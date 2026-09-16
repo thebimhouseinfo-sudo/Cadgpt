@@ -1,17 +1,18 @@
 ;;; =============================================================================
 ;;; TBH-HEADER-START
 ;;;
-;;; File        : XrefLayerMapper_v3.2.lsp
-;;; Module      : Setup Xref
-;;; Command     : XLAY
-;;; Description : Creates standard layers and maps existing layers to them
-;;;               based on keyword rules (layer name + block name fallback).
-;;;               Recursively remaps objects inside nested block definitions.
-;;;               Warns about off/frozen target layers and asks user to decide.
-;;;               Skips standard layers that already exist.
-;;;               Deletes old source layers after mapping.
+;;; File         : XrefLayerMapper_v3.2.lsp
+;;; Module       : Setup Xref
+;;; Command      : XLAY
+;;; Description  : Creates standard coordination layers, maps source layers by keyword/block-name rules, remaps nested block-definition content, handles off/frozen targets, and cleans obsolete source layers.
+;;; Inputs       : User choice when mapped target layers are off/frozen; project/runtime mapping values only when a bounded dynamic variant is intentionally derived.
+;;; Effects      : Creates target layers, remaps drawing and nested block content, may delete objects when Delete is chosen, deletes empty obsolete source layers, and restores prior layer locks.
+;;; Interaction  : Interactive when off/frozen mapped targets require a Delete/Map choice.
+;;; Risk         : High; broad layer remapping and optional object deletion can affect large portions of the drawing.
+;;; Dependencies : Visual LISP COM (`vl-load-com`) and required linetypes from `acad.lin` (including SCEN, HD, HID where configured).
+;;; Notes        : Managed source remains ordinary AutoLISP; ai_mode=dynamic permits only bounded runtime variants declared in User Registry. Function logic is unchanged in this metadata review.
+;;; Revision     : Metadata normalized 2026-09-17; function logic unchanged.
 ;;;
-;;; Usage       : Type XLAY and press Enter.
 ;;; TBH-HEADER-END
 ;;; =============================================================================
 
