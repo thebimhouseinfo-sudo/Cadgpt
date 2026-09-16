@@ -34,13 +34,15 @@ if (Test-Command "node") {
 } else { Fail "Node.js not found in PATH." }
 
 if (Test-Command "npm") { Ok "npm available" } else { Fail "npm not found in PATH." }
+if (Test-Path "package-lock.json") { Ok "Node dependency lock exists" } else { Fail "package-lock.json missing." }
+if (Test-Path "runtimes\cad-mcp\requirements.lock.txt") { Ok "CAD MCP Python dependency lock exists" } else { Fail "CAD MCP requirements.lock.txt missing." }
 
 if (Test-Command "python") {
     $pyVersion = (& python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>$null).Trim()
     $parts = $pyVersion.Split('.')
-    if ($parts.Count -ge 2 -and ([int]$parts[0] -gt 3 -or ([int]$parts[0] -eq 3 -and [int]$parts[1] -ge 11))) {
+    if ($parts.Count -ge 2 -and [int]$parts[0] -eq 3 -and [int]$parts[1] -eq 11) {
         Ok "Python $pyVersion"
-    } else { Fail "Python $pyVersion found; CadGPT requires Python 3.11+." }
+    } else { Fail "Python $pyVersion found; current CadGPT beta requires Python 3.11.x." }
 } else { Fail "Python not found in PATH." }
 
 if (Test-Path ".env") { Ok ".env exists" } else { Fail ".env missing; run setup.bat." }
@@ -63,6 +65,10 @@ if ($tunnelId -and $tunnelKey) { Ok "Secure MCP Tunnel credentials configured" }
 $cadPython = ".venv-cad\Scripts\python.exe"
 if (Test-Path $cadPython) {
     Ok "CAD MCP virtual environment exists"
+
+    & $cadPython -m pip check *> $null
+    if ($LASTEXITCODE -eq 0) { Ok "CAD MCP Python dependency graph passes pip check" } else { Fail "CAD MCP Python dependency graph failed pip check; rerun setup.bat." }
+
     & $cadPython -c "import sys; sys.path.insert(0, r'runtimes\cad-mcp'); import main; print('cad-mcp import ok')" *> $null
     if ($LASTEXITCODE -eq 0) { Ok "CAD MCP entrypoint imports cleanly" } else { Fail "CAD MCP entrypoint import failed." }
 
@@ -76,7 +82,7 @@ if (Test-Path $cadPython) {
             if ($parts.Count -eq 3) { Ok "AutoCAD COM reachable: $($parts[0]) $($parts[1]); open drawings=$($parts[2])" }
             else { Ok "AutoCAD COM reachable" }
         } else {
-            Warn "AutoCAD COM is not currently reachable. This is acceptable unless running live CAD acceptance."
+            Warn "AutoCAD COM is not currently reachable. This is acceptable in Stage 1; live CAD validation begins in Stage 2."
         }
     }
     finally {
