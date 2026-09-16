@@ -27,7 +27,15 @@ appdata/
 └── logs/                     diagnostics
 ```
 
-`drawings/<drawing_id>/` is intentionally separate from the conceptual Current Working Space. A drawing's stable identity will later map a reopened DWG back to this directory. Observator V1 only provides the per-drawing storage primitive; drawing-anchor creation/reconciliation is a separate concern.
+## Drawing-scoped Observator data
+
+`drawings/<drawing_id>/` is intentionally separate from the conceptual Current Working Space.
+
+A drawing gets a stable `drawing_id` lazily when Observator first needs metadata for it. The id is carried inside that DWG by the Observator-owned Drawing Anchor. File path/name remain locators only.
+
+The Drawing Anchor is the only CAD entity Observator may create or modify. A completed Observation Job writes/finalizes its AppData records and then updates the anchor exactly once.
+
+The anchor revision is **not** a guarantee that AutoCAD saved the latest in-memory drawing to disk. If an older DWG copy is opened, the anchor revision physically present in that copy describes that copy even when `appdata/drawings/<drawing_id>/` contains newer observation history. Newer AppData must not automatically overwrite or advance the opened drawing's anchor.
 
 ## Imported library contract
 
