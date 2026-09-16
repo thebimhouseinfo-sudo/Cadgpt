@@ -1,6 +1,6 @@
 # Coding Skill: Debugging and Testing
 
-Purpose: debug AutoLISP from concrete AutoCAD evidence and finish with a real load test, without risking a live project drawing.
+Purpose: debug AutoLISP from concrete AutoCAD evidence and finish with a real load test, without silently choosing a live project drawing.
 
 ## Non-negotiable test rule
 
@@ -8,30 +8,34 @@ Every changed production `.lsp` must be loaded in AutoCAD before handoff.
 
 Static validation is only a pre-load gate. A file is not considered fixed merely because parentheses balance or `lisp_validate` passes.
 
-Default test target:
+## Test-environment selection requires user choice
+
+After static validation passes and the Lisp is ready for AutoCAD testing, do not silently pick a drawing.
+
+If the user has already explicitly named a test drawing in the current request, use that drawing. Otherwise ask whether they want:
 
 ```text
-new blank unsaved drawing created with drawing_create_test
+1. a new drawing for testing; or
+2. the current drawing.
 ```
 
-Alternative test target:
+Do not proceed to the load gate until the user chooses.
 
-```text
-a drawing explicitly designated by the user for testing
-```
+### New drawing selected
 
-Never choose an open project drawing as a test target merely because it is currently active or already bound. Do not run experimental Lisp against a project file unless the user explicitly names that drawing as the intended test environment.
+Try `drawing_create_test` first.
 
-## Test-environment selection
+The current CadGPT CAD MCP contains a blank-drawing creation path using AutoCAD's document collection. When available, `drawing_create_test` creates a new unsaved blank drawing and binds the CadGPT session to it.
 
-Before the load gate:
+If that capability is unavailable on the installed runtime/AutoCAD host or the tool fails, **do not fall back to the current/project drawing**. Ask the user to open/create a test drawing manually. Then use `drawing_list` and `drawing_bind` to bind exactly that drawing before loading the Lisp.
 
-1. if the user explicitly supplied a test DWG, use `drawing_list` and `drawing_bind` to bind exactly that drawing;
-2. otherwise call `drawing_create_test`, which creates a new blank unsaved DWG and binds the CadGPT session to it;
-3. confirm `drawing_status` before loading;
-4. keep the project drawing untouched.
+### Current drawing selected
 
-A blank drawing is sufficient for syntax/load validation. Commands that require representative geometry may need a user-designated test DWG or deliberately-created disposable test entities in the blank drawing.
+Use `drawing_status` to confirm the exact bound drawing identity before loading. The user's explicit choice authorizes the agreed test on that drawing.
+
+A drawing is never considered approved for testing merely because it is active, open, or already bound from earlier CAD work.
+
+A blank drawing is sufficient for syntax/load validation. Commands that require representative geometry may need a user-designated test DWG or deliberately-created disposable test entities.
 
 ## Debugging loop
 
@@ -43,7 +47,7 @@ reproduce/inspect
 → inspect source/state
 → patch narrowly
 → lisp_validate
-→ safe test drawing
+→ obtain user-approved test drawing
 → verified load
 → read load error evidence
 → patch/revalidate/reload until loaded=true
@@ -75,7 +79,7 @@ Treat these differently. A COM `Invalid index` error is not a reason to change p
 Before patching runtime bugs, collect the smallest useful evidence:
 
 - command name;
-- exact test drawing identity;
+- exact approved test drawing identity;
 - entity handle/type/layer when relevant;
 - source file/function;
 - actual AutoCAD error message or load log tail;
@@ -88,7 +92,7 @@ Every edited `.lsp` must pass `lisp_validate` before load. Static validation cat
 
 ## Verified load test
 
-Load the exact edited file into the safe bound test drawing with:
+Load the exact edited file into the approved bound drawing with:
 
 ```text
 cad__cad_load_lisp_file
@@ -102,7 +106,7 @@ loaded: true
 
 before command execution or handoff.
 
-If it returns `loaded: false`, read `error` and `log_tail`, patch the source, run `lisp_validate` again, and reload. Repeat until the file loads cleanly or a concrete external blocker is identified.
+If it returns `loaded: false`, read `error` and `log_tail`, patch the source, run `lisp_validate` again, and reload into the same approved test drawing. Repeat until the file loads cleanly or a concrete external blocker is identified.
 
 Do not treat `SendCommand` enqueue/queue success as load success.
 
@@ -113,14 +117,15 @@ Many useful AutoLISP commands require user input: object selection, point pickin
 For such commands:
 
 1. complete static validation;
-2. load successfully in the safe test drawing;
-3. stop automated execution unless there is a deterministic, explicitly-supported automation path;
-4. tell the user the Lisp **loaded successfully** and ask them to run the named command manually in the designated test drawing;
-5. use the user's reported error/result for the next debug iteration if needed.
+2. obtain the user-approved test drawing;
+3. load successfully in that drawing;
+4. stop automated execution unless there is a deterministic, explicitly-supported automation path;
+5. tell the user the Lisp **loaded successfully** and ask them to run the named command manually in the approved drawing;
+6. use the user's reported error/result for the next debug iteration if needed.
 
 Do not invent clicks, points, selections or keyword responses merely to claim a test passed.
 
-This is still a valid handoff state because a large class of AutoLISP defects fail during load before any user interaction begins.
+This is still a valid handoff state because many AutoLISP defects fail during load before any user interaction begins.
 
 ## Non-interactive execution test
 
@@ -156,7 +161,7 @@ Only these outcomes are acceptable:
 ### Automated test complete
 
 - static validation passed;
-- safe test drawing confirmed;
+- the user approved the actual test drawing;
 - verified load passed;
 - command ran safely;
 - structured postcondition passed.
@@ -164,10 +169,10 @@ Only these outcomes are acceptable:
 ### User interaction required
 
 - static validation passed;
-- safe test drawing confirmed;
+- the user approved the actual test drawing;
 - verified load passed;
 - command requires manual interaction;
-- user is explicitly asked to test the command in the designated test drawing.
+- user is explicitly asked to test the command in that drawing.
 
 ### Blocked
 
