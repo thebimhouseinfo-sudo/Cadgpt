@@ -174,7 +174,7 @@ export async function deactivateCadRuntime(): Promise<void> {
   await cadUpstream.deactivate();
 }
 
-export async function registerCadProxyTools(server: McpServer): Promise<void> {
+export function registerCadProxyTools(server: McpServer): void {
   registerStableBusinessProxies(server);
 
   server.registerTool(
