@@ -17,21 +17,24 @@ jobs:
       - name: Validate curated Lisp semantic registry
         run: python scripts/validate-lisp-registry.py
 
-      - name: Verify registry class/type contract
+      - name: Verify registry class/AI-mode contract
         shell: pwsh
         run: |
           $registry = Get-Content "registry/lisp-registry.json" -Raw | ConvertFrom-Json
           if (-not $registry.entries -or $registry.entries.Count -lt 1) { throw "Lisp registry has no entries" }
           foreach ($entry in $registry.entries) {
-            if ($entry.type -notin @("static", "dynamic")) { throw "Invalid Lisp type: $($entry.id)" }
+            if ($entry.ai_mode -notin @("static", "dynamic")) { throw "Invalid Lisp ai_mode: $($entry.id)" }
+            if ($null -ne $entry.type -or $null -ne $entry.dynamic_role) { throw "Legacy Lisp type/dynamic_role metadata is not allowed: $($entry.id)" }
             if (-not $entry.class -or -not $entry.subclass -or -not $entry.summary) { throw "Incomplete semantic metadata: $($entry.id)" }
             if (-not $entry.path.StartsWith("lisp/")) { throw "Permanent registry entry must point to lisp/**: $($entry.id)" }
+            if ($entry.ai_mode -eq "static" -and $entry.dynamic_parameters.Count -gt 0) { throw "Static AI mode cannot declare dynamic parameters: $($entry.id)" }
+            if ($entry.ai_mode -eq "dynamic" -and $entry.dynamic_parameters.Count -lt 1) { throw "Dynamic AI mode requires bounded dynamic parameters: $($entry.id)" }
           }
           $xlay = $registry.entries | Where-Object { $_.commands -contains "XLAY" } | Select-Object -First 1
           if (-not $xlay) { throw "XLAY is missing from Lisp registry" }
-          if ($xlay.type -ne "dynamic" -or $xlay.dynamic_role -ne "template") { throw "XLAY must remain a dynamic-capable template" }
+          if ($xlay.ai_mode -ne "dynamic") { throw "XLAY must remain AI-dynamic-capable" }
           if ($xlay.dynamic_parameters.Count -lt 1) { throw "XLAY dynamic parameters are not catalogued" }
           if (Test-Path "appdata/lisp-draft") {
             Write-Host "Draft AppData exists; registry validator correctly ignores drafts until promotion."
           }
-          Write-Host "Semantic registry contract OK"
+          Write-Host "Semantic registry AI-mode contract OK"
