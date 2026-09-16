@@ -145,14 +145,8 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`Health:     http://${HOST}:${PORT}/health`);
   console.log(`File roots: ${getAllowedRoots().map(toRepoRelative).join(", ")}`);
   console.log(`MCP path:   ${MCP_TOKEN ? "protected" : "unprotected"}`);
-  console.log("CAD MCP:    host-controlled; activated while AutoCAD is running");
+  console.log("CAD MCP:    controlled by wake-agent; active only after ChatGPT activation while AutoCAD is running");
   console.log("");
-
-  if (process.env.CADGPT_START_CAD_MCP === "1") {
-    void activateCadRuntime().catch((error) =>
-      console.warn("[CAD MCP] initial host activation failed:", error instanceof Error ? error.message : error)
-    );
-  }
 });
 
 async function shutdown(signal: string): Promise<void> {
