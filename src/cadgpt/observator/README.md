@@ -52,6 +52,27 @@ Observation discovery cost
 != total entities in the drawing
 ```
 
+## Validation status
+
+Live AutoCAD validation is intentionally deferred to a later phase. The current foundation must not be described as live-verified yet.
+
+The later validation phase must include at least this smoke path:
+
+```text
+bind an explicit test drawing
+→ observator_capture_start
+→ manually create several entities
+→ delete/undo some temporary entities
+→ optionally combine remaining geometry into one block
+→ observator_capture_finish
+→ verify only surviving top-level entities are returned
+→ verify block-definition/nested entities are excluded
+→ read full properties for selected returned handles
+→ verify no full-drawing enumeration is required
+```
+
+Also validate cancellation, drawing mismatch protection, listener cleanup, and repeated start/finish cycles before treating the capture primitive as production-ready.
+
 ## Drawing Anchor boundary
 
 The anchor is created lazily when Observator first needs metadata for a drawing, and it is the only CAD database object Observator may create or modify.
