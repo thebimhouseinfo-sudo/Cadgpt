@@ -2,15 +2,7 @@
 
 These scripts are development/migration utilities. They are not part of the normal CadGPT end-user startup path.
 
-## TBH Toolkit
-
-`migrate-tbh-toolkit.ps1` copies the complete `tool-kit/` folder from a local clone of `thebimhouseinfo-sudo/CAD-Agent` into:
-
-```text
-lisp/tbh-toolkit/
-```
-
-The source repository is private, so CadGPT intentionally does not depend on cross-repository GitHub Actions credentials for this migration.
+The source repository `thebimhouseinfo-sudo/CAD-Agent` is private, so CadGPT intentionally avoids adding cross-repository GitHub Actions credentials just to perform one-time source preservation. Run these scripts from trusted local clones instead.
 
 Default expected sibling layout:
 
@@ -20,31 +12,117 @@ Default expected sibling layout:
 └── Cadgpt/
 ```
 
+Both scripts accept `-SourceRepo` when the old repository is stored elsewhere.
+
+---
+
+## TBH Toolkit
+
+`migrate-tbh-toolkit.ps1` mirrors the complete:
+
+```text
+CAD-Agent/tool-kit/**
+```
+
+into:
+
+```text
+Cadgpt/lisp/tbh-toolkit/**
+```
+
 Dry run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/migration/migrate-tbh-toolkit.ps1 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass \
+  -File scripts/migration/migrate-tbh-toolkit.ps1 -DryRun
 ```
 
-Copy + SHA256 verification:
+Exact mirror + SHA256 verification:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/migration/migrate-tbh-toolkit.ps1
+powershell -NoProfile -ExecutionPolicy Bypass \
+  -File scripts/migration/migrate-tbh-toolkit.ps1
 ```
 
 Custom source clone location:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/migration/migrate-tbh-toolkit.ps1 -SourceRepo "D:\dev\CAD-Agent"
+powershell -NoProfile -ExecutionPolicy Bypass \
+  -File scripts/migration/migrate-tbh-toolkit.ps1 \
+  -SourceRepo "D:\dev\CAD-Agent"
 ```
 
 Rules:
 
-- preserve every source file and its relative path;
+- preserve every source file and relative path;
 - do not refactor AutoLISP during migration;
-- overwrite destination copies from the selected source commit so migration is deterministic;
+- overwrite destination copies from the selected source commit;
+- remove stale destination-only files **individually** inside `lisp/tbh-toolkit/**`;
+- never recursively delete the Toolkit root;
 - verify every copied file by SHA256;
-- write `lisp/tbh-toolkit/MIGRATION_PROVENANCE.md` with source commit and file count;
+- verify destination/source file counts match;
+- write `lisp/tbh-toolkit/MIGRATION_PROVENANCE.md` with source commit and counts;
 - review and commit the resulting asset changes separately from later AutoLISP edits.
 
-Existing files such as `Setup Xref` are intentionally overwritten from the chosen source clone during the migration so the target pack matches one exact CAD-Agent commit.
+Existing partial copies such as `Setup Xref` are intentionally replaced by the selected source clone so the migrated Toolkit represents one exact CAD-Agent commit.
+
+---
+
+## Revit MCP preservation
+
+`preserve-revit-mcp.ps1` preserves the old:
+
+```text
+CAD-Agent/runtimes/Revit-mcp/**
+```
+
+under:
+
+```text
+Cadgpt/preserved/revit-mcp/source/**
+```
+
+Dry run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass \
+  -File scripts/migration/preserve-revit-mcp.ps1 -DryRun
+```
+
+Preserve + SHA256 verification:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass \
+  -File scripts/migration/preserve-revit-mcp.ps1
+```
+
+The script deliberately excludes generated artifacts such as:
+
+```text
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.vs
+bin
+obj
+logs
+node_modules
+*.pyc
+*.pyo
+*.log
+*.tmp
+*.pdb
+```
+
+Rules:
+
+- preserve source/config/project/documentation files and relative paths;
+- do not refactor Revit source during preservation;
+- remove stale files only inside `preserved/revit-mcp/source/**`;
+- verify every preserved file by SHA256 and compare file counts;
+- write `preserved/revit-mcp/MIGRATION_PROVENANCE.md`;
+- keep the entire preserved tree inactive in CadGPT runtime/startup/build;
+- future Revit cleanup belongs to RevitGPT, not CadGPT.
+
+After either script runs, review `git status` and commit the generated asset/preservation changes before calling that migration complete.
