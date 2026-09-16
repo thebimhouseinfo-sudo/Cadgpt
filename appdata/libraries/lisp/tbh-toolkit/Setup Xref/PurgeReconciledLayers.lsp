@@ -1,14 +1,18 @@
 ;;; =============================================================================
 ;;; TBH-HEADER-START
 ;;;
-;;; File        : PurgeReconciledLayers.lsp
-;;; Module      : Setup Xref
-;;; Command     : PURGERECONCILEDLAYERS
-;;; Description : Clears out reconciled layer states from xrefs automatically.
+;;; File         : PurgeReconciledLayers.lsp
+;;; Module       : Setup Xref
+;;; Command      : PURGERECONCILEDLAYERS
+;;; Description  : Removes reconciled-layer metadata from layer extension dictionaries, then disables layer evaluation/notification; the command also runs automatically when the file is loaded.
+;;; Inputs       : None.
+;;; Effects      : Attempts to remove ADSK_XREC_LAYER_RECONCILED, deletes each layer extension dictionary, sets LAYEREVAL=0 and LAYERNOTIFY=0.
+;;; Interaction  : Non-interactive; executes automatically on file load.
+;;; Risk         : High; load-time mutation and extension-dictionary deletion may affect metadata unrelated to layer reconciliation.
+;;; Dependencies : Visual LISP COM (`vl-load-com`).
+;;; Notes        : Static review found that the whole layer extension dictionary is deleted after reconciliation-record removal; function logic is intentionally not repaired in this phase.
+;;; Revision     : Metadata normalized 2026-09-17; function logic unchanged.
 ;;;
-;;; Usage       :
-;;; 1. Run command.
-;;; 2. Automatically accepts and purges reconciled/unreconciled layer states globally.
 ;;; TBH-HEADER-END
 ;;; =============================================================================
 
