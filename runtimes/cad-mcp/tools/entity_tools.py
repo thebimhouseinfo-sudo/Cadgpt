@@ -10,6 +10,7 @@ from services.entity_service import (
     set_entity_linetype,
     set_entity_visibility,
 )
+from services.property_service import PropertyServiceError, read_entities_properties
 from utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -18,7 +19,7 @@ log = get_logger(__name__)
 def _safe(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
-    except (AutoCADNotRunningError, EntityServiceError) as exc:
+    except (AutoCADNotRunningError, EntityServiceError, PropertyServiceError) as exc:
         raise RuntimeError(str(exc)) from exc
     except Exception as exc:
         log.exception("Unexpected entity tool error")
@@ -38,6 +39,18 @@ def register(mcp):
     def cad_get_entity(handle: str, include_paper_space: bool = True) -> dict:
         """Get one supported entity by AutoCAD handle from the bound drawing."""
         return _safe(get_entity, handle, include_paper_space)
+
+    @mcp.tool()
+    def cad_read_entity_properties(
+        handles: list[str],
+        include_paper_space: bool = True,
+    ) -> dict:
+        """Read all discoverable direct properties for one or many entities.
+
+        This tool is read-only and entity-generic. It does not traverse block
+        definitions, nested entities, or child COM objects.
+        """
+        return _safe(read_entities_properties, handles, include_paper_space)
 
     @mcp.tool()
     def cad_set_entity_layer(handles: list[str], layer: str) -> dict:
