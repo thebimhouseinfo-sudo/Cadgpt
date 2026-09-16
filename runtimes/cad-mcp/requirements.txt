@@ -1,3 +1,2 @@
-pywin32>=306
+pywin32==312
 mcp==1.2.1
-fastmcp
