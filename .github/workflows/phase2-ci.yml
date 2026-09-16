@@ -1,0 +1,39 @@
+name: Phase 2 CAD Tools CI
+
+on:
+  push:
+    branches: [phase2-cad-tools]
+  pull_request:
+    branches: [main]
+
+jobs:
+  read-only-cad-proxy:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Node dependencies
+        run: npm install
+      - name: Install CAD MCP dependencies
+        run: python -m pip install -r runtimes/cad-mcp/requirements.txt
+      - name: Build connector
+        run: npm run build
+      - name: Compile CAD MCP slice
+        run: python -m compileall -q runtimes/cad-mcp
+      - name: Verify read-only CAD tool registration
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "${{ github.workspace }}\runtimes\cad-mcp"
+          python -c "import main; names={tool.name for tool in main.mcp._tool_manager.list_tools()}; required={'cad_inventory_layer_objects','acad_list_layers','acad_get_current_layer'}; forbidden={'acad_create_layer','acad_rename_layer','acad_delete_layer','acad_delete_entities'}; assert required <= names, f'Missing: {required-names}'; assert not (forbidden & names), f'Mutation tools exposed: {forbidden & names}'; print(sorted(names))"
+      - name: Verify bound-target proxy contract in source
+        shell: pwsh
+        run: |
+          $source = Get-Content "src/cadgpt/tools/cad-proxy.ts" -Raw
+          if ($source -notmatch 'BOUND_TARGET_ARGUMENTS') { throw 'Missing bound-target argument policy' }
+          if ($source -notmatch 'args\.document_name = drawing\.full_name \|\| drawing\.name') { throw 'Bound drawing identity is not injected into document_name' }
+          if ($source -notmatch 'if \(BOUND_TARGET_ARGUMENTS\.has\(key\)\) continue') { throw 'document_name is not removed from public proxy schema' }
