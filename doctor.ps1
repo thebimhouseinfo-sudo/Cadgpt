@@ -47,8 +47,22 @@ if (Test-Command "python") {
 
 if (Test-Path ".env") { Ok ".env exists" } else { Fail ".env missing; run setup.bat." }
 foreach ($root in @("lisp", "jobs")) {
-    if (Test-Path $root) { Ok "Editable root exists: $root/" } else { Fail "Editable root missing: $root/" }
+    if (Test-Path $root) { Ok "Permanent source root exists: $root/" } else { Fail "Permanent source root missing: $root/" }
 }
+
+$appDataConfigured = Get-DotEnvValue "CADGPT_APPDATA_ROOT"
+if (-not $appDataConfigured) { $appDataConfigured = "appdata" }
+$appDataRoot = if ([System.IO.Path]::IsPathRooted($appDataConfigured)) {
+    [System.IO.Path]::GetFullPath($appDataConfigured)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $ScriptDir $appDataConfigured))
+}
+foreach ($relative in @("data\runs", "lisp-draft", "runtime\dynamic-lisp", "state", "logs")) {
+    $target = Join-Path $appDataRoot $relative
+    if (Test-Path $target) { Ok "AppData area exists: $relative" }
+    else { Fail "AppData area missing: $target (rerun setup.bat)" }
+}
+Ok "CadGPT AppData root: $appDataRoot"
 
 $portValue = Get-DotEnvValue "PORT"
 $port = if ($portValue) { [int]$portValue } else { 3000 }

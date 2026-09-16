@@ -1,158 +1,156 @@
 # CadGPT
 
-CadGPT is a thin local execution layer that lets ChatGPT work with AutoCAD through a single MCP connection.
-
-CadGPT does **not** provide its own chat UI or local AI model. ChatGPT is the reasoning/UI layer. The local runtime provides controlled access to AutoCAD, CAD Jobs, and AutoLISP assets.
-
-## Architecture
+CadGPT turns ChatGPT into a drawing-centric AutoCAD execution environment without adding another chat UI or local AI model.
 
 ```text
 ChatGPT
-   |
-   | Developer Mode / custom MCP app
-   v
+   ⇅
 OpenAI Secure MCP Tunnel
-   |
-   v
-CadGPT local MCP (127.0.0.1)
-   |-- file tools -> lisp/**, jobs/** only
-   |-- drawing binding/session
-   `-- CAD MCP -> AutoCAD
+   ⇅
+CadGPT
+   ↓
+Jobs + Skills
+   ↓
+CAD MCP
+   ↓
+AutoCAD
 ```
 
-`runtimes/cad-mcp/` is the only active execution runtime in CadGPT.
+## Product model
 
-## Product stages
+- ChatGPT is the reasoning/chat UI.
+- CadGPT is a thin local execution/orchestration layer.
+- CAD MCP is the only active CAD runtime.
+- AutoCAD is never launched implicitly by CadGPT.
+- Revit MCP is preserved only for possible future RevitGPT work.
+- Jobs describe repeatable CAD workflows; concrete Job redesign is intentionally deferred until the core is stable.
 
-The product roadmap is defined in `ROADMAP.md`.
+## Background-agent lifecycle
 
-Current stage:
+CadGPT behaves more like a lightweight per-user driver than a daily-launched application.
+
+After one-time setup:
 
 ```text
-Stage 1 — Beta Build / Code Complete
+Windows logon
+→ tiny hidden wake-agent + Secure MCP Tunnel ON
+→ full CadGPT MCP OFF
+→ CAD MCP OFF
+
+first ChatGPT call to CadGPT
+→ full CadGPT MCP ON
+→ if acad.exe is running, CAD MCP ON
+
+acad.exe closes
+→ CAD MCP OFF
 ```
 
-Stage 1 intentionally does **not** require a real AutoCAD host. The goal is to finish every architecture, source, dependency, CI, MCP, migration, and `write-lisp` contract that can be validated without live CAD.
+AutoCAD being open by itself never wakes the full CadGPT core. The public CAD tool descriptors remain stable while the CAD backend sleeps so ChatGPT does not need tool-list churn merely because AutoCAD opens/closes.
 
-After Stage 1 passes its exit gate, CadGPT enters a dedicated **Beta Scope Review** where features may be added, removed, or simplified. Only after that review is Stage 2 frozen and real-AutoCAD validation begins.
+`run.bat` is a control utility (`install`, `start`, `stop`, `restart`, `status`, `uninstall`), not something users should need to launch every day.
 
-## Requirements
+## AppData
+
+CadGPT keeps generated/user runtime data separate from permanent source.
+
+During Beta the AppData root intentionally lives inside the repository:
+
+```text
+appdata/
+├── data/
+│   └── runs/
+├── lisp-draft/
+├── runtime/
+│   └── dynamic-lisp/
+├── state/
+└── logs/
+```
+
+`CADGPT_APPDATA_ROOT` abstracts this location. Packaged builds can move the same virtual `appdata/...` paths to a per-user location such as `%LOCALAPPDATA%\CadGPT` without changing capability/tool contracts.
+
+Only `appdata/data/**` and `appdata/lisp-draft/**` are exposed through general file tools. Runtime/state/log areas remain internal.
+
+## AutoLISP lifecycle
+
+`lisp/**` is the permanent reusable AutoLISP library. New/substantial work goes through a draft first:
+
+```text
+semantic registry discovery
+→ appdata/lisp-draft/**
+→ AutoLISP/TBH static validation
+→ user-approved AutoCAD test drawing
+→ verified load / runtime test
+→ lisp_promote_draft
+→ permanent lisp/** + semantic registry update
+```
+
+`write-lisp` is a specialized AutoLISP/Visual LISP capability, not a generic Lisp/software-engineering agent. Its harness explicitly rejects recognizable Common Lisp constructs and follows the TBH library presentation/scaffold.
+
+Parameterized/session-only Lisp can live under `appdata/runtime/dynamic-lisp/**` and be verified-loaded directly without mutating the permanent template/library.
+
+## Semantic capability registry
+
+Use `registry_list` / `registry_get` to discover what existing Lisp/tools actually do. Lisp filenames/command names may be personal or historical and are not treated as reliable semantic descriptions.
+
+Permanent Lisp registry entries include functional class/subclass, static/dynamic type, interaction, load behavior, mutation/destructive risk, inputs, effects, dynamic parameters, and implementation caveats.
+
+Every user-facing permanent `.lsp` under `lisp/**` must be catalogued. Drafts are excluded until promotion.
+
+## Installation
+
+Requirements for the current Beta source build:
 
 - Windows
-- Node.js 20 or newer
-- Python 3.11.x for the current beta runtime
-- AutoCAD for Stage 2 live CAD validation and normal live CAD operations
-- ChatGPT account/workspace with Developer Mode and the required custom MCP permissions
-- OpenAI Secure MCP Tunnel ID + Runtime API key
+- Node.js 20+
+- Python 3.11.x
+- AutoCAD for Stage 2/live CAD validation
 
-## Reproducible dependencies
-
-The beta build uses committed dependency locks:
-
-```text
-package-lock.json
-runtimes/cad-mcp/requirements.lock.txt
-```
-
-`setup.bat` and CI install from these locks. `runtimes/cad-mcp/requirements.txt` remains the small direct-dependency manifest used when intentionally regenerating the Python lock.
-
-## One-time setup
-
-Run:
+One-time setup:
 
 ```bat
 setup.bat
 ```
 
-Setup will:
+Setup installs locked Node/Python dependencies, generates the stable CAD tool manifest, initializes Beta AppData, configures the Secure MCP Tunnel, installs the hidden per-user background task, and runs diagnostics.
 
-1. validate Node.js and Python 3.11.x;
-2. install the connector with `npm ci` from `package-lock.json`;
-3. build the CadGPT connector;
-4. recreate the isolated `.venv-cad` environment;
-5. install exact CAD MCP dependencies from `requirements.lock.txt` and run `pip check`;
-6. configure the OpenAI Secure MCP Tunnel and a private local MCP path token;
-7. start CadGPT;
-8. run `doctor.bat`.
+Daily use normally requires no command.
 
-After the tunnel is configured, enable ChatGPT Developer Mode and add/select the CadGPT tunnel connection once.
-
-Secrets and generated tunnel profiles are local-only (`.env`, `profiles/*.yaml`) and are ignored by Git.
-
-## Daily use
-
-Run:
+Useful controls:
 
 ```bat
-run.bat
-```
-
-`run.bat` starts the local CadGPT MCP service, waits until it is healthy, starts the Secure MCP Tunnel, and waits for the tunnel `/readyz` health check before reporting success.
-
-AutoCAD may be opened before or after CadGPT. CAD availability is reported separately from ChatGPT/tunnel health.
-
-## Diagnostics
-
-Run:
-
-```bat
+run.bat status
+run.bat restart
 doctor.bat
 ```
 
-Doctor checks the local environment, dependency versions, file roots, CAD MCP import, CadGPT HTTP health, Secure MCP Tunnel configuration/health, tunnel-client doctor result, and reports whether AutoCAD COM is currently reachable.
+`acceptance.bat` is reserved for real Windows + AutoCAD acceptance work in Stage 2.
 
-## Real-host acceptance — Stage 2
+## File safety
 
-`acceptance.bat` exists now so the real-host contract is defined in advance, but **passing it on a real AutoCAD workstation is not a Stage 1 exit requirement**.
-
-After the Stage 1 Beta Scope Review, Stage 2 uses:
-
-```bat
-acceptance.bat
-```
-
-The acceptance gate validates:
-
-1. `run.bat` startup;
-2. `doctor.ps1`;
-3. protected MCP session/tool discovery;
-4. live AutoCAD drawing discovery;
-5. creation and binding of a **new unsaved blank test drawing**;
-6. verified AutoLISP load using `lisp/_cadgpt-system/CADGPT_LOAD_SMOKE.lsp`;
-7. safe no-op AutoLISP command dispatch.
-
-The acceptance script never chooses an existing project drawing for mutation. The blank test drawing is intentionally left unsaved and should be closed manually after the test.
-
-If AutoCAD cannot create a new drawing programmatically on a particular host, the `write-lisp` workflow falls back to asking the user to open a blank/test drawing manually; it must not silently use the project drawing.
-
-## Local file boundary
-
-ChatGPT file tools are restricted by default to:
+Permanent editable source roots:
 
 ```text
 lisp/**
 jobs/**
 ```
 
-Paths outside these roots, including traversal attempts, are rejected. There is no generic full-disk file access.
+Editable AppData roots:
+
+```text
+appdata/data/**
+appdata/lisp-draft/**
+```
+
+The file sandbox uses lexical containment plus realpath/symlink checks. Generic arbitrary filesystem/shell/package-manager access is not part of normal CadGPT capability.
 
 ## Drawing binding
 
-CadGPT does not treat AutoCAD `ActiveDocument` as the session target. A ChatGPT MCP session explicitly binds one open drawing. CAD operations exposed through CadGPT must re-establish that bound drawing before execution so changing AutoCAD tabs does not silently retarget the session.
-
-## AutoLISP testing rule
-
-Changed production AutoLISP is not complete after static validation alone. Before final handoff it must pass a real AutoCAD load test during Stage 2 or later.
-
-When `write-lisp` is ready to test, it asks whether to:
-
-- create/use a new blank test drawing; or
-- test on the currently bound drawing.
-
-Testing on the current drawing requires explicit user choice. If the command requires manual selections, points, dialogs, or prompts, CadGPT stops after verified load and asks the user to test the command manually in the chosen test drawing.
+Before CAD business operations, CadGPT binds explicitly to one drawing identity. AutoCAD tab switching does not silently retarget a session. Proxied CAD tools re-establish the bound drawing before execution.
 
 ## Development status
 
-Current target: **CadGPT Beta 0.1 — Code Complete, Real-CAD Validation Pending**.
+Stage 1 — Beta Build / Code Complete is complete.
 
-Concrete CAD Job redesign is intentionally deferred. Stage 1 finishes the core beta first; then the Beta Scope Review may add/remove/simplify features before Stage 2 real-CAD testing begins.
+Current work is the **Beta Scope Review**: simplify/add/remove features and tighten contracts before starting Stage 2 real-AutoCAD validation.
+
+No claim is made yet that the current Beta Review branch has completed live Windows + AutoCAD lifecycle validation.

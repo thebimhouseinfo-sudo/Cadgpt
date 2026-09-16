@@ -2,20 +2,38 @@
 
 Status: **active**
 
-`write-lisp` is CadGPT's specialized **AutoLISP/Visual LISP for AutoCAD** coding capability. It is deliberately not a generic Lisp agent and not a generic application-development agent.
+`write-lisp` is CadGPT's specialized **AutoLISP/Visual LISP for AutoCAD** coding capability. It is not a generic Lisp agent and not a generic application-development agent.
 
-Its job is to understand existing AutoLISP, create or patch it safely, validate the exact AutoLISP dialect and TBH library structure, load/test it in an explicitly approved AutoCAD drawing, debug concrete load/runtime failures, and verify the resulting drawing state when the command can be automated safely.
+Its job is to understand existing AutoLISP, create or patch it safely, validate the exact AutoLISP dialect and TBH library structure, load/test it in an explicitly approved AutoCAD drawing, debug concrete load/runtime failures, verify drawing results when automation is safe, and only then promote reusable code into the permanent library.
 
 ## Core rule
 
-> AutoLISP is not Common Lisp. Search first. Patch before rewrite. Scaffold new files from the TBH library standard. Static validation is not enough: every changed production Lisp must be loaded successfully in AutoCAD before handoff.
+> AutoLISP is not Common Lisp. Search first. Patch before rewrite. New/substantial work lives in AppData draft first. Static validation is not enough: changed Lisp must load successfully in AutoCAD before permanent promotion or handoff.
 
-## Boundaries
+## Storage model
 
-Editable source:
+Permanent source:
 
 ```text
 lisp/**
+```
+
+Draft/work-in-progress source:
+
+```text
+appdata/lisp-draft/**
+```
+
+Run/output data:
+
+```text
+appdata/data/**
+```
+
+AI-derived/session-only Lisp artifacts:
+
+```text
+appdata/runtime/dynamic-lisp/**
 ```
 
 Read-only skill knowledge:
@@ -24,13 +42,23 @@ Read-only skill knowledge:
 skills/write-lisp/**
 ```
 
-Do not request generic shell, package-manager, Git, arbitrary filesystem, or application-development tooling. AutoLISP source is edited only through CadGPT's sandboxed file tools.
+Rules:
+
+- `lisp/**` is the permanent reusable library, not a scratch directory.
+- every user-facing permanent Lisp must have semantic metadata in `registry/lisp-registry.json`;
+- drafts are not permanent capabilities and do not enter the permanent registry;
+- promotion from draft to permanent must use `lisp_promote_draft`, which updates permanent source and semantic registry together;
+- all source files remain ordinary AutoLISP/Visual LISP; `ai_mode=dynamic` only describes whether AI may derive bounded runtime variants from that source;
+- runtime variants are not promoted merely because they were generated dynamically.
+
+Do not request generic shell, package-manager, Git, arbitrary filesystem, or application-development tooling. AutoLISP source/data is edited only through CadGPT's sandboxed file/workspace tools.
 
 ## Runtime tools
 
 Core file tools:
 
 ```text
+file_roots
 file_list
 file_search
 file_read
@@ -38,13 +66,22 @@ file_create
 file_edit
 ```
 
-Skill/harness tools:
+Registry/discovery:
+
+```text
+registry_list
+registry_get
+```
+
+Skill/harness/workspace tools:
 
 ```text
 skill_list
 skill_get
 lisp_scaffold
 lisp_validate
+lisp_draft_validate
+lisp_promote_draft
 ```
 
 Drawing/session tools:
@@ -76,217 +113,266 @@ Other structured `cad__...` tools may be used when they directly express require
 
 `SKILL.md` is the orchestrator. Load only the relevant resources with `skill_get(name="write-lisp", resource=...)`.
 
-### Baseline resources for every meaningful source edit
+Baseline resources for meaningful edits:
 
 - `coding-skills/autolisp-dialect-boundary.md` — strict AutoLISP vs Common Lisp boundary.
 - `coding-skills/autolisp-language.md` — AutoLISP/Visual LISP source discipline.
 - `coding-skills/debugging-and-testing.md` — approved test drawing, verified load, runtime/user-test handoff.
 
-### New file or substantial rewrite
+New file or substantial rewrite:
 
-Also load:
+- `coding-skills/library-style-and-scaffold.md` — canonical TBH presentation/file structure.
 
-- `coding-skills/library-style-and-scaffold.md` — canonical TBH presentation and file structure.
+Task-specific:
 
-Use `lisp_scaffold` for every new production command file instead of inventing a new file layout.
+- `coding-skills/discovery-and-planning.md`
+- `coding-skills/autocad-api-and-dxf.md`
+- `coding-skills/selection-and-batch.md`
+- `coding-skills/blocks-xrefs-attributes.md`
 
-### Task-specific resources
-
-- `coding-skills/discovery-and-planning.md` — locate commands/helpers and choose reuse/patch/new-file path.
-- `coding-skills/autocad-api-and-dxf.md` — DXF, enames, handles, VLA/COM, layers, geometry, coordinate systems.
-- `coding-skills/selection-and-batch.md` — cleanup, conversion, mapping, takeoff, batch classification/mutation.
-- `coding-skills/blocks-xrefs-attributes.md` — blocks, dynamic blocks, nested definitions, attributes and xrefs.
-
-Do not create generic sub-skills for refactoring, dependency management, release engineering, Git review, or application performance. Those abstractions do not match CadGPT's AutoLISP role.
+Do not add generic refactoring, dependency-management, release-engineering, Git-review or application-performance skills. Those abstractions do not match CadGPT's AutoLISP role.
 
 ## Required workflow
 
-### 1. Inspect the real requirement
+### 1. Discover capability before reading source
 
-When drawing state matters, inspect structured CAD state before deciding what AutoLISP must do. Do not infer the target or required logic visually when AutoCAD can return deterministic entity/layer/block data.
+Use `registry_list` / `registry_get` first when looking for an existing Lisp capability. Lisp filenames and command names are not reliable semantic descriptions.
 
-### 2. Search existing AutoLISP
+Only read source when reuse/patch/debug/audit actually requires implementation detail.
 
-Search `lisp/**` before creating a file. Search by command name, helper prefix, relevant layer/object terminology, and similar behavior.
+### 2. Inspect the real CAD requirement
+
+When drawing state matters, inspect structured CAD state before deciding what Lisp must do. Do not infer target geometry visually when AutoCAD can return deterministic layer/entity/block data.
+
+### 3. Prefer reuse, then patch
 
 Preference order:
 
-1. use an existing command unchanged;
-2. change mapping/data if the algorithm already supports the request;
-3. patch the smallest relevant function/branch;
-4. add a narrow helper to an existing command;
-5. create a new `.lsp` only when no suitable implementation exists.
+1. use an existing registered command unchanged;
+2. when `ai_mode=dynamic`, derive a temporary parameterized runtime variant by changing only the registry-declared `dynamic_parameters`;
+3. patch the smallest relevant implementation surface;
+4. add a narrow helper;
+5. create a new command only when no suitable implementation exists.
 
-### 3. Read the real change surface
+A source with `ai_mode=dynamic` is still ordinary AutoLISP. Dynamic behavior exists in the **AI + runtime adaptation workflow**, not in the Lisp language/file itself.
 
-Before editing, read the full affected `defun` and directly referenced helpers. Preserve public command names and working behavior unless the requested contract explicitly changes them.
+### 4. Use draft workspace for new/substantial work
 
-For a narrow legacy patch, preserve the local style unless it causes a defect. Do not rewrite an entire working file for cosmetic consistency.
+For new commands or substantial rewrites:
 
-### 4. Scaffold new files; patch existing files narrowly
+1. call `lisp_scaffold`;
+2. create the working file under `appdata/lisp-draft/**`;
+3. edit/test the draft there;
+4. do **not** create a permanent `lisp/**` file before the code has passed its applicable test gates.
 
-For a **new production command file**, call `lisp_scaffold` first and create the source from the returned TBH skeleton. Do not write a new `.lsp` from an empty page.
+Small fixes to an already-permanent Lisp may be patched in place when appropriate, but the normal path for risky/substantial changes is to copy/work as a draft and promote after validation.
 
-The canonical file structure is derived from the existing TBH Toolkit and includes the TBH metadata header, predictable helper/main-command order, command-local cleanup pattern where applicable, TBH load banner and quiet final `(princ)`.
+For an existing file, preserve public command names and working behavior unless the requested contract explicitly changes them. Do not rewrite an entire working file for cosmetic consistency.
 
-For an **existing file**, use `file_edit` for exact patches. Use `file_create` only for genuinely new source.
-
-Keep project mappings/configuration out of general algorithms when the Job owns that data.
-
-For large/destructive batch operations, prefer:
+For large/destructive batch operations prefer:
 
 ```text
 collect/classify → validate → mutate → verify/report
 ```
 
-### 5. AutoLISP dialect + library static gate — mandatory
+### 5. Static AutoLISP gate — mandatory
 
-Run `lisp_validate` on every changed `.lsp` before any AutoCAD load.
-
-The harness rejects recognizable Common Lisp syntax such as Common Lisp-only binding/control forms, lambda-list keywords like `&optional`/`&rest`, and `#'` reader shorthand. Dialect errors are always errors.
-
-With the normal `enforce_library_style=true`, the harness also checks the canonical TBH production header and public-command/header agreement. It is reader-aware for comments/strings, validates parenthesis structure, extracts commands/functions, detects duplicate public commands, and checks AutoLISP/Visual LISP conventions such as `(vl-load-com)` before COM use.
-
-`valid: false` blocks the load gate.
-
-`enforce_library_style=false` exists only for deliberate diagnosis of imported/legacy source; it is not the normal path for newly generated production code.
-
-### 6. Ask the user where to test — mandatory
-
-After the code passes the static gate and is ready for AutoCAD testing, do **not** silently choose a drawing.
-
-If the user has already explicitly named a test drawing in the current request, use it. Otherwise ask:
+Draft:
 
 ```text
-Lisp đã sẵn sàng để load test. Bạn muốn:
-1. tạo một drawing mới để test; hay
-2. test trên drawing hiện tại?
+lisp_draft_validate
 ```
 
-Do not proceed to load until the user has chosen one of these paths.
+Permanent legacy/narrow patch:
 
-#### User chooses a new drawing
+```text
+lisp_validate
+```
+
+The harness rejects recognizable Common Lisp syntax such as Common-Lisp-only binding/control forms, lambda-list keywords like `&optional`/`&rest`, and `#'` reader shorthand. Dialect errors are always errors.
+
+With normal TBH-style enforcement it also checks canonical metadata/header structure, command/header agreement, comments/strings-aware parentheses, duplicate public commands, COM initialization patterns, and relevant cleanup warnings.
+
+A failed static gate blocks AutoCAD load.
+
+### 6. Ask where to test — mandatory
+
+After static validation passes and the Lisp is ready for AutoCAD testing, do not silently choose a drawing.
+
+If the user already explicitly named a test drawing in the current request, use it. Otherwise ask whether to:
+
+1. create a new drawing for testing; or
+2. test on the currently bound drawing.
+
+#### New drawing
 
 Call `drawing_create_test`.
 
-CadGPT's current CAD MCP includes a blank-drawing creation path backed by AutoCAD's document collection. If `drawing_create_test` is available and succeeds, it creates a new unsaved blank DWG and binds the CadGPT session to it.
+If blank-drawing creation is unavailable/fails, do **not** fall back to a project drawing. Ask the user to manually open/create a test drawing, then use `drawing_list` + `drawing_bind`.
 
-If the tool is unavailable on the installed CAD MCP/AutoCAD host or creation fails, **do not fall back to the project drawing**. Tell the user to create/open a blank test drawing manually, then use `drawing_list` + `drawing_bind` to bind exactly that drawing.
+#### Current drawing
 
-#### User chooses the current drawing
+Use `drawing_status` to confirm the exact bound drawing. The user's explicit choice authorizes the agreed test there.
 
-Use `drawing_status` to show/confirm the currently bound drawing identity. The user's explicit choice is authorization to perform the agreed Lisp load/runtime test on that drawing.
+A project drawing is never implicitly approved merely because it is active/bound.
 
-Do not treat a previously-open project drawing as implicitly approved merely because it is active or bound.
+### 7. Verified load gate — mandatory
 
-### 7. Verified AutoCAD load gate — mandatory
+Load the exact tested Lisp through the approved Lisp-load path.
 
-Load the exact repository file through:
-
-```text
-cad__cad_load_lisp_file
-```
-
-The tool must report:
+The load result must report:
 
 ```text
 loaded: true
 ```
 
-before the Lisp can be handed off or executed.
+A queued command is not proof of load success. When load fails, read concrete error/log evidence, patch the same draft/source, rerun static validation, and repeat load on the same approved test drawing.
 
-A queued `SendCommand` is not proof of load success. When load fails, read the returned `error` and `log_tail`, patch the source, run `lisp_validate` again, and repeat the load test on the same approved test drawing until it succeeds or a concrete external blocker is identified.
+Many AutoLISP defects fail at load time before command invocation; these must be fixed before delivery.
 
-Many AutoLISP defects fail here before the user ever invokes the command; these must be fixed before delivery.
+### 8. Automated execution vs user interaction
 
-### 8. Decide automated execution vs user interaction
+If the command can run deterministically without manual point picking, selection, keyword prompts, dialogs or similar interaction, invoke it and verify structured CAD postconditions.
 
-If the command can run deterministically without manual point-picking, selection, keyword prompts, dialogs, or other user interaction, invoke it with:
+If manual interaction is required, do not invent prompt input. Once static validation and verified load both pass, ask the user to run the command manually in the approved test drawing.
 
-```text
-cad__cad_run_lisp_command
-```
-
-then verify the CAD postcondition.
-
-If the command **requires user interaction**, do not invent prompt input merely to claim a successful test. Once static validation and verified load have both passed, stop automated execution and ask the user to run the named command manually in the approved test drawing.
-
-For an interactive command, this is a valid handoff state:
+Valid interactive handoff state:
 
 ```text
-static validate PASS
+static validation PASS
 verified load PASS
 manual command test REQUIRED
 ```
 
-If the user reports a runtime error after manual command testing, resume the same debug loop from that concrete error evidence.
+If the user reports a runtime error, resume the debug loop from that concrete evidence.
 
-### 9. CAD postcondition gate for safely automated commands
+### 9. CAD postcondition gate for automated commands
 
-When automated execution is possible, verify actual drawing state with structured CAD tools.
+Verify actual drawing state where automation is safe.
 
 Examples:
 
 - expected layer/type counts changed;
 - target handles/properties are correct;
 - unwanted source/review/detail entities are gone;
-- nested block entity layers were really changed, not only the INSERT layer;
+- nested block entity layers were changed, not only INSERT layer;
 - attributes have expected values;
 - expected target layers exist;
 - unresolved/unmapped objects are reported.
 
-A successful edit, static validation, verified load, or command dispatch is not completion without the applicable CAD postcondition.
+Edit/static/load/dispatch success alone is not completion.
+
+### 10. Promote only after acceptance
+
+When a draft has passed the applicable gates and is intended to become reusable permanent library code, call:
+
+```text
+lisp_promote_draft
+```
+
+Promotion requires curated semantic metadata describing what the implementation **actually does**, including class/subclass, `ai_mode`, interaction, load behavior, mutation/destructive risk, inputs, effects and bounded dynamic parameters when AI adaptation is allowed.
+
+`lisp_promote_draft`:
+
+1. re-validates the draft as AutoLISP/TBH source;
+2. writes the permanent file under `lisp/**`;
+3. derives public commands from the source;
+4. upserts the semantic entry in `registry/lisp-registry.json`;
+5. blocks command/path collisions with other registered capabilities.
+
+Do not manually copy a draft into `lisp/**` and postpone registry work.
+
+The draft may remain in AppData after promotion for traceability until it is explicitly cleaned.
+
+## AI dynamic usage
+
+`ai_mode` describes **how CadGPT/AI may use a normal AutoLISP capability**:
+
+```text
+ai_mode=static
+```
+
+CadGPT normally loads/runs the permanent source as stored. `dynamic_parameters` is empty.
+
+```text
+ai_mode=dynamic
+```
+
+CadGPT may derive a temporary runtime source variant by changing only fields declared in `dynamic_parameters`. The permanent `.lsp` remains ordinary AutoLISP and is not overwritten.
+
+Runtime variants belong under:
+
+```text
+appdata/runtime/dynamic-lisp/**
+```
+
+They should carry provenance such as source registry ID/path, applied parameters, content hash and run/session identity. They are runtime artifacts rather than a separate Lisp type.
+
+## Run data
+
+Generated reports, mappings, inventories, manifests or other outputs that should survive the individual tool call belong under:
+
+```text
+appdata/data/runs/**
+```
+
+Do not scatter generated run outputs through repo source folders.
 
 ## Debugging loop
-
-When an AutoLISP file fails:
 
 ```text
 classify syntax/dialect/load/DXF/COM/CAD-state failure
 → collect source/CAD evidence
-→ patch narrowly
-→ lisp_validate
-→ use the same user-approved test drawing
+→ patch draft/source narrowly
+→ static validate
+→ same user-approved test drawing
 → verified load
 → read error/log evidence
 → patch and repeat
 → run when safely automatable
 → inspect postcondition
+→ promote only if intended permanent
 ```
 
-If the failure is caused by Common Lisp-like syntax, fix the dialect instead of trying to emulate Common Lisp inside AutoLISP.
+If the failure is caused by Common-Lisp-like syntax, fix the dialect instead of trying to emulate Common Lisp inside AutoLISP.
 
 ## Completion / handoff states
 
-### Automated test complete
+### Draft automated test complete
 
 All applicable conditions hold:
 
-- source changes are restricted to `lisp/**`;
-- new command files originate from `lisp_scaffold` or match the same canonical structure;
-- source is AutoLISP/Visual LISP, not another Lisp-family dialect;
-- `lisp_validate` reports `valid: true` with the normal TBH style gate;
-- the user approved the actual test drawing;
-- `cad__cad_load_lisp_file` reports `loaded: true`;
-- command execution is safely automatable;
+- source is AutoLISP/Visual LISP;
+- draft static validation passes;
+- user approved the actual test drawing;
+- verified load passes;
+- automated execution is safe;
 - structured CAD postcondition confirms the requested result.
+
+The draft is still **not** a permanent library capability until promoted.
+
+### Permanent capability complete
+
+In addition to applicable test gates:
+
+- source exists under `lisp/**`;
+- semantic registry metadata describes actual implementation behavior;
+- `lisp_promote_draft` (or an equivalent controlled update for a narrow legacy patch) has kept permanent source and registry synchronized.
 
 ### User interaction required
 
-All applicable conditions hold:
-
 - static validation passed;
-- the user approved the actual test drawing;
-- verified load passed with `loaded: true`;
-- the command requires manual interaction;
-- the user is told exactly which command to run in that drawing and that runtime command behavior still requires their manual test.
+- approved test drawing confirmed;
+- verified load passed;
+- command requires manual interaction;
+- user is told exactly which command to run and that runtime behavior still requires their manual test.
 
 ### Blocked
 
 - concrete load/runtime evidence identifies a blocker that cannot be resolved automatically;
-- the blocker and untested portion are stated explicitly.
+- blocker and untested portion are stated explicitly.
 
-Never hand off a changed Lisp with an unverified load state.
+Never hand off changed Lisp with an unverified load state.
 
 ## Relationship to Jobs
 

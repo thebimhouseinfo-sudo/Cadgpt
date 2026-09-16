@@ -26,24 +26,28 @@ jobs:
             "setup.bat",
             "run.bat",
             "doctor.bat",
-            "acceptance.bat"
+            "acceptance.bat",
+            "appdata/README.md"
           )) {
             if (-not (Test-Path -LiteralPath $required)) { throw "Missing Beta Build artifact: $required" }
           }
 
           $setup = Get-Content "setup.bat" -Raw
-          foreach ($marker in @("npm ci", "requirements.lock.txt", "pip check", "Python 3.11")) {
-            if ($setup -notmatch [regex]::Escape($marker)) { throw "setup.bat missing reproducible-install marker: $marker" }
+          foreach ($marker in @("npm ci", "requirements.lock.txt", "pip check", "Python 3.11", "appdata\lisp-draft", "appdata\data\runs")) {
+            if ($setup -notmatch [regex]::Escape($marker)) { throw "setup.bat missing reproducible-install/AppData marker: $marker" }
           }
 
           $roadmap = Get-Content "ROADMAP.md" -Raw
           foreach ($marker in @("Stage 1 — Beta Build / Code Complete", "Review Gate — Beta Scope Review", "Stage 2 — Real CAD Beta Validation")) {
             if ($roadmap -notmatch [regex]::Escape($marker)) { throw "ROADMAP.md missing product-stage marker: $marker" }
           }
-          Write-Host "Beta dependency/install/roadmap contract OK"
+          Write-Host "Beta dependency/install/AppData/roadmap contract OK"
 
       - name: Install locked Node dependencies
         run: npm ci
+
+      - name: Generate stable CAD tool manifest
+        run: python scripts/generate-cad-tool-manifest.py
 
       - name: Build connector
         run: npm run build
@@ -51,11 +55,14 @@ jobs:
       - name: Exercise write-lisp specialist through MCP
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force -Path "appdata/lisp-draft", "appdata/data/runs", "appdata/runtime/dynamic-lisp", "appdata/state", "appdata/logs" | Out-Null
           $env:CAD_MCP_PYTHON = "python"
           $env:CAD_MCP_ENTRY = "runtimes\cad-mcp\main.py"
           $env:MCP_TOKEN = "beta-gate-token"
+          $env:CADGPT_APPDATA_ROOT = "appdata"
           $mcpUrl = "http://127.0.0.1:3000/mcp/beta-gate-token"
           $badFixture = "lisp/_cadgpt-system/_CI_COMMON_LISP_REJECT.lsp"
+          $draftFixture = "appdata/lisp-draft/Beta Smoke.lsp"
           $proc = Start-Process -FilePath "node" -ArgumentList "dist/index.js" -PassThru -NoNewWindow
           try {
             $ready = $false
@@ -87,20 +94,35 @@ jobs:
             }
             $null = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body (@{ jsonrpc="2.0"; method="notifications/initialized" } | ConvertTo-Json)
 
-            function Invoke-McpTool([int]$Id, [string]$Name, $Arguments) {
-              $body = @{
-                jsonrpc = "2.0"; id = $Id; method = "tools/call";
-                params = @{ name = $Name; arguments = $Arguments }
-              } | ConvertTo-Json -Depth 12
+            $script:RpcId = 10
+            function Invoke-Mcp([string]$Method, $Params) {
+              $script:RpcId += 1
+              $body = @{ jsonrpc = "2.0"; id = $script:RpcId; method = $Method; params = $Params } | ConvertTo-Json -Depth 20
               $resp = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body $body
               return ($resp.Content | ConvertFrom-Json)
             }
+            function Invoke-McpTool([string]$Name, $Arguments) {
+              return Invoke-Mcp "tools/call" @{ name = $Name; arguments = $Arguments }
+            }
 
-            $skill = Invoke-McpTool 2 "skill_get" @{ name = "write-lisp" }
+            $tools = Invoke-Mcp "tools/list" @{}
+            $toolNames = @($tools.result.tools | ForEach-Object { $_.name })
+            foreach ($requiredTool in @("lisp_draft_validate", "lisp_promote_draft", "registry_list", "registry_get")) {
+              if ($toolNames -notcontains $requiredTool) { throw "Missing Beta Lisp/AppData tool: $requiredTool" }
+            }
+
+            $roots = Invoke-McpTool "file_roots" @{}
+            $rootNames = @($roots.result.structuredContent.data.roots)
+            foreach ($requiredRoot in @("lisp", "jobs", "appdata/data", "appdata/lisp-draft")) {
+              if ($rootNames -notcontains $requiredRoot) { throw "file_roots missing sandbox root: $requiredRoot" }
+            }
+
+            $skill = Invoke-McpTool "skill_get" @{ name = "write-lisp" }
             if ($skill.result.isError -eq $true -or $skill.result.structuredContent.ok -ne $true) { throw "skill_get write-lisp failed" }
             if ($skill.result.structuredContent.data.content -notmatch "AutoLISP") { throw "write-lisp skill does not identify itself as AutoLISP-specialized" }
+            if ($skill.result.structuredContent.data.content -notmatch "appdata/lisp-draft") { throw "write-lisp skill does not route work through AppData drafts" }
 
-            $scaffold = Invoke-McpTool 3 "lisp_scaffold" @{
+            $scaffold = Invoke-McpTool "lisp_scaffold" @{
               file_name = "Beta Smoke.lsp"
               module = "CadGPT Beta Gate"
               command = "BETASMOKE"
@@ -114,7 +136,18 @@ jobs:
               throw "lisp_scaffold did not produce canonical TBH AutoLISP structure"
             }
 
-            $valid = Invoke-McpTool 4 "lisp_validate" @{
+            $createDraft = Invoke-McpTool "file_create" @{ path = "appdata/lisp-draft/Beta Smoke.lsp"; content = $scaffoldSource }
+            if ($createDraft.result.isError -eq $true -or $createDraft.result.structuredContent.ok -ne $true) { throw "file_create draft failed" }
+
+            $draftValid = Invoke-McpTool "lisp_draft_validate" @{
+              path = "appdata/lisp-draft/Beta Smoke.lsp"
+              expected_commands = @("BETASMOKE")
+              enforce_library_style = $true
+            }
+            if ($draftValid.result.isError -eq $true -or $draftValid.result.structuredContent.ok -ne $true) { throw "lisp_draft_validate call failed" }
+            if ($draftValid.result.structuredContent.data.valid -ne $true) { throw "Valid AppData AutoLISP draft failed static validation" }
+
+            $valid = Invoke-McpTool "lisp_validate" @{
               path = "lisp/_cadgpt-system/CADGPT_LOAD_SMOKE.lsp"
               expected_commands = @("CADGPT_LOAD_SMOKE")
               enforce_library_style = $true
@@ -142,7 +175,7 @@ jobs:
             )
             Set-Content -LiteralPath $badFixture -Value $badSource -Encoding UTF8
 
-            $invalid = Invoke-McpTool 5 "lisp_validate" @{
+            $invalid = Invoke-McpTool "lisp_validate" @{
               path = $badFixture
               expected_commands = @("BADCL")
               enforce_library_style = $true
@@ -152,9 +185,10 @@ jobs:
             $codes = @($invalid.result.structuredContent.data.diagnostics | ForEach-Object { $_.code })
             if ($codes -notcontains "COMMON_LISP_FORM") { throw "Common Lisp rejection did not report COMMON_LISP_FORM" }
 
-            Write-Host "write-lisp specialist MCP gate passed"
+            Write-Host "write-lisp/AppData specialist MCP gate passed"
           }
           finally {
             if (Test-Path -LiteralPath $badFixture) { Remove-Item -LiteralPath $badFixture -Force }
+            if (Test-Path -LiteralPath $draftFixture) { Remove-Item -LiteralPath $draftFixture -Force }
             if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
           }
