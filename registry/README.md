@@ -10,7 +10,7 @@ CadGPT uses a semantic capability registry so ChatGPT can discover what existing
 - MCP `tools/list` remains authoritative for executable MCP tool schemas;
 - permanent Lisp source lives under `lisp/**` and every user-facing permanent `.lsp` must be catalogued;
 - work-in-progress Lisp under `appdata/lisp-draft/**` is intentionally **not** part of the permanent registry;
-- runtime dynamic instances under `appdata/runtime/dynamic-lisp/**` are runtime artifacts and are not permanent registry entries unless intentionally promoted as reusable templates.
+- runtime AI-derived variants under `appdata/runtime/dynamic-lisp/**` are runtime artifacts and are not permanent registry entries.
 
 ## Lisp metadata
 
@@ -19,8 +19,7 @@ Each permanent Lisp capability should describe enough behavior for ChatGPT to ch
 ```text
 id
 title
-type                static | dynamic
-dynamic_role        template | instance (when relevant)
+ai_mode             static | dynamic
 class
 subclass
 tags
@@ -43,11 +42,15 @@ implementation_notes
 
 Descriptions follow implementation reality rather than trusting legacy headers blindly.
 
-## Static and dynamic
+## AI usage mode
 
-`static` means the reusable implementation normally loads/runs as stored.
+All permanent sources are ordinary **AutoLISP/Visual LISP files**. `ai_mode` does not define a different Lisp type or language.
 
-`dynamic` means the reusable algorithm is expected to produce parameterized variants. A permanent dynamic `template` still lives in `lisp/**` and is catalogued normally. Per-run/session `instance` artifacts live in AppData runtime storage and should retain template/parameter/hash provenance rather than polluting the permanent library.
+`ai_mode=static` means CadGPT/AI normally uses the permanent source as stored. `dynamic_parameters` must be empty.
+
+`ai_mode=dynamic` means CadGPT/AI is allowed to derive a temporary runtime variant of the same normal AutoLISP source by changing only the bounded fields listed in `dynamic_parameters`. The permanent source remains unchanged.
+
+For example, XLAY is ordinary AutoLISP, but its project-specific mapping tables/rules make it suitable for AI-derived runtime variants. Those instances live under `appdata/runtime/dynamic-lisp/**` and should carry provenance such as source registry ID/path, parameters, and content hash.
 
 ## Draft → permanent lifecycle
 
@@ -75,11 +78,11 @@ registry_get(kind="lisp" | "tool", id=...)
 Typical Lisp discovery:
 
 ```text
-registry_list(kind="lisp", class_name="xref", query="map consultant layers")
+registry_list(kind="lisp", class_name="xref", ai_mode="dynamic", query="map consultant layers")
 registry_get(kind="lisp", id="XLAY")
 ```
 
-Read the `.lsp` source only when modification, debugging, audit, or dynamic-instance construction actually requires implementation detail.
+Read the `.lsp` source only when modification, debugging, audit, or runtime-variant construction actually requires implementation detail.
 
 ## CI contract
 
@@ -90,6 +93,9 @@ Read the `.lsp` source only when modification, debugging, audit, or dynamic-inst
 - declared `commands` exist in source;
 - public source commands are not omitted from registry metadata;
 - registry IDs are unique;
-- type and core semantic fields are valid.
+- `ai_mode` and core semantic fields are valid;
+- `ai_mode=static` cannot declare dynamic parameters;
+- `ai_mode=dynamic` must declare at least one bounded dynamic parameter;
+- legacy `type` / `dynamic_role` fields are rejected.
 
-Drafts and runtime dynamic instances are intentionally outside this permanent-library coverage until promotion.
+Drafts and runtime AI-derived instances are intentionally outside permanent-library coverage until explicit promotion of source changes.
