@@ -42,14 +42,19 @@ async function atomicWrite(target: string, content: string): Promise<void> {
   }
 }
 
-async function loadRegistry(): Promise<{ version: number; entries: Array<Record<string, unknown>> }> {
+async function loadRegistry(): Promise<{
+  version: number;
+  entries: Array<Record<string, unknown>>;
+  raw: string;
+}> {
   const target = path.join(getRepoRoot(), "registry", "lisp-registry.json");
-  const parsed = JSON.parse(await fs.readFile(target, "utf8")) as {
+  const raw = await fs.readFile(target, "utf8");
+  const parsed = JSON.parse(raw) as {
     version?: number;
     entries?: Array<Record<string, unknown>>;
   };
   if (!Array.isArray(parsed.entries)) throw new Error("registry/lisp-registry.json is missing entries[]");
-  return { version: Number(parsed.version || 1), entries: parsed.entries };
+  return { version: Number(parsed.version || 1), entries: parsed.entries, raw };
 }
 
 function assertDraftVirtualPath(value: string): void {
@@ -107,7 +112,7 @@ export function registerLispWorkspaceTools(server: McpServer): void {
     "lisp_promote_draft",
     {
       title: "Promote Tested Lisp Draft",
-      description: "Promote one validated appdata/lisp-draft/** file into permanent lisp/** and upsert its curated semantic registry entry in the same operation.",
+      description: "Promote one validated appdata/lisp-draft/** file into permanent lisp/** and upsert its curated semantic registry entry as one rollback-safe operation.",
       inputSchema: {
         draft_path: z.string().min(1),
         permanent_path: z.string().min(1),
@@ -142,8 +147,9 @@ export function registerLispWorkspaceTools(server: McpServer): void {
         }
 
         let targetExists = false;
+        let previousPermanent: string | null = null;
         try {
-          await fs.lstat(permanent);
+          previousPermanent = await fs.readFile(permanent, "utf8");
           targetExists = true;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -196,11 +202,27 @@ export function registerLispWorkspaceTools(server: McpServer): void {
         nextEntries.push(newEntry);
         nextEntries.sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
 
-        // Write the source first, then registry. A failure before registry write is
-        // explicit and recoverable; CI's registry-contract will reject drift.
-        await atomicWrite(permanent, source);
         const registryTarget = path.join(getRepoRoot(), "registry", "lisp-registry.json");
-        await atomicWrite(registryTarget, `${JSON.stringify({ version: registry.version, entries: nextEntries }, null, 2)}\n`);
+        await atomicWrite(permanent, source);
+        try {
+          await atomicWrite(registryTarget, `${JSON.stringify({ version: registry.version, entries: nextEntries }, null, 2)}\n`);
+        } catch (registryError) {
+          // Keep permanent source and semantic discovery metadata inseparable.
+          // If registry update fails, restore the exact previous source state.
+          try {
+            if (targetExists && previousPermanent !== null) {
+              await atomicWrite(permanent, previousPermanent);
+            } else {
+              await fs.rm(permanent, { force: true });
+            }
+          } catch (rollbackError) {
+            throw new Error(
+              `Registry update failed and permanent-source rollback also failed. ` +
+              `Registry error: ${String(registryError)}; rollback error: ${String(rollbackError)}`
+            );
+          }
+          throw registryError;
+        }
 
         return toolResult("lisp_promote_draft", {
           draft_path: toCadgptPath(draft),
@@ -209,8 +231,9 @@ export function registerLispWorkspaceTools(server: McpServer): void {
           commands: validation.commands,
           sha256: validation.sha256,
           registry_updated: true,
+          rollback_safe: true,
           draft_retained: true,
-          note: "Draft is retained for traceability until explicitly cleaned; permanent library discovery now uses the updated semantic registry.",
+          note: "Draft is retained for traceability until explicitly cleaned; permanent source and semantic registry were promoted together.",
         });
       } catch (error) {
         return toolError("lisp_promote_draft", error);
