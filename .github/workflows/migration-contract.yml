@@ -37,7 +37,7 @@ jobs:
             "Get-FileHash -Algorithm SHA256",
             "MIGRATION_PROVENANCE.md",
             "Copy-Item",
-            "-DryRun"
+            '[switch]$DryRun'
           )) {
             if ($script -notmatch [regex]::Escape($required)) {
               throw "Migration script missing required contract marker: $required"
