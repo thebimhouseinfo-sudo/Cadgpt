@@ -115,16 +115,16 @@ Field semantics:
 V1 `drawing_id` format:
 
 ```text
-<origin-name>-<HHMM>-<DDMMYY>
+<origin-name>-<HHMMSS>-<DDMMYY>
 ```
 
 Example:
 
 ```text
-Bowhotel-1435-100826
+Bowhotel-143527-100826
 ```
 
-The `HHMM` + `DDMMYY` segments are generated once from local system time when the anchor is created. The timestamp is the unique number string; V1 does not require a random/opaque suffix.
+The `HHMMSS` + `DDMMYY` segments are generated once from local system time when the anchor is created. Including seconds keeps the identifier compact while making accidental collisions extremely unlikely for practical use. V1 does not require a random/opaque suffix.
 
 Creation time/date and origin drawing name are therefore not stored as separate anchor fields. They are immutable provenance embedded once in `drawing_id`.
 
