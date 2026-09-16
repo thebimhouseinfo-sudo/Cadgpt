@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { getDrawingsRoot } from "../lib/appdata.js";
+import { getAppDataRoot } from "../lib/appdata.js";
 
 export interface ObservationLogRecord {
   [key: string]: unknown;
@@ -15,6 +15,10 @@ function requireSafeSegment(value: string, field: string): string {
     throw new Error(`${field} must contain only letters, numbers, dot, underscore or dash and cannot be a path segment`);
   }
   return clean;
+}
+
+export function getDrawingsRoot(): string {
+  return path.join(getAppDataRoot(), "drawings");
 }
 
 export function getDrawingRoot(drawingId: string): string {
@@ -36,7 +40,8 @@ export async function appendObservationRecords(
   }
 
   const safeDrawingId = requireSafeSegment(drawingId, "drawing_id");
-  const logPath = getObservationLogPath(safeDrawingId, logName);
+  const safeLogName = requireSafeSegment(logName, "log_name");
+  const logPath = getObservationLogPath(safeDrawingId, safeLogName);
   await fs.mkdir(path.dirname(logPath), { recursive: true });
 
   const now = new Date().toISOString();
@@ -50,7 +55,7 @@ export async function appendObservationRecords(
   await fs.appendFile(logPath, `${lines.join("\n")}\n`, "utf8");
   return {
     drawing_id: safeDrawingId,
-    log_name: requireSafeSegment(logName, "log_name"),
+    log_name: safeLogName,
     path: logPath,
     appended: lines.length,
   };
