@@ -1,9 +1,9 @@
 """Read complete direct properties for one or many AutoCAD entities.
 
-This service is intentionally entity-generic. It accepts handles, finds the
-corresponding top-level entities in the active CadGPT-bound drawing, and reads
-direct COM properties only. It does not traverse nested entities or block
-definitions.
+This service is intentionally entity-generic. It resolves requested handles
+directly through the active CadGPT-bound document and reads direct COM
+properties only. It never enumerates the whole drawing and does not traverse
+nested entities or block definitions.
 """
 
 from __future__ import annotations
@@ -38,31 +38,6 @@ def _retry(call, attempts: int = 3, delay: float = 0.05):
     raise last_error
 
 
-def _spaces(doc, include_paper_space: bool):
-    yield "ModelSpace", doc.ModelSpace
-    if include_paper_space:
-        for layout in doc.Layouts:
-            try:
-                if str(layout.Name).lower() != "model":
-                    yield f"Layout:{layout.Name}", layout.Block
-            except Exception:
-                continue
-
-
-def _entities(space):
-    try:
-        count = int(_retry(lambda: space.Count))
-    except Exception:
-        return
-    for index in range(count):
-        try:
-            entity = _retry(lambda idx=index: space.Item(idx))
-            if entity is not None:
-                yield entity
-        except Exception:
-            continue
-
-
 def _normalize_handles(handles: list[str]) -> list[str]:
     if not isinstance(handles, list) or not handles:
         raise PropertyServiceError("handles must be a non-empty list")
@@ -74,39 +49,62 @@ def _normalize_handles(handles: list[str]) -> list[str]:
     return result
 
 
+def _top_level_owner_map(doc, include_paper_space: bool) -> dict[int, str]:
+    owners: dict[int, str] = {int(doc.ModelSpace.ObjectID): "ModelSpace"}
+    if include_paper_space:
+        for layout in doc.Layouts:
+            try:
+                name = str(layout.Name)
+                if name.casefold() == "model":
+                    continue
+                block = layout.Block
+                owners[int(block.ObjectID)] = f"Layout:{name}"
+            except Exception:
+                continue
+    return owners
+
+
 def read_entities_properties(
     handles: list[str],
     include_paper_space: bool = True,
 ) -> dict:
     requested = _normalize_handles(handles)
-    wanted = {handle.lower() for handle in requested}
-    found: dict[str, dict] = {}
     doc = _doc()
+    owner_map = _top_level_owner_map(doc, include_paper_space)
 
-    for space_name, space in _spaces(doc, include_paper_space):
-        for entity in _entities(space):
-            try:
-                handle = str(entity.Handle)
-            except Exception:
-                continue
-            key = handle.lower()
-            if key not in wanted or key in found:
-                continue
-            snapshot = read_direct_properties(entity)
-            snapshot["space"] = space_name
-            found[key] = snapshot
-            if len(found) == len(wanted):
-                break
-        if len(found) == len(wanted):
-            break
+    entities: list[dict] = []
+    missing: list[str] = []
+    non_top_level: list[str] = []
 
-    entities = [found[handle.lower()] for handle in requested if handle.lower() in found]
-    missing = [handle for handle in requested if handle.lower() not in found]
+    for handle in requested:
+        try:
+            entity = _retry(lambda h=handle: doc.HandleToObject(h))
+        except Exception:
+            missing.append(handle)
+            continue
+
+        try:
+            owner_id = int(entity.OwnerID)
+        except Exception:
+            missing.append(handle)
+            continue
+
+        space_name = owner_map.get(owner_id)
+        if space_name is None:
+            non_top_level.append(handle)
+            continue
+
+        snapshot = read_direct_properties(entity)
+        snapshot["space"] = space_name
+        entities.append(snapshot)
+
     return {
         "document_name": str(doc.Name),
         "requested_count": len(requested),
         "found_count": len(entities),
         "entities": entities,
         "missing_handles": missing,
+        "non_top_level_handles": non_top_level,
         "nested_traversal": False,
+        "full_drawing_scan": False,
     }
