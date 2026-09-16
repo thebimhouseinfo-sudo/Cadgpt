@@ -41,6 +41,13 @@ function normalizeDocuments(raw: unknown): Array<Record<string, unknown>> {
   throw new Error("CAD MCP returned an unexpected document-list payload");
 }
 
+function matchesBinding(item: Record<string, unknown>, binding: Pick<BoundDrawing, "name" | "full_name">): boolean {
+  const name = String(item.name ?? "").toLowerCase();
+  const fullName = String(item.full_name ?? "").toLowerCase();
+  if (binding.full_name) return fullName === binding.full_name.toLowerCase();
+  return name === binding.name.toLowerCase();
+}
+
 export async function listOpenDrawings(): Promise<Array<Record<string, unknown>>> {
   const raw = await cadUpstream.callTool("acad_list_open_documents", {});
   return normalizeDocuments(raw);
@@ -99,11 +106,7 @@ export async function ensureBoundDrawingActive(server: McpServer): Promise<Bound
 
   const identity = binding.full_name || binding.name;
   const docs = await listOpenDrawings();
-  const available = docs.some((item) => {
-    const name = String(item.name ?? "").toLowerCase();
-    const fullName = String(item.full_name ?? "").toLowerCase();
-    return name === binding.name.toLowerCase() || (!!binding.full_name && fullName === binding.full_name.toLowerCase());
-  });
+  const available = docs.some((item) => matchesBinding(item, binding));
   if (!available) {
     clearDrawingBinding(server);
     throw new Error(`Bound drawing is no longer open: ${identity}`);
@@ -124,11 +127,7 @@ export async function drawingBindingStatus(server: McpServer) {
 
   try {
     const docs = await listOpenDrawings();
-    const available = docs.some((item) => {
-      const name = String(item.name ?? "").toLowerCase();
-      const fullName = String(item.full_name ?? "").toLowerCase();
-      return name === binding.name.toLowerCase() || (!!binding.full_name && fullName === binding.full_name.toLowerCase());
-    });
+    const available = docs.some((item) => matchesBinding(item, binding));
     return { bound: true, drawing: binding, available };
   } catch (error) {
     return {
