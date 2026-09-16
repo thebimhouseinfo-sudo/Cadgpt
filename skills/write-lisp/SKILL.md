@@ -1,56 +1,62 @@
 # Skill: write-lisp
 
-Status: **active system Skill contract; harness implementation pending migration**
+Status: **active**
 
 `write-lisp` is CadGPT's specialized AutoLISP/Visual LISP coding capability. It is not a CAD business Job and not a generic coding agent.
 
-Its purpose is to safely inspect, create, patch, test, load, and verify AutoLISP required by Jobs.
-
-Legacy sources to extract from:
-
-- `CAD-Agent/backend/skills/lisp_coder_SKILL.md`
-- `CAD-Agent/backend/agents/operator/skills/lisp_coder.py`
-- selected TBH AutoLISP guidelines/patterns
-- selected OpenLISP validation components if they materially improve the harness
+Its purpose is to safely inspect, create, patch, load, run, and verify AutoLISP required by Jobs.
 
 ## Core rule
 
-> Search first. Patch before rewrite. Validate before load. Test on the bound drawing before returning control to the Job.
+> Search first. Patch before rewrite. Validate before load. Verify the bound drawing before returning control to the Job.
 
-## Allowed workspace
+## Workspace boundary
 
-Normal write-lisp file operations are restricted to:
+Source mutations are restricted to:
 
 ```text
 lisp/**
 ```
 
-The Skill must use CadGPT sandboxed file tools rather than unrestricted Python/filesystem access.
+Use CadGPT's sandboxed file tools. Do not request unrestricted filesystem access, generic shell, package-manager, or Git tools.
 
-## Available tools
+`skills/**` is read-only runtime guidance; the Skill must not rewrite itself during normal CAD work.
+
+## Actual tool surface
+
+Use these CadGPT tools where applicable:
 
 ```text
-file.list:lisp
-file.search:lisp
-file.read:lisp
-file.create:lisp
-file.patch:lisp
-cad.context
-cad.query
-cad.lisp
-cad.command
-cad.validate
+file_list
+file_search
+file_read
+file_create
+file_edit
+lisp_validate
+
+drawing_list
+drawing_bind
+drawing_status
+
+cad__cad_inventory_layer_objects
+cad__cad_list_layers
+cad__cad_list_entities
+cad__cad_get_entity
+cad__cad_list_blocks
+cad__cad_get_block
+cad__cad_load_lisp_file
+cad__cad_run_lisp_command
 ```
 
-A Job may expose a narrower subset when invoking this Skill.
+Other structured `cad__...` tools may be used when they directly express the required inspection or verification. Prefer them over creating new LISP for an operation already covered safely by CAD MCP.
 
-## Workflow
+## Required workflow
 
-### 1. Understand the required behavior
+### 1. Establish the target and evidence
 
-Use the calling Job step, current structured CAD evidence, existing LISP contract, and expected postconditions.
+When CAD state matters, confirm the explicitly bound drawing and inspect it with structured CAD tools. Never infer the target from the visible AutoCAD tab.
 
-Do not infer unrelated business rules.
+Do not infer unrelated business rules beyond the calling Job or explicit user request.
 
 ### 2. Search existing LISP
 
@@ -58,100 +64,95 @@ Search `lisp/**` before creating a file.
 
 Prefer in order:
 
-1. reuse existing command unchanged;
+1. reuse an existing command unchanged;
 2. patch the smallest relevant implementation;
 3. extend a reusable implementation;
 4. create a new LISP only when no suitable implementation exists.
 
 ### 3. Read before editing
 
-Before patching a file:
+Before changing a file:
 
 - read the complete relevant command/function region;
 - inspect referenced helpers when needed;
-- preserve public command names unless the Job explicitly requires a contract change;
+- preserve public command names unless the requested contract changes;
 - preserve unrelated behavior.
 
-### 4. Write or patch
+### 4. Write or patch narrowly
 
-Apply AutoLISP/Visual LISP coding discipline.
+Use `file_edit` for exact replacements and `file_create` for genuinely new files.
 
-Baseline rules migrated from the old LISP coder:
+Baseline coding rules:
 
 - use `(vl-load-com)` when Visual LISP/COM is required;
 - namespace helper functions with a module-specific prefix;
-- declare local variables in the defun `/` section;
-- restore modified system variables on normal completion and error/cancel paths;
+- declare local variables in the `defun` `/` section;
+- restore modified system variables on success and error/cancel paths;
 - use guarded COM calls where failure is possible;
-- prefer data/config changes over algorithm rewrites when the current engine already supports the requested behavior;
-- prefer non-interactive automation for Job-driven batch work unless interaction is intrinsic to the command;
+- prefer data/config changes over algorithm rewrites when the engine already supports the requested behavior;
+- prefer deterministic, non-interactive automation for Job-driven work unless interaction is intrinsic to the command;
 - use explicit undo/error boundaries for mutating commands where appropriate;
-- avoid hard-coded project-specific values when they belong in Job rules or mapping data.
+- avoid hard-coded project-specific mappings when they belong in Job-local data.
 
-## Harness
+### 5. Static validation — mandatory
 
-The Skill must not declare a LISP ready based only on text generation.
+Run `lisp_validate` on every changed `.lsp` file.
 
-### Stage A — static validation
+Block loading when `valid` is false. Review warnings rather than ignoring them.
 
-At minimum validate:
+The validator is token-aware for comments and strings; raw parenthesis counts are not an acceptable final validation method.
 
-- balanced Lisp structure using a parser/token-aware method when available;
-- string literal closure;
-- command/function definitions expected by the calling Job;
-- obvious malformed source;
-- required coding contract for the specific file where applicable.
+### 6. Load validation
 
-The old coder's raw `code.count("(")` / `code.count(")")` check may be retained only as a fallback smoke check, not as the final validator because parentheses inside strings/comments can produce false results.
+Load the exact repository file with:
 
-### Stage B — load validation
+```text
+cad__cad_load_lisp_file
+```
 
-Load/reload the changed file through CAD MCP against the explicitly bound drawing.
+Only `lisp/**` files are loadable. A queued load is not proof that the requested behavior works.
 
-Failure to load returns control to write-lisp for correction; do not let the parent Job continue as if the automation were ready.
+### 7. Execution test
 
-### Stage C — execution test
+When safe and testable, run the intended named command with:
 
-When safe and when the calling Job provides a testable case:
+```text
+cad__cad_run_lisp_command
+```
 
-- execute the command or target helper path;
-- capture structured CAD MCP result/error;
-- inspect the affected drawing state.
+Avoid interactive commands unless the Job explicitly defines how prompt arguments are supplied.
 
-### Stage D — postcondition validation
+### 8. Postcondition validation — completion gate
 
-Use the calling Job's expected result where possible.
+Inspect actual CAD state with structured read tools and compare it with the calling Job's success criteria.
 
 Examples:
 
 - target entity count changed as expected;
-- unwanted entity/layer combination is gone;
-- target layer/property exists;
-- command completed without leaving partial state.
+- unwanted layer/entity combination is gone;
+- expected layer/property exists;
+- created or converted objects have the expected structured properties;
+- command did not leave partial or contradictory state.
 
-A successful load is not sufficient when the Job requires a drawing-state result.
+A successful file edit, static validation, load, or command queue is **not sufficient** by itself.
 
-## Error handling
+## Error loop
 
-If a patch fails:
+If validation fails:
 
-1. preserve the existing file state where possible;
-2. report the failing harness stage;
-3. inspect the actual error;
-4. patch only the needed logic;
-5. rerun validation from the appropriate stage.
+1. identify the failing stage and concrete evidence;
+2. read the relevant source again;
+3. patch only the needed logic;
+4. rerun `lisp_validate`;
+5. reload the changed file;
+6. rerun the intended command when safe;
+7. re-check the CAD postcondition.
 
-Do not repeatedly rewrite the whole file to chase a small runtime error.
+Do not repeatedly rewrite the whole file to chase a local defect.
 
 ## Relationship to Jobs
 
-A Job calls `write-lisp` when:
-
-- required automation does not exist;
-- existing automation cannot satisfy the current step;
-- a controlled source patch is needed.
-
-After write-lisp passes its harness, control returns to the exact Job step that invoked it.
+A Job calls `write-lisp` when required automation is missing or insufficient. After the Skill passes its validation loop, control returns to the same Job step.
 
 ```text
 Job step
@@ -160,13 +161,19 @@ automation missing / insufficient
    ↓
 write-lisp
    ↓
-search → read → patch/create → static validate → CAD load → test → validate
+inspect → search → read → patch/create → validate → load → run → verify
    ↓
 return to same Job step
 ```
 
-## Legacy behavior intentionally not carried forward as architecture
+## Completion criteria
 
-The old LISP coder directly manipulated `tool-kit/temp/`, moved files after user confirmation, and owned broad local filesystem operations. CadGPT replaces that with sandboxed `file.*` tools under `lisp/**`.
+A write-lisp task is complete only when all applicable conditions hold:
 
-Draft/approval states may be added later if a concrete workflow needs them, but they are not required as a global write-lisp architecture rule.
+- changed source is under `lisp/**`;
+- `lisp_validate` reports `valid: true`;
+- expected command definitions are present;
+- the file was queued for load into the bound drawing;
+- the intended command was run when required;
+- structured CAD inspection confirms the requested postcondition;
+- unresolved mismatches are explicitly reported rather than hidden.
