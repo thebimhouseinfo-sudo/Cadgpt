@@ -3,6 +3,7 @@ import { registerFilesystemTools } from "./tools/filesystem.js";
 import { registerJobTools } from "./tools/jobs.js";
 import { registerSkillTools } from "./tools/skills.js";
 import { registerLispHarnessTools } from "./tools/lisp-harness.js";
+import { registerCapabilityRegistryTools } from "./tools/registry.js";
 import { registerCadProxyTools } from "./tools/cad-proxy.js";
 
 export function createMcpServer(): McpServer {
@@ -20,6 +21,7 @@ export function createMcpServer(): McpServer {
         "CadGPT is a drawing-centric AutoCAD execution environment for ChatGPT.",
         "Local file tools are strictly sandboxed to lisp/** and jobs/**.",
         "skills/** is read-only guidance and can only be accessed through skill_list/skill_get.",
+        "Use registry_list/registry_get to discover what a Lisp capability actually does before reading its source. Lisp filenames/command names are not semantic contracts.",
         "Never assume that AutoCAD ActiveDocument is the CadGPT target drawing.",
         "Use drawing_list and drawing_bind to explicitly bind the target drawing before any CAD business operation; changing AutoCAD tabs does not change that binding.",
         "Jobs define repeatable CAD workflows; load them with job_list/job_get and follow each step's explicit available_tools contract.",
@@ -35,6 +37,7 @@ export function createMcpServer(): McpServer {
   registerJobTools(server);
   registerSkillTools(server);
   registerLispHarnessTools(server);
+  registerCapabilityRegistryTools(server);
   registerCadProxyTools(server);
 
   return server;
