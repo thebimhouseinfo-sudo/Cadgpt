@@ -2,7 +2,6 @@
 
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
-import cors from "cors";
 import express from "express";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
@@ -17,9 +16,10 @@ const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
 const MCP_TOKEN = (process.env.MCP_TOKEN || "").trim();
 const SESSION_RECOVERY = (process.env.MCP_SESSION_RECOVERY || "true").toLowerCase() !== "false";
+const STARTED_AT = Date.now();
 
 const app = express();
-app.use(cors());
+app.disable("x-powered-by");
 app.use(express.json({ limit: "20mb" }));
 
 const mcpPaths = MCP_TOKEN ? [`/mcp/${MCP_TOKEN}`] : ["/mcp"];
@@ -32,10 +32,13 @@ app.get("/health", (_req, res) => {
     status: "ok",
     name: "cadgpt",
     version: "0.1.0",
+    pid: process.pid,
+    uptime_seconds: Math.floor((Date.now() - STARTED_AT) / 1000),
     repository: getRepoRoot(),
     file_roots: getAllowedRoots().map(toRepoRelative),
     active_mcp_sessions: sessions.count(),
     session_recovery: SESSION_RECOVERY,
+    mcp_path_protected: Boolean(MCP_TOKEN),
     mcp_paths: mcpPaths,
     cad_mcp: cadUpstream.status(),
   });
@@ -123,6 +126,7 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`Local MCP:  http://${HOST}:${PORT}${mcpPaths[0]}`);
   console.log(`Health:     http://${HOST}:${PORT}/health`);
   console.log(`File roots: ${getAllowedRoots().map(toRepoRelative).join(", ")}`);
+  console.log(`MCP path:   ${MCP_TOKEN ? "protected" : "unprotected"}`);
   console.log("CAD MCP:    lazy upstream; connects when a CadGPT MCP session loads CAD tools");
   console.log("");
 });
