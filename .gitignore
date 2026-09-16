@@ -5,6 +5,8 @@ bin/
 profiles/*.yaml
 .venv-cad/
 .runtime/
+appdata/*
+!appdata/README.md
 *.log
 __pycache__/
 *.pyc
