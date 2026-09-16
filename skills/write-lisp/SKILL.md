@@ -4,11 +4,11 @@ Status: **active**
 
 `write-lisp` is CadGPT's specialized **AutoLISP/Visual LISP for AutoCAD** coding capability. It is deliberately not a generic Lisp agent and not a generic application-development agent.
 
-Its job is to understand existing AutoLISP, create or patch it safely, validate the exact AutoLISP dialect and TBH library structure, load/test it in a safe AutoCAD drawing, debug concrete load/runtime failures, and verify the resulting drawing state when the command can be automated safely.
+Its job is to understand existing AutoLISP, create or patch it safely, validate the exact AutoLISP dialect and TBH library structure, load/test it in an explicitly approved AutoCAD drawing, debug concrete load/runtime failures, and verify the resulting drawing state when the command can be automated safely.
 
 ## Core rule
 
-> AutoLISP is not Common Lisp. Search first. Patch before rewrite. Scaffold new files from the TBH library standard. Static validation is not enough: every changed production Lisp must be loaded successfully in a safe test drawing before handoff.
+> AutoLISP is not Common Lisp. Search first. Patch before rewrite. Scaffold new files from the TBH library standard. Static validation is not enough: every changed production Lisp must be loaded successfully in AutoCAD before handoff.
 
 ## Boundaries
 
@@ -80,7 +80,7 @@ Other structured `cad__...` tools may be used when they directly express require
 
 - `coding-skills/autolisp-dialect-boundary.md` — strict AutoLISP vs Common Lisp boundary.
 - `coding-skills/autolisp-language.md` — AutoLISP/Visual LISP source discipline.
-- `coding-skills/debugging-and-testing.md` — safe test drawing, verified load, runtime/user-test handoff.
+- `coding-skills/debugging-and-testing.md` — approved test drawing, verified load, runtime/user-test handoff.
 
 ### New file or substantial rewrite
 
@@ -151,17 +151,33 @@ With the normal `enforce_library_style=true`, the harness also checks the canoni
 
 `enforce_library_style=false` exists only for deliberate diagnosis of imported/legacy source; it is not the normal path for newly generated production code.
 
-### 6. Select a safe AutoCAD test environment — mandatory
+### 6. Ask the user where to test — mandatory
 
-Do **not** test modified Lisp on a project drawing merely because that drawing is open or currently bound.
+After the code passes the static gate and is ready for AutoCAD testing, do **not** silently choose a drawing.
 
-Use this priority:
+If the user has already explicitly named a test drawing in the current request, use it. Otherwise ask:
 
-1. if the user explicitly designates a test DWG, bind exactly that drawing with `drawing_bind`;
-2. otherwise call `drawing_create_test` to create a new blank unsaved AutoCAD drawing and bind the CadGPT session to it;
-3. confirm the result with `drawing_status` before loading.
+```text
+Lisp đã sẵn sàng để load test. Bạn muốn:
+1. tạo một drawing mới để test; hay
+2. test trên drawing hiện tại?
+```
 
-A blank drawing is the default environment for syntax/load testing. If command behavior requires representative geometry, use a user-designated test DWG or deliberately create disposable test entities in the blank drawing. Never experiment on a live project file without explicit user instruction.
+Do not proceed to load until the user has chosen one of these paths.
+
+#### User chooses a new drawing
+
+Call `drawing_create_test`.
+
+CadGPT's current CAD MCP includes a blank-drawing creation path backed by AutoCAD's document collection. If `drawing_create_test` is available and succeeds, it creates a new unsaved blank DWG and binds the CadGPT session to it.
+
+If the tool is unavailable on the installed CAD MCP/AutoCAD host or creation fails, **do not fall back to the project drawing**. Tell the user to create/open a blank test drawing manually, then use `drawing_list` + `drawing_bind` to bind exactly that drawing.
+
+#### User chooses the current drawing
+
+Use `drawing_status` to show/confirm the currently bound drawing identity. The user's explicit choice is authorization to perform the agreed Lisp load/runtime test on that drawing.
+
+Do not treat a previously-open project drawing as implicitly approved merely because it is active or bound.
 
 ### 7. Verified AutoCAD load gate — mandatory
 
@@ -179,7 +195,7 @@ loaded: true
 
 before the Lisp can be handed off or executed.
 
-A queued `SendCommand` is not proof of load success. When load fails, read the returned `error` and `log_tail`, patch the source, run `lisp_validate` again, and repeat the load test until it succeeds or a concrete external blocker is identified.
+A queued `SendCommand` is not proof of load success. When load fails, read the returned `error` and `log_tail`, patch the source, run `lisp_validate` again, and repeat the load test on the same approved test drawing until it succeeds or a concrete external blocker is identified.
 
 Many AutoLISP defects fail here before the user ever invokes the command; these must be fixed before delivery.
 
@@ -193,7 +209,7 @@ cad__cad_run_lisp_command
 
 then verify the CAD postcondition.
 
-If the command **requires user interaction**, do not invent prompt input merely to claim a successful test. Once static validation and verified load have both passed, stop automated execution and ask the user to run the named command manually in the designated test drawing.
+If the command **requires user interaction**, do not invent prompt input merely to claim a successful test. Once static validation and verified load have both passed, stop automated execution and ask the user to run the named command manually in the approved test drawing.
 
 For an interactive command, this is a valid handoff state:
 
@@ -230,7 +246,7 @@ classify syntax/dialect/load/DXF/COM/CAD-state failure
 → collect source/CAD evidence
 → patch narrowly
 → lisp_validate
-→ safe test drawing
+→ use the same user-approved test drawing
 → verified load
 → read error/log evidence
 → patch and repeat
@@ -250,7 +266,7 @@ All applicable conditions hold:
 - new command files originate from `lisp_scaffold` or match the same canonical structure;
 - source is AutoLISP/Visual LISP, not another Lisp-family dialect;
 - `lisp_validate` reports `valid: true` with the normal TBH style gate;
-- a safe test drawing or user-designated test drawing was used;
+- the user approved the actual test drawing;
 - `cad__cad_load_lisp_file` reports `loaded: true`;
 - command execution is safely automatable;
 - structured CAD postcondition confirms the requested result.
@@ -260,10 +276,10 @@ All applicable conditions hold:
 All applicable conditions hold:
 
 - static validation passed;
-- safe test drawing or user-designated test drawing was used;
+- the user approved the actual test drawing;
 - verified load passed with `loaded: true`;
 - the command requires manual interaction;
-- the user is told exactly which command to run in the test drawing and that runtime command behavior still requires their manual test.
+- the user is told exactly which command to run in that drawing and that runtime command behavior still requires their manual test.
 
 ### Blocked
 
