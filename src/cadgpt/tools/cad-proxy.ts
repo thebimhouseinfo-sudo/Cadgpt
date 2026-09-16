@@ -12,6 +12,7 @@ import {
 } from "../session/drawing-binding.js";
 
 const proxyRegistry = new WeakMap<McpServer, Map<string, RegisteredTool>>();
+const activeServers = new Set<McpServer>();
 const INTERNAL_DOCUMENT_TOOLS = new Set([
   "acad_get_active_document",
   "acad_list_open_documents",
@@ -98,10 +99,9 @@ function schemaToShape(schema: Tool["inputSchema"]): Record<string, z.ZodTypeAny
   return shape;
 }
 
-async function refreshProxies(server: McpServer, force = false): Promise<string[]> {
+function applyProxies(server: McpServer, tools: Tool[]): string[] {
   const registry = registryFor(server);
   const active = new Set<string>();
-  const tools = await cadUpstream.listTools(force);
 
   for (const tool of tools) {
     if (INTERNAL_DOCUMENT_TOOLS.has(tool.name)) continue;
@@ -120,8 +120,6 @@ async function refreshProxies(server: McpServer, force = false): Promise<string[
         annotations: tool.annotations,
       },
       async (args: Record<string, unknown>) => {
-        // Enforce the CadGPT session target immediately before every CAD
-        // business operation. Switching AutoCAD tabs cannot silently retarget it.
         await ensureBoundDrawingActive(server);
         return (await cadUpstream.callTool(tool.name, args ?? {})) as any;
       }
@@ -138,12 +136,40 @@ async function refreshProxies(server: McpServer, force = false): Promise<string[
   return [...active];
 }
 
+function removeBusinessProxies(server: McpServer): void {
+  const registry = registryFor(server);
+  for (const [name, registered] of registry) {
+    registered.remove();
+    registry.delete(name);
+  }
+}
+
+export async function activateCadRuntime(): Promise<{ tools: string[]; count: number }> {
+  const tools = await cadUpstream.activate();
+  let publicTools: string[] = [];
+  for (const server of activeServers) {
+    publicTools = applyProxies(server, tools);
+    server.sendToolListChanged();
+  }
+  return { tools: publicTools, count: publicTools.length };
+}
+
+export async function deactivateCadRuntime(): Promise<void> {
+  for (const server of activeServers) {
+    removeBusinessProxies(server);
+    server.sendToolListChanged();
+  }
+  await cadUpstream.deactivate();
+}
+
 export async function registerCadProxyTools(server: McpServer): Promise<void> {
+  activeServers.add(server);
+
   server.registerTool(
     "cad_status",
     {
       title: "CAD MCP Status",
-      description: "Report CadGPT-to-CAD-MCP upstream health separately from tunnel/session health.",
+      description: "Report CAD runtime state. CAD MCP sleeps while AutoCAD is closed and is activated by the CadGPT wake-agent when acad.exe is detected.",
       inputSchema: {},
     },
     async () => toolResult("cad_status", cadUpstream.status() as unknown as Record<string, unknown>)
@@ -153,7 +179,7 @@ export async function registerCadProxyTools(server: McpServer): Promise<void> {
     "drawing_list",
     {
       title: "List Open Drawings",
-      description: "List open AutoCAD drawings. This does not change the CadGPT session binding.",
+      description: "List open AutoCAD drawings. AutoCAD must be running; this does not change the CadGPT session binding.",
       inputSchema: {},
     },
     async () => {
@@ -170,7 +196,7 @@ export async function registerCadProxyTools(server: McpServer): Promise<void> {
     "drawing_create_test",
     {
       title: "Create and Bind Blank Test Drawing",
-      description: "Create a new unsaved blank AutoCAD drawing and bind this CadGPT session to it. Use this as the default safe environment for AutoLISP load/runtime tests instead of testing against a project drawing.",
+      description: "Create a new unsaved blank AutoCAD drawing and bind this CadGPT session to it. AutoCAD must already be running.",
       inputSchema: {},
     },
     async () => {
@@ -206,7 +232,7 @@ export async function registerCadProxyTools(server: McpServer): Promise<void> {
     "drawing_bind",
     {
       title: "Bind CadGPT Drawing",
-      description: "Bind this CadGPT MCP session to one explicitly open AutoCAD drawing by exact file name or full path. For AutoLISP testing, use only a user-designated test drawing; otherwise prefer drawing_create_test.",
+      description: "Bind this CadGPT MCP session to one explicitly open AutoCAD drawing by exact file name or full path.",
       inputSchema: {
         document: z.string().min(1),
       },
@@ -234,24 +260,29 @@ export async function registerCadProxyTools(server: McpServer): Promise<void> {
   server.registerTool(
     "cad_refresh_tools",
     {
-      title: "Refresh CAD MCP Tools",
-      description: "Reconnect to the local CAD MCP process and refresh proxied CAD tools after a runtime restart.",
+      title: "Refresh Active CAD MCP Tools",
+      description: "Refresh proxied CAD tools while AutoCAD/CAD MCP is already active. This does not wake CAD MCP while AutoCAD is closed.",
       inputSchema: {},
     },
     async () => {
       try {
-        const tools = await refreshProxies(server, true);
-        server.sendToolListChanged();
-        return toolResult("cad_refresh_tools", { tools, count: tools.length });
+        if (!cadUpstream.status().enabled) {
+          throw new Error("CAD MCP is sleeping because AutoCAD is not detected.");
+        }
+        const tools = await cadUpstream.listTools(true);
+        let publicTools: string[] = [];
+        for (const activeServer of activeServers) {
+          publicTools = applyProxies(activeServer, tools);
+          activeServer.sendToolListChanged();
+        }
+        return toolResult("cad_refresh_tools", { tools: publicTools, count: publicTools.length });
       } catch (error) {
         return toolError("cad_refresh_tools", error);
       }
     }
   );
 
-  try {
-    await refreshProxies(server);
-  } catch (error) {
-    console.warn("[CAD MCP] unavailable during session creation:", error instanceof Error ? error.message : error);
+  if (cadUpstream.status().connected) {
+    applyProxies(server, cadUpstream.cachedTools());
   }
 }
