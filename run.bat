@@ -12,12 +12,12 @@ echo.
 
 if not exist ".env" (
   echo [ERROR] CadGPT is not set up yet. Run setup.bat first.
-  pause
+  if not defined CADGPT_NO_PAUSE pause
   exit /b 1
 )
 if not exist "node_modules" (
   echo [ERROR] Dependencies are missing. Run setup.bat first.
-  pause
+  if not defined CADGPT_NO_PAUSE pause
   exit /b 1
 )
 
@@ -33,7 +33,7 @@ powershell -NoProfile -Command "$ok=$false; foreach ($i in 1..40) { try { $r=Inv
 if errorlevel 1 (
   echo [ERROR] CadGPT local MCP did not become ready.
   echo Run doctor.bat for diagnostics.
-  pause
+  if not defined CADGPT_NO_PAUSE pause
   exit /b 1
 )
 
@@ -45,7 +45,7 @@ if errorlevel 1 (
   echo [ERROR] Secure MCP Tunnel did not become ready.
   echo CadGPT local MCP is running, but ChatGPT connection is not ready.
   echo Run doctor.bat for diagnostics.
-  pause
+  if not defined CADGPT_NO_PAUSE pause
   exit /b 1
 )
 
