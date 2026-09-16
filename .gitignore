@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+bin/
+profiles/*.yaml
+.venv-cad/
+*.log
+__pycache__/
+*.pyc
+.vs/
+**/bin/
+**/obj/
+.DS_Store
