@@ -29,6 +29,12 @@ class CadUpstream {
     return process.env.CAD_MCP_ENTRY || path.join("runtimes", "cad-mcp", "main.py");
   }
 
+  private rememberError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    this.lastError = message;
+    return message;
+  }
+
   async connect(force = false): Promise<void> {
     if (this.client && this.transport && !force) return;
     if (this.connecting && !force) return this.connecting;
@@ -60,7 +66,7 @@ class CadUpstream {
         console.log(`[CAD MCP] connected; ${this.tools.length} tool(s) discovered`);
       } catch (error) {
         await transport.close().catch(() => undefined);
-        this.lastError = error instanceof Error ? error.message : String(error);
+        this.rememberError(error);
         throw error;
       } finally {
         if (timer) clearTimeout(timer);
@@ -75,18 +81,34 @@ class CadUpstream {
   }
 
   async listTools(force = false): Promise<Tool[]> {
-    await this.connect(force);
-    if (force && this.client) {
-      const listed = await this.client.listTools();
-      this.tools = listed.tools ?? [];
+    try {
+      await this.connect(force);
+      if (force && this.client) {
+        const listed = await this.client.listTools();
+        this.tools = listed.tools ?? [];
+      }
+      return [...this.tools];
+    } catch (error) {
+      this.rememberError(error);
+      await this.shutdown();
+      throw error;
     }
-    return [...this.tools];
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
     await this.connect();
     if (!this.client) throw new Error("CAD MCP client is not connected");
-    return this.client.callTool({ name, arguments: args });
+
+    try {
+      return await this.client.callTool({ name, arguments: args });
+    } catch (error) {
+      const message = this.rememberError(error);
+      // Reset the dead/stale upstream so the NEXT explicit tool call gets a fresh
+      // CAD MCP process. Do not replay this call automatically: it may have been a
+      // mutation that reached AutoCAD before the transport failed.
+      await this.shutdown();
+      throw new Error(`CAD MCP call '${name}' failed; upstream was reset and will reconnect on the next call. Original error: ${message}`);
+    }
   }
 
   status(): CadUpstreamStatus {
