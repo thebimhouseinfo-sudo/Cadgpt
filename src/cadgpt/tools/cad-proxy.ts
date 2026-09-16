@@ -17,6 +17,7 @@ const INTERNAL_DOCUMENT_TOOLS = new Set([
   "acad_list_open_documents",
   "acad_set_active_document",
 ]);
+const BOUND_TARGET_ARGUMENTS = new Set(["document_name"]);
 
 function registryFor(server: McpServer): Map<string, RegisteredTool> {
   let registry = proxyRegistry.get(server);
@@ -85,16 +86,40 @@ function schemaNodeToZod(schema: unknown): z.ZodTypeAny {
   return node.description ? field.describe(node.description) : field;
 }
 
+function rootProperties(schema: Tool["inputSchema"]): Record<string, unknown> {
+  if (!schema || typeof schema !== "object") return {};
+  return (schema as { properties?: Record<string, unknown> }).properties ?? {};
+}
+
 function schemaToShape(schema: Tool["inputSchema"]): Record<string, z.ZodTypeAny> {
   if (!schema || typeof schema !== "object") return {};
   const root = schema as { properties?: Record<string, unknown>; required?: string[] };
   const required = new Set(root.required ?? []);
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const [key, node] of Object.entries(root.properties ?? {})) {
+    // The bound drawing is session state, not an LLM-selectable tool argument.
+    // Hiding document_name prevents a proxied legacy tool from overriding the
+    // CadGPT drawing binding after ensureBoundDrawingActive() runs.
+    if (BOUND_TARGET_ARGUMENTS.has(key)) continue;
     const child = schemaNodeToZod(node);
     shape[key] = required.has(key) ? child : child.optional();
   }
   return shape;
+}
+
+function argumentsForBoundDrawing(
+  tool: Tool,
+  publicArgs: Record<string, unknown>,
+  drawing: { name: string; full_name: string }
+): Record<string, unknown> {
+  const args = { ...publicArgs };
+  for (const key of BOUND_TARGET_ARGUMENTS) delete args[key];
+
+  const properties = rootProperties(tool.inputSchema);
+  if (Object.prototype.hasOwnProperty.call(properties, "document_name")) {
+    args.document_name = drawing.full_name || drawing.name;
+  }
+  return args;
 }
 
 async function refreshProxies(server: McpServer, force = false): Promise<string[]> {
@@ -119,10 +144,12 @@ async function refreshProxies(server: McpServer, force = false): Promise<string[
         annotations: tool.annotations,
       },
       async (args: Record<string, unknown>) => {
-        // Enforce the CadGPT session target immediately before every CAD
-        // business operation. Switching AutoCAD tabs cannot silently retarget it.
-        await ensureBoundDrawingActive(server);
-        return (await cadUpstream.callTool(tool.name, args ?? {})) as any;
+        // Binding is both activation and argument authority. A legacy upstream
+        // document_name parameter is never accepted from ChatGPT; it is injected
+        // from the session binding here immediately before the operation.
+        const drawing = await ensureBoundDrawingActive(server);
+        const upstreamArgs = argumentsForBoundDrawing(tool, args ?? {}, drawing);
+        return (await cadUpstream.callTool(tool.name, upstreamArgs)) as any;
       }
     );
     registry.set(name, registered);
