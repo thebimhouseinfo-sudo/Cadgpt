@@ -476,7 +476,7 @@ export function registerLispHarnessTools(server: McpServer): void {
     "lisp_scaffold",
     {
       title: "Create Canonical AutoLISP Scaffold",
-      description: "Return the canonical TBH AutoLISP command skeleton derived from the existing library. Use this before creating a new production .lsp file.",
+      description: "Return the canonical TBH AutoLISP command skeleton derived from the existing library. Use this before creating a new command draft.",
       inputSchema: {
         file_name: z.string().regex(/^[^\\/]+\.lsp$/i),
         module: z.string().min(1).max(120),
@@ -500,7 +500,7 @@ export function registerLispHarnessTools(server: McpServer): void {
           file_name,
           command: command.toUpperCase(),
           content,
-          next: "Create the file under lisp/**, replace implementation placeholders, then run lisp_validate.",
+          next: "Create the working file under appdata/lisp-draft/**, replace implementation placeholders, then run lisp_draft_validate before CAD load/testing.",
         });
       } catch (error) {
         return toolError("lisp_scaffold", error);
@@ -511,8 +511,8 @@ export function registerLispHarnessTools(server: McpServer): void {
   server.registerTool(
     "lisp_validate",
     {
-      title: "Validate AutoLISP Source",
-      description: "Validate AutoLISP dialect, TBH library structure, command contracts, and static source safety for one .lsp file under lisp/** before AutoCAD load.",
+      title: "Validate Permanent AutoLISP Source",
+      description: "Validate AutoLISP dialect, TBH library structure, command contracts, and static source safety for one permanent .lsp file under lisp/**.",
       inputSchema: {
         path: z.string().min(1),
         expected_commands: z.array(z.string().min(1)).max(50).optional().default([]),
