@@ -114,11 +114,13 @@ def rename_layer(old_name: str, new_name: str) -> dict:
     layer = _find_layer(old_value)
     if layer is None:
         raise LayerServiceError(f"layer '{old_value}' was not found")
+    before = str(layer.Name)
+    if before.lower() == new_value.lower():
+        return {"changed": False, "old_name": before, "new_name": before}
     existing = _find_layer(new_value)
-    if existing is not None and existing is not layer:
+    if existing is not None:
         raise LayerServiceError(f"layer '{new_value}' already exists")
     try:
-        before = str(layer.Name)
         layer.Name = new_value
         return {"changed": before != str(layer.Name), "old_name": before, "new_name": str(layer.Name)}
     except Exception as exc:
