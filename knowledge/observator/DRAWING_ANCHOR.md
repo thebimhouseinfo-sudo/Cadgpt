@@ -80,7 +80,26 @@ copy / rename / Save As
 
 `last_revision` is not a global "latest wins" pointer. It identifies the Observation revision from which this particular DWG copy is continuing.
 
-Revision labels are **hierarchical strings**, not floating-point numbers. For example `12.1` means a branch revision continuing from revision `12`; it must never be parsed as a decimal number.
+Revision labels are **hierarchical strings**, never numbers or floating-point values.
+
+Branch segments use two-digit zero padding:
+
+```text
+12.01
+12.02
+...
+12.09
+12.10
+```
+
+If a branch itself branches again, the same rule applies recursively:
+
+```text
+12.01.01
+12.01.02
+```
+
+Zero padding is part of the stored label and must be preserved exactly. `12.01`, `12.10`, and `12.01.01` are strings, not decimal numbers.
 
 Example:
 
@@ -89,28 +108,28 @@ opened DWG anchor.last_revision = 12
 AppData contains mainline revisions through 15
 ```
 
-The opened DWG may simply be an older copy. If the user continues working from it, the next Observation Job creates revision `12.1` rather than silently adopting revision `15`.
+The opened DWG may simply be an older copy. If the user continues working from it, the next Observation Job creates revision `12.01` rather than silently adopting revision `15`.
 
 Conceptually:
 
 ```text
 10 → 11 → 12 → 13 → 14 → 15
            \
-            → 12.1
+            → 12.01
 ```
 
-Revision `12.1` is new work continued from revision `12`. Revisions `13–15` remain valid history on another branch of the same logical drawing lineage.
+Revision `12.01` is new work continued from revision `12`. Revisions `13–15` remain valid history on another branch of the same logical drawing lineage.
 
 The branch relationship belongs in AppData revision metadata:
 
 ```text
-revision: "12.1"
+revision: "12.01"
 parent_revision: "12"
 ```
 
 It does not require adding branch metadata to the Drawing Anchor. The anchor only needs to point to the current DWG copy's `last_revision`.
 
-Further revision labels may extend the hierarchy as needed. Their exact allocation rules belong to the AppData revision allocator; the authoritative parent relationship remains `parent_revision` metadata rather than inference from string formatting alone.
+Further revision labels extend the hierarchy using the same two-digit branch segment convention. The exact allocation rule belongs to the AppData revision allocator; the authoritative parent relationship remains `parent_revision` metadata rather than inference from string formatting alone.
 
 ## Per-Job update rule
 
