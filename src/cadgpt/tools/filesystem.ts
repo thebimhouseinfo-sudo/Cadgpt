@@ -6,7 +6,6 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import {
   getAllowedRoots,
-  getRepoRoot,
   resolveAllowedPath,
   toRepoRelative,
 } from "../lib/path-security.js";
@@ -63,7 +62,6 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async () =>
       toolResult("file_roots", {
-        repository: getRepoRoot(),
         roots: getAllowedRoots().map(toRepoRelative),
       })
   );
