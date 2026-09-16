@@ -18,6 +18,7 @@ from tools import (
     layer_tools,
     lisp_tools,
     modify_tools,
+    observation_tools,
 )
 from utils.logger import get_logger
 
@@ -28,6 +29,7 @@ document_tools.register(mcp)
 inventory_tools.register(mcp)
 layer_tools.register(mcp)
 entity_tools.register(mcp)
+observation_tools.register(mcp)
 block_tools.register(mcp)
 host_tools.register(mcp)
 geometry_tools.register(mcp)
