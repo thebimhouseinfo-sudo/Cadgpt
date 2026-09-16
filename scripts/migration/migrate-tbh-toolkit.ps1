@@ -26,12 +26,14 @@ function Get-FileSha256([string]$Path) {
 $sourceRepoFull = Normalize-Path (Join-Path $RepoRoot $SourceRepo)
 $sourceToolkit = Join-Path $sourceRepoFull "tool-kit"
 $destRoot = Normalize-Path (Join-Path $RepoRoot $Destination)
+$provenanceName = "MIGRATION_PROVENANCE.md"
+$provenancePath = Join-Path $destRoot $provenanceName
 
 Write-Host ""
 Write-Host "=== TBH Toolkit migration ===" -ForegroundColor Cyan
 Write-Host "Source      : $sourceToolkit"
 Write-Host "Destination : $destRoot"
-Write-Host "Mode        : $(if ($DryRun) { 'DRY RUN' } else { 'COPY + VERIFY' })"
+Write-Host "Mode        : $(if ($DryRun) { 'DRY RUN' } else { 'EXACT MIRROR + VERIFY' })"
 Write-Host ""
 
 if (-not (Test-Path -LiteralPath $sourceToolkit -PathType Container)) {
@@ -55,6 +57,12 @@ if ($sourceFiles.Count -eq 0) {
     throw "Source tool-kit contains no files."
 }
 
+$sourceRelativeSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+foreach ($file in $sourceFiles) {
+    $relative = Get-RelativePath $sourceToolkit $file.FullName
+    $null = $sourceRelativeSet.Add($relative)
+}
+
 Write-Host "Source files : $($sourceFiles.Count)"
 Write-Host "Source commit: $sourceCommit"
 
@@ -63,12 +71,35 @@ if ($DryRun) {
         $relative = Get-RelativePath $sourceToolkit $file.FullName
         Write-Host "COPY $relative"
     }
+    if (Test-Path -LiteralPath $destRoot -PathType Container) {
+        $existingDestFiles = @(Get-ChildItem -LiteralPath $destRoot -Recurse -File)
+        foreach ($file in $existingDestFiles) {
+            $relative = Get-RelativePath $destRoot $file.FullName
+            if ($relative -ieq $provenanceName) { continue }
+            if (-not $sourceRelativeSet.Contains($relative)) {
+                Write-Host "REMOVE STALE $relative"
+            }
+        }
+    }
     Write-Host ""
     Write-Host "Dry run complete. No files were changed." -ForegroundColor Yellow
     exit 0
 }
 
 New-Item -ItemType Directory -Force -Path $destRoot | Out-Null
+
+# Remove stale destination files individually so lisp/tbh-toolkit becomes an
+# exact mirror of one source commit. Never recursively delete the toolkit tree.
+$staleRemoved = 0
+$existingDestFiles = @(Get-ChildItem -LiteralPath $destRoot -Recurse -File -ErrorAction SilentlyContinue)
+foreach ($file in $existingDestFiles) {
+    $relative = Get-RelativePath $destRoot $file.FullName
+    if ($relative -ieq $provenanceName) { continue }
+    if (-not $sourceRelativeSet.Contains($relative)) {
+        Remove-Item -LiteralPath $file.FullName -Force
+        $staleRemoved++
+    }
+}
 
 $copied = 0
 foreach ($file in $sourceFiles) {
@@ -96,10 +127,12 @@ foreach ($file in $sourceFiles) {
 }
 
 $destFiles = @(Get-ChildItem -LiteralPath $destRoot -Recurse -File | Where-Object {
-    $_.Name -ne "MIGRATION_PROVENANCE.md"
+    (Get-RelativePath $destRoot $_.FullName) -ine $provenanceName
 })
+if ($destFiles.Count -ne $sourceFiles.Count) {
+    $errors.Add("Destination file count $($destFiles.Count) does not match source file count $($sourceFiles.Count)")
+}
 
-$provenancePath = Join-Path $destRoot "MIGRATION_PROVENANCE.md"
 $timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssK")
 $provenance = @"
 # TBH Toolkit Migration Provenance
@@ -112,6 +145,7 @@ $provenance = @"
 - Migration time: `$timestamp`
 - Source file count: $($sourceFiles.Count)
 - Copied file count: $copied
+- Stale destination files removed: $staleRemoved
 
 Migration policy: preserve source files and relative structure as-is. Do not normalize or refactor AutoLISP during migration. Future edits are governed by `skills/write-lisp/`.
 "@
@@ -125,7 +159,8 @@ if ($errors.Count -gt 0) {
 }
 
 Write-Host ""
-Write-Host "[OK] Copied and SHA256-verified $copied TBH Toolkit files." -ForegroundColor Green
+Write-Host "[OK] Exact-mirrored and SHA256-verified $copied TBH Toolkit files." -ForegroundColor Green
+Write-Host "[OK] Removed $staleRemoved stale destination files." -ForegroundColor Green
 Write-Host "[OK] Provenance written to $provenancePath" -ForegroundColor Green
 Write-Host ""
 Write-Host "Next: review `git status`, then commit the migrated asset pack without refactoring it." -ForegroundColor Cyan
