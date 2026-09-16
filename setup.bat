@@ -62,17 +62,18 @@ if not exist ".env" (
 )
 
 echo.
-echo [1/6] Installing locked CadGPT connector dependencies...
+echo [1/7] Installing locked CadGPT connector dependencies...
 call npm ci
 if errorlevel 1 goto :failed
 
 echo.
-echo [2/6] Building CadGPT connector...
+echo [2/7] Building CadGPT connector...
 call npm run build
 if errorlevel 1 goto :failed
 
 echo.
-echo [3/6] Rebuilding isolated CAD MCP Python environment from lock...
+echo [3/7] Rebuilding isolated CAD MCP Python environment from lock...
+call "%~dp0run.bat" stop >nul 2>nul
 if exist ".venv-cad" (
   rmdir /s /q ".venv-cad"
   if exist ".venv-cad" (
@@ -90,17 +91,22 @@ if errorlevel 1 goto :failed
 if errorlevel 1 goto :failed
 
 echo.
-echo [4/6] Configuring OpenAI Secure MCP Tunnel...
+echo [4/7] Configuring OpenAI Secure MCP Tunnel...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0openai-tunnel.ps1" -Init
 if errorlevel 1 goto :failed
 
 echo.
-echo [5/6] Starting CadGPT...
-call "%~dp0run.bat"
+echo [5/7] Installing CadGPT background autostart agent...
+call "%~dp0run.bat" install
 if errorlevel 1 goto :failed
 
 echo.
-echo [6/6] Running installation doctor...
+echo [6/7] Verifying background listener status...
+call "%~dp0run.bat" status
+if errorlevel 1 goto :failed
+
+echo.
+echo [7/7] Running installation doctor...
 call "%~dp0doctor.bat"
 if errorlevel 1 goto :failed
 
@@ -108,8 +114,12 @@ echo.
 echo ========================================
 echo   Setup complete
 echo ========================================
+echo CadGPT is installed as a hidden per-user background agent.
+echo It will start automatically when you sign in to Windows.
+echo No daily launcher is required.
+echo.
 echo Enable ChatGPT Developer Mode and add/select the CadGPT tunnel connection once.
-echo After that, normal use is only: run.bat
+echo Manual control: run.bat status ^| start ^| stop ^| restart ^| uninstall
 echo Diagnostics: doctor.bat
 echo.
 pause
