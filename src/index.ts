@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import "dotenv/config";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import express from "express";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
@@ -16,6 +16,7 @@ import { activateCadRuntime, deactivateCadRuntime } from "./cadgpt/tools/cad-pro
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
 const MCP_TOKEN = (process.env.MCP_TOKEN || "").trim();
+const CONTROL_TOKEN = (process.env.CADGPT_CONTROL_TOKEN || "").trim();
 const SESSION_RECOVERY = (process.env.MCP_SESSION_RECOVERY || "true").toLowerCase() !== "false";
 const CORE_IDLE_MS = Math.max(10_000, Number(process.env.CADGPT_SESSION_IDLE_MS || 120_000));
 const STARTED_AT = Date.now();
@@ -33,18 +34,36 @@ const mcpPathSet = new Set(mcpPaths);
 const sessions = createSessionManager(PORT);
 sessions.startCleanup();
 
-function trackMcpRequest(res: express.Response): void {
+function markMcpActivity(): void {
   lastMcpActivityAt = Date.now();
+}
+
+function trackMcpOperation(res: express.Response): void {
+  markMcpActivity();
   activeMcpRequests += 1;
   let released = false;
   const release = () => {
     if (released) return;
     released = true;
     activeMcpRequests = Math.max(0, activeMcpRequests - 1);
-    lastMcpActivityAt = Date.now();
+    markMcpActivity();
   };
   res.once("finish", release);
   res.once("close", release);
+}
+
+function validControlToken(value: string | undefined): boolean {
+  if (!CONTROL_TOKEN || !value) return false;
+  const a = Buffer.from(CONTROL_TOKEN);
+  const b = Buffer.from(value);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function requireInternalControl(req: express.Request, res: express.Response): boolean {
+  const supplied = req.header("x-cadgpt-control-token");
+  if (validControlToken(supplied)) return true;
+  res.status(404).json({ ok: false, error: "Not found" });
+  return false;
 }
 
 app.get("/health", (_req, res) => {
@@ -66,7 +85,8 @@ app.get("/health", (_req, res) => {
   });
 });
 
-app.post("/internal/cad/activate", async (_req, res) => {
+app.post("/internal/cad/activate", async (req, res) => {
+  if (!requireInternalControl(req, res)) return;
   try {
     const result = await activateCadRuntime();
     res.json({ ok: true, cad_mcp: cadUpstream.status(), ...result });
@@ -76,7 +96,8 @@ app.post("/internal/cad/activate", async (_req, res) => {
   }
 });
 
-app.post("/internal/cad/deactivate", async (_req, res) => {
+app.post("/internal/cad/deactivate", async (req, res) => {
+  if (!requireInternalControl(req, res)) return;
   try {
     await deactivateCadRuntime();
     res.json({ ok: true, cad_mcp: cadUpstream.status() });
@@ -131,12 +152,14 @@ async function handlePost(req: express.Request, res: express.Response): Promise<
 
 for (const route of mcpPaths) {
   app.post(route, (req, res) => {
-    trackMcpRequest(res);
+    trackMcpOperation(res);
     void handlePost(req, res);
   });
 
   app.get(route, async (req, res) => {
-    trackMcpRequest(res);
+    // A long-lived SSE/GET stream proves connectivity, not active user work.
+    // Touch activity when it is opened, but do not let it hold the core awake forever.
+    markMcpActivity();
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     const session = sessionId ? sessions.get(sessionId) : undefined;
     if (!session) {
@@ -147,7 +170,7 @@ for (const route of mcpPaths) {
   });
 
   app.delete(route, async (req, res) => {
-    trackMcpRequest(res);
+    trackMcpOperation(res);
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     const session = sessionId ? sessions.get(sessionId) : undefined;
     if (!session) {
@@ -155,6 +178,12 @@ for (const route of mcpPaths) {
       return;
     }
     await sessions.handleExisting(session, req, res);
+    // When ChatGPT explicitly terminates an MCP session, return to lazy mode
+    // promptly. If another request is already active, that request wins and the
+    // normal inactivity lease remains the fallback.
+    setTimeout(() => {
+      if (!shuttingDown && activeMcpRequests === 0) void shutdown("MCP_DELETE");
+    }, 250).unref();
   });
 }
 
@@ -170,8 +199,8 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`Health:     http://${HOST}:${PORT}/health`);
   console.log(`File roots: ${getAllowedRoots().map(toRepoRelative).join(", ")}`);
   console.log(`MCP path:   ${MCP_TOKEN ? "protected" : "unprotected"}`);
-  console.log(`Sleep:      after ${CORE_IDLE_MS}ms without MCP activity once no request/stream remains`);
-  console.log("CAD MCP:    controlled by wake-agent; active only after ChatGPT activation while AutoCAD is running");
+  console.log(`Sleep:      after ${CORE_IDLE_MS}ms MCP inactivity; explicit MCP DELETE sleeps promptly`);
+  console.log("CAD MCP:    active only while ChatGPT has awakened CadGPT and AutoCAD is running");
   console.log("");
 });
 
