@@ -20,10 +20,12 @@ def _safe(fn, *args):
 def register(mcp):
     @mcp.tool()
     def cad_load_lisp_file(path: str) -> dict:
-        """Queue loading of one repository `.lsp` file under `lisp/**`.
+        """Load and verify one repository `.lsp` file under `lisp/**`.
 
         Absolute paths and paths outside the CadGPT LISP sandbox are rejected.
-        Loading is asynchronous; verify before depending on its side effects.
+        The tool waits for an AutoCAD load sentinel and returns `loaded`, error
+        evidence, and command-log tail when available. `loaded: false` blocks
+        command execution and must be debugged before handoff.
         """
         return _safe(load_lisp_file, path)
 
@@ -33,6 +35,9 @@ def register(mcp):
 
         This is intentionally not a raw command-string tool. Command names are
         restricted to identifier characters and arguments to scalar strings or
-        numbers. Verify the drawing post-condition with structured read tools.
+        numbers. Use only after `cad_load_lisp_file` reports `loaded: true`.
+        Interactive Lisp commands should normally be handed to the user after a
+        verified load instead of inventing prompt input. Automated commands must
+        be verified with structured CAD postconditions.
         """
         return _safe(run_lisp_command, name, args)

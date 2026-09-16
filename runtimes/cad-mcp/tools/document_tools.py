@@ -1,8 +1,9 @@
-"""MCP tools for AutoCAD document discovery and explicit activation."""
+"""MCP tools for AutoCAD document discovery, activation, and safe test drawing creation."""
 
 from connection.acad import AutoCADNotRunningError
 from services.document_service import (
     DocumentServiceError,
+    create_blank_test_document,
     get_active_document_info,
     list_open_documents,
     set_active_document,
@@ -37,3 +38,12 @@ def register(mcp):
     def acad_set_active_document(document_name: str) -> dict:
         """Explicitly activate an already-open drawing by file name or full path."""
         return _safe(set_active_document, document_name)
+
+    @mcp.tool()
+    def acad_create_blank_test_document() -> dict:
+        """Create a new unsaved blank drawing for isolated CadGPT testing.
+
+        This low-level tool is consumed by the outer `drawing_create_test` tool
+        and is not intended to be exposed directly to ChatGPT.
+        """
+        return _safe(create_blank_test_document)

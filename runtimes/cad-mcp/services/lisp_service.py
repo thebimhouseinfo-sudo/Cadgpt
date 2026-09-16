@@ -1,9 +1,12 @@
 """Sandboxed AutoLISP execution bridge for the CadGPT-bound drawing.
 
 File editing belongs to CadGPT's outer file tools. This service only loads
-existing .lsp files from the repository lisp/** sandbox and queues named
+existing .lsp files from the repository lisp/** sandbox and invokes named
 AutoCAD commands on the already-bound drawing. Raw arbitrary SendCommand is
 intentionally not exposed.
+
+LISP loading is verified inside AutoCAD. A SendCommand enqueue is never treated
+as proof that source loaded successfully.
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import uuid
 
 import pywintypes
 
@@ -22,6 +26,8 @@ class LispServiceError(RuntimeError):
 
 
 _COMMAND_NAME = re.compile(r"^[A-Za-z0-9_+\-.$:]+$")
+_LOAD_POLL_INTERVAL = 0.10
+_LOAD_TIMEOUT_SECONDS = 8.0
 
 
 def _repo_root() -> str:
@@ -95,18 +101,131 @@ def _serialize_arg(value) -> str:
     return str(value)
 
 
+def _safe_getvar(doc, name: str, default=None):
+    try:
+        return doc.GetVariable(name)
+    except Exception:
+        return default
+
+
+def _safe_setvar(doc, name: str, value) -> bool:
+    try:
+        doc.SetVariable(name, value)
+        return True
+    except Exception:
+        return False
+
+
+def _log_position(path: str | None) -> int:
+    if not path or not os.path.isfile(path):
+        return 0
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
+
+
+def _read_log_tail(path: str | None, start: int = 0, max_bytes: int = 16000) -> str:
+    if not path or not os.path.isfile(path):
+        return ""
+    try:
+        size = os.path.getsize(path)
+        offset = start if 0 <= start <= size else max(0, size - max_bytes)
+        if size - offset > max_bytes:
+            offset = size - max_bytes
+        with open(path, "rb") as handle:
+            handle.seek(offset)
+            data = handle.read(max_bytes)
+        return data.decode("utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _verified_load_expression(lisp_path: str, token: str) -> str:
+    """Build a controlled expression that records load success/error in USERS5."""
+    ok = f"CADGPT_OK:{token}"
+    err = f"CADGPT_ERR:{token}:"
+    # Keep the error payload short enough for a USER string system variable.
+    return (
+        "(progn "
+        "(vl-load-com) "
+        f"(setq *cadgpt-load-result* (vl-catch-all-apply 'load (list \"{lisp_path}\"))) "
+        "(if (vl-catch-all-error-p *cadgpt-load-result*) "
+        f"(setvar \"USERS5\" (strcat \"{err}\" (substr (vl-catch-all-error-message *cadgpt-load-result*) 1 180))) "
+        f"(setvar \"USERS5\" \"{ok}\")) "
+        "(princ))"
+    )
+
+
 def load_lisp_file(path: str) -> dict:
+    """Load one sandboxed LISP file and verify AutoCAD reached a success sentinel.
+
+    On failure, return captured AutoLISP error text when available and the
+    relevant command-history log tail as evidence for the write-lisp debug loop.
+    """
     absolute, relative = _resolve_lisp_path(path)
     lisp_path = absolute.replace("\\", "/")
-    # Windows file names cannot contain a double quote; normalized forward
-    # slashes make the path safe for AutoLISP's load expression.
-    expression = f'(load "{lisp_path}")'
-    _send(expression)
-    return {
-        "queued": True,
-        "path": relative,
-        "note": "LISP load is asynchronous; verify by running a known command or inspecting drawing state.",
-    }
+    doc = get_active_document()
+
+    token = uuid.uuid4().hex[:12]
+    pending = f"CADGPT_PENDING:{token}"
+    ok_prefix = f"CADGPT_OK:{token}"
+    err_prefix = f"CADGPT_ERR:{token}:"
+
+    previous_users5 = _safe_getvar(doc, "USERS5", "")
+    previous_log_mode = _safe_getvar(doc, "LOGFILEMODE", 0)
+    log_path = str(_safe_getvar(doc, "LOGFILENAME", "") or "")
+    log_start = _log_position(log_path)
+
+    # Command history is diagnostic evidence. Restore the user's mode afterwards.
+    _safe_setvar(doc, "LOGFILEMODE", 1)
+    _safe_setvar(doc, "USERS5", pending)
+
+    try:
+        _send(_verified_load_expression(lisp_path, token))
+        deadline = time.monotonic() + _LOAD_TIMEOUT_SECONDS
+        result = pending
+        while time.monotonic() < deadline:
+            time.sleep(_LOAD_POLL_INTERVAL)
+            value = _safe_getvar(doc, "USERS5", pending)
+            result = str(value or "")
+            if result.startswith(ok_prefix) or result.startswith(err_prefix):
+                break
+
+        # Give AutoCAD a moment to flush the command history before reading it.
+        time.sleep(0.15)
+        log_tail = _read_log_tail(log_path, log_start)
+
+        if result.startswith(ok_prefix):
+            return {
+                "loaded": True,
+                "path": relative,
+                "error": None,
+                "log_tail": log_tail[-4000:] if log_tail else "",
+                "note": "AutoCAD reached the verified LISP load-success sentinel.",
+            }
+
+        if result.startswith(err_prefix):
+            message = result[len(err_prefix) :].strip() or "AutoLISP load returned an unspecified error"
+            return {
+                "loaded": False,
+                "path": relative,
+                "error": message,
+                "log_tail": log_tail[-8000:] if log_tail else "",
+                "note": "Fix the source and run static validation + verified load again before handoff.",
+            }
+
+        return {
+            "loaded": False,
+            "path": relative,
+            "error": "AutoCAD did not reach the LISP load-success sentinel before timeout.",
+            "log_tail": log_tail[-8000:] if log_tail else "",
+            "note": "Inspect the command-history evidence; do not run the Lisp command until load is verified.",
+        }
+    finally:
+        _safe_setvar(doc, "USERS5", previous_users5 if isinstance(previous_users5, str) else str(previous_users5 or ""))
+        if previous_log_mode is not None:
+            _safe_setvar(doc, "LOGFILEMODE", int(previous_log_mode))
 
 
 def run_lisp_command(name: str, args: list | None = None) -> dict:

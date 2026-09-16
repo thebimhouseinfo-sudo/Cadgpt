@@ -35,7 +35,7 @@ jobs:
             }
             Write-Host "PowerShell parse OK: $script"
           }
-      - name: Smoke test protected HTTP MCP surface, recovery, and file sandbox
+      - name: Smoke test protected HTTP MCP surface, recovery, file sandbox, and write-lisp tools
         shell: pwsh
         run: |
           $env:CAD_MCP_PYTHON = "python"
@@ -92,7 +92,12 @@ jobs:
 
             $toolsJson = Invoke-Mcp 2 "tools/list" @{}
             $names = @($toolsJson.result.tools | ForEach-Object { $_.name })
-            foreach ($required in @("file_roots", "file_read", "file_search", "job_list", "job_get", "cad_status", "drawing_list", "drawing_bind", "drawing_status")) {
+            foreach ($required in @(
+              "file_roots", "file_read", "file_search",
+              "job_list", "job_get",
+              "skill_list", "skill_get", "lisp_scaffold", "lisp_validate",
+              "cad_status", "drawing_list", "drawing_create_test", "drawing_bind", "drawing_status"
+            )) {
               if ($names -notcontains $required) { throw "Missing MCP tool: $required" }
             }
 
@@ -122,7 +127,7 @@ jobs:
             $recoveryJson = $recoveryResp.Content | ConvertFrom-Json
             if (@($recoveryJson.result.tools).Count -lt 1) { throw "Recovered MCP session returned no tools" }
 
-            Write-Host "Protected HTTP MCP + recovery + sandbox smoke passed; tools=$($names.Count)"
+            Write-Host "Protected HTTP MCP + recovery + sandbox + write-lisp smoke passed; tools=$($names.Count)"
           }
           finally {
             if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
