@@ -4,7 +4,7 @@
     {
       "id": "block.attributes.clear-values",
       "title": "Clear Attribute Values on Selected Blocks",
-      "type": "static",
+      "ai_mode": "static",
       "class": "blocks.attributes",
       "subclass": "cleanup",
       "tags": ["block", "attribute", "text", "cleanup", "selection"],
@@ -31,7 +31,7 @@
     {
       "id": "drawing.cleanup.remove-visual-artifacts",
       "title": "Remove SOLID/TRACE/3DFACE, Solid Hatches and Wipeouts",
-      "type": "static",
+      "ai_mode": "static",
       "class": "drawing.cleanup",
       "subclass": "geometry-removal",
       "tags": ["cleanup", "solid", "trace", "3dface", "hatch", "wipeout", "blocks"],
@@ -58,7 +58,7 @@
     {
       "id": "text.mtext.strip-formatting",
       "title": "Strip MText Formatting Overrides",
-      "type": "static",
+      "ai_mode": "static",
       "class": "text.mtext",
       "subclass": "cleanup",
       "tags": ["mtext", "formatting", "text", "cleanup", "selection"],
@@ -85,7 +85,7 @@
     {
       "id": "layers.reconciliation.purge-metadata",
       "title": "Purge Reconciled Layer Metadata and Disable Notifications",
-      "type": "static",
+      "ai_mode": "static",
       "class": "layers.reconciliation",
       "subclass": "metadata-cleanup",
       "tags": ["layer", "xref", "reconciled", "notification", "metadata", "cleanup"],
@@ -116,7 +116,7 @@
     {
       "id": "xref.references.move-to-host-layer",
       "title": "Move Xref References to Standard XREF Layer",
-      "type": "static",
+      "ai_mode": "static",
       "class": "xref.references",
       "subclass": "layer-normalization",
       "tags": ["xref", "layer", "insert", "lock", "normalization"],
@@ -145,11 +145,10 @@
     {
       "id": "xref.layers.semantic-map",
       "title": "Map Imported/Xref Layers to Standard Coordination Layers",
-      "type": "dynamic",
-      "dynamic_role": "template",
+      "ai_mode": "dynamic",
       "class": "xref.layers",
       "subclass": "semantic-mapping",
-      "tags": ["xref", "layer", "mapping", "keyword", "block", "nested-block", "coordination", "dynamic"],
+      "tags": ["xref", "layer", "mapping", "keyword", "block", "nested-block", "coordination", "ai-adaptable"],
       "module": "Setup Xref",
       "commands": ["XLAY"],
       "path": "lisp/tbh-toolkit/Setup Xref/XrefLayerMapper_v3.2.lsp",
@@ -160,7 +159,7 @@
       ],
       "targets": ["Drawing layers", "Entities on mapped source layers", "Nested block-definition entities", "Locked layers"],
       "inputs": [
-        "Runtime/project mapping rules when using dynamic mode",
+        "Runtime/project mapping rules when AI adaptation is used",
         "User choice if mapped target layers are off or frozen"
       ],
       "effects": [
@@ -183,7 +182,7 @@
         "off/frozen target handling policy"
       ],
       "implementation_notes": [
-        "The repository file is the default library template. Runtime variants should be materialized as validated dynamic artifacts rather than overwriting this file."
+        "This source file is ordinary AutoLISP. ai_mode=dynamic only means CadGPT/AI may derive a temporary validated runtime variant by changing the declared dynamic_parameters without overwriting the permanent library source."
       ]
     }
   ]
