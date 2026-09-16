@@ -45,16 +45,16 @@ Field meaning:
 V1 `drawing_id` format:
 
 ```text
-<origin-name>-<HHMM>-<DDMMYY>
+<origin-name>-<HHMMSS>-<DDMMYY>
 ```
 
 Example:
 
 ```text
-Bowhotel-1435-100826
+Bowhotel-143527-100826
 ```
 
-The `HHMM` + `DDMMYY` segments are the anchor creation timestamp in local system time. The timestamp is the unique number string; no separate random suffix is required by V1.
+The `HHMMSS` + `DDMMYY` segments are the anchor creation timestamp in local system time. Including seconds keeps the id compact while making accidental collisions extremely unlikely for practical CadGPT use. No separate random suffix is required by V1.
 
 The creation time/date and origin drawing name are not stored as separate anchor fields. They are immutable provenance embedded once in `drawing_id`.
 
@@ -83,14 +83,14 @@ Example:
 
 ```text
 first observed file: Bowhotel.dwg
-created at: 14:35 on 10/08/2026
-created drawing_id: Bowhotel-1435-100826
+created at: 14:35:27 on 10/08/2026
+created drawing_id: Bowhotel-143527-100826
 
 later rename: BOWHOTEL-MEP-CLIENT.dwg
 later copy: CLIENT-COMMENT.dwg
 
 anchor drawing_id remains:
-Bowhotel-1435-100826
+Bowhotel-143527-100826
 ```
 
 Therefore:
