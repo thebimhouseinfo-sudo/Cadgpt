@@ -1,8 +1,8 @@
-name: Phase 1 CI
+name: CadGPT Core CI
 
 on:
   push:
-    branches: [phase1-migration]
+    branches: [phase2-cad-mcp]
   pull_request:
     branches: [main]
 
@@ -111,9 +111,6 @@ jobs:
               throw "Sandbox allowed path traversal outside jobs/** and lisp/**"
             }
 
-            # Exercise the exact stale-session path used after connector/server churn:
-            # send a normal request with an unknown session ID and require CadGPT to
-            # rebuild/warm that session before serving the request.
             $recoveryHeaders = @{
               Accept = "application/json, text/event-stream"
               "Mcp-Session-Id" = "ci-stale-session"
