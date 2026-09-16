@@ -13,21 +13,25 @@ jobs:
       - name: Parse migration PowerShell
         shell: pwsh
         run: |
-          $script = "scripts/migration/migrate-tbh-toolkit.ps1"
-          $errors = $null
-          $tokens = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path $script),
-            [ref]$tokens,
-            [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error "${script}: $($_.Message)" }
-            throw "PowerShell parse failed: $script"
+          foreach ($script in @(
+            "scripts/migration/migrate-tbh-toolkit.ps1",
+            "scripts/migration/preserve-revit-mcp.ps1"
+          )) {
+            $errors = $null
+            $tokens = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $script),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "${script}: $($_.Message)" }
+              throw "PowerShell parse failed: $script"
+            }
+            Write-Host "PowerShell parse OK: $script"
           }
-          Write-Host "PowerShell parse OK: $script"
 
-      - name: Verify migration safety contract
+      - name: Verify TBH Toolkit exact-mirror contract
         shell: pwsh
         run: |
           $script = Get-Content "scripts/migration/migrate-tbh-toolkit.ps1" -Raw
@@ -37,13 +41,78 @@ jobs:
             "Get-FileHash -Algorithm SHA256",
             "MIGRATION_PROVENANCE.md",
             "Copy-Item",
-            '[switch]$DryRun'
+            '[switch]$DryRun',
+            "sourceRelativeSet",
+            "staleRemoved",
+            "Destination file count"
           )) {
             if ($script -notmatch [regex]::Escape($required)) {
-              throw "Migration script missing required contract marker: $required"
+              throw "Toolkit migration script missing required contract marker: $required"
             }
           }
           if ($script -match "Remove-Item\s+.*-Recurse") {
-            throw "Migration script must not recursively delete toolkit/source trees"
+            throw "Toolkit migration script must not recursively delete toolkit/source trees"
           }
-          Write-Host "TBH Toolkit migration safety contract OK"
+          Write-Host "TBH Toolkit exact-mirror contract OK"
+
+      - name: Verify Revit preservation contract
+        shell: pwsh
+        run: |
+          $script = Get-Content "scripts/migration/preserve-revit-mcp.ps1" -Raw
+          foreach ($required in @(
+            "runtimes\Revit-mcp",
+            "preserved\revit-mcp\source",
+            "Get-FileHash -Algorithm SHA256",
+            "MIGRATION_PROVENANCE.md",
+            "Test-GeneratedArtifact",
+            "__pycache__",
+            "sourceRelativeSet",
+            "staleRemoved",
+            '[switch]$DryRun'
+          )) {
+            if ($script -notmatch [regex]::Escape($required)) {
+              throw "Revit preservation script missing required contract marker: $required"
+            }
+          }
+          if ($script -match "Remove-Item\s+.*-Recurse") {
+            throw "Revit preservation script must not recursively delete source/preservation trees"
+          }
+          Write-Host "Revit preservation contract OK"
+
+      - name: Verify preserved Revit is not an active dependency
+        shell: pwsh
+        run: |
+          $activeFiles = New-Object System.Collections.Generic.List[System.IO.FileInfo]
+          foreach ($root in @("src", "runtimes/cad-mcp")) {
+            if (Test-Path $root) {
+              Get-ChildItem $root -Recurse -File | ForEach-Object { $activeFiles.Add($_) }
+            }
+          }
+          foreach ($rootFile in @(
+            "package.json",
+            "setup.bat",
+            "run.bat",
+            "doctor.bat",
+            "doctor.ps1",
+            "acceptance.bat",
+            "acceptance.ps1",
+            "start.ps1",
+            "openai-tunnel.ps1"
+          )) {
+            if (Test-Path $rootFile -PathType Leaf) {
+              $activeFiles.Add((Get-Item $rootFile))
+            }
+          }
+
+          $matches = @()
+          foreach ($file in $activeFiles) {
+            $text = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue
+            if ($text -and $text -match 'preserved[\\/]+revit-mcp') {
+              $matches += $file.FullName
+            }
+          }
+          if ($matches.Count -gt 0) {
+            $matches | ForEach-Object { Write-Error "Active dependency/reference to preserved Revit source: $_" }
+            throw "CadGPT active runtime must not depend on preserved/revit-mcp/**"
+          }
+          Write-Host "No active CadGPT dependency on preserved/revit-mcp/**"
