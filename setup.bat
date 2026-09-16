@@ -33,14 +33,25 @@ if errorlevel 1 (
 where python >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] Python is not installed or not in PATH.
-  echo Python 3.11+ is required for CAD MCP.
+  echo Python 3.11 is required for the current CadGPT beta runtime.
   pause
   exit /b 1
 )
-python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"
+python -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3,11) else 1)"
 if errorlevel 1 (
-  echo [ERROR] Python 3.11+ is required.
+  echo [ERROR] Python 3.11.x is required for this beta build.
   python --version
+  pause
+  exit /b 1
+)
+
+if not exist "package-lock.json" (
+  echo [ERROR] package-lock.json is missing. Reproducible Node install cannot continue.
+  pause
+  exit /b 1
+)
+if not exist "runtimes\cad-mcp\requirements.lock.txt" (
+  echo [ERROR] runtimes\cad-mcp\requirements.lock.txt is missing.
   pause
   exit /b 1
 )
@@ -51,8 +62,8 @@ if not exist ".env" (
 )
 
 echo.
-echo [1/6] Installing CadGPT connector dependencies...
-call npm install
+echo [1/6] Installing locked CadGPT connector dependencies...
+call npm ci
 if errorlevel 1 goto :failed
 
 echo.
@@ -61,20 +72,22 @@ call npm run build
 if errorlevel 1 goto :failed
 
 echo.
-echo [3/6] Preparing isolated CAD MCP Python environment...
-if not exist ".venv-cad\Scripts\python.exe" (
-  python -m venv .venv-cad
-  if errorlevel 1 goto :failed
+echo [3/6] Rebuilding isolated CAD MCP Python environment from lock...
+if exist ".venv-cad" (
+  rmdir /s /q ".venv-cad"
+  if exist ".venv-cad" (
+    echo [ERROR] Could not remove existing .venv-cad. Stop running CadGPT/CAD MCP processes and retry setup.
+    goto :failed
+  )
 )
-if exist "runtimes\cad-mcp\requirements.txt" (
-  ".venv-cad\Scripts\python.exe" -m pip install --upgrade pip
-  if errorlevel 1 goto :failed
-  ".venv-cad\Scripts\python.exe" -m pip install -r "runtimes\cad-mcp\requirements.txt"
-  if errorlevel 1 goto :failed
-) else (
-  echo [ERROR] runtimes\cad-mcp\requirements.txt is missing.
-  goto :failed
-)
+python -m venv .venv-cad
+if errorlevel 1 goto :failed
+".venv-cad\Scripts\python.exe" -m pip install --upgrade pip
+if errorlevel 1 goto :failed
+".venv-cad\Scripts\python.exe" -m pip install -r "runtimes\cad-mcp\requirements.lock.txt"
+if errorlevel 1 goto :failed
+".venv-cad\Scripts\python.exe" -m pip check
+if errorlevel 1 goto :failed
 
 echo.
 echo [4/6] Configuring OpenAI Secure MCP Tunnel...
