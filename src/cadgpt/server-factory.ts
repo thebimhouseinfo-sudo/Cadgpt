@@ -14,7 +14,7 @@ export function createMcpServer(): McpServer {
     {
       capabilities: {
         logging: {},
-        tools: { listChanged: true },
+        tools: {},
       },
       instructions: [
         "CadGPT is a drawing-centric AutoCAD execution environment for ChatGPT.",
@@ -25,6 +25,7 @@ export function createMcpServer(): McpServer {
         "Jobs define repeatable CAD workflows; load them with job_list/job_get and follow each step's explicit available_tools contract.",
         "write-lisp is a specialized AutoLISP coding capability, not a generic application-development agent. Load its relevant coding-skills resources before non-trivial Lisp work.",
         "Every changed .lsp must pass lisp_validate before cad__cad_load_lisp_file; successful load/run still requires structured CAD postcondition verification.",
+        "CAD tool descriptors are stable even while CAD MCP sleeps. The backend becomes executable only after ChatGPT has activated CadGPT and AutoCAD is running.",
         "Proxied CAD business tools are exposed as cad__<upstream-tool-name> and CadGPT re-establishes the bound drawing before each call.",
       ].join("\n"),
     }
@@ -34,14 +35,7 @@ export function createMcpServer(): McpServer {
   registerJobTools(server);
   registerSkillTools(server);
   registerLispHarnessTools(server);
-
-  // CAD MCP is optional at connector startup. The ChatGPT/file-tool surface
-  // remains healthy even if AutoCAD/CAD MCP is temporarily unavailable.
-  void registerCadProxyTools(server)
-    .then(() => server.sendToolListChanged())
-    .catch((error) =>
-      console.warn("[CAD MCP] proxy registration deferred:", error instanceof Error ? error.message : error)
-    );
+  registerCadProxyTools(server);
 
   return server;
 }
