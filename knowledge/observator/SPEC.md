@@ -2,13 +2,21 @@
 
 ## Purpose
 
-Observator is CadGPT's generic CAD entity property reader, drawing-scoped AppData log writer, and owner of the minimal Drawing Anchor used to bind persistent metadata to a DWG.
+Observator is CadGPT's generic CAD entity observation foundation, drawing-scoped AppData log writer, and owner of the minimal Drawing Anchor used to bind persistent metadata to a DWG.
 
 It is infrastructure for future Observation Jobs. This specification deliberately does not define any concrete Job such as create-system, numbering, tagging, or workflow recording.
 
 ## Core invariants
 
-> Observator reads complete direct properties of one or many CAD entities. Jobs decide what, when, and why to observe and persist.
+> Observator never needs to enumerate the whole drawing to discover what an Observation Job created.
+
+> While an Observation Job is active, the CAD host records only the identity of database objects appended after Job start. Property inspection is deferred until Job finalization.
+
+> At Job end, only surviving top-level drawing entities are candidates. Erased, undone, non-entity, block-definition, and nested objects are ignored.
+
+> Candidate type is read before full properties. Jobs decide which object types are relevant and only relevant candidates receive deep property inspection.
+
+> Observator reads direct properties only. V1 performs no nested entity traversal.
 
 > The Drawing Anchor is the only CAD database object Observator may create or modify.
 
@@ -24,17 +32,173 @@ It is infrastructure for future Observation Jobs. This specification deliberatel
 
 Observator V1 provides the following foundation capabilities:
 
-1. Read one or many CAD entities and return every directly discoverable, safely serializable property exposed by the CAD host adapter.
-2. Append caller-selected records to a drawing-scoped AppData JSONL log.
-3. Resolve the Drawing Anchor for an observed drawing.
-4. Lazily create the Drawing Anchor when Observator first needs persistent metadata for a drawing that has no anchor.
-5. Update the Drawing Anchor `last_revision` once at successful Observation Job completion.
+1. Start and stop lightweight appended-object capture for the explicitly bound drawing.
+2. During capture, retain only stable object identity needed for later resolution; do not inspect full properties.
+3. At finalization, resolve only objects observed since Job start and reduce them to surviving top-level drawing entities.
+4. Read lightweight candidate headers/type first.
+5. Read complete direct properties for one or many Job-approved candidates.
+6. Append caller-selected records to a drawing-scoped AppData JSONL log.
+7. Resolve the Drawing Anchor for an observed drawing.
+8. Lazily create the Drawing Anchor when Observator first needs persistent metadata for a drawing that has no anchor.
+9. Update the Drawing Anchor `last_revision` once at successful Observation Job completion.
 
-Single-object and multi-object reads use the same engine contract. The only difference is the number of entity references supplied by the caller.
+Single-object and multi-object property reads use the same engine contract. The only difference is the number of entity references supplied by the caller.
 
-## CAD read boundary
+## Observation capture lifecycle
 
-The CAD MCP primitive is:
+### Stage model
+
+An Observation Job uses a small lifecycle:
+
+```text
+idle
+→ capturing
+→ finalizing
+→ complete
+```
+
+The engine does not continuously inspect drawing content while `capturing`.
+
+### Start
+
+At Job start:
+
+```text
+Observation Job start
+→ bind to the intended drawing
+→ register a lightweight database append listener/reactor
+→ initialize an in-memory candidate-id set
+→ stage = capturing
+```
+
+The append listener records only identity such as object id/handle for newly appended database objects.
+
+It must not:
+
+- enumerate existing drawing entities;
+- read full properties;
+- recursively inspect blocks;
+- infer business meaning;
+- write Observation results merely because an append event fired.
+
+The purpose of the listener is only to remember which database objects appeared after this Job started.
+
+### During capture
+
+While the user works manually in AutoCAD, many temporary objects may be created, deleted, undone, copied, or consumed while creating a block.
+
+Observator does not need to interpret these intermediate steps.
+
+Example:
+
+```text
+Job starts
+→ user creates many lines/arcs/etc.
+→ user deletes or redraws some of them
+→ user selects the remaining geometry
+→ user creates a temporary block
+→ Job ends
+```
+
+The append listener may have seen many object ids during that process. That is acceptable because it stores identity only; no deep inspection has occurred.
+
+### End / finalization
+
+At Job end:
+
+```text
+stage = finalizing
+→ detach/stop append listener
+→ resolve only ids collected since Job start
+→ discard objects that no longer survive
+→ discard non-entity database objects
+→ discard entities owned by block definitions / nested containers
+→ retain only top-level ModelSpace/PaperSpace entities
+→ read lightweight object type/header
+→ Job applies its relevance predicate
+→ deep-read direct properties only for relevant candidates
+→ Job writes/finalizes its result
+→ update Drawing Anchor last_revision once
+→ stage = complete
+```
+
+The listener must be stopped before final candidate resolution so the candidate set has a clear boundary.
+
+## No full-drawing scan
+
+V1 must not use this pattern:
+
+```text
+Job start → snapshot every entity in drawing
+Job end   → enumerate every entity again
+           → diff two full-drawing sets
+```
+
+That design is forbidden because its cost scales with total drawing size.
+
+Instead:
+
+```text
+cost of discovery ≈ objects appended during this Observation Job
+```
+
+A drawing may contain millions of pre-existing entities without making Observation finalization proportional to those millions.
+
+If a Job sees 50 temporary allocations but the user finally creates one top-level BlockReference, final business processing may reduce to that one BlockReference after survivor/top-level filtering.
+
+## Candidate survival and top-level rule
+
+An object observed during capture is not automatically an Observation result.
+
+At finalization a candidate is ignored when it is:
+
+- erased or otherwise no longer resolvable;
+- undone/unappended and not present in the final Job state;
+- a non-entity database object;
+- contained in a block definition;
+- nested under another entity/container rather than present directly in ModelSpace or PaperSpace.
+
+V1 observes final top-level drawing results, not construction history inside those results.
+
+Therefore, when a user creates many entities and then turns them into one block, Observator does not traverse the block definition. The top-level BlockReference is the candidate visible to the Observation Job.
+
+## Lightweight type gate before deep read
+
+Finalization is two-stage:
+
+```text
+surviving top-level candidate
+→ lightweight read: identity + ObjectName/object type (+ space when needed)
+→ Job predicate
+   ├─ irrelevant → stop
+   └─ relevant   → full direct-property read
+```
+
+This keeps the expensive generic property reader away from irrelevant objects.
+
+The exact business predicate belongs to the Observation Job, not Observator Engine.
+
+## CAD host capture primitive
+
+V1 requires the CAD host adapter to provide a drawing-scoped appended-object capture mechanism.
+
+The mechanism may be implemented using a host-native database append reactor/event. It must satisfy this contract:
+
+```text
+start capture on bound drawing
+→ receive append events locally inside AutoCAD
+→ record stable object identities only
+→ stop capture
+→ return/resolve the captured candidate identities
+```
+
+The implementation must not simulate this capability by polling or repeatedly enumerating the whole drawing.
+
+Exact CAD MCP tool names are implementation details until the capture primitive is coded.
+
+## CAD property read boundary
+
+The existing deep-read CAD MCP primitive is:
 
 ```text
 cad_read_entity_properties(handles[], include_paper_space?)
@@ -52,6 +216,8 @@ For each requested handle it returns:
 - an explicit `nested_traversal: false` marker.
 
 The reader is entity-generic. It is not limited to the entity classes recognized by the older structured entity mapper.
+
+The capture finalizer must not call this full reader for every appended object. It first performs the lightweight type gate described above.
 
 ### No nested traversal
 
@@ -190,12 +356,16 @@ Canonical successful completion:
 
 ```text
 1. parent = anchor.last_revision
-2. Job performs its observation behavior.
-3. Allocate a new unique hierarchical revision label in AppData.
-4. Store parent_revision = parent.
-5. Job writes/finalizes its selected AppData result/log.
-6. Observator updates anchor.last_revision to the new revision exactly once.
-7. Job is complete.
+2. stage = capturing; host records appended-object identities only.
+3. Job reaches its explicit end boundary.
+4. stage = finalizing; stop capture and resolve surviving top-level candidates.
+5. Read candidate type/header and let the Job select relevant candidates.
+6. Deep-read direct properties only for selected candidates.
+7. Allocate a new unique hierarchical revision label in AppData.
+8. Store parent_revision = parent.
+9. Job writes/finalizes its selected AppData result/log.
+10. Observator updates anchor.last_revision to the new revision exactly once.
+11. stage = complete; Job is complete.
 ```
 
 This is an Observator lifecycle checkpoint only. It does not assert that AutoCAD has saved the drawing to disk.
@@ -237,7 +407,7 @@ drawing_id
 <caller supplied payload>
 ```
 
-The engine does not choose which properties should be persisted. A future Job may read a complete entity snapshot and write only a small projection of it.
+The engine does not choose which properties should be persisted. A Job may receive a complete direct snapshot for a relevant candidate and write only a small projection of it.
 
 During the current foundation slice, the low-level logger may still receive `drawing_id` directly from its caller. Once the Drawing Anchor primitive is implemented, Observation Job orchestration must resolve `drawing_id` through the anchor instead of treating file path/name as drawing identity.
 
@@ -245,19 +415,15 @@ During the current foundation slice, the low-level logger may still receive `dra
 
 Observator Engine does not define:
 
-- which entities should be read;
-- how a user selects one or many objects;
-- whether an entity is new, modified, copied, or relevant;
-- entity predicates or filters for a business workflow;
+- which appended object types are relevant to a concrete Job;
+- business predicates or filters;
 - which properties a Job keeps;
 - semantic meaning such as equipment, duct, fitting, grille, or system membership;
-- concrete Job start/stop behavior;
-- business logic for Observation Jobs;
-- mouse monitoring;
-- command monitoring;
-- command-line recording;
-- UI interaction recording;
-- workflow recording or workflow inference;
+- UI workflow recording;
+- mouse movement recording;
+- command-line transcription;
+- inference of the user's intermediate construction steps;
+- nested/block-definition content inspection;
 - AutoCAD save policy;
 - verification that the current DWG state has been persisted to disk.
 
@@ -266,15 +432,20 @@ Those decisions belong to Job behavior or other runtime concerns.
 ## Read/write boundary
 
 ```text
-CAD
- ↑ read normal entities
- │
- │  only mutation exception:
- │  create/update Drawing Anchor
- │
-Observator Engine
- ↓ append caller-selected records
-AppData/drawings/<drawing_id>/...
+AutoCAD database append events
+        ↓ identity only
+Observator capture
+        ↓ at Job end
+surviving top-level candidates
+        ↓ type gate
+Job relevance predicate
+        ↓ selected handles only
+Observator direct-property reader
+        ↓
+Job-selected AppData records
+
+CAD mutation exception:
+Observator may create/update Drawing Anchor only.
 ```
 
 ## Future Job usage
@@ -285,13 +456,21 @@ A future Observation Job may conceptually do this:
 Job starts
 → Observator resolves/creates Drawing Anchor
 → parent = anchor.last_revision
-→ Job chooses entity references
-→ Observator reads full direct property snapshots
-→ Job evaluates/filter/selects properties
-→ allocate unique hierarchical revision with parent_revision = parent
+→ start appended-object capture
+
+user works manually in AutoCAD
+→ capture only remembers newly appended object identities
+
+Job ends
+→ stop capture
+→ resolve surviving top-level entities only
+→ lightweight type/header read
+→ Job filters candidates
+→ full direct-property read only for relevant candidates
+→ allocate hierarchical revision with parent_revision = parent
 → Job writes/finalizes AppData result
 → Observator updates anchor.last_revision once
 → Job completes
 ```
 
-The filtering, timing, semantics, entity relevance, and persistence projection in that example are Job behavior, not Observator Engine behavior.
+The business filtering, semantics, and persistence projection belong to the Observation Job. The capture mechanism and direct-property reader are generic Observator infrastructure.
