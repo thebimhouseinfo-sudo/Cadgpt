@@ -18,6 +18,59 @@ jobs:
         run: npm install
       - name: Build connector
         run: npm run build
+      - name: Smoke test HTTP MCP surface
+        shell: pwsh
+        run: |
+          $env:CAD_MCP_PYTHON = "python"
+          $env:CAD_MCP_ENTRY = "runtimes\cad-mcp\main.py"
+          $proc = Start-Process -FilePath "node" -ArgumentList "dist/index.js" -PassThru -NoNewWindow
+          try {
+            $ready = $false
+            foreach ($i in 1..40) {
+              try {
+                $health = Invoke-RestMethod -Uri "http://127.0.0.1:3000/health" -Method Get -TimeoutSec 1
+                if ($health.status -eq "ok") { $ready = $true; break }
+              } catch {}
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not $ready) { throw "CadGPT /health did not become ready" }
+
+            $headers = @{ Accept = "application/json, text/event-stream" }
+            $initBody = @{
+              jsonrpc = "2.0"
+              id = 1
+              method = "initialize"
+              params = @{
+                protocolVersion = "2025-06-18"
+                capabilities = @{}
+                clientInfo = @{ name = "cadgpt-ci"; version = "0.1.0" }
+              }
+            } | ConvertTo-Json -Depth 10
+            $initResp = Invoke-WebRequest -Uri "http://127.0.0.1:3000/mcp" -Method Post -Headers $headers -ContentType "application/json" -Body $initBody
+            if ($initResp.StatusCode -ne 200) { throw "MCP initialize failed" }
+            $sessionId = $initResp.Headers["Mcp-Session-Id"]
+            if (-not $sessionId) { throw "MCP initialize returned no session id" }
+
+            $mcpHeaders = @{
+              Accept = "application/json, text/event-stream"
+              "Mcp-Session-Id" = $sessionId
+              "Mcp-Protocol-Version" = "2025-06-18"
+            }
+            $initializedBody = @{ jsonrpc = "2.0"; method = "notifications/initialized" } | ConvertTo-Json
+            $null = Invoke-WebRequest -Uri "http://127.0.0.1:3000/mcp" -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body $initializedBody
+
+            $toolsBody = @{ jsonrpc = "2.0"; id = 2; method = "tools/list"; params = @{} } | ConvertTo-Json -Depth 5
+            $toolsResp = Invoke-WebRequest -Uri "http://127.0.0.1:3000/mcp" -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body $toolsBody
+            $toolsJson = $toolsResp.Content | ConvertFrom-Json
+            $names = @($toolsJson.result.tools | ForEach-Object { $_.name })
+            foreach ($required in @("file_roots", "file_read", "file_search", "job_list", "job_get", "cad_status", "drawing_list", "drawing_bind", "drawing_status")) {
+              if ($names -notcontains $required) { throw "Missing MCP tool: $required" }
+            }
+            Write-Host "HTTP MCP smoke passed; tools=$($names.Count)"
+          }
+          finally {
+            if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
 
   cad-runtime-smoke:
     runs-on: windows-latest
