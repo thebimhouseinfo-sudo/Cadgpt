@@ -12,7 +12,9 @@ It is infrastructure for future Observation Jobs. This specification deliberatel
 
 > The Drawing Anchor is the only CAD entity Observator may create or modify.
 
-> A completed Observation Job finalizes its AppData result first, then updates the Drawing Anchor exactly once as its final persistent checkpoint.
+> A completed Observation Job writes/finalizes its AppData result, then updates the Drawing Anchor exactly once.
+
+> Anchor state is independent of AutoCAD save state. Observator does not certify that the latest in-memory DWG or anchor update has been persisted to disk.
 
 ## Engine responsibilities
 
@@ -68,7 +70,7 @@ The anchor is created **lazily** when Observator first needs persistent metadata
 ```text
 Observation Job requires persistent drawing metadata
 → resolve Drawing Anchor
-   ├─ found     → read stable drawing identity/checkpoint
+   ├─ found     → read stable drawing identity/job checkpoint
    └─ not found → create drawing identity
                   insert Drawing Anchor
                   create AppData drawing root
@@ -93,39 +95,59 @@ not allowed
   tag/number drawing content
 ```
 
-The physical anchor representation is intentionally not fixed by this specification yet. It may later be implemented as an appropriate AutoCAD entity/protocol, but the logical contract below is authoritative.
+The physical anchor representation is intentionally not fixed by this specification yet. It must be an AutoCAD entity owned by Observator, but the exact representation/encoding remains open until implementation selection.
 
-The anchor stores only minimal persistent identity/checkpoint information. Semantic system/member metadata remains external in AppData.
+The anchor stores only minimal persistent identity/job-checkpoint information. Semantic system/member metadata remains external in AppData.
 
 Logical anchor information includes at least:
 
 ```text
 drawing_id
 schema_version
-last_committed_observation_revision
+last_completed_observation_revision
 ```
 
-A committed timestamp may also be stored for diagnostics. Exact physical field names/encoding remain implementation details until the anchor representation is selected.
+A completed timestamp may also be stored for diagnostics. Exact physical field names/encoding remain implementation details until the anchor representation is selected.
 
-See `DRAWING_ANCHOR.md` for the full lifecycle and crash semantics.
+See `DRAWING_ANCHOR.md` for the full lifecycle and save/crash semantics.
 
-## Observation Job commit boundary
+## Observation Job completion boundary
 
-Anchor update is part of the Observation Job completion path. It must not be delegated to application shutdown, AutoCAD save events, cache flushing, process cleanup, or an external background engine because those events are not reliable completion boundaries.
+Anchor update is part of the Observation Job completion path. It must not be delegated to application shutdown, AutoCAD save events, cache flushing, process cleanup, or an external background engine.
 
 Canonical successful completion:
 
 ```text
 1. Job performs its observation behavior.
-2. Job writes/updates its AppData result.
-3. Job validates/finalizes that AppData result.
+2. Job writes/updates its AppData result/log.
+3. Job finalizes that AppData result.
 4. Observator updates the Drawing Anchor exactly once.
 5. Job is complete.
 ```
 
-The anchor therefore represents the last Observation Job state that is known to have completed its persistent commit path.
+This is an Observator lifecycle checkpoint only. It does **not** assert that AutoCAD has saved the drawing to disk.
 
-If a process or AutoCAD session terminates before the final anchor update, the previous anchor checkpoint remains intact and can be used during recovery/reconciliation.
+No `Save()` operation is required by this contract.
+
+## Reopen semantics
+
+When a drawing is reopened, Observator trusts the anchor physically present in that DWG copy as the checkpoint associated with that copy.
+
+AppData may contain later observation revisions. Observator must not automatically treat those later revisions as authoritative over the opened DWG because the user may intentionally be opening an older saved version.
+
+Therefore:
+
+```text
+anchor revision in opened DWG
+= checkpoint carried by this DWG copy
+
+latest AppData revision
+= later historical information that may exist
+
+latest AppData revision != automatic replacement for anchor revision
+```
+
+Any future reconciliation behavior must preserve that distinction.
 
 ## AppData log boundary
 
@@ -167,9 +189,11 @@ Observator Engine does not define:
 - command monitoring;
 - command-line recording;
 - UI interaction recording;
-- workflow recording or workflow inference.
+- workflow recording or workflow inference;
+- AutoCAD save policy;
+- verification that the current DWG state has been persisted to disk.
 
-Those decisions belong to Job behavior or other future runtime components.
+Those decisions belong to Job behavior or other runtime concerns.
 
 ## Read/write boundary
 
