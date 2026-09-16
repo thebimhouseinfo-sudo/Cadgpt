@@ -7,6 +7,39 @@ import {
   type ObservationLogRecord,
 } from "./log-store.js";
 
+function assertCadAvailable(): void {
+  if (!cadUpstream.status().enabled) {
+    throw new Error("CAD backend is sleeping. AutoCAD must be running and CadGPT must be active.");
+  }
+}
+
+export async function startObservationCapture(server: McpServer): Promise<unknown> {
+  assertCadAvailable();
+  await ensureBoundDrawingActive(server);
+  return cadUpstream.callTool("cad_observation_capture_start", {});
+}
+
+export async function observationCaptureStatus(): Promise<unknown> {
+  assertCadAvailable();
+  return cadUpstream.callTool("cad_observation_capture_status", {});
+}
+
+export async function finishObservationCapture(
+  server: McpServer,
+  includePaperSpace = true
+): Promise<unknown> {
+  assertCadAvailable();
+  await ensureBoundDrawingActive(server);
+  return cadUpstream.callTool("cad_observation_capture_finish", {
+    include_paper_space: includePaperSpace,
+  });
+}
+
+export async function cancelObservationCapture(): Promise<unknown> {
+  assertCadAvailable();
+  return cadUpstream.callTool("cad_observation_capture_cancel", {});
+}
+
 export async function readEntityProperties(
   server: McpServer,
   handles: string[],
@@ -15,9 +48,7 @@ export async function readEntityProperties(
   if (!Array.isArray(handles) || handles.length === 0) {
     throw new Error("handles must be a non-empty array");
   }
-  if (!cadUpstream.status().enabled) {
-    throw new Error("CAD backend is sleeping. AutoCAD must be running and CadGPT must be active.");
-  }
+  assertCadAvailable();
 
   await ensureBoundDrawingActive(server);
   return cadUpstream.callTool("cad_read_entity_properties", {
