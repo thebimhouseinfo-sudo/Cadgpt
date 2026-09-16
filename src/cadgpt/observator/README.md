@@ -4,45 +4,45 @@ Implementation primitives for CadGPT Observator.
 
 Current foundation:
 
-- `engine.ts` bridges the explicitly bound CAD drawing to the CAD MCP direct-property reader and exposes the generic log writer.
+- `engine.ts` bridges the explicitly bound drawing to CAD MCP Observation capture, lightweight candidate finalization, direct-property reads, and the generic log writer.
 - `log-store.ts` appends caller-selected JSON records under `AppData/drawings/<drawing_id>/observator/`.
+- CAD MCP exposes `cad_observation_capture_start`, `cad_observation_capture_status`, `cad_observation_capture_finish`, and `cad_observation_capture_cancel`.
+- `cad_read_entity_properties` resolves requested handles directly with `HandleToObject`; it no longer enumerates ModelSpace/PaperSpace to find them.
 
-The next engine primitives are:
+The remaining major engine primitive is Drawing Anchor support.
 
-1. Drawing Anchor support;
-2. drawing-scoped appended-object capture for Observation Jobs;
-3. lightweight candidate type/header resolution before full direct-property reads.
+## Implemented capture model
 
-## Required capture model
+Observation discovery does not enumerate the whole drawing at Job start or Job end.
 
-Observation discovery must not enumerate the whole drawing at Job start or Job end.
-
-The CAD host should use a database append event/reactor while an Observation Job is active:
+The CAD host uses the AutoCAD document `ObjectAdded` event while an Observation Job is active:
 
 ```text
 Job start
-→ register append listener on explicitly bound drawing
+→ register ObjectAdded listener on explicitly bound drawing
 → stage = capturing
 
-append event
-→ store object identity only
+ObjectAdded
+→ store entity handle only
 → no full property read
 
 Job end
 → stage = finalizing
 → stop listener
-→ resolve captured identities only
+→ resolve captured handles only
 → discard no-longer-existing / erased / undone objects
-→ discard non-entity and block-definition/nested content
+→ discard block-definition/nested content
 → keep top-level ModelSpace/PaperSpace entities
-→ read lightweight object type/header
+→ return identity + ObjectName/type header
 → Job chooses relevant candidates
-→ full direct-property read only for selected candidates
+→ full direct-property read only for selected handles
 ```
+
+The event listener runs on its own COM-initialized message-pump thread so it can remain active while the user works manually in AutoCAD between MCP calls. The event callback records only `Handle`; it does not perform interactive work or deep inspection.
 
 The listener may see many temporary allocations. This is expected and cheap because capture stores identity only. Finalization is based on the final surviving state.
 
-V1 never recursively inspects block contents. If the user creates many entities and then creates one block before ending the Job, final processing should reduce to the surviving top-level `BlockReference`; block-definition contents are ignored.
+V1 never recursively inspects block contents. If the user creates many entities and then creates one block before ending the Job, final processing reduces to surviving top-level entities such as the final `BlockReference`; block-definition contents are ignored.
 
 This gives the intended scaling property:
 
@@ -51,8 +51,6 @@ Observation discovery cost
 ≈ objects appended during this Job
 != total entities in the drawing
 ```
-
-The capture primitive must be implemented inside the CAD host boundary using a native database append event/reactor or equivalent. It must not be emulated by periodic/full-drawing polling.
 
 ## Drawing Anchor boundary
 
