@@ -64,8 +64,12 @@ if not exist ".env" (
 echo.
 echo [1/9] Initializing CadGPT Beta AppData...
 for %%D in (
+  "appdata\libraries\lisp"
+  "appdata\libraries\jobs"
+  "appdata\registry\user"
+  "appdata\workspace\lisp-draft"
+  "appdata\workspace\job-draft"
   "appdata\data\runs"
-  "appdata\lisp-draft"
   "appdata\runtime\dynamic-lisp"
   "appdata\state"
   "appdata\logs"
@@ -144,6 +148,7 @@ echo It starts automatically when you sign in to Windows.
 echo Full CadGPT wakes only after ChatGPT calls it.
 echo CAD MCP runs only while CadGPT is active and AutoCAD is running.
 echo Beta AppData is stored under repo\appdata and can move to per-user LocalAppData when packaged.
+echo User Lisp/Job source folders are imported read-only into managed AppData copies.
 echo No daily launcher is required.
 echo.
 echo Enable ChatGPT Developer Mode and add/select the CadGPT tunnel connection once.
