@@ -10,7 +10,7 @@ During Beta, the app-data root is intentionally inside the repository:
 appdata/
 ```
 
-Runtime code must resolve it through `CADGPT_APPDATA_ROOT` / the shared appdata helper rather than hard-coding the repository path.
+Runtime code resolves it through `CADGPT_APPDATA_ROOT` / the shared appdata helper rather than hard-coding the repository path.
 
 For a packaged build, the same virtual `appdata/...` paths can move to a per-user location such as:
 
@@ -18,7 +18,7 @@ For a packaged build, the same virtual `appdata/...` paths can move to a per-use
 %LOCALAPPDATA%\CadGPT\
 ```
 
-without changing capability logic.
+without changing capability logic or ChatGPT-facing paths.
 
 ## Layout
 
@@ -43,8 +43,19 @@ appdata/
 
 Only this README is committed. Generated AppData contents are ignored by Git.
 
+General file tools expose only:
+
+```text
+appdata/data/**
+appdata/lisp-draft/**
+```
+
+`runtime/**`, `state/**`, and `logs/**` are internal CadGPT areas rather than generic model-editable filesystem roots.
+
 ## Lisp promotion
 
 A new or substantially changed Lisp should normally live in `appdata/lisp-draft/**` while it is being authored and tested.
 
-After the applicable static/load/runtime gates pass, promote it into permanent `lisp/**`. Promotion must update `registry/lisp-registry.json` in the same workflow so permanent library source and semantic discovery metadata cannot drift.
+After the applicable static/load/runtime gates pass, promote it into permanent `lisp/**` with `lisp_promote_draft`. Promotion re-validates the source and updates `registry/lisp-registry.json` together with the permanent file. The operation rolls the permanent file back if the registry update fails.
+
+Runtime dynamic Lisp instances stay under `appdata/runtime/dynamic-lisp/**` unless the user explicitly decides to turn one into a reusable permanent template/capability.
