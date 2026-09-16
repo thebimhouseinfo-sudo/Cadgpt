@@ -73,7 +73,31 @@ Run:
 doctor.bat
 ```
 
-Doctor checks the local environment, dependency versions, file roots, CAD MCP import, CadGPT HTTP health, Secure MCP Tunnel configuration/health, and tunnel-client doctor result.
+Doctor checks the local environment, dependency versions, file roots, CAD MCP import, CadGPT HTTP health, Secure MCP Tunnel configuration/health, tunnel-client doctor result, and reports whether AutoCAD COM is currently reachable.
+
+## Pre-EXE local acceptance
+
+Before packaging CadGPT as an EXE, run the real-host acceptance gate on the intended Windows/AutoCAD machine:
+
+```bat
+acceptance.bat
+```
+
+The acceptance gate verifies the proven BAT/runtime contract rather than simulating AutoCAD in CI. It checks:
+
+1. `run.bat` startup;
+2. `doctor.ps1`;
+3. protected MCP session/tool discovery;
+4. live AutoCAD drawing discovery;
+5. creation and binding of a **new unsaved blank test drawing**;
+6. verified AutoLISP load using `lisp/_cadgpt-system/CADGPT_LOAD_SMOKE.lsp`;
+7. safe no-op AutoLISP command dispatch.
+
+The acceptance script never chooses an existing project drawing for mutation. The blank test drawing is intentionally left unsaved and should be closed manually after the test.
+
+If AutoCAD cannot create a new drawing programmatically on a particular host, the write-lisp workflow must fall back to asking the user to open a blank/test drawing manually; it must not silently use the project drawing.
+
+CI validates source/build/tool-surface behavior, but this local acceptance gate is the authority for COM/AutoCAD/tunnel behavior that requires the real host.
 
 ## Local file boundary
 
@@ -89,6 +113,17 @@ Paths outside these roots, including traversal attempts, are rejected. There is 
 ## Drawing binding
 
 CadGPT does not treat AutoCAD `ActiveDocument` as the session target. A ChatGPT MCP session explicitly binds one open drawing. CAD operations exposed through CadGPT must re-establish that bound drawing before execution so changing AutoCAD tabs does not silently retarget the session.
+
+## AutoLISP testing rule
+
+Changed production AutoLISP is not complete after static validation alone. Before handoff it must pass a real AutoCAD load test.
+
+When `write-lisp` is ready to test, it asks whether to:
+
+- create/use a new blank test drawing; or
+- test on the currently bound drawing.
+
+Testing on the current drawing requires explicit user choice. If the command requires manual selections, points, dialogs, or prompts, CadGPT stops after verified load and asks the user to test the command manually in the chosen test drawing.
 
 ## Development status
 
