@@ -1,0 +1,50 @@
+name: Generate dependency locks
+
+on:
+  push:
+    branches: [phase8-reproducible-install]
+
+permissions:
+  contents: write
+
+jobs:
+  generate-locks:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase8-reproducible-install
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Generate npm lockfile
+        shell: pwsh
+        run: npm install --package-lock-only --ignore-scripts
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate CAD MCP Python lock
+        shell: pwsh
+        run: |
+          python -m venv .lock-venv
+          .\.lock-venv\Scripts\python.exe -m pip install --disable-pip-version-check -r runtimes\cad-mcp\requirements.txt
+          .\.lock-venv\Scripts\python.exe -m pip freeze | Out-File -FilePath runtimes\cad-mcp\requirements.lock.txt -Encoding ascii
+          Get-Content runtimes\cad-mcp\requirements.lock.txt
+
+      - name: Commit generated locks
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json runtimes/cad-mcp/requirements.lock.txt
+          if (git diff --cached --quiet) {
+            Write-Host "Dependency locks are already up to date."
+            exit 0
+          }
+          git commit -m "Lock Node and CAD MCP dependencies"
+          git push origin HEAD:phase8-reproducible-install
