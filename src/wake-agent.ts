@@ -27,6 +27,7 @@ let tunnelChild: ChildProcess | null = null;
 let coreStarting: Promise<void> | null = null;
 let tunnelStarting: Promise<void> | null = null;
 let lastAutoCadRunning = false;
+let chatgptActivated = false;
 
 function log(message: string, level = "INFO"): void {
   const line = `${new Date().toISOString()} [${level}] ${message}`;
@@ -102,7 +103,7 @@ function detectAutoCad(): Promise<boolean> {
   });
 }
 
-async function ensureCore(reason: "chatgpt" | "autocad"): Promise<void> {
+async function ensureCore(): Promise<void> {
   if (await coreHealth()) return;
   if (coreStarting) return coreStarting;
 
@@ -110,17 +111,12 @@ async function ensureCore(reason: "chatgpt" | "autocad"): Promise<void> {
     const entry = path.join(ROOT, "dist", "index.js");
     if (!fs.existsSync(entry)) throw new Error("dist/index.js is missing; run setup.bat");
 
-    log(`Waking full CadGPT MCP because ${reason} was detected.`);
+    log("Waking full CadGPT MCP because ChatGPT called CadGPT.");
     coreChild = spawn(process.execPath, [entry], {
       cwd: ROOT,
       windowsHide: true,
       stdio: ["ignore", "ignore", "ignore"],
-      env: {
-        ...process.env,
-        HOST,
-        PORT: String(CORE_PORT),
-        CADGPT_WOKEN_BY: reason,
-      },
+      env: { ...process.env, HOST, PORT: String(CORE_PORT), CADGPT_WOKEN_BY: "chatgpt" },
     });
     coreChild.once("exit", (code, signal) => {
       log(`Full CadGPT MCP exited (code=${code ?? "null"}, signal=${signal ?? "null"}).`, "WARN");
@@ -131,14 +127,11 @@ async function ensureCore(reason: "chatgpt" | "autocad"): Promise<void> {
       if (await coreHealth()) return;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    throw new Error("Full CadGPT MCP did not become ready after wake request");
+    throw new Error("Full CadGPT MCP did not become ready after ChatGPT wake request");
   })();
 
-  try {
-    await coreStarting;
-  } finally {
-    coreStarting = null;
-  }
+  try { await coreStarting; }
+  finally { coreStarting = null; }
 }
 
 async function ensureTunnel(): Promise<void> {
@@ -170,17 +163,15 @@ async function ensureTunnel(): Promise<void> {
     });
   })();
 
-  try {
-    await tunnelStarting;
-  } finally {
-    tunnelStarting = null;
-  }
+  try { await tunnelStarting; }
+  finally { tunnelStarting = null; }
 }
 
 async function activateCadForHost(): Promise<void> {
-  await ensureCore("autocad");
+  if (!chatgptActivated || !lastAutoCadRunning) return;
+  if (!(await coreHealth())) return;
   if (!(await postCoreControl("activate"))) {
-    log("AutoCAD is running but CAD MCP activation did not succeed.", "WARN");
+    log("ChatGPT is active and AutoCAD is running, but CAD MCP activation did not succeed.", "WARN");
   }
 }
 
@@ -192,8 +183,12 @@ async function deactivateCadForHost(): Promise<void> {
 }
 
 async function proxyToCore(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  await ensureCore("chatgpt");
-  if (lastAutoCadRunning) await postCoreControl("activate");
+  if (!chatgptActivated) {
+    chatgptActivated = true;
+    log("First ChatGPT CadGPT request detected; leaving lazy mode.");
+  }
+  await ensureCore();
+  if (lastAutoCadRunning) await activateCadForHost();
 
   const headers = { ...req.headers, host: `${HOST}:${CORE_PORT}` };
   const upstream = http.request(
@@ -207,9 +202,7 @@ async function proxyToCore(req: IncomingMessage, res: ServerResponse): Promise<v
     if (!res.headersSent) {
       res.writeHead(502, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: false, error: `CadGPT core proxy failed: ${error.message}` }));
-    } else {
-      res.destroy(error);
-    }
+    } else { res.destroy(error); }
   });
   req.pipe(upstream);
 }
@@ -219,7 +212,8 @@ async function writeState(): Promise<void> {
   const state = {
     timestamp: new Date().toISOString(),
     wake_pid: process.pid,
-    mode: core ? "active" : "lazy",
+    mode: chatgptActivated ? "active" : "lazy",
+    chatgpt_activated: chatgptActivated,
     external_port: PORT,
     core_port: CORE_PORT,
     tunnel_ready: await tunnelReady(),
@@ -240,7 +234,8 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({
         status: "ok",
         name: "cadgpt",
-        mode: core ? "active" : "lazy",
+        mode: chatgptActivated ? "active" : "lazy",
+        chatgpt_activated: chatgptActivated,
         pid: process.pid,
         uptime_seconds: Math.floor((Date.now() - STARTED_AT) / 1000),
         wake_agent: true,
@@ -260,9 +255,8 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    try {
-      await proxyToCore(req, res);
-    } catch (error) {
+    try { await proxyToCore(req, res); }
+    catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log(`Wake/proxy failed: ${message}`, "ERROR");
       if (!res.headersSent) {
@@ -274,21 +268,28 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  log(`CadGPT wake-agent listening on http://${HOST}:${PORT}; MCP path protected=${Boolean(MCP_TOKEN)}.`);
+  log(`CadGPT wake-agent listening on http://${HOST}:${PORT}; waiting for ChatGPT request.`);
 });
 
 const poll = setInterval(() => {
   void (async () => {
     await ensureTunnel().catch((error) => log(`Tunnel check failed: ${String(error)}`, "WARN"));
     const running = await detectAutoCad();
+
     if (running && !lastAutoCadRunning) {
-      log("AutoCAD process detected; activating CAD MCP.");
-      await activateCadForHost().catch((error) => log(`AutoCAD activation failed: ${String(error)}`, "WARN"));
+      log(chatgptActivated
+        ? "AutoCAD process detected after ChatGPT activation; activating CAD MCP."
+        : "AutoCAD process detected while CadGPT is still lazy; CAD MCP remains off.");
+      lastAutoCadRunning = true;
+      if (chatgptActivated) await activateCadForHost().catch((error) => log(`CAD activation failed: ${String(error)}`, "WARN"));
     } else if (!running && lastAutoCadRunning) {
-      log("AutoCAD process closed; shutting down CAD MCP.");
-      await deactivateCadForHost().catch((error) => log(`AutoCAD deactivation failed: ${String(error)}`, "WARN"));
+      lastAutoCadRunning = false;
+      log("AutoCAD process closed; shutting down CAD MCP if active.");
+      await deactivateCadForHost().catch((error) => log(`CAD deactivation failed: ${String(error)}`, "WARN"));
+    } else {
+      lastAutoCadRunning = running;
     }
-    lastAutoCadRunning = running;
+
     await writeState().catch(() => undefined);
   })();
 }, POLL_MS);
@@ -297,7 +298,7 @@ poll.unref?.();
 void ensureTunnel();
 void detectAutoCad().then(async (running) => {
   lastAutoCadRunning = running;
-  if (running) await activateCadForHost().catch((error) => log(`Initial AutoCAD activation failed: ${String(error)}`, "WARN"));
+  if (running) log("AutoCAD is already running, but CadGPT remains lazy until ChatGPT calls it.");
   await writeState().catch(() => undefined);
 });
 
