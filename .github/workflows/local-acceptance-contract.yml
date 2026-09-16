@@ -17,9 +17,7 @@ jobs:
             $errors = $null
             $tokens = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
-              (Resolve-Path $script),
-              [ref]$tokens,
-              [ref]$errors
+              (Resolve-Path $script), [ref]$tokens, [ref]$errors
             ) | Out-Null
             if ($errors.Count -gt 0) {
               $errors | ForEach-Object { Write-Error "${script}: $($_.Message)" }
@@ -36,24 +34,24 @@ jobs:
           }
           $run = Get-Content run.bat -Raw
           foreach ($action in @("install", "start", "stop", "restart", "status", "uninstall")) {
-            if ($run -notmatch [regex]::Escape($action)) { throw "run.bat is missing driver control action: $action" }
+            if ($run -notmatch [regex]::Escape($action)) { throw "run.bat missing driver action: $action" }
           }
-          if ($run -notmatch "agent-task\.ps1") { throw "run.bat does not delegate to the background-agent controller" }
+          if ($run -notmatch "agent-task\.ps1") { throw "run.bat does not delegate to background-agent controller" }
           $setup = Get-Content setup.bat -Raw
-          if ($setup -notmatch 'run\.bat" install') { throw "setup.bat does not install the CadGPT background autostart task" }
+          if ($setup -notmatch 'run\.bat" install') { throw "setup.bat does not install background autostart task" }
           Write-Host "Driver-style BAT/background-agent contract OK"
 
-      - name: Verify safe AutoLISP smoke fixture contract
+      - name: Verify safe internal AutoLISP smoke fixture
         shell: pwsh
         run: |
-          $path = "lisp/_cadgpt-system/CADGPT_LOAD_SMOKE.lsp"
-          if (-not (Test-Path $path)) { throw "Missing AutoLISP smoke fixture" }
+          $path = "resources/cad/CADGPT_LOAD_SMOKE.lsp"
+          if (-not (Test-Path $path)) { throw "Missing internal AutoLISP smoke fixture" }
           $source = Get-Content $path -Raw
           foreach ($required in @(
-            "TBH-HEADER-START",
-            "TBH-HEADER-END",
-            "File        : CADGPT_LOAD_SMOKE.lsp",
-            "Command     : CADGPT_LOAD_SMOKE",
+            "CADGPT-HEADER-START",
+            "CADGPT-HEADER-END",
+            "File         : CADGPT_LOAD_SMOKE.lsp",
+            "Command      : CADGPT_LOAD_SMOKE",
             "(vl-load-com)",
             "(defun c:CADGPT_LOAD_SMOKE",
             "(princ)"
@@ -63,4 +61,5 @@ jobs:
           if ($source -match "\(command\b|\(entdel\b|\.Delete\(|vla-delete") {
             throw "Smoke fixture contains a mutating/destructive primitive"
           }
-          Write-Host "Safe AutoLISP smoke fixture contract OK"
+          if ($source -match "TBH-HEADER") { throw "Internal CadGPT fixture must not use TBH header" }
+          Write-Host "Safe internal AutoLISP smoke fixture contract OK"
