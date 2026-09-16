@@ -3,32 +3,9 @@ import path from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import { getUserCapabilitiesPath } from "../lib/appdata.js";
 import { getRepoRoot } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
-
-interface LispEntry {
-  id: string;
-  title: string;
-  ai_mode: "static" | "dynamic";
-  class: string;
-  subclass: string;
-  tags: string[];
-  module: string;
-  commands: string[];
-  path?: string;
-  summary: string;
-  when_to_use: string[];
-  targets: string[];
-  inputs: string[];
-  effects: string[];
-  interaction: "interactive" | "non-interactive";
-  load_behavior: "define_only" | "execute_on_load";
-  mutates_drawing: boolean;
-  destructive: boolean;
-  risk: "low" | "medium" | "high";
-  dynamic_parameters: string[];
-  implementation_notes: string[];
-}
 
 interface ToolManifestEntry {
   name: string;
@@ -44,40 +21,31 @@ const INTERNAL_CAD_TOOLS = new Set([
 ]);
 
 const CORE_TOOLS = [
-  { name: "file_roots", class: "local.files", summary: "Show the source and editable AppData roots that CadGPT file tools can access." },
-  { name: "file_list", class: "local.files", summary: "List files/directories inside lisp/**, jobs/**, appdata/data/** or appdata/lisp-draft/**." },
-  { name: "file_read", class: "local.files", summary: "Read a UTF-8 text file inside the CadGPT source/AppData sandbox." },
-  { name: "file_search", class: "local.files", summary: "Search text inside sandboxed source or editable AppData files." },
-  { name: "file_create", class: "local.files", summary: "Create a permitted text file inside the CadGPT source/AppData sandbox." },
-  { name: "file_edit", class: "local.files", summary: "Apply an exact bounded text edit inside the CadGPT source/AppData sandbox." },
-  { name: "job_list", class: "workflow.jobs", summary: "List available repeatable CadGPT Jobs." },
-  { name: "job_get", class: "workflow.jobs", summary: "Load the exact JOB.md contract for one selected Job." },
-  { name: "skill_list", class: "skills", summary: "List read-only CadGPT skill resources." },
-  { name: "skill_get", class: "skills", summary: "Load one selected skill resource." },
-  { name: "lisp_scaffold", class: "lisp.authoring", summary: "Create a canonical TBH AutoLISP scaffold for a new command." },
-  { name: "lisp_validate", class: "lisp.authoring", summary: "Statically validate a permanent AutoLISP source file under lisp/**." },
-  { name: "lisp_draft_validate", class: "lisp.authoring", summary: "Statically validate an AutoLISP work-in-progress under appdata/lisp-draft/**." },
-  { name: "lisp_promote_draft", class: "lisp.authoring", summary: "Promote a tested Lisp draft into permanent lisp/** and update its semantic registry entry in the same workflow." },
-  { name: "registry_list", class: "registry", summary: "List semantic capability metadata for Lisp or MCP tools." },
-  { name: "registry_get", class: "registry", summary: "Get one semantic Lisp/tool capability record." },
+  { name: "file_roots", class: "local.files", summary: "Show managed AppData roots editable by CadGPT." },
+  { name: "file_list", class: "local.files", summary: "List managed AppData library/workspace/data files." },
+  { name: "file_read", class: "local.files", summary: "Read a managed AppData text file." },
+  { name: "file_search", class: "local.files", summary: "Search managed AppData text files." },
+  { name: "file_create", class: "local.files", summary: "Create a managed AppData text file." },
+  { name: "file_edit", class: "local.files", summary: "Edit a managed AppData text file." },
+  { name: "library_list", class: "libraries", summary: "List user Lisp/Job libraries imported into managed AppData." },
+  { name: "library_import", class: "libraries", summary: "Read a user-selected source folder, copy it into AppData, and index User Registry without writing back to source." },
+  { name: "job_list", class: "workflow.jobs", summary: "List concrete Jobs registered from managed user Job Libraries." },
+  { name: "job_get", class: "workflow.jobs", summary: "Load one concrete registered Job from its managed AppData library." },
+  { name: "skill_list", class: "skills", summary: "List internal CadGPT system skills." },
+  { name: "skill_get", class: "skills", summary: "Load one internal CadGPT skill resource." },
+  { name: "lisp_scaffold", class: "lisp.authoring", summary: "Create a canonical CadGPT AutoLISP scaffold, with TBH profile only for target library tbh-toolkit." },
+  { name: "lisp_checkout", class: "lisp.authoring", summary: "Copy one managed Lisp capability into workspace for editing and normalize its working header only when write-lisp is activated." },
+  { name: "lisp_validate", class: "lisp.authoring", summary: "Statically validate managed AutoLISP source with an explicit authoring profile." },
+  { name: "lisp_draft_validate", class: "lisp.authoring", summary: "Statically validate an AutoLISP workspace draft." },
+  { name: "lisp_promote_draft", class: "lisp.authoring", summary: "Promote a tested workspace draft into a managed Lisp Library and synchronize User Registry." },
+  { name: "registry_list", class: "registry", summary: "List effective capabilities from Internal Registry and User Registry." },
+  { name: "registry_get", class: "registry", summary: "Get one effective capability record." },
   { name: "cad_status", class: "cad.session", summary: "Report AutoCAD/CAD-MCP backend state without mutating a drawing." },
   { name: "drawing_list", class: "cad.session", summary: "List AutoCAD drawings available for explicit CadGPT binding." },
-  { name: "drawing_create_test", class: "cad.session", summary: "Create a blank AutoCAD drawing for safe LISP/runtime testing when supported by the host." },
+  { name: "drawing_create_test", class: "cad.session", summary: "Create a blank AutoCAD drawing for safe testing." },
   { name: "drawing_bind", class: "cad.session", summary: "Bind the CadGPT session to one explicit drawing identity." },
   { name: "drawing_status", class: "cad.session", summary: "Report the currently bound drawing and availability state." },
 ];
-
-function registryPath(name: string): string {
-  return path.join(getRepoRoot(), "registry", name);
-}
-
-async function loadLispEntries(): Promise<LispEntry[]> {
-  const parsed = JSON.parse(await fs.readFile(registryPath("lisp-registry.json"), "utf8")) as {
-    entries?: LispEntry[];
-  };
-  if (!Array.isArray(parsed.entries)) throw new Error("registry/lisp-registry.json is missing entries[]");
-  return parsed.entries;
-}
 
 function toolClass(name: string): string {
   if (/lisp/i.test(name)) return "cad.lisp-runtime";
@@ -95,11 +63,12 @@ async function loadToolEntries(): Promise<Array<Record<string, unknown>>> {
   const result: Array<Record<string, unknown>> = CORE_TOOLS.map((item) => ({
     id: item.name,
     name: item.name,
+    kind: "tool",
+    registry: "internal",
     source: "cadgpt-core",
     class: item.class,
     summary: item.summary,
   }));
-
   const manifestPath = path.join(getRepoRoot(), "runtimes", "cad-mcp", "tool-manifest.json");
   try {
     const parsed = JSON.parse(await fs.readFile(manifestPath, "utf8")) as { tools?: ToolManifestEntry[] };
@@ -109,6 +78,8 @@ async function loadToolEntries(): Promise<Array<Record<string, unknown>>> {
         id: `cad__${tool.name}`,
         name: `cad__${tool.name}`,
         upstream_name: tool.name,
+        kind: "tool",
+        registry: "internal",
         source: "cad-mcp",
         class: toolClass(tool.name),
         summary: tool.description || tool.name,
@@ -116,11 +87,62 @@ async function loadToolEntries(): Promise<Array<Record<string, unknown>>> {
       });
     }
   } catch {
-    // Setup/CI generates the stable manifest. Core registry remains useful when
-    // source is being edited before generation, so absence is non-fatal here.
+    // Generated during setup/CI; absence is non-fatal for core registry discovery.
   }
+  return result;
+}
 
-  return result.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+async function loadSkillEntries(): Promise<Array<Record<string, unknown>>> {
+  const root = path.join(getRepoRoot(), "skills");
+  const result: Array<Record<string, unknown>> = [];
+  let dirs: Array<import("node:fs").Dirent> = [];
+  try {
+    dirs = await fs.readdir(root, { withFileTypes: true });
+  } catch {
+    return result;
+  }
+  for (const dir of dirs) {
+    if (!dir.isDirectory() || dir.name.startsWith(".")) continue;
+    try {
+      const content = await fs.readFile(path.join(root, dir.name, "SKILL.md"), "utf8");
+      const title = content.match(/^#\s+(?:Skill:\s*)?(.+)$/mi)?.[1]?.trim() || dir.name;
+      const status = content.match(/^Status:\s*(.+)$/mi)?.[1]?.replace(/\*\*/g, "").trim();
+      const summary = content.split(/\r?\n/).find((line) => line.trim() && !line.startsWith("#") && !/^Status:/i.test(line))?.trim() || title;
+      result.push({
+        id: dir.name,
+        name: dir.name,
+        title,
+        kind: "skill",
+        registry: "internal",
+        source: "cadgpt-system-skill",
+        class: "skills",
+        summary,
+        ...(status ? { status } : {}),
+      });
+    } catch {
+      // Not an active system skill.
+    }
+  }
+  return result;
+}
+
+async function loadUserEntries(): Promise<Array<Record<string, unknown>>> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(getUserCapabilitiesPath(), "utf8")) as { entries?: Array<Record<string, unknown>> };
+    if (!Array.isArray(parsed.entries)) throw new Error("User Registry is missing entries[]");
+    for (const entry of parsed.entries) {
+      if (entry.kind !== "lisp" && entry.kind !== "job") throw new Error(`User Registry may contain only lisp/job entries: ${String(entry.id || "<unknown>")}`);
+    }
+    return parsed.entries.map((entry) => ({ ...entry, registry: "user" }));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function loadEffectiveRegistry(): Promise<Array<Record<string, unknown>>> {
+  const [tools, skills, users] = await Promise.all([loadToolEntries(), loadSkillEntries(), loadUserEntries()]);
+  return [...tools, ...skills, ...users].sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`));
 }
 
 function textMatch(value: unknown, query: string): boolean {
@@ -131,35 +153,33 @@ export function registerCapabilityRegistryTools(server: McpServer): void {
   server.registerTool(
     "registry_list",
     {
-      title: "List CadGPT Capability Registry",
-      description: "List semantic capability metadata for available Lisp or MCP tools. Prefer Lisp registry metadata over reading Lisp source merely to discover what it does. Lisp ai_mode describes how AI may use/adapt normal AutoLISP source; it is not a Lisp language/type distinction.",
+      title: "List CadGPT Effective Capability Registry",
+      description: "List the unified view of Internal Registry (MCP tools + system skills) and User Registry (managed Lisp + Jobs). Ownership is disjoint; User Registry cannot overwrite Internal Registry.",
       inputSchema: {
-        kind: z.enum(["lisp", "tool"]).default("lisp"),
+        kind: z.enum(["tool", "skill", "lisp", "job"]).optional(),
+        registry: z.enum(["internal", "user"]).optional(),
         class_name: z.string().optional(),
+        library_id: z.string().optional(),
         ai_mode: z.enum(["static", "dynamic"]).optional(),
         query: z.string().optional(),
-        limit: z.number().int().min(1).max(500).optional().default(100),
+        limit: z.number().int().min(1).max(1000).optional().default(100),
       },
     },
-    async ({ kind, class_name, ai_mode, query, limit }) => {
+    async ({ kind, registry, class_name, library_id, ai_mode, query, limit }) => {
       try {
-        let entries: Array<Record<string, unknown>> = kind === "lisp"
-          ? (await loadLispEntries()) as unknown as Array<Record<string, unknown>>
-          : await loadToolEntries();
-
+        let entries = await loadEffectiveRegistry();
+        if (kind) entries = entries.filter((entry) => entry.kind === kind);
+        if (registry) entries = entries.filter((entry) => entry.registry === registry);
         if (class_name) entries = entries.filter((entry) => String(entry.class ?? "").startsWith(class_name));
-        if (kind === "lisp" && ai_mode) entries = entries.filter((entry) => entry.ai_mode === ai_mode);
+        if (library_id) entries = entries.filter((entry) => String(entry.library_id ?? "") === library_id);
+        if (ai_mode) entries = entries.filter((entry) => entry.ai_mode === ai_mode);
         if (query?.trim()) entries = entries.filter((entry) => textMatch(entry, query.trim()));
         const selected = entries.slice(0, limit);
-
         return toolResult("registry_list", {
-          kind,
           count: selected.length,
           total_matches: entries.length,
           entries: selected,
-          note: kind === "lisp"
-            ? "Registry metadata is curated from actual behavior. ai_mode=dynamic only means AI may derive a temporary parameterized runtime variant; the source itself remains ordinary AutoLISP. Read source only when modification/debug/audit requires it."
-            : "MCP tools/list remains execution-authoritative; registry adds semantic grouping.",
+          ownership: { internal: ["tool", "skill"], user: ["lisp", "job"] },
         });
       } catch (error) {
         return toolError("registry_list", error);
@@ -171,32 +191,27 @@ export function registerCapabilityRegistryTools(server: McpServer): void {
     "registry_get",
     {
       title: "Get CadGPT Capability Metadata",
-      description: "Get one semantic Lisp/tool registry entry by canonical id, Lisp command, or tool name.",
+      description: "Get one capability by canonical id, MCP tool name, Lisp command, or managed relative path from the effective registry.",
       inputSchema: {
-        kind: z.enum(["lisp", "tool"]).default("lisp"),
         id: z.string().min(1),
+        kind: z.enum(["tool", "skill", "lisp", "job"]).optional(),
       },
     },
-    async ({ kind, id }) => {
+    async ({ id, kind }) => {
       try {
         const needle = id.trim().toLowerCase();
-        if (kind === "lisp") {
-          const entries = await loadLispEntries();
-          const entry = entries.find((item) =>
-            item.id.toLowerCase() === needle ||
-            item.commands.some((command) => command.toLowerCase() === needle) ||
-            item.path?.toLowerCase() === needle
-          );
-          if (!entry) throw new Error(`Lisp registry entry not found: ${id}`);
-          return toolResult("registry_get", { kind, entry });
-        }
-
-        const entries = await loadToolEntries();
-        const entry = entries.find((item) =>
-          String(item.id ?? "").toLowerCase() === needle || String(item.name ?? "").toLowerCase() === needle
-        );
-        if (!entry) throw new Error(`Tool registry entry not found: ${id}`);
-        return toolResult("registry_get", { kind, entry });
+        let entries = await loadEffectiveRegistry();
+        if (kind) entries = entries.filter((entry) => entry.kind === kind);
+        const matches = entries.filter((entry) => {
+          if (String(entry.id ?? "").toLowerCase() === needle) return true;
+          if (String(entry.name ?? "").toLowerCase() === needle) return true;
+          if (String(entry.relative_path ?? "").toLowerCase() === needle) return true;
+          const commands = Array.isArray(entry.commands) ? entry.commands : [];
+          return commands.some((command) => String(command).toLowerCase() === needle);
+        });
+        if (!matches.length) throw new Error(`Registry capability not found: ${id}`);
+        if (matches.length > 1) throw new Error(`Registry lookup is ambiguous for ${id}; specify kind or canonical id`);
+        return toolResult("registry_get", { entry: matches[0] });
       } catch (error) {
         return toolError("registry_get", error);
       }
