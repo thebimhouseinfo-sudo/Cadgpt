@@ -13,7 +13,7 @@ jobs:
       - name: Parse acceptance and launcher PowerShell
         shell: pwsh
         run: |
-          foreach ($script in @("acceptance.ps1", "doctor.ps1", "start.ps1", "openai-tunnel.ps1")) {
+          foreach ($script in @("acceptance.ps1", "doctor.ps1", "start.ps1", "openai-tunnel.ps1", "agent-task.ps1")) {
             $errors = $null
             $tokens = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
@@ -28,15 +28,20 @@ jobs:
             Write-Host "PowerShell parse OK: $script"
           }
 
-      - name: Verify BAT-first acceptance entrypoints
+      - name: Verify driver-style acceptance entrypoints
         shell: pwsh
         run: |
-          foreach ($file in @("setup.bat", "run.bat", "doctor.bat", "acceptance.bat")) {
-            if (-not (Test-Path $file)) { throw "Missing required BAT entrypoint: $file" }
+          foreach ($file in @("setup.bat", "run.bat", "doctor.bat", "acceptance.bat", "agent-task.ps1")) {
+            if (-not (Test-Path $file)) { throw "Missing required entrypoint: $file" }
           }
-          if ((Get-Content run.bat -Raw) -notmatch "CADGPT_NO_PAUSE") {
-            throw "run.bat is not automation-safe for acceptance invocation"
+          $run = Get-Content run.bat -Raw
+          foreach ($action in @("install", "start", "stop", "restart", "status", "uninstall")) {
+            if ($run -notmatch [regex]::Escape($action)) { throw "run.bat is missing driver control action: $action" }
           }
+          if ($run -notmatch "agent-task\.ps1") { throw "run.bat does not delegate to the background-agent controller" }
+          $setup = Get-Content setup.bat -Raw
+          if ($setup -notmatch 'run\.bat" install') { throw "setup.bat does not install the CadGPT background autostart task" }
+          Write-Host "Driver-style BAT/background-agent contract OK"
 
       - name: Verify safe AutoLISP smoke fixture contract
         shell: pwsh
