@@ -62,12 +62,28 @@ if not exist ".env" (
 )
 
 echo.
-echo [1/8] Installing locked CadGPT connector dependencies...
+echo [1/9] Initializing CadGPT Beta AppData...
+for %%D in (
+  "appdata\data\runs"
+  "appdata\lisp-draft"
+  "appdata\runtime\dynamic-lisp"
+  "appdata\state"
+  "appdata\logs"
+) do (
+  if not exist "%%~D" mkdir "%%~D"
+  if not exist "%%~D" (
+    echo [ERROR] Could not create AppData directory: %%~D
+    goto :failed
+  )
+)
+
+echo.
+echo [2/9] Installing locked CadGPT connector dependencies...
 call npm ci
 if errorlevel 1 goto :failed
 
 echo.
-echo [2/8] Generating stable CAD tool manifest...
+echo [3/9] Generating stable CAD tool manifest...
 python "%~dp0scripts\generate-cad-tool-manifest.py"
 if errorlevel 1 goto :failed
 if not exist "runtimes\cad-mcp\tool-manifest.json" (
@@ -76,12 +92,12 @@ if not exist "runtimes\cad-mcp\tool-manifest.json" (
 )
 
 echo.
-echo [3/8] Building CadGPT connector and wake-agent...
+echo [4/9] Building CadGPT connector and wake-agent...
 call npm run build
 if errorlevel 1 goto :failed
 
 echo.
-echo [4/8] Rebuilding isolated CAD MCP Python environment from lock...
+echo [5/9] Rebuilding isolated CAD MCP Python environment from lock...
 call "%~dp0run.bat" stop >nul 2>nul
 if exist ".venv-cad" (
   rmdir /s /q ".venv-cad"
@@ -100,22 +116,22 @@ if errorlevel 1 goto :failed
 if errorlevel 1 goto :failed
 
 echo.
-echo [5/8] Configuring OpenAI Secure MCP Tunnel...
+echo [6/9] Configuring OpenAI Secure MCP Tunnel...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0openai-tunnel.ps1" -Init
 if errorlevel 1 goto :failed
 
 echo.
-echo [6/8] Installing CadGPT background autostart agent...
+echo [7/9] Installing CadGPT background autostart agent...
 call "%~dp0run.bat" install
 if errorlevel 1 goto :failed
 
 echo.
-echo [7/8] Verifying background listener status...
+echo [8/9] Verifying background listener status...
 call "%~dp0run.bat" status
 if errorlevel 1 goto :failed
 
 echo.
-echo [8/8] Running installation doctor...
+echo [9/9] Running installation doctor...
 call "%~dp0doctor.bat"
 if errorlevel 1 goto :failed
 
@@ -127,6 +143,7 @@ echo CadGPT is installed as a hidden per-user wake-agent.
 echo It starts automatically when you sign in to Windows.
 echo Full CadGPT wakes only after ChatGPT calls it.
 echo CAD MCP runs only while CadGPT is active and AutoCAD is running.
+echo Beta AppData is stored under repo\appdata and can move to per-user LocalAppData when packaged.
 echo No daily launcher is required.
 echo.
 echo Enable ChatGPT Developer Mode and add/select the CadGPT tunnel connection once.
