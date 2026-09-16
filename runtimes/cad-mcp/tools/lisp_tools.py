@@ -20,9 +20,12 @@ def _safe(fn, *args):
 def register(mcp):
     @mcp.tool()
     def cad_load_lisp_file(path: str) -> dict:
-        """Load and verify one repository `.lsp` file under `lisp/**`.
+        """Load and verify one sandboxed `.lsp` file.
 
-        Absolute paths and paths outside the CadGPT LISP sandbox are rejected.
+        Accepted virtual namespaces are permanent `lisp/**`, work-in-progress
+        `appdata/lisp-draft/**`, and parameterized runtime
+        `appdata/runtime/dynamic-lisp/**`. Absolute/arbitrary paths are rejected.
+
         The tool waits for an AutoCAD load sentinel and returns `loaded`, error
         evidence, and command-log tail when available. `loaded: false` blocks
         command execution and must be debugged before handoff.
