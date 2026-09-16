@@ -26,6 +26,15 @@ function Get-PortOwnerPid([int]$TargetPort) {
     return $null
 }
 
+function Test-CadGptHealth([int]$TargetPort) {
+    try {
+        $health = Invoke-RestMethod -Uri "http://127.0.0.1:$TargetPort/health" -Method Get -TimeoutSec 2
+        return ($health.status -eq "ok" -and $health.name -eq "cadgpt")
+    } catch {
+        return $false
+    }
+}
+
 if (-not (Test-Path ".env")) {
     Copy-Item ".env.example" ".env"
     Write-Host "Created .env from .env.example" -ForegroundColor Yellow
@@ -37,12 +46,19 @@ $env:PORT = "$Port"
 
 $existingPid = Get-PortOwnerPid -TargetPort $Port
 if ($existingPid) {
+    $isCadGpt = Test-CadGptHealth -TargetPort $Port
+    if (-not $isCadGpt) {
+        $proc = Get-Process -Id $existingPid -ErrorAction SilentlyContinue
+        $name = if ($proc) { $proc.ProcessName } else { "unknown" }
+        throw "Port $Port is occupied by PID $existingPid ($name), but it is not a healthy CadGPT process. CadGPT will not kill unrelated processes. Change PORT in .env or stop that process manually."
+    }
+
     if ($Force) {
-        Write-Host "Stopping old CadGPT process on port $Port (PID $existingPid)..." -ForegroundColor Yellow
-        Stop-Process -Id $existingPid -Force -ErrorAction SilentlyContinue
+        Write-Host "Restarting verified CadGPT process on port $Port (PID $existingPid)..." -ForegroundColor Yellow
+        Stop-Process -Id $existingPid -Force -ErrorAction Stop
         Start-Sleep -Seconds 1
     } else {
-        Write-Host "CadGPT already appears to be listening on port $Port (PID $existingPid)." -ForegroundColor Green
+        Write-Host "[OK] CadGPT is already healthy on port $Port (PID $existingPid)." -ForegroundColor Green
         exit 0
     }
 }
