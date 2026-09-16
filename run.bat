@@ -1,59 +1,50 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title CadGPT Launcher
 
-echo.
-echo ========================================
-echo   Starting CadGPT
+set "ACTION=%~1"
+if "%ACTION%"=="" set "ACTION=start"
 
-echo ========================================
-echo.
+if /I "%ACTION%"=="help" goto :usage
+if /I "%ACTION%"=="install" goto :control
+if /I "%ACTION%"=="start" goto :control
+if /I "%ACTION%"=="stop" goto :control
+if /I "%ACTION%"=="restart" goto :control
+if /I "%ACTION%"=="status" goto :control
+if /I "%ACTION%"=="uninstall" goto :control
 
+echo [ERROR] Unknown action: %ACTION%
+goto :usage
+
+:control
 if not exist ".env" (
   echo [ERROR] CadGPT is not set up yet. Run setup.bat first.
-  if not defined CADGPT_NO_PAUSE pause
   exit /b 1
 )
-if not exist "node_modules" (
-  echo [ERROR] Dependencies are missing. Run setup.bat first.
-  if not defined CADGPT_NO_PAUSE pause
-  exit /b 1
-)
-
-set "CADGPT_PORT=3000"
-set "TUNNEL_HEALTH_PORT=8080"
-for /f "tokens=2 delims==" %%A in ('findstr /B /C:"PORT=" ".env"') do set "CADGPT_PORT=%%A"
-for /f "tokens=2 delims==" %%A in ('findstr /B /C:"OPENAI_TUNNEL_HEALTH_PORT=" ".env"') do set "TUNNEL_HEALTH_PORT=%%A"
-
-start "CadGPT Local MCP" /min powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start.ps1" -Port %CADGPT_PORT% -Force
-
-echo Waiting for CadGPT local MCP on port %CADGPT_PORT%...
-powershell -NoProfile -Command "$ok=$false; foreach ($i in 1..40) { try { $r=Invoke-RestMethod 'http://127.0.0.1:%CADGPT_PORT%/health' -TimeoutSec 1; if ($r.status -eq 'ok' -and $r.name -eq 'cadgpt') { $ok=$true; break } } catch {}; Start-Sleep -Milliseconds 500 }; if (-not $ok) { exit 1 }"
-if errorlevel 1 (
-  echo [ERROR] CadGPT local MCP did not become ready.
-  echo Run doctor.bat for diagnostics.
-  if not defined CADGPT_NO_PAUSE pause
+if not exist "agent-task.ps1" (
+  echo [ERROR] agent-task.ps1 is missing.
   exit /b 1
 )
 
-start "CadGPT Secure Tunnel" /min powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0openai-tunnel.ps1" -Port %CADGPT_PORT% -HealthPort %TUNNEL_HEALTH_PORT%
+set "WAIT_ARG="
+if /I "%ACTION%"=="install" set "WAIT_ARG=-WaitReady"
+if /I "%ACTION%"=="start" set "WAIT_ARG=-WaitReady"
+if /I "%ACTION%"=="restart" set "WAIT_ARG=-WaitReady"
 
-echo Waiting for OpenAI Secure MCP Tunnel on health port %TUNNEL_HEALTH_PORT%...
-powershell -NoProfile -Command "$ok=$false; foreach ($i in 1..40) { try { $r=Invoke-WebRequest 'http://127.0.0.1:%TUNNEL_HEALTH_PORT%/readyz' -UseBasicParsing -TimeoutSec 1; if ($r.StatusCode -eq 200 -and $r.Content -match 'ready') { $ok=$true; break } } catch {}; Start-Sleep -Milliseconds 500 }; if (-not $ok) { exit 1 }"
-if errorlevel 1 (
-  echo [ERROR] Secure MCP Tunnel did not become ready.
-  echo CadGPT local MCP is running, but ChatGPT connection is not ready.
-  echo Run doctor.bat for diagnostics.
-  if not defined CADGPT_NO_PAUSE pause
-  exit /b 1
-)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0agent-task.ps1" -Action %ACTION% %WAIT_ARG%
+exit /b %ERRORLEVEL%
 
+:usage
 echo.
-echo [OK] CadGPT local MCP is ready.
-echo [OK] OpenAI Secure MCP Tunnel is ready.
+echo CadGPT background agent control
 echo.
-echo AutoCAD may be opened before or after CadGPT. CAD status is reported separately.
-echo Open ChatGPT and use the configured CadGPT MCP app.
+echo   run.bat              Start/wake the installed background agent
+echo   run.bat install      Install autostart task and start now
+echo   run.bat start        Start/wake the background agent
+echo   run.bat stop         Stop until manually started or next logon
+echo   run.bat restart      Restart background agent
+echo   run.bat status       Show task/listener/tunnel status
+echo   run.bat uninstall    Remove autostart task, keep CadGPT files/config
 echo.
-exit /b 0
+echo Normal daily use requires no command: CadGPT starts hidden at Windows logon.
+exit /b 2
