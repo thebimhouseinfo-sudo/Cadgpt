@@ -87,18 +87,24 @@ export function createSessionManager(port: number): SessionManager {
   const opChains = new Map<string, Promise<void>>();
   let cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
+  function clearGrace(id: string): void {
+    const timer = graceTimers.get(id);
+    if (timer) clearTimeout(timer);
+    graceTimers.delete(id);
+  }
+
   function touch(id: string): void {
     const session = sessions.get(id);
     if (session) session.lastAccessedAt = Date.now();
   }
 
   function remove(id: string, reason: string): void {
-    const timer = graceTimers.get(id);
-    if (timer) clearTimeout(timer);
-    graceTimers.delete(id);
+    clearGrace(id);
+    const current = sessions.get(id) ?? pending.get(id);
     sessions.delete(id);
     pending.delete(id);
     opChains.delete(id);
+    if (current) void current.transport.close().catch(() => undefined);
     console.log(`[MCP] Session removed (${reason}): ${id}`);
   }
 
@@ -119,6 +125,9 @@ export function createSessionManager(port: number): SessionManager {
       sessionIdGenerator: preferredId ? () => preferredId : () => randomUUID(),
       enableJsonResponse: true,
       onsessioninitialized: (id) => {
+        // A recovered session may reuse an ID whose old transport left a close
+        // grace timer behind. Never let that stale timer delete the replacement.
+        clearGrace(id);
         sessions.set(id, {
           server,
           transport,
@@ -130,9 +139,16 @@ export function createSessionManager(port: number): SessionManager {
       },
       onsessionclosed: (id) => {
         if (!id) return;
-        const old = graceTimers.get(id);
-        if (old) clearTimeout(old);
-        const timer = setTimeout(() => remove(id, "client close grace expired"), DELETE_GRACE_MS);
+        // A stale transport may close after a replacement with the same session
+        // ID is already active. Only the currently registered transport is
+        // allowed to schedule deletion for that ID.
+        const active = sessions.get(id) ?? pending.get(id);
+        if (!active || active.transport !== transport) return;
+        clearGrace(id);
+        const timer = setTimeout(() => {
+          const current = sessions.get(id) ?? pending.get(id);
+          if (current?.transport === transport) remove(id, "client close grace expired");
+        }, DELETE_GRACE_MS);
         timer.unref?.();
         graceTimers.set(id, timer);
       },
@@ -140,7 +156,9 @@ export function createSessionManager(port: number): SessionManager {
     transport.onerror = (error) => console.warn("[MCP] transport error:", error.message);
     transport.onclose = () => {
       const id = transport.sessionId;
-      if (id && sessions.has(id)) console.log(`[MCP] Transport closed; preserving session for recovery: ${id}`);
+      if (id && sessions.get(id)?.transport === transport) {
+        console.log(`[MCP] Transport closed; preserving session for recovery: ${id}`);
+      }
     };
     await server.connect(transport);
     return {
@@ -232,7 +250,10 @@ export function createSessionManager(port: number): SessionManager {
         return false;
       }
       const recovered = sessions.get(id);
-      if (!recovered) return false;
+      if (!recovered || recovered.transport !== replacement.transport) {
+        remove(id, "recovery session mismatch");
+        return false;
+      }
       const patched = patchSessionHeaders(req, id, protocol);
       await enqueue(id, async () => recovered.transport.handleRequest(patched, res, body));
       touch(id);
@@ -254,6 +275,7 @@ export function createSessionManager(port: number): SessionManager {
     stopCleanup() {
       if (cleanupTimer) clearInterval(cleanupTimer);
       cleanupTimer = null;
+      for (const id of graceTimers.keys()) clearGrace(id);
     },
   };
 }
