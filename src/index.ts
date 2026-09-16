@@ -9,7 +9,7 @@ import {
   createSessionManager,
   extractRequestId,
 } from "./cadgpt/lib/mcp-session-manager.js";
-import { getAllowedRoots, getRepoRoot, toRepoRelative } from "./cadgpt/lib/path-security.js";
+import { getAllowedRoots, toRepoRelative } from "./cadgpt/lib/path-security.js";
 import { cadUpstream } from "./cadgpt/runtime/cad-upstream.js";
 
 const HOST = process.env.HOST || "127.0.0.1";
@@ -34,7 +34,6 @@ app.get("/health", (_req, res) => {
     version: "0.1.0",
     pid: process.pid,
     uptime_seconds: Math.floor((Date.now() - STARTED_AT) / 1000),
-    repository: getRepoRoot(),
     file_roots: getAllowedRoots().map(toRepoRelative),
     active_mcp_sessions: sessions.count(),
     session_recovery: SESSION_RECOVERY,
