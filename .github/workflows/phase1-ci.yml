@@ -2,7 +2,7 @@ name: CadGPT Core CI
 
 on:
   push:
-    branches: [phase2-cad-mcp]
+    branches: ['phase*']
   pull_request:
     branches: [main]
 
@@ -14,14 +14,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Install dependencies
-        run: npm install
+      - name: Install locked dependencies
+        run: npm ci
       - name: Build connector
         run: npm run build
       - name: Validate PowerShell launcher scripts
         shell: pwsh
         run: |
-          foreach ($script in @("start.ps1", "openai-tunnel.ps1", "doctor.ps1")) {
+          foreach ($script in @("start.ps1", "openai-tunnel.ps1", "doctor.ps1", "acceptance.ps1")) {
             $errors = $null
             $tokens = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
@@ -140,8 +140,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install CAD MCP dependencies
-        run: python -m pip install -r runtimes/cad-mcp/requirements.txt
+      - name: Verify direct requirements are represented in lock
+        shell: pwsh
+        run: |
+          $direct = @(Get-Content "runtimes/cad-mcp/requirements.txt" | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') })
+          $locked = @(Get-Content "runtimes/cad-mcp/requirements.lock.txt" | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') })
+          foreach ($dep in $direct) {
+            if ($locked -notcontains $dep) { throw "Python dependency lock is stale or missing direct dependency: $dep" }
+          }
+          Write-Host "Direct Python requirements are represented in lock."
+      - name: Install locked CAD MCP dependencies
+        run: python -m pip install -r runtimes/cad-mcp/requirements.lock.txt
+      - name: Validate Python dependency graph
+        run: python -m pip check
       - name: Compile CAD MCP slice
         run: python -m compileall -q runtimes/cad-mcp
       - name: Import CAD MCP entrypoint
