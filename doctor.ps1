@@ -65,6 +65,24 @@ if (Test-Path $cadPython) {
     Ok "CAD MCP virtual environment exists"
     & $cadPython -c "import sys; sys.path.insert(0, r'runtimes\cad-mcp'); import main; print('cad-mcp import ok')" *> $null
     if ($LASTEXITCODE -eq 0) { Ok "CAD MCP entrypoint imports cleanly" } else { Fail "CAD MCP entrypoint import failed." }
+
+    $oldPythonPath = $env:PYTHONPATH
+    $env:PYTHONPATH = "$ScriptDir\runtimes\cad-mcp"
+    try {
+        $hostProbe = & $cadPython -c "from connection.acad import get_acad_app; app=get_acad_app(); print(f'{app.Name}|{app.Version}|{app.Documents.Count}')" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $line = ($hostProbe | Select-Object -Last 1).ToString()
+            $parts = $line -split '\|', 3
+            if ($parts.Count -eq 3) { Ok "AutoCAD COM reachable: $($parts[0]) $($parts[1]); open drawings=$($parts[2])" }
+            else { Ok "AutoCAD COM reachable" }
+        } else {
+            Warn "AutoCAD COM is not currently reachable. This is acceptable unless running live CAD acceptance."
+        }
+    }
+    finally {
+        if ($null -eq $oldPythonPath) { Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue }
+        else { $env:PYTHONPATH = $oldPythonPath }
+    }
 } else { Fail "CAD MCP virtual environment missing; run setup.bat." }
 
 try {
