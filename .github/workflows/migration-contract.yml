@@ -33,7 +33,7 @@ jobs:
           $script = Get-Content "scripts/migration/migrate-tbh-toolkit.ps1" -Raw
           foreach ($required in @(
             "tool-kit",
-            "lisp\\tbh-toolkit",
+            "lisp\tbh-toolkit",
             "Get-FileHash -Algorithm SHA256",
             "MIGRATION_PROVENANCE.md",
             "Copy-Item",
