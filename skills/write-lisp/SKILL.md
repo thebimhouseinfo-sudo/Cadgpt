@@ -30,7 +30,7 @@ Run/output data:
 appdata/data/**
 ```
 
-Dynamic/session-only Lisp artifacts:
+AI-derived/session-only Lisp artifacts:
 
 ```text
 appdata/runtime/dynamic-lisp/**
@@ -48,7 +48,8 @@ Rules:
 - every user-facing permanent Lisp must have semantic metadata in `registry/lisp-registry.json`;
 - drafts are not permanent capabilities and do not enter the permanent registry;
 - promotion from draft to permanent must use `lisp_promote_draft`, which updates permanent source and semantic registry together;
-- dynamic runtime instances are not promoted unless the user explicitly decides they should become reusable templates.
+- all source files remain ordinary AutoLISP/Visual LISP; `ai_mode=dynamic` only describes whether AI may derive bounded runtime variants from that source;
+- runtime variants are not promoted merely because they were generated dynamically.
 
 Do not request generic shell, package-manager, Git, arbitrary filesystem, or application-development tooling. AutoLISP source/data is edited only through CadGPT's sandboxed file/workspace tools.
 
@@ -148,10 +149,12 @@ When drawing state matters, inspect structured CAD state before deciding what Li
 Preference order:
 
 1. use an existing registered command unchanged;
-2. create a dynamic parameterized instance when the registered capability is dynamic-capable;
+2. when `ai_mode=dynamic`, derive a temporary parameterized runtime variant by changing only the registry-declared `dynamic_parameters`;
 3. patch the smallest relevant implementation surface;
 4. add a narrow helper;
 5. create a new command only when no suitable implementation exists.
+
+A source with `ai_mode=dynamic` is still ordinary AutoLISP. Dynamic behavior exists in the **AI + runtime adaptation workflow**, not in the Lisp language/file itself.
 
 ### 4. Use draft workspace for new/substantial work
 
@@ -267,7 +270,7 @@ When a draft has passed the applicable gates and is intended to become reusable 
 lisp_promote_draft
 ```
 
-Promotion requires curated semantic metadata describing what the implementation **actually does**, including class/subclass, static/dynamic type, interaction, load behavior, mutation/destructive risk, inputs, effects and dynamic parameters.
+Promotion requires curated semantic metadata describing what the implementation **actually does**, including class/subclass, `ai_mode`, interaction, load behavior, mutation/destructive risk, inputs, effects and bounded dynamic parameters when AI adaptation is allowed.
 
 `lisp_promote_draft`:
 
@@ -281,17 +284,29 @@ Do not manually copy a draft into `lisp/**` and postpone registry work.
 
 The draft may remain in AppData after promotion for traceability until it is explicitly cleaned.
 
-## Dynamic Lisp
+## AI dynamic usage
 
-A registered Lisp may be `type=dynamic` when its algorithm is reusable but project/run parameters vary.
+`ai_mode` describes **how CadGPT/AI may use a normal AutoLISP capability**:
 
-Dynamic instances belong under:
+```text
+ai_mode=static
+```
+
+CadGPT normally loads/runs the permanent source as stored. `dynamic_parameters` is empty.
+
+```text
+ai_mode=dynamic
+```
+
+CadGPT may derive a temporary runtime source variant by changing only fields declared in `dynamic_parameters`. The permanent `.lsp` remains ordinary AutoLISP and is not overwritten.
+
+Runtime variants belong under:
 
 ```text
 appdata/runtime/dynamic-lisp/**
 ```
 
-They are runtime artifacts, not permanent source. They should carry provenance such as base/template identity, parameters and hash. A dynamic instance is promoted only if the user intentionally turns it into a reusable permanent template/capability.
+They should carry provenance such as source registry ID/path, applied parameters, content hash and run/session identity. They are runtime artifacts rather than a separate Lisp type.
 
 ## Run data
 
