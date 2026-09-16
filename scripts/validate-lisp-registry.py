@@ -3,6 +3,12 @@
 This intentionally checks structural drift only. Semantic descriptions remain
 curated because filenames and legacy headers are not reliable enough to infer
 actual behavior automatically.
+
+`ai_mode` describes how CadGPT/AI may use an otherwise normal AutoLISP source:
+- static: use the permanent source as-is;
+- dynamic: AI may derive a bounded temporary runtime variant using the declared
+  dynamic_parameters.
+It is not an AutoLISP language/type distinction.
 """
 
 from __future__ import annotations
@@ -37,22 +43,33 @@ def main() -> None:
             errors.append(f"duplicate registry id: {entry_id}")
         ids.add(entry_id)
 
-        entry_type = entry.get("type")
-        if entry_type not in {"static", "dynamic"}:
-            errors.append(f"{entry_id}: type must be static or dynamic")
+        ai_mode = entry.get("ai_mode")
+        if ai_mode not in {"static", "dynamic"}:
+            errors.append(f"{entry_id}: ai_mode must be static or dynamic")
+
+        dynamic_parameters = entry.get("dynamic_parameters", [])
+        if not isinstance(dynamic_parameters, list):
+            errors.append(f"{entry_id}: dynamic_parameters must be a list")
+            dynamic_parameters = []
+        if ai_mode == "static" and dynamic_parameters:
+            errors.append(f"{entry_id}: ai_mode=static must not declare dynamic_parameters")
+        if ai_mode == "dynamic" and not dynamic_parameters:
+            errors.append(f"{entry_id}: ai_mode=dynamic must declare at least one bounded dynamic_parameter")
+
+        if "type" in entry or "dynamic_role" in entry:
+            errors.append(f"{entry_id}: legacy type/dynamic_role fields are not allowed; use ai_mode")
 
         for required in (
             "title", "class", "subclass", "summary", "when_to_use", "targets",
             "inputs", "effects", "interaction", "load_behavior", "risk",
+            "dynamic_parameters",
         ):
             if required not in entry:
                 errors.append(f"{entry_id}: missing semantic field {required}")
 
         rel = str(entry.get("path", "")).replace("\\", "/").strip()
         if not rel:
-            if entry.get("dynamic_role") == "instance":
-                continue
-            errors.append(f"{entry_id}: library/template entry has no path")
+            errors.append(f"{entry_id}: permanent library entry has no path")
             continue
         if not rel.startswith("lisp/") or not rel.lower().endswith(".lsp"):
             errors.append(f"{entry_id}: invalid Lisp path {rel}")
