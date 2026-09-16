@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import "dotenv/config";
+import { randomUUID } from "node:crypto";
 import cors from "cors";
 import express from "express";
 
@@ -67,7 +68,7 @@ async function handlePost(req: express.Request, res: express.Response): Promise<
     // session exists. Adopt a temporary session rather than leaving the connector
     // retrying indefinitely.
     if (!sessionId && SESSION_RECOVERY) {
-      const recoveryId = crypto.randomUUID();
+      const recoveryId = randomUUID();
       if (await sessions.tryRecover(recoveryId, req, res, req.body)) return;
     }
 
