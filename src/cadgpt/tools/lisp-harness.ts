@@ -32,6 +32,48 @@ export interface LispValidationResult {
   };
 }
 
+const COMMON_LISP_ONLY_FORMS = [
+  "let",
+  "let*",
+  "flet",
+  "labels",
+  "macrolet",
+  "defmacro",
+  "defpackage",
+  "in-package",
+  "defclass",
+  "defgeneric",
+  "defmethod",
+  "loop",
+  "dolist",
+  "dotimes",
+  "do",
+  "do*",
+  "setf",
+  "psetf",
+  "incf",
+  "decf",
+  "push",
+  "pop",
+  "multiple-value-bind",
+  "multiple-value-setq",
+  "handler-case",
+  "unwind-protect",
+  "destructuring-bind",
+  "with-open-file",
+  "with-output-to-string",
+];
+
+const COMMON_LISP_LAMBDA_KEYWORDS = [
+  "optional",
+  "rest",
+  "key",
+  "aux",
+  "body",
+  "whole",
+  "environment",
+];
+
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort((a, b) =>
     a.localeCompare(b)
@@ -50,15 +92,151 @@ function extractDefuns(clean: string): { commands: string[]; functions: string[]
   return { commands: uniqueSorted(commands), functions: uniqueSorted(functions) };
 }
 
+function locationAt(source: string, index: number): { line: number; column: number } {
+  const prefix = source.slice(0, Math.max(0, index));
+  const lines = prefix.split("\n");
+  return { line: lines.length, column: (lines.at(-1)?.length ?? 0) + 1 };
+}
+
+function headerField(source: string, name: string): string | null {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = source.match(new RegExp(`^;;;\\s*${escaped}\\s*:\\s*(.+?)\\s*$`, "mi"));
+  return match?.[1]?.trim() || null;
+}
+
+function checkAutoLispDialect(clean: string, source: string, diagnostics: LispDiagnostic[]): void {
+  for (const form of COMMON_LISP_ONLY_FORMS) {
+    const escaped = form.replace("*", "\\*");
+    const regex = new RegExp(`\\(\\s*${escaped}(?=[\\s()])`, "gi");
+    for (const match of clean.matchAll(regex)) {
+      const loc = locationAt(source, match.index ?? 0);
+      diagnostics.push({
+        severity: "error",
+        code: "COMMON_LISP_FORM",
+        message: `\`${form}\` is not an AutoLISP form. Rewrite this using AutoLISP/Visual LISP constructs.`,
+        ...loc,
+      });
+    }
+  }
+
+  const keywordPattern = COMMON_LISP_LAMBDA_KEYWORDS.join("|");
+  const keywordRegex = new RegExp(`&(?:${keywordPattern})\\b`, "gi");
+  for (const match of clean.matchAll(keywordRegex)) {
+    const loc = locationAt(source, match.index ?? 0);
+    diagnostics.push({
+      severity: "error",
+      code: "COMMON_LISP_LAMBDA_KEYWORD",
+      message: `\`${match[0]}\` is Common Lisp lambda-list syntax. AutoLISP declares locals after \`/\` in the defun argument list.`,
+      ...loc,
+    });
+  }
+
+  for (const match of clean.matchAll(/#'/g)) {
+    const loc = locationAt(source, match.index ?? 0);
+    diagnostics.push({
+      severity: "error",
+      code: "COMMON_LISP_READER_SYNTAX",
+      message: "`#'` function reader shorthand is not AutoLISP syntax. Use an AutoLISP-compatible quoted symbol or `(function (lambda ...))` where appropriate.",
+      ...loc,
+    });
+  }
+}
+
+function checkLibraryStyle(
+  source: string,
+  commands: string[],
+  diagnostics: LispDiagnostic[],
+  fileName?: string
+): void {
+  const hasHeaderStart = /;;;\s*TBH-HEADER-START/i.test(source);
+  const hasHeaderEnd = /;;;\s*TBH-HEADER-END/i.test(source);
+  if (!hasHeaderStart || !hasHeaderEnd) {
+    diagnostics.push({
+      severity: "error",
+      code: "MISSING_TBH_HEADER",
+      message: "Production AutoLISP must use the canonical TBH-HEADER-START/TBH-HEADER-END metadata block.",
+    });
+    return;
+  }
+
+  const fileField = headerField(source, "File");
+  const moduleField = headerField(source, "Module");
+  const commandField = headerField(source, "Command");
+  const descriptionField = headerField(source, "Description");
+
+  for (const [name, value] of [
+    ["File", fileField],
+    ["Module", moduleField],
+    ["Command", commandField],
+    ["Description", descriptionField],
+  ] as const) {
+    if (!value) {
+      diagnostics.push({
+        severity: "error",
+        code: "MISSING_TBH_HEADER_FIELD",
+        message: `TBH header is missing required \`${name}\` metadata.`,
+      });
+    }
+  }
+
+  if (fileName && fileField && fileField.toLowerCase() !== fileName.toLowerCase()) {
+    diagnostics.push({
+      severity: "warning",
+      code: "HEADER_FILENAME_MISMATCH",
+      message: `TBH header File is \`${fileField}\` but the repository file is \`${fileName}\`.`,
+    });
+  }
+
+  if (commandField && commands.length) {
+    const normalized = commandField.toUpperCase();
+    for (const command of commands) {
+      if (!new RegExp(`(^|[^A-Z0-9_-])${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Z0-9_-]|$)`).test(normalized)) {
+        diagnostics.push({
+          severity: "error",
+          code: "HEADER_COMMAND_MISMATCH",
+          message: `Public command ${command} is not declared in the TBH header Command field.`,
+        });
+      }
+    }
+  }
+
+  if (commands.length && !/\[TBH\]/i.test(source)) {
+    diagnostics.push({
+      severity: "warning",
+      code: "NO_TBH_LOAD_BANNER",
+      message: "Public command file has no TBH load banner; keep new command files consistent with the library scaffold.",
+    });
+  }
+
+  if (commands.length && !/\(\s*princ\s*\)\s*$/i.test(source.trim())) {
+    diagnostics.push({
+      severity: "warning",
+      code: "NO_QUIET_FILE_END",
+      message: "Public command file should normally end with a quiet `(princ)` like the TBH library scaffold.",
+    });
+  }
+
+  if (/\bTODO\b/i.test(source)) {
+    diagnostics.push({
+      severity: "warning",
+      code: "TODO_MARKER",
+      message: "Source still contains TODO markers; remove or resolve them before declaring the command complete.",
+    });
+  }
+}
+
 /**
  * Lightweight AutoLISP reader-aware validation.
  *
- * This is intentionally not a full evaluator. It understands line comments,
- * strings/escapes, and parenthesis structure so it avoids the false positives
- * caused by raw character counting. Runtime CAD behavior is validated later by
- * load/run/postcondition gates.
+ * It intentionally validates AutoLISP/Visual LISP rather than generic Lisp.
+ * Comments and strings are masked before dialect/structure checks. Runtime CAD
+ * behavior remains the responsibility of load/run/postcondition gates.
  */
-export function validateLispSource(source: string, expectedCommands: string[] = []): LispValidationResult {
+export function validateLispSource(
+  source: string,
+  expectedCommands: string[] = [],
+  options: { enforceLibraryStyle?: boolean; fileName?: string } = {}
+): LispValidationResult {
   const diagnostics: LispDiagnostic[] = [];
   const stack: Array<{ line: number; column: number }> = [];
   let line = 1;
@@ -178,6 +356,8 @@ export function validateLispSource(source: string, expectedCommands: string[] = 
     });
   }
 
+  checkAutoLispDialect(clean, source, diagnostics);
+
   const { commands, functions } = extractDefuns(clean);
   const commandCounts = new Map<string, number>();
   const commandRegex = /\(\s*defun\s+c:([^\s()]+)/gi;
@@ -210,9 +390,9 @@ export function validateLispSource(source: string, expectedCommands: string[] = 
   const hasVlLoadCom = /\(\s*vl-load-com\s*\)/i.test(clean);
   if (usesCom && !hasVlLoadCom) {
     diagnostics.push({
-      severity: "warning",
+      severity: "error",
       code: "COM_WITHOUT_VL_LOAD_COM",
-      message: "Visual LISP/COM APIs are used but `(vl-load-com)` was not found.",
+      message: "Visual LISP/ActiveX APIs are used but `(vl-load-com)` was not found.",
     });
   }
 
@@ -243,6 +423,10 @@ export function validateLispSource(source: string, expectedCommands: string[] = 
     });
   }
 
+  if (options.enforceLibraryStyle !== false) {
+    checkLibraryStyle(source, commands, diagnostics, options.fileName);
+  }
+
   return {
     valid: !diagnostics.some((item) => item.severity === "error"),
     sha256: createHash("sha256").update(source, "utf8").digest("hex"),
@@ -261,18 +445,81 @@ export function validateLispSource(source: string, expectedCommands: string[] = 
   };
 }
 
+function cleanCommentValue(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function makeScaffold(args: {
+  fileName: string;
+  module: string;
+  command: string;
+  description: string;
+  mutating: boolean;
+  usesCom: boolean;
+}): string {
+  const fileName = args.fileName.trim();
+  const module = cleanCommentValue(args.module);
+  const command = args.command.trim().toUpperCase();
+  const description = cleanCommentValue(args.description);
+  const prefix = command.toLowerCase().replace(/[^a-z0-9]/g, "") || "cmd";
+  const comLine = args.usesCom ? "\n(vl-load-com)\n" : "";
+
+  const body = args.mutating
+    ? `(defun c:${command} (/ *error* cmde undo-open)\n\n  (defun *error* (errmsg)\n    (if (not (member errmsg '(\"Function cancelled\" \"quit / exit abort\" \"console break\")))\n      (princ (strcat \"\\n[Error] \" errmsg))\n    )\n    (if undo-open (command \"_.undo\" \"_end\"))\n    (if cmde (setvar 'CMDECHO cmde))\n    (princ)\n  )\n\n  (setq cmde (getvar 'CMDECHO))\n  (setvar 'CMDECHO 0)\n  (command \"_.undo\" \"_begin\")\n  (setq undo-open T)\n\n  ;; Implement command logic here.\n\n  (if undo-open\n    (progn\n      (command \"_.undo\" \"_end\")\n      (setq undo-open nil)\n    )\n  )\n  (if cmde (setvar 'CMDECHO cmde))\n  (princ \"\\n[Done] Command complete.\")\n  (princ)\n)`
+    : `(defun c:${command} (/ )\n\n  ;; Implement command logic here.\n\n  (princ \"\\n[Done] Command complete.\")\n  (princ)\n)`;
+
+  return `;;; =============================================================================\n;;; TBH-HEADER-START\n;;;\n;;; File        : ${fileName}\n;;; Module      : ${module}\n;;; Command     : ${command}\n;;; Description : ${description}\n;;;\n;;; Usage       :\n;;; 1. Run '${command}'.\n;;; 2. Follow command prompts.\n;;; TBH-HEADER-END\n;;; =============================================================================\n${comLine}\n;; =============================================================================\n;; Helpers\n;; =============================================================================\n\n;; Prefix helper functions with ${prefix}: to avoid global symbol collisions.\n\n;; =============================================================================\n;; Main command\n;; =============================================================================\n\n${body}\n\n(princ \"\\n[TBH] ${description} loaded. Type '${command}' to start.\")\n(princ)\n`;
+}
+
 export function registerLispHarnessTools(server: McpServer): void {
+  server.registerTool(
+    "lisp_scaffold",
+    {
+      title: "Create Canonical AutoLISP Scaffold",
+      description: "Return the canonical TBH AutoLISP command skeleton derived from the existing library. Use this before creating a new production .lsp file.",
+      inputSchema: {
+        file_name: z.string().regex(/^[^\\/]+\.lsp$/i),
+        module: z.string().min(1).max(120),
+        command: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
+        description: z.string().min(1).max(500),
+        mutating: z.boolean().optional().default(true),
+        uses_com: z.boolean().optional().default(true),
+      },
+    },
+    async ({ file_name, module, command, description, mutating, uses_com }) => {
+      try {
+        const content = makeScaffold({
+          fileName: file_name,
+          module,
+          command,
+          description,
+          mutating,
+          usesCom: uses_com,
+        });
+        return toolResult("lisp_scaffold", {
+          file_name,
+          command: command.toUpperCase(),
+          content,
+          next: "Create the file under lisp/**, replace implementation placeholders, then run lisp_validate.",
+        });
+      } catch (error) {
+        return toolError("lisp_scaffold", error);
+      }
+    }
+  );
+
   server.registerTool(
     "lisp_validate",
     {
       title: "Validate AutoLISP Source",
-      description: "Run CadGPT's static AutoLISP harness against one .lsp file under lisp/** before loading it into AutoCAD.",
+      description: "Validate AutoLISP dialect, TBH library structure, command contracts, and static source safety for one .lsp file under lisp/** before AutoCAD load.",
       inputSchema: {
         path: z.string().min(1),
         expected_commands: z.array(z.string().min(1)).max(50).optional().default([]),
+        enforce_library_style: z.boolean().optional().default(true),
       },
     },
-    async ({ path: input, expected_commands }) => {
+    async ({ path: input, expected_commands, enforce_library_style }) => {
       try {
         const target = await resolveAllowedPath(input);
         const relative = toRepoRelative(target);
@@ -283,8 +530,15 @@ export function registerLispHarnessTools(server: McpServer): void {
           throw new Error("lisp_validate only accepts .lsp files");
         }
         const source = await fs.readFile(target, "utf8");
-        const result = validateLispSource(source, expected_commands);
-        return toolResult("lisp_validate", { path: relative, ...result }, result.valid ? "AutoLISP static validation passed" : "AutoLISP static validation failed");
+        const result = validateLispSource(source, expected_commands, {
+          enforceLibraryStyle: enforce_library_style,
+          fileName: path.basename(target),
+        });
+        return toolResult(
+          "lisp_validate",
+          { path: relative, dialect: "AutoLISP/Visual LISP", library_style: enforce_library_style ? "TBH" : "not-enforced", ...result },
+          result.valid ? "AutoLISP/TBH static validation passed" : "AutoLISP/TBH static validation failed"
+        );
       } catch (error) {
         return toolError("lisp_validate", error);
       }
