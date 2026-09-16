@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { getRepoRoot, resolveAllowedPath, toRepoRelative } from "../lib/path-security.js";
+import { resolveAllowedPath, toRepoRelative } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 
 interface JobSummary {
@@ -80,7 +80,6 @@ export function registerJobTools(server: McpServer): void {
           name,
           path: toRepoRelative(target),
           content,
-          repository: getRepoRoot(),
         });
       } catch (error) {
         return toolError("job_get", error);
