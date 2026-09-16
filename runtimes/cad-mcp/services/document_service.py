@@ -1,4 +1,4 @@
-"""Document discovery, explicit activation, and safe test-drawing creation for CadGPT."""
+"""Document discovery, explicit activation, saving, and safe test-drawing creation for CadGPT."""
 
 from connection.acad import AutoCADNotRunningError, get_acad_app, get_active_document
 from connection.session import activate_document, document_identity, iter_documents
@@ -58,6 +58,37 @@ def set_active_document(document_name: str) -> dict:
         raise DocumentServiceError(str(exc)) from exc
     except Exception as exc:
         raise DocumentServiceError(str(exc)) from exc
+
+
+def save_active_document() -> dict:
+    """Persist the currently active drawing to its existing DWG path.
+
+    The outer CadGPT layer must first reactivate the explicitly bound drawing.
+    This operation intentionally refuses unsaved drawings because choosing a
+    Save-As path is a user/workflow decision, not a low-level runtime decision.
+    """
+    try:
+        doc = get_active_document()
+        before = document_identity(doc)
+        full_name = str(before.get("full_name") or "")
+        if not full_name:
+            raise DocumentServiceError(
+                "The active drawing has no saved file path. Save As is required before a durable Observator checkpoint can be created."
+            )
+        doc.Save()
+        after = document_identity(doc)
+        return {
+            **after,
+            "active": True,
+            "host": "autocad",
+            "saved": True,
+        }
+    except AutoCADNotRunningError:
+        raise
+    except DocumentServiceError:
+        raise
+    except Exception as exc:
+        raise DocumentServiceError(f"Could not save active drawing: {exc}") from exc
 
 
 def create_blank_test_document() -> dict:
