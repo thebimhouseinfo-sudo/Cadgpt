@@ -17,7 +17,12 @@ const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
 const MCP_TOKEN = (process.env.MCP_TOKEN || "").trim();
 const SESSION_RECOVERY = (process.env.MCP_SESSION_RECOVERY || "true").toLowerCase() !== "false";
+const CORE_IDLE_MS = Math.max(10_000, Number(process.env.CADGPT_SESSION_IDLE_MS || 120_000));
 const STARTED_AT = Date.now();
+
+let lastMcpActivityAt = Date.now();
+let activeMcpRequests = 0;
+let shuttingDown = false;
 
 const app = express();
 app.disable("x-powered-by");
@@ -28,6 +33,20 @@ const mcpPathSet = new Set(mcpPaths);
 const sessions = createSessionManager(PORT);
 sessions.startCleanup();
 
+function trackMcpRequest(res: express.Response): void {
+  lastMcpActivityAt = Date.now();
+  activeMcpRequests += 1;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    activeMcpRequests = Math.max(0, activeMcpRequests - 1);
+    lastMcpActivityAt = Date.now();
+  };
+  res.once("finish", release);
+  res.once("close", release);
+}
+
 app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
@@ -37,6 +56,9 @@ app.get("/health", (_req, res) => {
     uptime_seconds: Math.floor((Date.now() - STARTED_AT) / 1000),
     file_roots: getAllowedRoots().map(toRepoRelative),
     active_mcp_sessions: sessions.count(),
+    active_mcp_requests: activeMcpRequests,
+    last_mcp_activity_at: new Date(lastMcpActivityAt).toISOString(),
+    session_idle_ms: CORE_IDLE_MS,
     session_recovery: SESSION_RECOVERY,
     mcp_path_protected: Boolean(MCP_TOKEN),
     mcp_paths: mcpPaths,
@@ -44,8 +66,6 @@ app.get("/health", (_req, res) => {
   });
 });
 
-// Internal lifecycle controls are only reachable on this core's loopback-only
-// internal port. The public wake-agent proxies only the protected MCP path.
 app.post("/internal/cad/activate", async (_req, res) => {
   try {
     const result = await activateCadRuntime();
@@ -110,9 +130,13 @@ async function handlePost(req: express.Request, res: express.Response): Promise<
 }
 
 for (const route of mcpPaths) {
-  app.post(route, (req, res) => void handlePost(req, res));
+  app.post(route, (req, res) => {
+    trackMcpRequest(res);
+    void handlePost(req, res);
+  });
 
   app.get(route, async (req, res) => {
+    trackMcpRequest(res);
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     const session = sessionId ? sessions.get(sessionId) : undefined;
     if (!session) {
@@ -123,6 +147,7 @@ for (const route of mcpPaths) {
   });
 
   app.delete(route, async (req, res) => {
+    trackMcpRequest(res);
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     const session = sessionId ? sessions.get(sessionId) : undefined;
     if (!session) {
@@ -145,17 +170,28 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`Health:     http://${HOST}:${PORT}/health`);
   console.log(`File roots: ${getAllowedRoots().map(toRepoRelative).join(", ")}`);
   console.log(`MCP path:   ${MCP_TOKEN ? "protected" : "unprotected"}`);
+  console.log(`Sleep:      after ${CORE_IDLE_MS}ms without MCP activity once no request/stream remains`);
   console.log("CAD MCP:    controlled by wake-agent; active only after ChatGPT activation while AutoCAD is running");
   console.log("");
 });
 
 async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log(`[CadGPT] ${signal}: shutting down`);
   sessions.stopCleanup();
   await cadUpstream.deactivate();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000).unref();
 }
+
+const idleTimer = setInterval(() => {
+  if (shuttingDown || activeMcpRequests > 0) return;
+  if (Date.now() - lastMcpActivityAt >= CORE_IDLE_MS) {
+    void shutdown("MCP_IDLE");
+  }
+}, Math.min(5_000, Math.max(1_000, Math.floor(CORE_IDLE_MS / 4))));
+idleTimer.unref?.();
 
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
