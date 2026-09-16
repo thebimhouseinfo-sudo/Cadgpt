@@ -17,10 +17,11 @@ export function createMcpServer(): McpServer {
       instructions: [
         "CadGPT is a drawing-centric AutoCAD execution environment for ChatGPT.",
         "Local file tools are strictly sandboxed to lisp/** and jobs/**.",
-        "Never assume that AutoCAD ActiveDocument is the CadGPT bound drawing.",
+        "Never assume that AutoCAD ActiveDocument is the CadGPT target drawing.",
+        "Use drawing_list and drawing_bind to explicitly bind the target drawing before any CAD business operation; changing AutoCAD tabs does not change that binding.",
         "Jobs define repeatable CAD workflows; load them with job_list/job_get and follow each step's explicit available_tools contract.",
         "write-lisp is a reusable coding capability rather than a CAD business Job.",
-        "CAD MCP tools are exposed as cad__<upstream-tool-name> and must target the explicitly bound drawing once drawing binding is implemented.",
+        "Proxied CAD business tools are exposed as cad__<upstream-tool-name> and CadGPT re-establishes the bound drawing before each call.",
       ].join("\n"),
     }
   );
