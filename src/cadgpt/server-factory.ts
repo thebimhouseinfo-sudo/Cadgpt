@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerFilesystemTools } from "./tools/filesystem.js";
 import { registerCadProxyTools } from "./tools/cad-proxy.js";
 
-export async function createMcpServer(): Promise<McpServer> {
+export function createMcpServer(): McpServer {
   const server = new McpServer(
     {
       name: "cadgpt",
@@ -24,6 +24,14 @@ export async function createMcpServer(): Promise<McpServer> {
   );
 
   registerFilesystemTools(server);
-  await registerCadProxyTools(server);
+
+  // CAD MCP is optional at connector startup. The ChatGPT/file-tool surface
+  // remains healthy even if AutoCAD/CAD MCP is temporarily unavailable.
+  void registerCadProxyTools(server)
+    .then(() => server.sendToolListChanged())
+    .catch((error) =>
+      console.warn("[CAD MCP] proxy registration deferred:", error instanceof Error ? error.message : error)
+    );
+
   return server;
 }
