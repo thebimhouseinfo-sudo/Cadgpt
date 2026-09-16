@@ -18,11 +18,16 @@ appdata/
 │   └── job-draft/            future Job authoring workspace
 ├── runtime/
 │   └── dynamic-lisp/         temporary AI-derived Lisp variants
+├── drawings/                 per-drawing Observator/semantic runtime data
+│   └── <drawing_id>/
+│       └── observator/       JSONL logs selected by future Jobs
 ├── data/
 │   └── runs/                 persistent run outputs/evidence
 ├── state/                    internal process state
 └── logs/                     diagnostics
 ```
+
+`drawings/<drawing_id>/` is intentionally separate from the conceptual Current Working Space. A drawing's stable identity will later map a reopened DWG back to this directory. Observator V1 only provides the per-drawing storage primitive; drawing-anchor creation/reconciliation is a separate concern.
 
 ## Imported library contract
 
