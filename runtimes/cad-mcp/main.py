@@ -16,6 +16,7 @@ from tools import (
     host_tools,
     inventory_tools,
     layer_tools,
+    lisp_tools,
     modify_tools,
 )
 from utils.logger import get_logger
@@ -32,7 +33,8 @@ host_tools.register(mcp)
 geometry_tools.register(mcp)
 modify_tools.register(mcp)
 destructive_tools.register(mcp)
+lisp_tools.register(mcp)
 
 if __name__ == "__main__":
-    log.info("Starting cad-mcp bounded inspection/mutation slice with stdio transport...")
+    log.info("Starting cad-mcp bounded inspection/mutation/LISP slice with stdio transport...")
     mcp.run(transport="stdio")
