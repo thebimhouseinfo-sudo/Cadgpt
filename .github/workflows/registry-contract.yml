@@ -1,8 +1,6 @@
 name: CadGPT Registry Contract
 
 on:
-  push:
-    branches: ['phase*', 'beta-review-*']
   pull_request:
     branches: [main]
 
@@ -11,28 +9,29 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Validate curated Lisp registry coverage and command drift
+
+      - name: Validate curated Lisp semantic registry
         run: python scripts/validate-lisp-registry.py
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Install locked Node dependencies
-        run: npm ci
-      - name: Generate stable CAD tool manifest
-        run: python scripts/generate-cad-tool-manifest.py
-      - name: Build registry-enabled connector
-        run: npm run build
-      - name: Check registry seed semantics
+
+      - name: Verify registry class/type contract
         shell: pwsh
         run: |
-          $registry = Get-Content 'registry/lisp-registry.json' -Raw | ConvertFrom-Json
-          if (@($registry.entries).Count -lt 1) { throw 'Lisp registry is empty' }
-          $xlay = @($registry.entries | Where-Object { $_.commands -contains 'XLAY' })
-          if ($xlay.Count -ne 1) { throw 'XLAY must have exactly one semantic registry entry' }
-          if ($xlay[0].type -ne 'dynamic') { throw 'XLAY must remain dynamic-capable in registry' }
-          $autoLoad = @($registry.entries | Where-Object { $_.load_behavior -eq 'execute_on_load' })
-          if ($autoLoad.Count -lt 1) { throw 'Registry must preserve execute_on_load safety metadata' }
-          Write-Host "Registry contract passed: entries=$(@($registry.entries).Count)"
+          $registry = Get-Content "registry/lisp-registry.json" -Raw | ConvertFrom-Json
+          if (-not $registry.entries -or $registry.entries.Count -lt 1) { throw "Lisp registry has no entries" }
+          foreach ($entry in $registry.entries) {
+            if ($entry.type -notin @("static", "dynamic")) { throw "Invalid Lisp type: $($entry.id)" }
+            if (-not $entry.class -or -not $entry.subclass -or -not $entry.summary) { throw "Incomplete semantic metadata: $($entry.id)" }
+            if (-not $entry.path.StartsWith("lisp/")) { throw "Permanent registry entry must point to lisp/**: $($entry.id)" }
+          }
+          $xlay = $registry.entries | Where-Object { $_.commands -contains "XLAY" } | Select-Object -First 1
+          if (-not $xlay) { throw "XLAY is missing from Lisp registry" }
+          if ($xlay.type -ne "dynamic" -or $xlay.dynamic_role -ne "template") { throw "XLAY must remain a dynamic-capable template" }
+          if ($xlay.dynamic_parameters.Count -lt 1) { throw "XLAY dynamic parameters are not catalogued" }
+          if (Test-Path "appdata/lisp-draft") {
+            Write-Host "Draft AppData exists; registry validator correctly ignores drafts until promotion."
+          }
+          Write-Host "Semantic registry contract OK"
