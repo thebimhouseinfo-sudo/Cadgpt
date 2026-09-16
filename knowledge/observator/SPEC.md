@@ -16,7 +16,7 @@ It is infrastructure for future Observation Jobs. This specification deliberatel
 
 > `last_revision` is the revision carried by the opened DWG copy, not a global "latest wins" marker.
 
-> Observation revision labels are hierarchical strings such as `12.1`, not floating-point numbers.
+> Observation revision labels are hierarchical strings such as `12.01`, never floating-point numbers.
 
 > Anchor state is independent of AutoCAD save state. Observator does not certify that the latest in-memory DWG or anchor update has been persisted to disk.
 
@@ -132,26 +132,43 @@ Observation history is not required to be linear.
 
 A copied/older DWG can later become the active working drawing again. If that DWG carries revision `12` while AppData already contains revisions `13–15`, Observator must not force the drawing to revision `15`.
 
-If the user continues working from revision `12`, the next successfully completed Observation Job creates a hierarchical branch revision such as `12.1` whose parent is `12`:
+If the user continues working from revision `12`, the next successfully completed Observation Job creates a hierarchical branch revision such as `12.01` whose parent is `12`:
 
 ```text
 10 → 11 → 12 → 13 → 14 → 15
            \
-            → 12.1
+            → 12.01
 ```
 
-Revision `12.1` is newer work continued from revision `12`. Revisions `13–15` remain another valid branch of the same `drawing_id` lineage.
+Branch segments use two-digit zero padding:
+
+```text
+12.01
+12.02
+...
+12.09
+12.10
+```
+
+If a branch later forks again, the hierarchy extends using the same convention:
+
+```text
+12.01.01
+12.01.02
+```
+
+Revision labels must be stored and compared as strings. Zero padding is significant formatting and must be preserved exactly. `12.10` must never be parsed as the decimal number `12.1`.
+
+Revision `12.01` is newer work continued from revision `12`. Revisions `13–15` remain another valid branch of the same `drawing_id` lineage.
 
 Branch/parent relationships belong in AppData revision metadata:
 
 ```text
-revision: "12.1"
+revision: "12.01"
 parent_revision: "12"
 ```
 
 They do not belong in the Drawing Anchor. The anchor stays minimal and points only to the revision carried by that DWG copy.
-
-Revision labels must be treated as strings. For example, `12.10` is a label and must never be compared or parsed as the decimal number 12.1.
 
 The exact child-label allocation policy belongs to the AppData revision allocator. `parent_revision` remains authoritative for topology; string formatting is human-readable lineage notation, not the sole source of graph semantics.
 
