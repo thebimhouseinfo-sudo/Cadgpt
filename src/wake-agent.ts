@@ -8,6 +8,8 @@ import { randomBytes } from "node:crypto";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { getAppDataPath } from "./cadgpt/lib/appdata.js";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
@@ -19,10 +21,12 @@ const POLL_MS = Math.max(1000, Number(process.env.CADGPT_WAKE_POLL_MS || 2500));
 const STARTED_AT = Date.now();
 const CONTROL_TOKEN = randomBytes(32).toString("hex");
 
-const runtimeDir = path.join(ROOT, ".runtime");
-const logFile = path.join(runtimeDir, "wake-agent.log");
-const stateFile = path.join(runtimeDir, "wake-state.json");
-fs.mkdirSync(runtimeDir, { recursive: true });
+const stateDir = getAppDataPath("state");
+const logDir = getAppDataPath("logs");
+const logFile = path.join(logDir, "wake-agent.log");
+const stateFile = path.join(stateDir, "wake-state.json");
+fs.mkdirSync(stateDir, { recursive: true });
+fs.mkdirSync(logDir, { recursive: true });
 
 let coreChild: ChildProcess | null = null;
 let tunnelChild: ChildProcess | null = null;
