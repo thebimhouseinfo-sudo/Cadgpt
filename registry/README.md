@@ -1,49 +1,95 @@
 # CadGPT Capability Registry
 
-The registry is a semantic catalog for ChatGPT. It is not an execution path and must never bypass normal MCP/CAD/LISP safety gates.
+CadGPT uses a semantic capability registry so ChatGPT can discover what existing tools and Lisp actually do without repeatedly opening implementation files.
 
-## Why it exists
+## Principles
 
-Legacy Lisp filenames and command names are often personal shorthand and do not reliably describe behavior. ChatGPT should normally select a capability from registry metadata first and only read source when it needs to modify, debug, audit, or generate a dynamic variant.
+- filenames and personal command names are **not** semantic contracts;
+- permanent Lisp metadata is curated from actual implementation behavior;
+- registry metadata is for discovery/selection, not an execution bypass;
+- MCP `tools/list` remains authoritative for executable MCP tool schemas;
+- permanent Lisp source lives under `lisp/**` and every user-facing permanent `.lsp` must be catalogued;
+- work-in-progress Lisp under `appdata/lisp-draft/**` is intentionally **not** part of the permanent registry;
+- runtime dynamic instances under `appdata/runtime/dynamic-lisp/**` are runtime artifacts and are not permanent registry entries unless intentionally promoted as reusable templates.
 
-## Lisp entry contract
+## Lisp metadata
 
-Every user-facing Lisp under `lisp/**` (except `lisp/_cadgpt-system/**`) must have one curated entry in `registry/lisp-registry.json`.
+Each permanent Lisp capability should describe enough behavior for ChatGPT to choose it without reading source merely for discovery:
 
-Required semantic fields:
+```text
+id
+title
+type                static | dynamic
+dynamic_role        template | instance (when relevant)
+class
+subclass
+tags
+module
+commands
+path
+summary
+when_to_use
+targets
+inputs
+effects
+interaction         interactive | non-interactive
+load_behavior       define_only | execute_on_load
+mutates_drawing
+destructive
+risk                 low | medium | high
+dynamic_parameters
+implementation_notes
+```
 
-- `id`: stable canonical identifier independent of filename.
-- `title`: human-readable capability name.
-- `type`: `static` or `dynamic`.
-- `dynamic_role`: `template` or `instance` when applicable.
-- `class` / `subclass`: semantic catalog hierarchy.
-- `tags`: additional retrieval hints.
-- `module`: owning functional module.
-- `commands`: public AutoCAD commands defined by the source.
-- `path`: source library path for library/template entries.
-- `summary`: concise description of actual current implementation.
-- `when_to_use`: scenarios where the capability is appropriate.
-- `targets`: drawing objects/state affected.
-- `inputs`: required user/runtime inputs.
-- `effects`: actual drawing changes performed.
-- `interaction`: `interactive` or `non-interactive`.
-- `load_behavior`: `define_only` or `execute_on_load`.
-- `mutates_drawing`: whether execution changes drawing state.
-- `destructive`: whether execution may delete or irreversibly overwrite data.
-- `risk`: `low`, `medium`, or `high`.
-- `dynamic_parameters`: parameters intended for runtime materialization when `type=dynamic`.
-- `implementation_notes`: important discrepancies, constraints, or caveats found by reading the implementation.
+Descriptions follow implementation reality rather than trusting legacy headers blindly.
 
-## Static vs dynamic
+## Static and dynamic
 
-`static` means the repository source is normally loaded as-is.
+`static` means the reusable implementation normally loads/runs as stored.
 
-`dynamic` means the library entry is a semantic template/capability. ChatGPT may create an ephemeral validated instance with runtime parameters without rewriting the source library file. Dynamic instances belong under `.runtime/dynamic-lisp/**`, are identified by artifact ID, and still pass AutoLISP validation plus verified AutoCAD load before use.
+`dynamic` means the reusable algorithm is expected to produce parameterized variants. A permanent dynamic `template` still lives in `lisp/**` and is catalogued normally. Per-run/session `instance` artifacts live in AppData runtime storage and should retain template/parameter/hash provenance rather than polluting the permanent library.
 
-## Source of truth
+## Draft → permanent lifecycle
 
-The registry description must reflect actual implementation, not merely filename or header text. Build/CI validation checks path and command drift; semantic fields remain deliberately curated.
+New or substantially changed AutoLISP normally follows:
 
-## Tool registry
+```text
+appdata/lisp-draft/**
+→ AutoLISP static validation
+→ user-approved AutoCAD load/runtime test
+→ lisp_promote_draft
+→ lisp/** + registry/lisp-registry.json
+```
 
-Normal MCP `tools/list` remains the execution source of truth. CadGPT's stable CAD tool manifest provides tool schemas while CAD MCP sleeps. Registry tooling may expose the same tool inventory with semantic grouping, but execution always goes through the registered MCP tool itself.
+`lisp_promote_draft` re-validates source, derives public commands, checks path/command collisions, writes the permanent file, and updates semantic registry metadata as one rollback-safe operation. If registry update fails, permanent source is restored to its previous state.
+
+A draft can remain in AppData after promotion for traceability until explicitly cleaned.
+
+## Registry tools
+
+```text
+registry_list(kind="lisp" | "tool", ...)
+registry_get(kind="lisp" | "tool", id=...)
+```
+
+Typical Lisp discovery:
+
+```text
+registry_list(kind="lisp", class_name="xref", query="map consultant layers")
+registry_get(kind="lisp", id="XLAY")
+```
+
+Read the `.lsp` source only when modification, debugging, audit, or dynamic-instance construction actually requires implementation detail.
+
+## CI contract
+
+`scripts/validate-lisp-registry.py` and the registry workflow enforce structural drift protection:
+
+- every user-facing permanent `lisp/**/*.lsp` except `lisp/_cadgpt-system/**` has a registry entry;
+- every registered path exists;
+- declared `commands` exist in source;
+- public source commands are not omitted from registry metadata;
+- registry IDs are unique;
+- type and core semantic fields are valid.
+
+Drafts and runtime dynamic instances are intentionally outside this permanent-library coverage until promotion.
