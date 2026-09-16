@@ -9,6 +9,7 @@ from mcp.server.fastmcp import FastMCP
 
 from tools import (
     block_tools,
+    destructive_tools,
     document_tools,
     entity_tools,
     geometry_tools,
@@ -30,6 +31,7 @@ block_tools.register(mcp)
 host_tools.register(mcp)
 geometry_tools.register(mcp)
 modify_tools.register(mcp)
+destructive_tools.register(mcp)
 
 if __name__ == "__main__":
     log.info("Starting cad-mcp bounded inspection/mutation slice with stdio transport...")
