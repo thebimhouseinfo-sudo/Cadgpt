@@ -1,0 +1,160 @@
+name: CadGPT Beta Build Gate
+
+on:
+  push:
+    branches: ['phase*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  beta-build-contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify beta dependency/install contract
+        shell: pwsh
+        run: |
+          foreach ($required in @(
+            "package-lock.json",
+            "runtimes/cad-mcp/requirements.lock.txt",
+            "ROADMAP.md",
+            "setup.bat",
+            "run.bat",
+            "doctor.bat",
+            "acceptance.bat"
+          )) {
+            if (-not (Test-Path -LiteralPath $required)) { throw "Missing Beta Build artifact: $required" }
+          }
+
+          $setup = Get-Content "setup.bat" -Raw
+          foreach ($marker in @("npm ci", "requirements.lock.txt", "pip check", "Python 3.11")) {
+            if ($setup -notmatch [regex]::Escape($marker)) { throw "setup.bat missing reproducible-install marker: $marker" }
+          }
+
+          $roadmap = Get-Content "ROADMAP.md" -Raw
+          foreach ($marker in @("Stage 1 — Beta Build / Code Complete", "Review Gate — Beta Scope Review", "Stage 2 — Real CAD Beta Validation")) {
+            if ($roadmap -notmatch [regex]::Escape($marker)) { throw "ROADMAP.md missing product-stage marker: $marker" }
+          }
+          Write-Host "Beta dependency/install/roadmap contract OK"
+
+      - name: Install locked Node dependencies
+        run: npm ci
+
+      - name: Build connector
+        run: npm run build
+
+      - name: Exercise write-lisp specialist through MCP
+        shell: pwsh
+        run: |
+          $env:CAD_MCP_PYTHON = "python"
+          $env:CAD_MCP_ENTRY = "runtimes\cad-mcp\main.py"
+          $env:MCP_TOKEN = "beta-gate-token"
+          $mcpUrl = "http://127.0.0.1:3000/mcp/beta-gate-token"
+          $badFixture = "lisp/_cadgpt-system/_CI_COMMON_LISP_REJECT.lsp"
+          $proc = Start-Process -FilePath "node" -ArgumentList "dist/index.js" -PassThru -NoNewWindow
+          try {
+            $ready = $false
+            foreach ($i in 1..40) {
+              try {
+                $health = Invoke-RestMethod -Uri "http://127.0.0.1:3000/health" -TimeoutSec 1
+                if ($health.status -eq "ok") { $ready = $true; break }
+              } catch {}
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not $ready) { throw "CadGPT did not become ready" }
+
+            $headers = @{ Accept = "application/json, text/event-stream" }
+            $init = @{
+              jsonrpc = "2.0"; id = 1; method = "initialize";
+              params = @{
+                protocolVersion = "2025-06-18"; capabilities = @{};
+                clientInfo = @{ name = "cadgpt-beta-gate"; version = "0.1.0" }
+              }
+            } | ConvertTo-Json -Depth 10
+            $initResp = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $headers -ContentType "application/json" -Body $init
+            $sessionId = $initResp.Headers["Mcp-Session-Id"]
+            if (-not $sessionId) { throw "No MCP session id" }
+
+            $mcpHeaders = @{
+              Accept = "application/json, text/event-stream"
+              "Mcp-Session-Id" = $sessionId
+              "Mcp-Protocol-Version" = "2025-06-18"
+            }
+            $null = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body (@{ jsonrpc="2.0"; method="notifications/initialized" } | ConvertTo-Json)
+
+            function Invoke-McpTool([int]$Id, [string]$Name, $Arguments) {
+              $body = @{
+                jsonrpc = "2.0"; id = $Id; method = "tools/call";
+                params = @{ name = $Name; arguments = $Arguments }
+              } | ConvertTo-Json -Depth 12
+              $resp = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body $body
+              return ($resp.Content | ConvertFrom-Json)
+            }
+
+            $skill = Invoke-McpTool 2 "skill_get" @{ name = "write-lisp" }
+            if ($skill.result.isError -eq $true -or $skill.result.structuredContent.ok -ne $true) { throw "skill_get write-lisp failed" }
+            if ($skill.result.structuredContent.data.content -notmatch "AutoLISP") { throw "write-lisp skill does not identify itself as AutoLISP-specialized" }
+
+            $scaffold = Invoke-McpTool 3 "lisp_scaffold" @{
+              file_name = "Beta Smoke.lsp"
+              module = "CadGPT Beta Gate"
+              command = "BETASMOKE"
+              description = "Static beta scaffold smoke test"
+              mutating = $false
+              uses_com = $false
+            }
+            if ($scaffold.result.isError -eq $true -or $scaffold.result.structuredContent.ok -ne $true) { throw "lisp_scaffold failed" }
+            $scaffoldSource = $scaffold.result.structuredContent.data.content
+            if ($scaffoldSource -notmatch "TBH-HEADER-START" -or $scaffoldSource -notmatch "defun c:BETASMOKE") {
+              throw "lisp_scaffold did not produce canonical TBH AutoLISP structure"
+            }
+
+            $valid = Invoke-McpTool 4 "lisp_validate" @{
+              path = "lisp/_cadgpt-system/CADGPT_LOAD_SMOKE.lsp"
+              expected_commands = @("CADGPT_LOAD_SMOKE")
+              enforce_library_style = $true
+            }
+            if ($valid.result.isError -eq $true -or $valid.result.structuredContent.ok -ne $true) { throw "lisp_validate valid fixture call failed" }
+            if ($valid.result.structuredContent.data.valid -ne $true) { throw "Valid AutoLISP fixture failed static validation" }
+            if ($valid.result.structuredContent.data.dialect -ne "AutoLISP/Visual LISP") { throw "Validator dialect contract is wrong" }
+
+            $badSource = @(
+              ";;; =============================================================================",
+              ";;; TBH-HEADER-START",
+              ";;;",
+              ";;; File        : _CI_COMMON_LISP_REJECT.lsp",
+              ";;; Module      : CadGPT Beta Gate",
+              ";;; Command     : BADCL",
+              ";;; Description : Must be rejected because it contains Common Lisp syntax.",
+              ";;; TBH-HEADER-END",
+              ";;; =============================================================================",
+              "(defun c:BADCL (/ x)",
+              "  (let ((x 1))",
+              "    (princ x))",
+              "  (princ))",
+              '(princ "\n[TBH] reject fixture")',
+              "(princ)"
+            )
+            Set-Content -LiteralPath $badFixture -Value $badSource -Encoding UTF8
+
+            $invalid = Invoke-McpTool 5 "lisp_validate" @{
+              path = $badFixture
+              expected_commands = @("BADCL")
+              enforce_library_style = $true
+            }
+            if ($invalid.result.isError -eq $true -or $invalid.result.structuredContent.ok -ne $true) { throw "lisp_validate reject-fixture call failed" }
+            if ($invalid.result.structuredContent.data.valid -ne $false) { throw "Common Lisp form was not rejected" }
+            $codes = @($invalid.result.structuredContent.data.diagnostics | ForEach-Object { $_.code })
+            if ($codes -notcontains "COMMON_LISP_FORM") { throw "Common Lisp rejection did not report COMMON_LISP_FORM" }
+
+            Write-Host "write-lisp specialist MCP gate passed"
+          }
+          finally {
+            if (Test-Path -LiteralPath $badFixture) { Remove-Item -LiteralPath $badFixture -Force }
+            if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
