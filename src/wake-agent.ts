@@ -50,6 +50,28 @@ function requestJson(port: number, route = "/health", timeoutMs = 1000): Promise
   });
 }
 
+function postCoreControl(action: "activate" | "deactivate"): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        host: HOST,
+        port: CORE_PORT,
+        path: `/internal/cad/${action}`,
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": "2" },
+        timeout: 5000,
+      },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve((res.statusCode ?? 500) < 400));
+      }
+    );
+    req.on("timeout", () => req.destroy());
+    req.on("error", () => resolve(false));
+    req.end("{}");
+  });
+}
+
 function tunnelReady(): Promise<boolean> {
   return new Promise((resolve) => {
     const req = http.get({ host: HOST, port: HEALTH_PORT, path: "/readyz", timeout: 1000 }, (res) => {
@@ -98,7 +120,6 @@ async function ensureCore(reason: "chatgpt" | "autocad"): Promise<void> {
         HOST,
         PORT: String(CORE_PORT),
         CADGPT_WOKEN_BY: reason,
-        ...(reason === "autocad" ? { CADGPT_START_CAD_MCP: "1" } : {}),
       },
     });
     coreChild.once("exit", (code, signal) => {
@@ -129,9 +150,7 @@ async function ensureTunnel(): Promise<void> {
     const profile = path.join(ROOT, "profiles", "cadgpt.yaml");
     const tunnelId = (process.env.OPENAI_TUNNEL_ID || "").trim();
     const apiKey = (process.env.OPENAI_TUNNEL_API_KEY || "").trim();
-    if (!fs.existsSync(exe) || !fs.existsSync(profile) || !tunnelId || !apiKey) {
-      return;
-    }
+    if (!fs.existsSync(exe) || !fs.existsSync(profile) || !tunnelId || !apiKey) return;
 
     log("Starting OpenAI Secure MCP Tunnel.");
     tunnelChild = spawn(exe, ["run", "--profile-file", profile], {
@@ -158,18 +177,27 @@ async function ensureTunnel(): Promise<void> {
   }
 }
 
+async function activateCadForHost(): Promise<void> {
+  await ensureCore("autocad");
+  if (!(await postCoreControl("activate"))) {
+    log("AutoCAD is running but CAD MCP activation did not succeed.", "WARN");
+  }
+}
+
+async function deactivateCadForHost(): Promise<void> {
+  if (!(await coreHealth())) return;
+  if (!(await postCoreControl("deactivate"))) {
+    log("AutoCAD closed but CAD MCP deactivation did not succeed.", "WARN");
+  }
+}
+
 async function proxyToCore(req: IncomingMessage, res: ServerResponse): Promise<void> {
   await ensureCore("chatgpt");
+  if (lastAutoCadRunning) await postCoreControl("activate");
 
   const headers = { ...req.headers, host: `${HOST}:${CORE_PORT}` };
   const upstream = http.request(
-    {
-      host: HOST,
-      port: CORE_PORT,
-      path: req.url,
-      method: req.method,
-      headers,
-    },
+    { host: HOST, port: CORE_PORT, path: req.url, method: req.method, headers },
     (upstreamRes) => {
       res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
       upstreamRes.pipe(res);
@@ -197,6 +225,7 @@ async function writeState(): Promise<void> {
     tunnel_ready: await tunnelReady(),
     autocad_running: lastAutoCadRunning,
     core_pid: core?.pid ?? coreChild?.pid ?? null,
+    cad_mcp: core?.cad_mcp ?? { enabled: false, connected: false, pid: null, tool_count: 0 },
     tunnel_pid: tunnelChild?.pid ?? null,
   };
   fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
@@ -208,22 +237,20 @@ const server = http.createServer((req, res) => {
     if (url.pathname === "/health") {
       const core = await coreHealth();
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(
-        JSON.stringify({
-          status: "ok",
-          name: "cadgpt",
-          mode: core ? "active" : "lazy",
-          pid: process.pid,
-          uptime_seconds: Math.floor((Date.now() - STARTED_AT) / 1000),
-          wake_agent: true,
-          external_port: PORT,
-          core_port: CORE_PORT,
-          autocad_running: lastAutoCadRunning,
-          tunnel_ready: await tunnelReady(),
-          core: core ? { running: true, pid: core.pid } : { running: false, pid: null },
-          cad_mcp: core?.cad_mcp ?? { connected: false, tool_count: 0, pid: null, last_error: null },
-        })
-      );
+      res.end(JSON.stringify({
+        status: "ok",
+        name: "cadgpt",
+        mode: core ? "active" : "lazy",
+        pid: process.pid,
+        uptime_seconds: Math.floor((Date.now() - STARTED_AT) / 1000),
+        wake_agent: true,
+        external_port: PORT,
+        core_port: CORE_PORT,
+        autocad_running: lastAutoCadRunning,
+        tunnel_ready: await tunnelReady(),
+        core: core ? { running: true, pid: core.pid } : { running: false, pid: null },
+        cad_mcp: core?.cad_mcp ?? { enabled: false, connected: false, tool_count: 0, pid: null, last_error: null },
+      }));
       return;
     }
 
@@ -255,8 +282,11 @@ const poll = setInterval(() => {
     await ensureTunnel().catch((error) => log(`Tunnel check failed: ${String(error)}`, "WARN"));
     const running = await detectAutoCad();
     if (running && !lastAutoCadRunning) {
-      log("AutoCAD process detected; waking CadGPT core and CAD MCP.");
-      await ensureCore("autocad").catch((error) => log(`AutoCAD wake failed: ${String(error)}`, "WARN"));
+      log("AutoCAD process detected; activating CAD MCP.");
+      await activateCadForHost().catch((error) => log(`AutoCAD activation failed: ${String(error)}`, "WARN"));
+    } else if (!running && lastAutoCadRunning) {
+      log("AutoCAD process closed; shutting down CAD MCP.");
+      await deactivateCadForHost().catch((error) => log(`AutoCAD deactivation failed: ${String(error)}`, "WARN"));
     }
     lastAutoCadRunning = running;
     await writeState().catch(() => undefined);
@@ -267,13 +297,14 @@ poll.unref?.();
 void ensureTunnel();
 void detectAutoCad().then(async (running) => {
   lastAutoCadRunning = running;
-  if (running) await ensureCore("autocad").catch((error) => log(`Initial AutoCAD wake failed: ${String(error)}`, "WARN"));
+  if (running) await activateCadForHost().catch((error) => log(`Initial AutoCAD activation failed: ${String(error)}`, "WARN"));
   await writeState().catch(() => undefined);
 });
 
 async function shutdown(signal: string): Promise<void> {
   log(`${signal}: stopping wake-agent.`);
   clearInterval(poll);
+  await deactivateCadForHost().catch(() => undefined);
   if (coreChild && !coreChild.killed) coreChild.kill();
   if (tunnelChild && !tunnelChild.killed) tunnelChild.kill();
   server.close(() => process.exit(0));
