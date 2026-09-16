@@ -16,6 +16,7 @@ const INTERNAL_DOCUMENT_TOOLS = new Set([
   "acad_get_active_document",
   "acad_list_open_documents",
   "acad_set_active_document",
+  "acad_create_blank_test_document",
 ]);
 
 function registryFor(server: McpServer): Map<string, RegisteredTool> {
@@ -166,10 +167,46 @@ export async function registerCadProxyTools(server: McpServer): Promise<void> {
   );
 
   server.registerTool(
+    "drawing_create_test",
+    {
+      title: "Create and Bind Blank Test Drawing",
+      description: "Create a new unsaved blank AutoCAD drawing and bind this CadGPT session to it. Use this as the default safe environment for AutoLISP load/runtime tests instead of testing against a project drawing.",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const created = await cadUpstream.callTool("acad_create_blank_test_document", {});
+        if (created && typeof created === "object" && (created as { isError?: boolean }).isError) {
+          throw new Error("CAD MCP could not create a blank test drawing");
+        }
+        const drawings = await listOpenDrawings();
+        const active = drawings.filter((item) => item.active === true);
+        if (active.length !== 1) {
+          throw new Error("Could not resolve the newly-created active test drawing uniquely");
+        }
+        const selected = active[0];
+        const identity = String(selected.full_name || selected.name || "");
+        if (!identity) throw new Error("New test drawing has no usable identity");
+        const drawing = await bindDrawing(server, identity);
+        return toolResult("drawing_create_test", {
+          created: true,
+          bound: true,
+          test_drawing: true,
+          unsaved: !drawing.full_name,
+          drawing,
+          note: "Use this isolated drawing for Lisp load/run tests. Do not save it over a project drawing.",
+        });
+      } catch (error) {
+        return toolError("drawing_create_test", error);
+      }
+    }
+  );
+
+  server.registerTool(
     "drawing_bind",
     {
       title: "Bind CadGPT Drawing",
-      description: "Bind this CadGPT MCP session to one explicitly open AutoCAD drawing by exact file name or full path.",
+      description: "Bind this CadGPT MCP session to one explicitly open AutoCAD drawing by exact file name or full path. For AutoLISP testing, use only a user-designated test drawing; otherwise prefer drawing_create_test.",
       inputSchema: {
         document: z.string().min(1),
       },
