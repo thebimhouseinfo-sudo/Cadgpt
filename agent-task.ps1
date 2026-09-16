@@ -21,8 +21,10 @@ function Get-DotEnvValue([string]$Name) {
 
 function Resolve-Ports {
     $portValue = Get-DotEnvValue "PORT"
+    $coreValue = Get-DotEnvValue "CADGPT_INTERNAL_PORT"
     $healthValue = Get-DotEnvValue "OPENAI_TUNNEL_HEALTH_PORT"
     $script:CadGptPort = if ($portValue) { [int]$portValue } else { 3000 }
+    $script:CorePort = if ($coreValue) { [int]$coreValue } else { $CadGptPort + 1 }
     $script:TunnelHealthPort = if ($healthValue) { [int]$healthValue } else { 8080 }
 }
 
@@ -36,11 +38,20 @@ function Get-PortOwnerPid([int]$TargetPort) {
     return $null
 }
 
-function Test-CadGptHealth {
+function Get-WakeHealth {
     try {
         $health = Invoke-RestMethod -Uri "http://127.0.0.1:$CadGptPort/health" -TimeoutSec 2
-        return ($health.status -eq "ok" -and $health.name -eq "cadgpt")
-    } catch { return $false }
+        if ($health.status -eq "ok" -and $health.name -eq "cadgpt" -and $health.wake_agent -eq $true) { return $health }
+    } catch {}
+    return $null
+}
+
+function Get-CoreHealth {
+    try {
+        $health = Invoke-RestMethod -Uri "http://127.0.0.1:$CorePort/health" -TimeoutSec 2
+        if ($health.status -eq "ok" -and $health.name -eq "cadgpt" -and $health.wake_agent -ne $true) { return $health }
+    } catch {}
+    return $null
 }
 
 function Test-TunnelHealth {
@@ -50,11 +61,19 @@ function Test-TunnelHealth {
     } catch { return $false }
 }
 
-function Stop-VerifiedChildren {
-    $connectorPid = Get-PortOwnerPid $CadGptPort
-    if ($connectorPid -and (Test-CadGptHealth)) {
-        Stop-Process -Id $connectorPid -Force -ErrorAction SilentlyContinue
-        Write-Host "[OK] Stopped verified CadGPT local MCP process (PID $connectorPid)."
+function Stop-VerifiedProcesses {
+    $wake = Get-WakeHealth
+    $wakePid = Get-PortOwnerPid $CadGptPort
+    if ($wake -and $wakePid) {
+        Stop-Process -Id $wakePid -Force -ErrorAction SilentlyContinue
+        Write-Host "[OK] Stopped CadGPT wake-agent (PID $wakePid)."
+    }
+
+    $core = Get-CoreHealth
+    $corePid = Get-PortOwnerPid $CorePort
+    if ($core -and $corePid) {
+        Stop-Process -Id $corePid -Force -ErrorAction SilentlyContinue
+        Write-Host "[OK] Stopped full CadGPT MCP (PID $corePid)."
     }
 
     $tunnelPid = Get-PortOwnerPid $TunnelHealthPort
@@ -69,15 +88,15 @@ function Stop-VerifiedChildren {
 }
 
 function Install-AgentTask {
-    if (-not (Test-Path "cadgpt-agent.ps1")) { throw "cadgpt-agent.ps1 is missing" }
+    if (-not (Test-Path "dist\wake-agent.js")) { throw "dist/wake-agent.js is missing; run npm run build first" }
     if (-not (Test-Path ".env")) { throw ".env is missing; run setup.bat first" }
 
+    $node = (Get-Command node -ErrorAction Stop).Source
     $userId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $psExe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $agentScript = Join-Path $ScriptDir "cadgpt-agent.ps1"
-    $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$agentScript`""
+    $wakeScript = Join-Path $ScriptDir "dist\wake-agent.js"
+    $arguments = "`"$wakeScript`""
 
-    $taskAction = New-ScheduledTaskAction -Execute $psExe -Argument $arguments
+    $taskAction = New-ScheduledTaskAction -Execute $node -Argument $arguments -WorkingDirectory $ScriptDir
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
     $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
@@ -89,8 +108,12 @@ function Install-AgentTask {
 function Start-AgentTask {
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     if (-not $task) { throw "CadGPT background task is not installed. Run setup.bat or run.bat install." }
+    if (Get-WakeHealth) {
+        Write-Host "[OK] CadGPT wake-agent is already running."
+        return
+    }
     Start-ScheduledTask -TaskName $TaskName
-    Write-Host "[OK] CadGPT background agent start requested."
+    Write-Host "[OK] CadGPT wake-agent start requested."
 }
 
 function Stop-AgentTask {
@@ -99,30 +122,39 @@ function Stop-AgentTask {
         Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
         Start-Sleep -Milliseconds 500
     }
-    Stop-VerifiedChildren
+    Stop-VerifiedProcesses
 }
 
 function Show-Status {
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    if ($task) {
-        Write-Host "Scheduled task : installed ($($task.State))"
+    $wake = Get-WakeHealth
+    $core = Get-CoreHealth
+    if ($task) { Write-Host "Scheduled task : installed ($($task.State))" }
+    else { Write-Host "Scheduled task : NOT INSTALLED" }
+
+    if ($wake) {
+        Write-Host "Wake listener   : READY ($($wake.mode))"
+        Write-Host "AutoCAD detect  : $($wake.autocad_running)"
+    } else { Write-Host "Wake listener   : OFFLINE" }
+
+    Write-Host "Full CadGPT MCP : $(if ($core) { 'ACTIVE' } else { 'SLEEPING' })"
+    Write-Host "Secure tunnel   : $(if (Test-TunnelHealth) { 'READY' } else { 'OFFLINE' })"
+    if ($core -and $core.cad_mcp.connected) {
+        Write-Host "CAD MCP         : ACTIVE (PID $($core.cad_mcp.pid))"
     } else {
-        Write-Host "Scheduled task : NOT INSTALLED"
+        Write-Host "CAD MCP         : SLEEPING / not connected"
     }
-    Write-Host "Local MCP      : $(if (Test-CadGptHealth) { 'READY' } else { 'OFFLINE' })"
-    Write-Host "Secure tunnel  : $(if (Test-TunnelHealth) { 'READY' } else { 'OFFLINE' })"
-    Write-Host "CAD MCP policy : ON-DEMAND (not started by Windows autostart)"
 }
 
 function Wait-AgentReady {
     foreach ($i in 1..60) {
-        if ((Test-CadGptHealth) -and (Test-TunnelHealth)) {
-            Write-Host "[OK] CadGPT background listener and Secure MCP Tunnel are ready."
+        if ((Get-WakeHealth) -and (Test-TunnelHealth)) {
+            Write-Host "[OK] CadGPT wake listener and Secure MCP Tunnel are ready."
             return
         }
         Start-Sleep -Milliseconds 500
     }
-    throw "CadGPT background agent did not become ready. Run doctor.bat and inspect .runtime/cadgpt-agent.log."
+    throw "CadGPT background agent did not become ready. Run doctor.bat and inspect .runtime/wake-agent.log."
 }
 
 Resolve-Ports
@@ -149,8 +181,5 @@ switch ($Action) {
     }
 }
 
-if ($WaitReady -and $Action -in @("install", "start", "restart")) {
-    Wait-AgentReady
-}
-
+if ($WaitReady -and $Action -in @("install", "start", "restart")) { Wait-AgentReady }
 if ($Action -ne "status") { Show-Status }
