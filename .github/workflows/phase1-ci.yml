@@ -18,3 +18,20 @@ jobs:
         run: npm install
       - name: Build connector
         run: npm run build
+
+  cad-runtime-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CAD MCP dependencies
+        run: python -m pip install -r runtimes/cad-mcp/requirements.txt
+      - name: Compile CAD MCP slice
+        run: python -m compileall -q runtimes/cad-mcp
+      - name: Import CAD MCP entrypoint
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "${{ github.workspace }}\runtimes\cad-mcp"
+          python -c "import main; print('cad-mcp import ok')"
