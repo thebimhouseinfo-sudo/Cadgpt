@@ -7,7 +7,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   getAllowedRoots,
   resolveAllowedPath,
-  toRepoRelative,
+  toCadgptPath,
 } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 
@@ -57,12 +57,12 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_roots",
     {
       title: "CadGPT File Roots",
-      description: "Show the only local repository roots accessible to CadGPT file tools.",
+      description: "Show the only local source/user-data roots accessible to CadGPT file tools.",
       inputSchema: {},
     },
     async () =>
       toolResult("file_roots", {
-        roots: getAllowedRoots().map(toRepoRelative),
+        roots: getAllowedRoots().map(toCadgptPath),
       })
   );
 
@@ -70,7 +70,7 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_list",
     {
       title: "List CadGPT Files",
-      description: "List files or directories inside lisp/** or jobs/**. Paths outside the sandbox are rejected.",
+      description: "List files/directories inside permanent lisp/** or jobs/**, or user-data appdata/data/** and appdata/lisp-draft/**. Other machine paths are rejected.",
       inputSchema: {
         path: z.string().default("lisp"),
         recursive: z.boolean().optional().default(false),
@@ -82,14 +82,14 @@ export function registerFilesystemTools(server: McpServer): void {
         const target = await resolveAllowedPath(input);
         const stat = await fs.stat(target);
         if (stat.isFile()) {
-          return toolResult("file_list", { entries: [{ path: toRepoRelative(target), type: "file" }] });
+          return toolResult("file_list", { entries: [{ path: toCadgptPath(target), type: "file" }] });
         }
 
         if (!recursive) {
           const entries = await fs.readdir(target, { withFileTypes: true });
           return toolResult("file_list", {
             entries: entries.slice(0, max_entries).map((entry) => ({
-              path: toRepoRelative(path.join(target, entry.name)),
+              path: toCadgptPath(path.join(target, entry.name)),
               type: entry.isDirectory() ? "directory" : "file",
             })),
             truncated: entries.length > max_entries,
@@ -100,7 +100,7 @@ export function registerFilesystemTools(server: McpServer): void {
         await walkFiles(target, files, max_entries + 1);
         const truncated = files.length > max_entries;
         return toolResult("file_list", {
-          entries: files.slice(0, max_entries).map((item) => ({ path: toRepoRelative(item), type: "file" })),
+          entries: files.slice(0, max_entries).map((item) => ({ path: toCadgptPath(item), type: "file" })),
           truncated,
         });
       } catch (error) {
@@ -113,7 +113,7 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_read",
     {
       title: "Read CadGPT Text File",
-      description: "Read a text asset inside lisp/** or jobs/**. Supports line ranges.",
+      description: "Read a text asset inside the CadGPT permanent source or editable AppData sandbox. Supports line ranges.",
       inputSchema: {
         path: z.string(),
         start_line: z.number().int().positive().optional(),
@@ -131,7 +131,7 @@ export function registerFilesystemTools(server: McpServer): void {
         if (end < start) throw new Error("end_line must be greater than or equal to start_line");
         const selected = lines.slice(start, end);
         return toolResult("file_read", {
-          path: toRepoRelative(target),
+          path: toCadgptPath(target),
           start_line: start + 1,
           end_line: start + selected.length,
           total_lines: lines.length,
@@ -147,7 +147,7 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_search",
     {
       title: "Search CadGPT Files",
-      description: "Search text inside lisp/** or jobs/** without accessing the rest of the machine.",
+      description: "Search text inside the CadGPT permanent source or editable AppData sandbox without accessing the rest of the machine.",
       inputSchema: {
         query: z.string().min(1),
         path: z.string().optional().default("lisp"),
@@ -183,7 +183,7 @@ export function registerFilesystemTools(server: McpServer): void {
             const line = lines[index];
             const hit = matcher ? matcher.test(line) : (case_sensitive ? line : line.toLowerCase()).includes(needle);
             if (matcher) matcher.lastIndex = 0;
-            if (hit) results.push({ path: toRepoRelative(file), line: index + 1, text: line.trim() });
+            if (hit) results.push({ path: toCadgptPath(file), line: index + 1, text: line.trim() });
           }
         }
 
@@ -198,7 +198,7 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_create",
     {
       title: "Create CadGPT Text File",
-      description: "Create a new text asset inside lisp/** or jobs/**. Fails if the target already exists.",
+      description: "Create a new text asset inside permanent source roots or editable AppData roots. Fails if the target already exists.",
       inputSchema: { path: z.string(), content: z.string() },
     },
     async ({ path: input, content }) => {
@@ -207,13 +207,13 @@ export function registerFilesystemTools(server: McpServer): void {
         assertTextExtension(target);
         try {
           await fs.lstat(target);
-          throw new Error(`Target already exists: ${toRepoRelative(target)}`);
+          throw new Error(`Target already exists: ${toCadgptPath(target)}`);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         }
         await atomicWrite(target, content);
-        console.log(`[AUDIT] file_create ${toRepoRelative(target)} bytes=${Buffer.byteLength(content)}`);
-        return toolResult("file_create", { path: toRepoRelative(target), bytes: Buffer.byteLength(content) });
+        console.log(`[AUDIT] file_create ${toCadgptPath(target)} bytes=${Buffer.byteLength(content)}`);
+        return toolResult("file_create", { path: toCadgptPath(target), bytes: Buffer.byteLength(content) });
       } catch (error) {
         return toolError("file_create", error);
       }
@@ -224,7 +224,7 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_edit",
     {
       title: "Edit CadGPT Text File",
-      description: "Apply an exact text replacement inside lisp/** or jobs/**. Read the target first.",
+      description: "Apply an exact text replacement inside permanent source roots or editable AppData roots. Read the target first.",
       inputSchema: {
         path: z.string(),
         old_text: z.string(),
@@ -240,9 +240,9 @@ export function registerFilesystemTools(server: McpServer): void {
         if (!original.includes(old_text)) throw new Error("old_text not found; read the file and use an exact match");
         const updated = replace_all ? original.split(old_text).join(new_text) : original.replace(old_text, new_text);
         await atomicWrite(target, updated);
-        console.log(`[AUDIT] file_edit ${toRepoRelative(target)} replace_all=${replace_all}`);
+        console.log(`[AUDIT] file_edit ${toCadgptPath(target)} replace_all=${replace_all}`);
         return toolResult("file_edit", {
-          path: toRepoRelative(target),
+          path: toCadgptPath(target),
           changed: true,
           bytes_before: Buffer.byteLength(original),
           bytes_after: Buffer.byteLength(updated),
