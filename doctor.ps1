@@ -18,9 +18,7 @@ function Get-DotEnvValue([string]$Name) {
     return (($line -split "=", 2)[1].Trim()).Trim("'").Trim('"')
 }
 
-function Test-Command([string]$Name) {
-    return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
-}
+function Test-Command([string]$Name) { return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue) }
 
 Write-Host ""
 Write-Host "=== CadGPT Doctor ===" -ForegroundColor Cyan
@@ -40,15 +38,13 @@ if (Test-Path "runtimes\cad-mcp\requirements.lock.txt") { Ok "CAD MCP Python dep
 if (Test-Command "python") {
     $pyVersion = (& python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>$null).Trim()
     $parts = $pyVersion.Split('.')
-    if ($parts.Count -ge 2 -and [int]$parts[0] -eq 3 -and [int]$parts[1] -eq 11) {
-        Ok "Python $pyVersion"
-    } else { Fail "Python $pyVersion found; current CadGPT beta requires Python 3.11.x." }
+    if ($parts.Count -ge 2 -and [int]$parts[0] -eq 3 -and [int]$parts[1] -eq 11) { Ok "Python $pyVersion" }
+    else { Fail "Python $pyVersion found; current CadGPT beta requires Python 3.11.x." }
 } else { Fail "Python not found in PATH." }
 
 if (Test-Path ".env") { Ok ".env exists" } else { Fail ".env missing; run setup.bat." }
-foreach ($root in @("lisp", "jobs")) {
-    if (Test-Path $root) { Ok "Permanent source root exists: $root/" } else { Fail "Permanent source root missing: $root/" }
-}
+if (Test-Path "knowledge\jobs\JOB_RULES.md") { Ok "Internal Job rules exist" } else { Fail "Internal Job rules missing." }
+if (Test-Path "resources\cad\CADGPT_LOAD_SMOKE.lsp") { Ok "Internal AutoLISP smoke fixture exists" } else { Fail "Internal AutoLISP smoke fixture missing." }
 
 $appDataConfigured = Get-DotEnvValue "CADGPT_APPDATA_ROOT"
 if (-not $appDataConfigured) { $appDataConfigured = "appdata" }
@@ -57,7 +53,17 @@ $appDataRoot = if ([System.IO.Path]::IsPathRooted($appDataConfigured)) {
 } else {
     [System.IO.Path]::GetFullPath((Join-Path $ScriptDir $appDataConfigured))
 }
-foreach ($relative in @("data\runs", "lisp-draft", "runtime\dynamic-lisp", "state", "logs")) {
+foreach ($relative in @(
+    "libraries\lisp",
+    "libraries\jobs",
+    "registry\user",
+    "workspace\lisp-draft",
+    "workspace\job-draft",
+    "data\runs",
+    "runtime\dynamic-lisp",
+    "state",
+    "logs"
+)) {
     $target = Join-Path $appDataRoot $relative
     if (Test-Path $target) { Ok "AppData area exists: $relative" }
     else { Fail "AppData area missing: $target (rerun setup.bat)" }
@@ -79,7 +85,6 @@ if ($tunnelId -and $tunnelKey) { Ok "Secure MCP Tunnel credentials configured" }
 $cadPython = ".venv-cad\Scripts\python.exe"
 if (Test-Path $cadPython) {
     Ok "CAD MCP virtual environment exists"
-
     & $cadPython -m pip check *> $null
     if ($LASTEXITCODE -eq 0) { Ok "CAD MCP Python dependency graph passes pip check" } else { Fail "CAD MCP Python dependency graph failed pip check; rerun setup.bat." }
 
@@ -95,9 +100,7 @@ if (Test-Path $cadPython) {
             $parts = $line -split '\|', 3
             if ($parts.Count -eq 3) { Ok "AutoCAD COM reachable: $($parts[0]) $($parts[1]); open drawings=$($parts[2])" }
             else { Ok "AutoCAD COM reachable" }
-        } else {
-            Warn "AutoCAD COM is not currently reachable. This is acceptable in Stage 1; live CAD validation begins in Stage 2."
-        }
+        } else { Warn "AutoCAD COM is not currently reachable. This is acceptable before real CAD validation." }
     }
     finally {
         if ($null -eq $oldPythonPath) { Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue }
@@ -111,7 +114,7 @@ try {
         Ok "CadGPT local MCP healthy on port $port"
         if ($health.cad_mcp.connected) { Ok "CAD MCP upstream connected ($($health.cad_mcp.tool_count) tools)" }
         elseif ($health.cad_mcp.last_error) { Warn "CAD MCP upstream not connected: $($health.cad_mcp.last_error)" }
-        else { Warn "CAD MCP upstream is idle/not connected yet; this is valid before first CAD tool use." }
+        else { Warn "CAD MCP upstream is idle/not connected yet." }
     } else { Fail "Unexpected service responded on CadGPT port $port." }
 } catch { Warn "CadGPT local MCP is not currently running on port $port." }
 
