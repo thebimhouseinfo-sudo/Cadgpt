@@ -1,0 +1,49 @@
+name: CadGPT Migration Contract
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  migration-contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse migration PowerShell
+        shell: pwsh
+        run: |
+          $script = "scripts/migration/migrate-tbh-toolkit.ps1"
+          $errors = $null
+          $tokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error "${script}: $($_.Message)" }
+            throw "PowerShell parse failed: $script"
+          }
+          Write-Host "PowerShell parse OK: $script"
+
+      - name: Verify migration safety contract
+        shell: pwsh
+        run: |
+          $script = Get-Content "scripts/migration/migrate-tbh-toolkit.ps1" -Raw
+          foreach ($required in @(
+            "tool-kit",
+            "lisp\tbh-toolkit",
+            "Get-FileHash -Algorithm SHA256",
+            "MIGRATION_PROVENANCE.md",
+            "Copy-Item",
+            '[switch]$DryRun'
+          )) {
+            if ($script -notmatch [regex]::Escape($required)) {
+              throw "Migration script missing required contract marker: $required"
+            }
+          }
+          if ($script -match "Remove-Item\s+.*-Recurse") {
+            throw "Migration script must not recursively delete toolkit/source trees"
+          }
+          Write-Host "TBH Toolkit migration safety contract OK"
