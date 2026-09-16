@@ -7,7 +7,7 @@ bound drawing. Phase 2 expands the inner runtime read-only first.
 
 from mcp.server.fastmcp import FastMCP
 
-from tools import document_tools, entity_tools, inventory_tools, layer_tools
+from tools import block_tools, document_tools, entity_tools, inventory_tools, layer_tools
 from utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -17,6 +17,7 @@ document_tools.register(mcp)
 inventory_tools.register(mcp)
 layer_tools.register(mcp)
 entity_tools.register(mcp)
+block_tools.register(mcp)
 
 if __name__ == "__main__":
     log.info("Starting cad-mcp read-only inspection slice with stdio transport...")
