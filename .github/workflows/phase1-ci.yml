@@ -18,6 +18,23 @@ jobs:
         run: npm install
       - name: Build connector
         run: npm run build
+      - name: Validate PowerShell launcher scripts
+        shell: pwsh
+        run: |
+          foreach ($script in @("start.ps1", "openai-tunnel.ps1", "doctor.ps1")) {
+            $errors = $null
+            $tokens = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $script),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$script: $($_.Message)" }
+              throw "PowerShell parse failed: $script"
+            }
+            Write-Host "PowerShell parse OK: $script"
+          }
       - name: Smoke test HTTP MCP surface
         shell: pwsh
         run: |
@@ -29,7 +46,7 @@ jobs:
             foreach ($i in 1..40) {
               try {
                 $health = Invoke-RestMethod -Uri "http://127.0.0.1:3000/health" -Method Get -TimeoutSec 1
-                if ($health.status -eq "ok") { $ready = $true; break }
+                if ($health.status -eq "ok" -and $health.name -eq "cadgpt") { $ready = $true; break }
               } catch {}
               Start-Sleep -Milliseconds 250
             }
