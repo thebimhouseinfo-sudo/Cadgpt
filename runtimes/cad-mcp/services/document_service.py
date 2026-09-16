@@ -1,6 +1,6 @@
-"""Read-only document discovery and explicit activation for CadGPT."""
+"""Document discovery, explicit activation, and safe test-drawing creation for CadGPT."""
 
-from connection.acad import AutoCADNotRunningError, get_active_document
+from connection.acad import AutoCADNotRunningError, get_acad_app, get_active_document
 from connection.session import activate_document, document_identity, iter_documents
 
 
@@ -58,3 +58,28 @@ def set_active_document(document_name: str) -> dict:
         raise DocumentServiceError(str(exc)) from exc
     except Exception as exc:
         raise DocumentServiceError(str(exc)) from exc
+
+
+def create_blank_test_document() -> dict:
+    """Create a new unsaved AutoCAD drawing intended only for CadGPT testing.
+
+    The document is intentionally not saved and is marked as a test drawing in
+    the returned metadata. The outer CadGPT session must explicitly bind to the
+    returned identity before any business/LISP tool can use it.
+    """
+    try:
+        app = get_acad_app()
+        doc = app.Documents.Add()
+        doc.Activate()
+        identity = document_identity(doc)
+        return {
+            **identity,
+            "active": True,
+            "host": "autocad",
+            "test_drawing": True,
+            "unsaved": not bool(identity.get("full_name")),
+        }
+    except AutoCADNotRunningError:
+        raise
+    except Exception as exc:
+        raise DocumentServiceError(f"Could not create blank AutoCAD test drawing: {exc}") from exc
