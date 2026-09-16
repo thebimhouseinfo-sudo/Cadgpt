@@ -123,23 +123,24 @@ jobs:
             if ($valid.result.structuredContent.data.valid -ne $true) { throw "Valid AutoLISP fixture failed static validation" }
             if ($valid.result.structuredContent.data.dialect -ne "AutoLISP/Visual LISP") { throw "Validator dialect contract is wrong" }
 
-            @'
-;;; =============================================================================
-;;; TBH-HEADER-START
-;;;
-;;; File        : _CI_COMMON_LISP_REJECT.lsp
-;;; Module      : CadGPT Beta Gate
-;;; Command     : BADCL
-;;; Description : Must be rejected because it contains Common Lisp syntax.
-;;; TBH-HEADER-END
-;;; =============================================================================
-(defun c:BADCL (/ x)
-  (let ((x 1))
-    (princ x))
-  (princ))
-(princ "\n[TBH] reject fixture")
-(princ)
-'@ | Set-Content -LiteralPath $badFixture -Encoding UTF8
+            $badSource = @(
+              ";;; =============================================================================",
+              ";;; TBH-HEADER-START",
+              ";;;",
+              ";;; File        : _CI_COMMON_LISP_REJECT.lsp",
+              ";;; Module      : CadGPT Beta Gate",
+              ";;; Command     : BADCL",
+              ";;; Description : Must be rejected because it contains Common Lisp syntax.",
+              ";;; TBH-HEADER-END",
+              ";;; =============================================================================",
+              "(defun c:BADCL (/ x)",
+              "  (let ((x 1))",
+              "    (princ x))",
+              "  (princ))",
+              '(princ "\n[TBH] reject fixture")',
+              "(princ)"
+            )
+            Set-Content -LiteralPath $badFixture -Value $badSource -Encoding UTF8
 
             $invalid = Invoke-McpTool 5 "lisp_validate" @{
               path = $badFixture
