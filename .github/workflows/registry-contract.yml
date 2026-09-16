@@ -1,0 +1,38 @@
+name: CadGPT Registry Contract
+
+on:
+  push:
+    branches: ['phase*', 'beta-review-*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  registry-contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate curated Lisp registry coverage and command drift
+        run: python scripts/validate-lisp-registry.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install locked Node dependencies
+        run: npm ci
+      - name: Generate stable CAD tool manifest
+        run: python scripts/generate-cad-tool-manifest.py
+      - name: Build registry-enabled connector
+        run: npm run build
+      - name: Check registry seed semantics
+        shell: pwsh
+        run: |
+          $registry = Get-Content 'registry/lisp-registry.json' -Raw | ConvertFrom-Json
+          if (@($registry.entries).Count -lt 1) { throw 'Lisp registry is empty' }
+          $xlay = @($registry.entries | Where-Object { $_.commands -contains 'XLAY' })
+          if ($xlay.Count -ne 1) { throw 'XLAY must have exactly one semantic registry entry' }
+          if ($xlay[0].type -ne 'dynamic') { throw 'XLAY must remain dynamic-capable in registry' }
+          $autoLoad = @($registry.entries | Where-Object { $_.load_behavior -eq 'execute_on_load' })
+          if ($autoLoad.Count -lt 1) { throw 'Registry must preserve execute_on_load safety metadata' }
+          Write-Host "Registry contract passed: entries=$(@($registry.entries).Count)"
