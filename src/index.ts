@@ -4,13 +4,14 @@ import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import cors from "cors";
 import express from "express";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 import {
   createSessionManager,
   extractRequestId,
 } from "./cadgpt/lib/mcp-session-manager.js";
 import { getAllowedRoots, getRepoRoot, toRepoRelative } from "./cadgpt/lib/path-security.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { cadUpstream } from "./cadgpt/runtime/cad-upstream.js";
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
@@ -36,7 +37,7 @@ app.get("/health", (_req, res) => {
     active_mcp_sessions: sessions.count(),
     session_recovery: SESSION_RECOVERY,
     mcp_paths: mcpPaths,
-    cad_mcp: "not_connected_yet",
+    cad_mcp: cadUpstream.status(),
   });
 });
 
@@ -119,16 +120,17 @@ app.use((req, res, next) => {
 const server = app.listen(PORT, HOST, () => {
   console.log("");
   console.log("=== CadGPT ===");
-  console.log(`Local MCP: http://${HOST}:${PORT}${mcpPaths[0]}`);
-  console.log(`Health:    http://${HOST}:${PORT}/health`);
+  console.log(`Local MCP:  http://${HOST}:${PORT}${mcpPaths[0]}`);
+  console.log(`Health:     http://${HOST}:${PORT}/health`);
   console.log(`File roots: ${getAllowedRoots().map(toRepoRelative).join(", ")}`);
-  console.log("CAD MCP:   pending migration/connection");
+  console.log("CAD MCP:    lazy upstream; connects when a CadGPT MCP session loads CAD tools");
   console.log("");
 });
 
 async function shutdown(signal: string): Promise<void> {
   console.log(`[CadGPT] ${signal}: shutting down`);
   sessions.stopCleanup();
+  await cadUpstream.shutdown();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000).unref();
 }
