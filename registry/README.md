@@ -1,23 +1,55 @@
 # CadGPT Capability Registry
 
-CadGPT uses a semantic capability registry so ChatGPT can discover what existing tools and Lisp actually do without repeatedly opening implementation files.
+CadGPT exposes one effective capability catalog to ChatGPT, but ownership is split deliberately:
 
-## Principles
+```text
+Internal Registry
+├─ MCP tools
+└─ system skills
 
-- filenames and personal command names are **not** semantic contracts;
-- permanent Lisp metadata is curated from actual implementation behavior;
-- registry metadata is for discovery/selection, not an execution bypass;
-- MCP `tools/list` remains authoritative for executable MCP tool schemas;
-- permanent Lisp source lives under `lisp/**` and every user-facing permanent `.lsp` must be catalogued;
-- work-in-progress Lisp under `appdata/lisp-draft/**` is intentionally **not** part of the permanent registry;
-- runtime AI-derived variants under `appdata/runtime/dynamic-lisp/**` are runtime artifacts and are not permanent registry entries.
+User Registry
+├─ managed Lisp capabilities
+└─ concrete Jobs
+```
+
+The effective registry is a unified search/view layer, not an override mechanism. User Registry cannot contain tools or system skills; Internal Registry does not own user Lisp/Jobs.
+
+## Internal Registry
+
+Internal entries are generated from CadGPT core tool metadata, the stable CAD MCP manifest, and `skills/*/SKILL.md`. They version with CadGPT and are not user-editable workflow assets.
+
+## User Registry
+
+User Registry lives under:
+
+```text
+appdata/registry/user/
+```
+
+Lisp/Job libraries are first copied into:
+
+```text
+appdata/libraries/lisp/<library-id>/**
+appdata/libraries/jobs/<library-id>/**
+```
+
+Registry entries then reference managed assets with:
+
+```text
+library_id + relative_path
+```
+
+The external folder selected by the user is an import source only. CadGPT never writes back to it.
 
 ## Lisp metadata
 
-Each permanent Lisp capability should describe enough behavior for ChatGPT to choose it without reading source merely for discovery:
+A curated Lisp capability can include:
 
 ```text
 id
+kind                lisp
+library_id
+relative_path
 title
 ai_mode             static | dynamic
 class
@@ -25,7 +57,6 @@ subclass
 tags
 module
 commands
-path
 summary
 when_to_use
 targets
@@ -38,64 +69,40 @@ destructive
 risk                 low | medium | high
 dynamic_parameters
 implementation_notes
+semantic_status      indexed | curated
 ```
 
-Descriptions follow implementation reality rather than trusting legacy headers blindly.
+Import/index never modifies source. Freshly discovered entries may remain `semantic_status=indexed` until behavior metadata is curated.
 
-## AI usage mode
+`ai_mode` is an AI usage mode, not a Lisp type. `dynamic` only permits bounded temporary runtime variants using declared `dynamic_parameters`; the source remains ordinary AutoLISP/Visual LISP.
 
-All permanent sources are ordinary **AutoLISP/Visual LISP files**. `ai_mode` does not define a different Lisp type or language.
+## Job metadata
 
-`ai_mode=static` means CadGPT/AI normally uses the permanent source as stored. `dynamic_parameters` must be empty.
+Concrete Jobs are User Registry assets from managed Job Libraries. Job rules/spec/schema are internal CadGPT knowledge under `knowledge/jobs/**` and are not themselves user Job entries.
 
-`ai_mode=dynamic` means CadGPT/AI is allowed to derive a temporary runtime variant of the same normal AutoLISP source by changing only the bounded fields listed in `dynamic_parameters`. The permanent source remains unchanged.
-
-For example, XLAY is ordinary AutoLISP, but its project-specific mapping tables/rules make it suitable for AI-derived runtime variants. Those instances live under `appdata/runtime/dynamic-lisp/**` and should carry provenance such as source registry ID/path, parameters, and content hash.
-
-## Draft → permanent lifecycle
-
-New or substantially changed AutoLISP normally follows:
+## write-lisp lifecycle
 
 ```text
-appdata/lisp-draft/**
-→ AutoLISP static validation
-→ user-approved AutoCAD load/runtime test
+managed Lisp
+→ lisp_checkout
+→ appdata/workspace/lisp-draft/**
+→ header/description normalization in draft only
+→ validation + approved CAD test
 → lisp_promote_draft
-→ lisp/** + registry/lisp-registry.json
+→ managed AppData Lisp + User Registry
 ```
 
-`lisp_promote_draft` re-validates source, derives public commands, checks path/command collisions, writes the permanent file, and updates semantic registry metadata as one rollback-safe operation. If registry update fails, permanent source is restored to its previous state.
-
-A draft can remain in AppData after promotion for traceability until explicitly cleaned.
+CadGPT header is the default authoring profile. `library_id=tbh-toolkit` is the explicit TBH-header exception.
 
 ## Registry tools
 
 ```text
-registry_list(kind="lisp" | "tool", ...)
-registry_get(kind="lisp" | "tool", id=...)
+registry_list(kind="tool" | "skill" | "lisp" | "job", registry="internal" | "user", ...)
+registry_get(id=..., kind=...)
 ```
 
-Typical Lisp discovery:
-
-```text
-registry_list(kind="lisp", class_name="xref", ai_mode="dynamic", query="map consultant layers")
-registry_get(kind="lisp", id="XLAY")
-```
-
-Read the `.lsp` source only when modification, debugging, audit, or runtime-variant construction actually requires implementation detail.
+Registry metadata is for discovery/selection. MCP `tools/list` remains execution-authoritative for MCP schemas; Lisp execution still goes through verified load and Job execution still goes through the Job runtime contract.
 
 ## CI contract
 
-`scripts/validate-lisp-registry.py` and the registry workflow enforce structural drift protection:
-
-- every user-facing permanent `lisp/**/*.lsp` except `lisp/_cadgpt-system/**` has a registry entry;
-- every registered path exists;
-- declared `commands` exist in source;
-- public source commands are not omitted from registry metadata;
-- registry IDs are unique;
-- `ai_mode` and core semantic fields are valid;
-- `ai_mode=static` cannot declare dynamic parameters;
-- `ai_mode=dynamic` must declare at least one bounded dynamic parameter;
-- legacy `type` / `dynamic_role` fields are rejected.
-
-Drafts and runtime AI-derived instances are intentionally outside permanent-library coverage until explicit promotion of source changes.
+`scripts/validate-lisp-registry.py` verifies User Registry coverage against managed AppData Lisp/Job libraries, including command/path drift, unique IDs, ownership, `ai_mode`, and full managed-library coverage.
