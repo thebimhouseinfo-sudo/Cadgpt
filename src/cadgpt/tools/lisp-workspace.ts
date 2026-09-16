@@ -11,8 +11,7 @@ import { validateLispSource } from "./lisp-harness.js";
 const semanticMetadataSchema = z.object({
   id: z.string().min(1).max(160),
   title: z.string().min(1).max(240),
-  type: z.enum(["static", "dynamic"]),
-  dynamic_role: z.enum(["template", "instance"]).optional(),
+  ai_mode: z.enum(["static", "dynamic"]),
   class_name: z.string().min(1).max(160),
   subclass: z.string().min(1).max(160),
   tags: z.array(z.string().min(1).max(80)).max(50).default([]),
@@ -112,7 +111,7 @@ export function registerLispWorkspaceTools(server: McpServer): void {
     "lisp_promote_draft",
     {
       title: "Promote Tested Lisp Draft",
-      description: "Promote one validated appdata/lisp-draft/** file into permanent lisp/** and upsert its curated semantic registry entry as one rollback-safe operation.",
+      description: "Promote one validated appdata/lisp-draft/** file into permanent lisp/** and upsert its curated semantic registry entry as one rollback-safe operation. ai_mode describes how AI may use the normal AutoLISP source, not a distinct Lisp type.",
       inputSchema: {
         draft_path: z.string().min(1),
         permanent_path: z.string().min(1),
@@ -125,11 +124,11 @@ export function registerLispWorkspaceTools(server: McpServer): void {
         assertDraftVirtualPath(draft_path);
         assertPermanentPath(permanent_path);
 
-        if (metadata.type === "static" && metadata.dynamic_role) {
-          throw new Error("dynamic_role is only valid for type=dynamic permanent Lisp entries");
+        if (metadata.ai_mode === "static" && metadata.dynamic_parameters.length) {
+          throw new Error("dynamic_parameters must be empty when ai_mode=static");
         }
-        if (metadata.type === "dynamic" && metadata.dynamic_role === "instance") {
-          throw new Error("Runtime dynamic instances belong in appdata/runtime/dynamic-lisp; only reusable dynamic templates are promoted into lisp/**");
+        if (metadata.ai_mode === "dynamic" && !metadata.dynamic_parameters.length) {
+          throw new Error("ai_mode=dynamic requires at least one declared dynamic_parameter so AI adaptation is bounded");
         }
 
         const draft = await resolveAllowedPath(draft_path);
@@ -163,8 +162,7 @@ export function registerLispWorkspaceTools(server: McpServer): void {
         const newEntry: Record<string, unknown> = {
           id: metadata.id,
           title: metadata.title,
-          type: metadata.type,
-          ...(metadata.type === "dynamic" ? { dynamic_role: metadata.dynamic_role || "template" } : {}),
+          ai_mode: metadata.ai_mode,
           class: metadata.class_name,
           subclass: metadata.subclass,
           tags: metadata.tags,
@@ -228,12 +226,13 @@ export function registerLispWorkspaceTools(server: McpServer): void {
           draft_path: toCadgptPath(draft),
           permanent_path: normalizedPermanent,
           registry_id: metadata.id,
+          ai_mode: metadata.ai_mode,
           commands: validation.commands,
           sha256: validation.sha256,
           registry_updated: true,
           rollback_safe: true,
           draft_retained: true,
-          note: "Draft is retained for traceability until explicitly cleaned; permanent source and semantic registry were promoted together.",
+          note: "Draft is retained for traceability until explicitly cleaned; permanent source and semantic registry were promoted together. ai_mode=dynamic only permits bounded AI-derived runtime variants from the same normal AutoLISP source.",
         });
       } catch (error) {
         return toolError("lisp_promote_draft", error);
