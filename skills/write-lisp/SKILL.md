@@ -2,13 +2,13 @@
 
 Status: **active**
 
-`write-lisp` is CadGPT's specialized AutoLISP/Visual LISP coding capability. It is deliberately **not** a generic application-development agent.
+`write-lisp` is CadGPT's specialized **AutoLISP/Visual LISP for AutoCAD** coding capability. It is deliberately not a generic Lisp agent and not a generic application-development agent.
 
-Its job is to understand existing Lisp, create or patch AutoLISP safely, validate the source, load/run it in the explicitly bound AutoCAD drawing, debug failures from concrete CAD evidence, and verify the resulting drawing state.
+Its job is to understand existing AutoLISP, create or patch it safely, validate the exact AutoLISP dialect and TBH library structure, load/run it in the explicitly bound AutoCAD drawing, debug failures from concrete CAD evidence, and verify the resulting drawing state.
 
 ## Core rule
 
-> Search first. Patch before rewrite. Validate before load. Debug from evidence. Verify the bound drawing before returning control to the Job.
+> AutoLISP is not Common Lisp. Search first. Patch before rewrite. Scaffold new files from the TBH library standard. Validate before load. Debug from evidence. Verify the bound drawing before returning control to the Job.
 
 ## Boundaries
 
@@ -43,6 +43,7 @@ Skill/harness tools:
 ```text
 skill_list
 skill_get
+lisp_scaffold
 lisp_validate
 ```
 
@@ -72,31 +73,28 @@ Other structured `cad__...` tools may be used when they directly express require
 
 ## Coding-skill resources
 
-`SKILL.md` is the orchestrator. For non-trivial work, load only the relevant resources with `skill_get(name="write-lisp", resource=...)`.
+`SKILL.md` is the orchestrator. Load only the relevant resources with `skill_get(name="write-lisp", resource=...)`.
 
-### `coding-skills/discovery-and-planning.md`
+### Baseline resources for every meaningful source edit
 
-Use when locating existing commands/helpers, deciding patch versus new file, or understanding what the current drawing/code already does.
+- `coding-skills/autolisp-dialect-boundary.md` — strict AutoLISP vs Common Lisp boundary.
+- `coding-skills/autolisp-language.md` — AutoLISP/Visual LISP source discipline.
 
-### `coding-skills/autolisp-language.md`
+### New file or substantial rewrite
 
-Use for AutoLISP/Visual LISP source structure, locals, symbols, strings, error handling, undo boundaries, and API choice discipline. This is baseline guidance for every meaningful source edit.
+Also load:
 
-### `coding-skills/autocad-api-and-dxf.md`
+- `coding-skills/library-style-and-scaffold.md` — canonical TBH presentation and file structure.
 
-Use when working with DXF, enames, handles, VLA/COM, layers, geometry, coordinate systems, or AutoCAD collections/properties.
+Use `lisp_scaffold` for every new production command file instead of inventing a new file layout.
 
-### `coding-skills/selection-and-batch.md`
+### Task-specific resources
 
-Use for cleanup, conversion, mapping, takeoff, or other high-volume operations. It covers selection-set filtering, classification-before-mutation, stable batch iteration, aggregate reporting, and CAD-specific efficiency.
-
-### `coding-skills/blocks-xrefs-attributes.md`
-
-Use for blocks, dynamic blocks, block definitions, nested entities, attributes, Revit-exported blocks/accessories/fittings, or xref layer mapping.
-
-### `coding-skills/debugging-and-testing.md`
-
-Use whenever an existing Lisp fails, AutoCAD reports COM/runtime errors, a patch needs regression checking, or the load/run result must be verified.
+- `coding-skills/discovery-and-planning.md` — locate commands/helpers and choose reuse/patch/new-file path.
+- `coding-skills/autocad-api-and-dxf.md` — DXF, enames, handles, VLA/COM, layers, geometry, coordinate systems.
+- `coding-skills/selection-and-batch.md` — cleanup, conversion, mapping, takeoff, batch classification/mutation.
+- `coding-skills/blocks-xrefs-attributes.md` — blocks, dynamic blocks, nested definitions, attributes and xrefs.
+- `coding-skills/debugging-and-testing.md` — syntax/load/runtime/COM/CAD-state debugging and validation.
 
 Do not create generic sub-skills for refactoring, dependency management, release engineering, Git review, or application performance. Those abstractions do not match CadGPT's AutoLISP role.
 
@@ -106,9 +104,9 @@ Do not create generic sub-skills for refactoring, dependency management, release
 
 When drawing state matters, confirm the explicit CadGPT drawing binding. Never infer the target from whichever AutoCAD tab is visible.
 
-Inspect structured CAD state before deciding what Lisp must do.
+Inspect structured CAD state before deciding what AutoLISP must do.
 
-### 2. Search existing Lisp
+### 2. Search existing AutoLISP
 
 Search `lisp/**` before creating a file. Search by command name, helper prefix, relevant layer/object terminology, and similar behavior.
 
@@ -124,35 +122,35 @@ Preference order:
 
 Before editing, read the full affected `defun` and directly referenced helpers. Preserve public command names and working behavior unless the requested contract explicitly changes them.
 
-For legacy Lisp, understand the code that exists instead of rewriting it into a preferred style merely for cleanliness.
+For a narrow legacy patch, preserve the local style unless it causes a defect. Do not rewrite an entire working file for cosmetic consistency.
 
-### 4. Edit narrowly
+### 4. Scaffold new files; patch existing files narrowly
 
-Use `file_edit` for exact patches and `file_create` for genuinely new source.
+For a **new production command file**, call `lisp_scaffold` first and create the source from the returned TBH skeleton. Do not write a new `.lsp` from an empty page.
+
+The canonical file structure is derived from the existing TBH Toolkit and includes the TBH metadata header, predictable helper/main-command order, command-local cleanup pattern where applicable, TBH load banner and quiet final `(princ)`.
+
+For an **existing file**, use `file_edit` for exact patches. Use `file_create` only for genuinely new source.
 
 Keep project mappings/configuration out of general algorithms when the Job owns that data.
 
-For large/destructive batch operations, prefer the conceptual structure:
+For large/destructive batch operations, prefer:
 
 ```text
 collect/classify → validate → mutate → verify/report
 ```
 
-### 5. Static harness — mandatory
+### 5. AutoLISP dialect + library static gate — mandatory
 
-Run:
+Run `lisp_validate` on every changed `.lsp` before load.
 
-```text
-lisp_validate
-```
+The harness must reject recognizable Common Lisp syntax such as Common Lisp-only binding/control forms, lambda-list keywords like `&optional`/`&rest`, and `#'` reader shorthand. Do not bypass such failures by disabling library style; dialect errors are always errors.
 
-on every changed `.lsp` before load.
-
-The static harness is reader-aware for strings/comments and validates structural parentheses without raw character counting. It also extracts public commands/functions, can enforce expected command names, detects duplicate public commands, and emits AutoLISP-specific warnings such as COM use without `vl-load-com` or sysvar mutation without an error handler.
+With the default `enforce_library_style=true`, the harness also checks the canonical TBH production header and public-command/header agreement. It is reader-aware for comments/strings, validates parenthesis structure, extracts commands/functions, detects duplicate public commands, and checks AutoLISP/Visual LISP conventions such as `(vl-load-com)` before COM use.
 
 `valid: false` blocks the load gate.
 
-Warnings require review but do not automatically mean the Lisp is wrong.
+`enforce_library_style=false` exists only for deliberate diagnosis of imported/legacy source; it is not the normal path for newly generated production code.
 
 ### 6. Load gate
 
@@ -192,13 +190,13 @@ A successful edit, static validation, load, or command dispatch is **not complet
 
 ## Debugging loop
 
-When a Lisp fails:
+When an AutoLISP file fails:
 
 ```text
 reproduce
-→ classify the failure
+→ classify syntax/dialect/load/DXF/COM/CAD-state failure
 → collect CAD/source evidence
-→ read the affected function
+→ read affected function
 → patch narrowly
 → lisp_validate
 → reload
@@ -206,16 +204,18 @@ reproduce
 → inspect postcondition
 ```
 
-Classify syntax/load/selection/DXF/COM/block-state/drawing-state/data-algorithm failures separately. Do not chase a local COM or mapping defect by rewriting the whole file.
+If the failure is caused by Common Lisp-like syntax, fix the dialect instead of trying to emulate Common Lisp inside AutoLISP.
 
 ## Completion criteria
 
 A write-lisp task is complete only when all applicable conditions hold:
 
-- the source change is restricted to `lisp/**`;
+- source changes are restricted to `lisp/**`;
+- new command files originate from `lisp_scaffold` or demonstrably match the same canonical structure;
+- source is AutoLISP/Visual LISP, not another Lisp-family dialect;
 - the smallest relevant implementation was changed;
-- `lisp_validate` reports `valid: true`;
-- expected public command contracts are present;
+- `lisp_validate` reports `valid: true` with the normal TBH style gate;
+- expected public command contracts are present and match header metadata;
 - the exact file was loaded into the bound drawing;
 - the command was run when runtime execution is required and safe;
 - structured CAD inspection confirms the requested result;
@@ -223,4 +223,4 @@ A write-lisp task is complete only when all applicable conditions hold:
 
 ## Relationship to Jobs
 
-A Job may call `write-lisp` when required automation is missing or insufficient. `write-lisp` is responsible for the Lisp engineering loop only. Once its completion gate passes, control returns to the exact Job step that invoked it.
+A Job may call `write-lisp` when required automation is missing or insufficient. `write-lisp` owns the AutoLISP engineering loop only. Once its completion gate passes, control returns to the exact Job step that invoked it.
