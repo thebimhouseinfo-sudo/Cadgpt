@@ -4,6 +4,7 @@ import "dotenv/config";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import fs from "node:fs";
+import { randomBytes } from "node:crypto";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -16,6 +17,7 @@ const MCP_TOKEN = (process.env.MCP_TOKEN || "").trim();
 const MCP_PATH = MCP_TOKEN ? `/mcp/${MCP_TOKEN}` : "/mcp";
 const POLL_MS = Math.max(1000, Number(process.env.CADGPT_WAKE_POLL_MS || 2500));
 const STARTED_AT = Date.now();
+const CONTROL_TOKEN = randomBytes(32).toString("hex");
 
 const runtimeDir = path.join(ROOT, ".runtime");
 const logFile = path.join(runtimeDir, "wake-agent.log");
@@ -59,7 +61,11 @@ function postCoreControl(action: "activate" | "deactivate"): Promise<boolean> {
         port: CORE_PORT,
         path: `/internal/cad/${action}`,
         method: "POST",
-        headers: { "content-type": "application/json", "content-length": "2" },
+        headers: {
+          "content-type": "application/json",
+          "content-length": "2",
+          "x-cadgpt-control-token": CONTROL_TOKEN,
+        },
         timeout: 5000,
       },
       (res) => {
@@ -116,11 +122,19 @@ async function ensureCore(): Promise<void> {
       cwd: ROOT,
       windowsHide: true,
       stdio: ["ignore", "ignore", "ignore"],
-      env: { ...process.env, HOST, PORT: String(CORE_PORT), CADGPT_WOKEN_BY: "chatgpt" },
+      env: {
+        ...process.env,
+        HOST,
+        PORT: String(CORE_PORT),
+        CADGPT_WOKEN_BY: "chatgpt",
+        CADGPT_CONTROL_TOKEN: CONTROL_TOKEN,
+      },
     });
     coreChild.once("exit", (code, signal) => {
-      log(`Full CadGPT MCP exited (code=${code ?? "null"}, signal=${signal ?? "null"}).`, "WARN");
+      log(`Full CadGPT MCP exited (code=${code ?? "null"}, signal=${signal ?? "null"}); returning to lazy mode.`, "WARN");
       coreChild = null;
+      chatgptActivated = false;
+      void writeState().catch(() => undefined);
     });
 
     for (let i = 0; i < 60; i += 1) {
@@ -209,6 +223,7 @@ async function proxyToCore(req: IncomingMessage, res: ServerResponse): Promise<v
 
 async function writeState(): Promise<void> {
   const core = await coreHealth();
+  if (chatgptActivated && !core && !coreStarting) chatgptActivated = false;
   const state = {
     timestamp: new Date().toISOString(),
     wake_pid: process.pid,
@@ -230,6 +245,7 @@ const server = http.createServer((req, res) => {
     const url = new URL(req.url || "/", `http://${HOST}:${PORT}`);
     if (url.pathname === "/health") {
       const core = await coreHealth();
+      if (chatgptActivated && !core && !coreStarting) chatgptActivated = false;
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({
         status: "ok",
