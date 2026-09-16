@@ -154,7 +154,7 @@ function Wait-AgentReady {
         }
         Start-Sleep -Milliseconds 500
     }
-    throw "CadGPT background agent did not become ready. Run doctor.bat and inspect .runtime/wake-agent.log."
+    throw "CadGPT background agent did not become ready. Run doctor.bat and inspect appdata/logs/wake-agent.log."
 }
 
 Resolve-Ports
