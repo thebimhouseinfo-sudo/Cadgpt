@@ -14,27 +14,45 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Validate curated Lisp semantic registry
+      - name: Validate managed User Registry
         run: python scripts/validate-lisp-registry.py
 
-      - name: Verify registry class/AI-mode contract
+      - name: Verify User Registry ownership and AI-mode contract
         shell: pwsh
         run: |
-          $registry = Get-Content "registry/lisp-registry.json" -Raw | ConvertFrom-Json
-          if (-not $registry.entries -or $registry.entries.Count -lt 1) { throw "Lisp registry has no entries" }
+          $registry = Get-Content "appdata/registry/user/capabilities.json" -Raw | ConvertFrom-Json
+          if (-not $registry.entries -or $registry.entries.Count -lt 1) { throw "User Registry has no entries" }
           foreach ($entry in $registry.entries) {
-            if ($entry.ai_mode -notin @("static", "dynamic")) { throw "Invalid Lisp ai_mode: $($entry.id)" }
-            if ($null -ne $entry.type -or $null -ne $entry.dynamic_role) { throw "Legacy Lisp type/dynamic_role metadata is not allowed: $($entry.id)" }
-            if (-not $entry.class -or -not $entry.subclass -or -not $entry.summary) { throw "Incomplete semantic metadata: $($entry.id)" }
-            if (-not $entry.path.StartsWith("lisp/")) { throw "Permanent registry entry must point to lisp/**: $($entry.id)" }
-            if ($entry.ai_mode -eq "static" -and $entry.dynamic_parameters.Count -gt 0) { throw "Static AI mode cannot declare dynamic parameters: $($entry.id)" }
-            if ($entry.ai_mode -eq "dynamic" -and $entry.dynamic_parameters.Count -lt 1) { throw "Dynamic AI mode requires bounded dynamic parameters: $($entry.id)" }
+            if ($entry.kind -notin @("lisp", "job")) { throw "User Registry contains forbidden kind: $($entry.kind) / $($entry.id)" }
+            if ($entry.registry -and $entry.registry -ne "user") { throw "User capability claims internal ownership: $($entry.id)" }
+            if (-not $entry.library_id -or -not $entry.relative_path) { throw "User capability missing library reference: $($entry.id)" }
+            if ($entry.kind -eq "lisp") {
+              if ($entry.ai_mode -notin @("static", "dynamic")) { throw "Invalid Lisp ai_mode: $($entry.id)" }
+              if ($null -ne $entry.type -or $null -ne $entry.dynamic_role) { throw "Legacy Lisp type/dynamic_role metadata is forbidden: $($entry.id)" }
+              if ($entry.ai_mode -eq "static" -and $entry.dynamic_parameters.Count -gt 0) { throw "Static AI mode cannot declare dynamic parameters: $($entry.id)" }
+              if ($entry.ai_mode -eq "dynamic" -and $entry.dynamic_parameters.Count -lt 1) { throw "Dynamic AI mode requires bounded parameters: $($entry.id)" }
+            }
           }
-          $xlay = $registry.entries | Where-Object { $_.commands -contains "XLAY" } | Select-Object -First 1
-          if (-not $xlay) { throw "XLAY is missing from Lisp registry" }
-          if ($xlay.ai_mode -ne "dynamic") { throw "XLAY must remain AI-dynamic-capable" }
-          if ($xlay.dynamic_parameters.Count -lt 1) { throw "XLAY dynamic parameters are not catalogued" }
-          if (Test-Path "appdata/lisp-draft") {
-            Write-Host "Draft AppData exists; registry validator correctly ignores drafts until promotion."
+
+          $xlay = $registry.entries | Where-Object { $_.kind -eq "lisp" -and $_.commands -contains "XLAY" } | Select-Object -First 1
+          if (-not $xlay) { throw "XLAY missing from User Registry" }
+          if ($xlay.library_id -ne "tbh-toolkit" -or $xlay.ai_mode -ne "dynamic") { throw "XLAY managed-library/AI-mode contract drifted" }
+
+          $job = $registry.entries | Where-Object { $_.kind -eq "job" } | Select-Object -First 1
+          if (-not $job) { throw "Concrete Job missing from User Registry" }
+
+          $manifest = Get-Content "appdata/registry/user/libraries.json" -Raw | ConvertFrom-Json
+          $tbhLisp = $manifest.libraries | Where-Object { $_.id -eq "tbh-toolkit" -and $_.kind -eq "lisp" } | Select-Object -First 1
+          if (-not $tbhLisp -or $tbhLisp.authoring_profile -ne "tbh") { throw "TBH authoring-profile exception missing" }
+          if ($tbhLisp.source_access -ne "read-only" -or $tbhLisp.import_mode -ne "managed-copy") { throw "Imported source ownership contract drifted" }
+          Write-Host "Split Internal/User Registry ownership contract OK"
+
+      - name: Verify internal registry kinds are generated, not stored in User Registry
+        shell: pwsh
+        run: |
+          $source = Get-Content "src/cadgpt/tools/registry.ts" -Raw
+          foreach ($marker in @('kind: "tool"', 'kind: "skill"', 'registry: "internal"', 'getUserCapabilitiesPath')) {
+            if ($source -notmatch [regex]::Escape($marker)) { throw "Internal registry generator missing: $marker" }
           }
-          Write-Host "Semantic registry AI-mode contract OK"
+          if ($source -notmatch 'User Registry may contain only lisp/job') { throw "Runtime ownership guard missing" }
+          Write-Host "Internal Registry generation contract OK"
