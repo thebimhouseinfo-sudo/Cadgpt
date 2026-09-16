@@ -4,6 +4,7 @@ dist/
 bin/
 profiles/*.yaml
 .venv-cad/
+.runtime/
 *.log
 __pycache__/
 *.pyc
