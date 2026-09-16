@@ -1,9 +1,14 @@
 """Sandboxed AutoLISP execution bridge for the CadGPT-bound drawing.
 
 File editing belongs to CadGPT's outer file tools. This service only loads
-existing .lsp files from the repository lisp/** sandbox and invokes named
+existing .lsp files from explicit CadGPT Lisp namespaces and invokes named
 AutoCAD commands on the already-bound drawing. Raw arbitrary SendCommand is
 intentionally not exposed.
+
+Allowed load namespaces:
+- lisp/**                         permanent reusable library
+- appdata/lisp-draft/**           work-in-progress Lisp approved for testing
+- appdata/runtime/dynamic-lisp/** parameterized/session-only Lisp artifacts
 
 LISP loading is verified inside AutoCAD. A SendCommand enqueue is never treated
 as proof that source loaded successfully.
@@ -41,31 +46,58 @@ def _lisp_root() -> str:
     return os.path.realpath(os.path.join(_repo_root(), "lisp"))
 
 
+def _appdata_root() -> str:
+    configured = (os.environ.get("CADGPT_APPDATA_ROOT") or "appdata").strip() or "appdata"
+    if os.path.isabs(configured):
+        return os.path.realpath(configured)
+    return os.path.realpath(os.path.join(_repo_root(), configured))
+
+
+def _inside(candidate: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([candidate, root]) == root
+    except ValueError:
+        return False
+
+
 def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
     if not isinstance(input_path, str) or not input_path.strip():
         raise LispServiceError("path is required")
 
     raw = input_path.strip().replace("\\", "/")
     if os.path.isabs(raw):
-        raise LispServiceError("absolute paths are not allowed; use a repository-relative lisp/** path")
+        raise LispServiceError("absolute paths are not allowed; use a CadGPT virtual Lisp path")
 
     normalized = raw[2:] if raw.startswith("./") else raw
-    if normalized.lower().startswith("lisp/"):
-        normalized = normalized[5:]
-    candidate = os.path.realpath(os.path.join(_lisp_root(), normalized))
-    root = _lisp_root()
-    try:
-        inside = os.path.commonpath([candidate, root]) == root
-    except ValueError:
-        inside = False
-    if not inside:
-        raise LispServiceError("LISP path escapes the repository lisp/** sandbox")
+    lower = normalized.lower()
+
+    if lower.startswith("lisp/"):
+        suffix = normalized[5:]
+        root = _lisp_root()
+        virtual_prefix = "lisp"
+    elif lower.startswith("appdata/lisp-draft/"):
+        suffix = normalized[len("appdata/lisp-draft/") :]
+        root = os.path.realpath(os.path.join(_appdata_root(), "lisp-draft"))
+        virtual_prefix = "appdata/lisp-draft"
+    elif lower.startswith("appdata/runtime/dynamic-lisp/"):
+        suffix = normalized[len("appdata/runtime/dynamic-lisp/") :]
+        root = os.path.realpath(os.path.join(_appdata_root(), "runtime", "dynamic-lisp"))
+        virtual_prefix = "appdata/runtime/dynamic-lisp"
+    else:
+        raise LispServiceError(
+            "LISP path must be under lisp/**, appdata/lisp-draft/**, or appdata/runtime/dynamic-lisp/**"
+        )
+
+    candidate = os.path.realpath(os.path.join(root, suffix))
+    if not _inside(candidate, root):
+        raise LispServiceError(f"LISP path escapes the {virtual_prefix}/** sandbox")
     if os.path.splitext(candidate)[1].lower() != ".lsp":
         raise LispServiceError("only .lsp files can be loaded")
     if not os.path.isfile(candidate):
-        raise LispServiceError(f"LISP file was not found: lisp/{normalized}")
-    relative = os.path.relpath(candidate, _repo_root()).replace("\\", "/")
-    return candidate, relative
+        raise LispServiceError(f"LISP file was not found: {virtual_prefix}/{suffix}")
+
+    relative_suffix = os.path.relpath(candidate, root).replace("\\", "/")
+    return candidate, f"{virtual_prefix}/{relative_suffix}"
 
 
 def _send(command: str) -> None:
