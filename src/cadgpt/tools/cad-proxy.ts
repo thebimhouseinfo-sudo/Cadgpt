@@ -4,8 +4,19 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { cadUpstream } from "../runtime/cad-upstream.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import {
+  bindDrawing,
+  drawingBindingStatus,
+  ensureBoundDrawingActive,
+  listOpenDrawings,
+} from "../session/drawing-binding.js";
 
 const proxyRegistry = new WeakMap<McpServer, Map<string, RegisteredTool>>();
+const INTERNAL_DOCUMENT_TOOLS = new Set([
+  "acad_get_active_document",
+  "acad_list_open_documents",
+  "acad_set_active_document",
+]);
 
 function registryFor(server: McpServer): Map<string, RegisteredTool> {
   let registry = proxyRegistry.get(server);
@@ -47,7 +58,9 @@ function schemaNodeToZod(schema: unknown): z.ZodTypeAny {
     field = z.union(literals as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
   } else if ((node.oneOf ?? node.anyOf)?.length) {
     const options = (node.oneOf ?? node.anyOf)!.map(schemaNodeToZod);
-    field = options.length === 1 ? options[0] : z.union(options as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
+    field = options.length === 1
+      ? options[0]
+      : z.union(options as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
   } else {
     const types = Array.isArray(node.type) ? node.type : node.type ? [node.type] : [];
     const primary = types.find((item) => item !== "null");
@@ -90,6 +103,8 @@ async function refreshProxies(server: McpServer, force = false): Promise<string[
   const tools = await cadUpstream.listTools(force);
 
   for (const tool of tools) {
+    if (INTERNAL_DOCUMENT_TOOLS.has(tool.name)) continue;
+
     const name = `cad__${tool.name}`;
     active.add(name);
     if (registry.has(name)) continue;
@@ -99,11 +114,16 @@ async function refreshProxies(server: McpServer, force = false): Promise<string[
       name,
       {
         title: tool.title ?? tool.name,
-        description: `[CAD MCP] ${tool.description ?? tool.name}`,
+        description: `[CAD MCP / bound drawing required] ${tool.description ?? tool.name}`,
         inputSchema,
         annotations: tool.annotations,
       },
-      async (args: Record<string, unknown>) => (await cadUpstream.callTool(tool.name, args ?? {})) as any
+      async (args: Record<string, unknown>) => {
+        // Enforce the CadGPT session target immediately before every CAD
+        // business operation. Switching AutoCAD tabs cannot silently retarget it.
+        await ensureBoundDrawingActive(server);
+        return (await cadUpstream.callTool(tool.name, args ?? {})) as any;
+      }
     );
     registry.set(name, registered);
   }
@@ -122,10 +142,56 @@ export async function registerCadProxyTools(server: McpServer): Promise<void> {
     "cad_status",
     {
       title: "CAD MCP Status",
-      description: "Report the CadGPT-to-CAD-MCP upstream connection separately from the ChatGPT tunnel status.",
+      description: "Report CadGPT-to-CAD-MCP upstream health separately from tunnel/session health.",
       inputSchema: {},
     },
     async () => toolResult("cad_status", cadUpstream.status() as unknown as Record<string, unknown>)
+  );
+
+  server.registerTool(
+    "drawing_list",
+    {
+      title: "List Open Drawings",
+      description: "List open AutoCAD drawings. This does not change the CadGPT session binding.",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const drawings = await listOpenDrawings();
+        return toolResult("drawing_list", { drawings, count: drawings.length });
+      } catch (error) {
+        return toolError("drawing_list", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "drawing_bind",
+    {
+      title: "Bind CadGPT Drawing",
+      description: "Bind this CadGPT MCP session to one explicitly open AutoCAD drawing by exact file name or full path.",
+      inputSchema: {
+        document: z.string().min(1),
+      },
+    },
+    async ({ document }) => {
+      try {
+        const drawing = await bindDrawing(server, document);
+        return toolResult("drawing_bind", { bound: true, drawing });
+      } catch (error) {
+        return toolError("drawing_bind", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "drawing_status",
+    {
+      title: "CadGPT Drawing Binding Status",
+      description: "Show the drawing explicitly bound to this CadGPT MCP session and whether it is still open.",
+      inputSchema: {},
+    },
+    async () => toolResult("drawing_status", await drawingBindingStatus(server))
   );
 
   server.registerTool(
