@@ -30,12 +30,12 @@ jobs:
               [ref]$errors
             ) | Out-Null
             if ($errors.Count -gt 0) {
-              $errors | ForEach-Object { Write-Error "$script: $($_.Message)" }
+              $errors | ForEach-Object { Write-Error "${script}: $($_.Message)" }
               throw "PowerShell parse failed: $script"
             }
             Write-Host "PowerShell parse OK: $script"
           }
-      - name: Smoke test HTTP MCP surface
+      - name: Smoke test HTTP MCP surface and file sandbox
         shell: pwsh
         run: |
           $env:CAD_MCP_PYTHON = "python"
@@ -76,14 +76,35 @@ jobs:
             $initializedBody = @{ jsonrpc = "2.0"; method = "notifications/initialized" } | ConvertTo-Json
             $null = Invoke-WebRequest -Uri "http://127.0.0.1:3000/mcp" -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body $initializedBody
 
-            $toolsBody = @{ jsonrpc = "2.0"; id = 2; method = "tools/list"; params = @{} } | ConvertTo-Json -Depth 5
-            $toolsResp = Invoke-WebRequest -Uri "http://127.0.0.1:3000/mcp" -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body $toolsBody
-            $toolsJson = $toolsResp.Content | ConvertFrom-Json
+            function Invoke-Mcp([int]$Id, [string]$Method, $Params) {
+              $body = @{ jsonrpc = "2.0"; id = $Id; method = $Method; params = $Params } | ConvertTo-Json -Depth 12
+              $resp = Invoke-WebRequest -Uri "http://127.0.0.1:3000/mcp" -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body $body
+              if ($resp.StatusCode -ne 200) { throw "MCP call failed: $Method" }
+              return ($resp.Content | ConvertFrom-Json)
+            }
+
+            $toolsJson = Invoke-Mcp 2 "tools/list" @{}
             $names = @($toolsJson.result.tools | ForEach-Object { $_.name })
             foreach ($required in @("file_roots", "file_read", "file_search", "job_list", "job_get", "cad_status", "drawing_list", "drawing_bind", "drawing_status")) {
               if ($names -notcontains $required) { throw "Missing MCP tool: $required" }
             }
-            Write-Host "HTTP MCP smoke passed; tools=$($names.Count)"
+
+            $allowedRead = Invoke-Mcp 3 "tools/call" @{ name = "file_read"; arguments = @{ path = "jobs/JOB_RULES.md"; start_line = 1; end_line = 2 } }
+            if ($allowedRead.result.isError -eq $true -or $allowedRead.result.structuredContent.ok -ne $true) {
+              throw "Sandbox rejected an allowed jobs/** read"
+            }
+
+            $blockedRead = Invoke-Mcp 4 "tools/call" @{ name = "file_read"; arguments = @{ path = "package.json" } }
+            if ($blockedRead.result.isError -ne $true -or $blockedRead.result.structuredContent.ok -ne $false) {
+              throw "Sandbox allowed package.json outside jobs/** and lisp/**"
+            }
+
+            $traversalRead = Invoke-Mcp 5 "tools/call" @{ name = "file_read"; arguments = @{ path = "jobs/../package.json" } }
+            if ($traversalRead.result.isError -ne $true -or $traversalRead.result.structuredContent.ok -ne $false) {
+              throw "Sandbox allowed path traversal outside jobs/** and lisp/**"
+            }
+
+            Write-Host "HTTP MCP + sandbox smoke passed; tools=$($names.Count)"
           }
           finally {
             if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
