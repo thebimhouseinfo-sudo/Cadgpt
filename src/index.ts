@@ -11,6 +11,7 @@ import {
 } from "./cadgpt/lib/mcp-session-manager.js";
 import { getAllowedRoots, toRepoRelative } from "./cadgpt/lib/path-security.js";
 import { cadUpstream } from "./cadgpt/runtime/cad-upstream.js";
+import { activateCadRuntime, deactivateCadRuntime } from "./cadgpt/tools/cad-proxy.js";
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
@@ -43,8 +44,29 @@ app.get("/health", (_req, res) => {
   });
 });
 
+// Internal lifecycle controls are only reachable on this core's loopback-only
+// internal port. The public wake-agent proxies only the protected MCP path.
+app.post("/internal/cad/activate", async (_req, res) => {
+  try {
+    const result = await activateCadRuntime();
+    res.json({ ok: true, cad_mcp: cadUpstream.status(), ...result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(503).json({ ok: false, error: message, cad_mcp: cadUpstream.status() });
+  }
+});
+
+app.post("/internal/cad/deactivate", async (_req, res) => {
+  try {
+    await deactivateCadRuntime();
+    res.json({ ok: true, cad_mcp: cadUpstream.status() });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(500).json({ ok: false, error: message, cad_mcp: cadUpstream.status() });
+  }
+});
+
 if (MCP_TOKEN) {
-  // Do not answer 401 here: an MCP client may interpret it as an OAuth challenge.
   app.all("/mcp", (_req, res) => res.status(404).json({ ok: false, error: "Not found" }));
 }
 
@@ -67,9 +89,6 @@ async function handlePost(req: express.Request, res: express.Response): Promise<
       if (await sessions.tryRecover(sessionId, req, res, req.body)) return;
     }
 
-    // ChatGPT may probe with server/discover or another request before a v1-style
-    // session exists. Adopt a temporary session rather than leaving the connector
-    // retrying indefinitely.
     if (!sessionId && SESSION_RECOVERY) {
       const recoveryId = randomUUID();
       if (await sessions.tryRecover(recoveryId, req, res, req.body)) return;
@@ -121,19 +140,25 @@ app.use((req, res, next) => {
 
 const server = app.listen(PORT, HOST, () => {
   console.log("");
-  console.log("=== CadGPT ===");
+  console.log("=== CadGPT Core ===");
   console.log(`Local MCP:  http://${HOST}:${PORT}${mcpPaths[0]}`);
   console.log(`Health:     http://${HOST}:${PORT}/health`);
   console.log(`File roots: ${getAllowedRoots().map(toRepoRelative).join(", ")}`);
   console.log(`MCP path:   ${MCP_TOKEN ? "protected" : "unprotected"}`);
-  console.log("CAD MCP:    lazy upstream; connects when a CadGPT MCP session loads CAD tools");
+  console.log("CAD MCP:    host-controlled; activated while AutoCAD is running");
   console.log("");
+
+  if (process.env.CADGPT_START_CAD_MCP === "1") {
+    void activateCadRuntime().catch((error) =>
+      console.warn("[CAD MCP] initial host activation failed:", error instanceof Error ? error.message : error)
+    );
+  }
 });
 
 async function shutdown(signal: string): Promise<void> {
   console.log(`[CadGPT] ${signal}: shutting down`);
   sessions.stopCleanup();
-  await cadUpstream.shutdown();
+  await cadUpstream.deactivate();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000).unref();
 }
