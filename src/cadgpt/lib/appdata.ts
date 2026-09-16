@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { getRepoRoot } from "./path-security.js";
+const REPO_ROOT = path.resolve(process.cwd());
 
 export type AppDataArea = "data" | "lisp-draft" | "runtime" | "state" | "logs";
 
@@ -20,7 +20,7 @@ export function getAppDataRoot(): string {
   const configured = (process.env.CADGPT_APPDATA_ROOT || "appdata").trim() || "appdata";
   return path.isAbsolute(configured)
     ? path.resolve(configured)
-    : path.resolve(getRepoRoot(), configured);
+    : path.resolve(REPO_ROOT, configured);
 }
 
 export function getAppDataPath(area: AppDataArea, ...parts: string[]): string {
