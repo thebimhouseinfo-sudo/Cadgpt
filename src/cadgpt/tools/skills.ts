@@ -41,7 +41,8 @@ async function walkMarkdown(root: string, current: string, out: string[], max = 
   if (out.length >= max) return;
   const entries = await fs.readdir(current, { withFileTypes: true });
   for (const entry of entries) {
-    if (out.length >= max || entry.name.startsWith(".")) break;
+    if (out.length >= max) break;
+    if (entry.name.startsWith(".")) continue;
     const full = path.join(current, entry.name);
     if (entry.isDirectory()) {
       await walkMarkdown(root, full, out, max);
