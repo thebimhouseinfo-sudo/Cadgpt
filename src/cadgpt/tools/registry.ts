@@ -9,8 +9,7 @@ import { toolError, toolResult } from "../lib/tool-result.js";
 interface LispEntry {
   id: string;
   title: string;
-  type: "static" | "dynamic";
-  dynamic_role?: "template" | "instance";
+  ai_mode: "static" | "dynamic";
   class: string;
   subclass: string;
   tags: string[];
@@ -133,23 +132,23 @@ export function registerCapabilityRegistryTools(server: McpServer): void {
     "registry_list",
     {
       title: "List CadGPT Capability Registry",
-      description: "List semantic capability metadata for available Lisp or MCP tools. Prefer Lisp registry metadata over reading Lisp source merely to discover what it does.",
+      description: "List semantic capability metadata for available Lisp or MCP tools. Prefer Lisp registry metadata over reading Lisp source merely to discover what it does. Lisp ai_mode describes how AI may use/adapt normal AutoLISP source; it is not a Lisp language/type distinction.",
       inputSchema: {
         kind: z.enum(["lisp", "tool"]).default("lisp"),
         class_name: z.string().optional(),
-        type: z.enum(["static", "dynamic"]).optional(),
+        ai_mode: z.enum(["static", "dynamic"]).optional(),
         query: z.string().optional(),
         limit: z.number().int().min(1).max(500).optional().default(100),
       },
     },
-    async ({ kind, class_name, type, query, limit }) => {
+    async ({ kind, class_name, ai_mode, query, limit }) => {
       try {
         let entries: Array<Record<string, unknown>> = kind === "lisp"
           ? (await loadLispEntries()) as unknown as Array<Record<string, unknown>>
           : await loadToolEntries();
 
         if (class_name) entries = entries.filter((entry) => String(entry.class ?? "").startsWith(class_name));
-        if (kind === "lisp" && type) entries = entries.filter((entry) => entry.type === type);
+        if (kind === "lisp" && ai_mode) entries = entries.filter((entry) => entry.ai_mode === ai_mode);
         if (query?.trim()) entries = entries.filter((entry) => textMatch(entry, query.trim()));
         const selected = entries.slice(0, limit);
 
@@ -159,7 +158,7 @@ export function registerCapabilityRegistryTools(server: McpServer): void {
           total_matches: entries.length,
           entries: selected,
           note: kind === "lisp"
-            ? "Registry metadata is curated from actual behavior; read source only when modification/debug/audit requires it."
+            ? "Registry metadata is curated from actual behavior. ai_mode=dynamic only means AI may derive a temporary parameterized runtime variant; the source itself remains ordinary AutoLISP. Read source only when modification/debug/audit requires it."
             : "MCP tools/list remains execution-authoritative; registry adds semantic grouping.",
         });
       } catch (error) {
