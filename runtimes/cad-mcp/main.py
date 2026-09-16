@@ -2,7 +2,7 @@
 
 CadGPT owns drawing selection in the outer MCP session. Every proxied CAD
 business tool is called only after the outer layer re-activates the explicitly
-bound drawing. Phase 2 expands the inner runtime read-only first.
+bound drawing. Mutation groups are enabled incrementally by risk tier.
 """
 
 from mcp.server.fastmcp import FastMCP
@@ -11,9 +11,11 @@ from tools import (
     block_tools,
     document_tools,
     entity_tools,
+    geometry_tools,
     host_tools,
     inventory_tools,
     layer_tools,
+    modify_tools,
 )
 from utils.logger import get_logger
 
@@ -26,7 +28,9 @@ layer_tools.register(mcp)
 entity_tools.register(mcp)
 block_tools.register(mcp)
 host_tools.register(mcp)
+geometry_tools.register(mcp)
+modify_tools.register(mcp)
 
 if __name__ == "__main__":
-    log.info("Starting cad-mcp read-only inspection slice with stdio transport...")
+    log.info("Starting cad-mcp bounded inspection/mutation slice with stdio transport...")
     mcp.run(transport="stdio")
