@@ -35,7 +35,7 @@ jobs:
             }
             Write-Host "PowerShell parse OK: $script"
           }
-      - name: Smoke test protected HTTP MCP surface and file sandbox
+      - name: Smoke test protected HTTP MCP surface, recovery, and file sandbox
         shell: pwsh
         run: |
           $env:CAD_MCP_PYTHON = "python"
@@ -111,7 +111,21 @@ jobs:
               throw "Sandbox allowed path traversal outside jobs/** and lisp/**"
             }
 
-            Write-Host "Protected HTTP MCP + sandbox smoke passed; tools=$($names.Count)"
+            # Exercise the exact stale-session path used after connector/server churn:
+            # send a normal request with an unknown session ID and require CadGPT to
+            # rebuild/warm that session before serving the request.
+            $recoveryHeaders = @{
+              Accept = "application/json, text/event-stream"
+              "Mcp-Session-Id" = "ci-stale-session"
+              "Mcp-Protocol-Version" = "2025-06-18"
+            }
+            $recoveryBody = @{ jsonrpc = "2.0"; id = 6; method = "tools/list"; params = @{} } | ConvertTo-Json -Depth 5
+            $recoveryResp = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $recoveryHeaders -ContentType "application/json" -Body $recoveryBody
+            if ($recoveryResp.StatusCode -ne 200) { throw "MCP stale-session recovery returned HTTP $($recoveryResp.StatusCode)" }
+            $recoveryJson = $recoveryResp.Content | ConvertFrom-Json
+            if (@($recoveryJson.result.tools).Count -lt 1) { throw "Recovered MCP session returned no tools" }
+
+            Write-Host "Protected HTTP MCP + recovery + sandbox smoke passed; tools=$($names.Count)"
           }
           finally {
             if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
