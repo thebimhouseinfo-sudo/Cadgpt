@@ -141,7 +141,15 @@ async function loadUserEntries(): Promise<Array<Record<string, unknown>>> {
       if (seen.has(id)) throw new Error(`User Registry contains duplicate capability id: ${String(entry.id)}`);
       seen.add(id);
     }
-    return parsed.entries.map((entry) => ({ ...entry, registry: "user" }));
+    return parsed.entries.map((entry) => {
+      const effective: Record<string, unknown> = { ...entry, registry: "user" };
+      if (entry.kind === "lisp" && entry.semantic_status !== "curated" && entry.ai_mode === "dynamic") {
+        effective.review_blocked_ai_mode = "dynamic";
+        effective.ai_mode = "static";
+        effective.dynamic_parameters = [];
+      }
+      return effective;
+    });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
@@ -162,7 +170,7 @@ export function registerCapabilityRegistryTools(server: McpServer): void {
     "registry_list",
     {
       title: "List CadGPT Effective Capability Registry",
-      description: "List the unified view of Internal Registry (MCP tools + system skills) and User Registry (managed Lisp + Jobs). Ownership is disjoint; User Registry cannot overwrite Internal Registry.",
+      description: "List the unified view of Internal Registry (MCP tools + system skills) and User Registry (managed Lisp + Jobs). Ownership is disjoint; User Registry cannot overwrite Internal Registry. Unreviewed Lisp cannot retain effective dynamic AI mode.",
       inputSchema: {
         kind: z.enum(["tool", "skill", "lisp", "job"]).optional(),
         registry: z.enum(["internal", "user"]).optional(),
