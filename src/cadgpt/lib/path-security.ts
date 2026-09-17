@@ -4,8 +4,7 @@ import path from "node:path";
 import { getAppDataRoot } from "./appdata.js";
 
 const REPO_ROOT = path.resolve(process.cwd());
-const DEFAULT_SOURCE_ROOTS = ["lisp", "jobs"];
-const APPDATA_EDITABLE_ROOTS = ["data", "lisp-draft"];
+const APPDATA_EDITABLE_ROOTS = ["data", "libraries", "workspace"];
 
 function normalizeForCompare(value: string): string {
   const resolved = path.resolve(value);
@@ -15,56 +14,22 @@ function normalizeForCompare(value: string): string {
 function isInside(candidate: string, root: string): boolean {
   const normalizedCandidate = normalizeForCompare(candidate);
   const normalizedRoot = normalizeForCompare(root);
-  return (
-    normalizedCandidate === normalizedRoot ||
-    normalizedCandidate.startsWith(normalizedRoot + path.sep)
-  );
-}
-
-function configuredSourceRootNames(): string[] {
-  const raw = process.env.CADGPT_FILE_ROOTS?.trim();
-  const values = raw ? raw.split(";") : DEFAULT_SOURCE_ROOTS;
-  const roots = values.map((item) => item.trim()).filter(Boolean);
-  if (!roots.length) throw new Error("CADGPT_FILE_ROOTS contains no usable roots");
-  return roots;
+  return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(normalizedRoot + path.sep);
 }
 
 export function getRepoRoot(): string {
   return REPO_ROOT;
 }
 
-function getSourceRoots(): string[] {
-  return configuredSourceRootNames().map((item) => {
-    if (path.isAbsolute(item)) {
-      const absolute = path.resolve(item);
-      if (!isInside(absolute, REPO_ROOT)) {
-        throw new Error(`Configured source root escapes CadGPT repository: ${item}`);
-      }
-      return absolute;
-    }
-    const resolved = path.resolve(REPO_ROOT, item);
-    if (!isInside(resolved, REPO_ROOT)) {
-      throw new Error(`Configured source root escapes CadGPT repository: ${item}`);
-    }
-    return resolved;
-  });
-}
-
-function getEditableAppDataRoots(): string[] {
+export function getAllowedRoots(): string[] {
   const appDataRoot = getAppDataRoot();
   return APPDATA_EDITABLE_ROOTS.map((name) => path.resolve(appDataRoot, name));
-}
-
-export function getAllowedRoots(): string[] {
-  return [...getSourceRoots(), ...getEditableAppDataRoots()];
 }
 
 function assertInsideAllowed(candidate: string): void {
   const allowed = getAllowedRoots();
   if (!allowed.some((root) => isInside(candidate, root))) {
-    throw new Error(
-      `Path is outside CadGPT editable roots (${allowed.map(toCadgptPath).join(", ")}): ${candidate}`
-    );
+    throw new Error(`Path is outside CadGPT managed AppData roots (${allowed.map(toCadgptPath).join(", ")}): ${candidate}`);
   }
 }
 
@@ -88,16 +53,15 @@ function resolveVirtualPath(inputPath: string): string {
     const suffix = normalized === "appdata" ? "" : normalized.slice("appdata/".length);
     return path.resolve(getAppDataRoot(), suffix);
   }
-  return path.resolve(REPO_ROOT, inputPath);
+  throw new Error("CadGPT editable file paths must use the appdata/... virtual namespace");
 }
 
 /**
- * Resolve a user/tool supplied path inside the explicit CadGPT file sandbox.
- * Existing paths are realpath-resolved to prevent symlink escapes. For new
- * paths, the nearest existing parent is realpath-resolved before creation.
+ * Resolve a tool-supplied path inside managed AppData only.
  *
- * `appdata/...` is a stable virtual namespace: in Beta it maps to repo/appdata,
- * while packaged builds may map the same paths to %LOCALAPPDATA%/CadGPT.
+ * External user library source folders are deliberately NOT part of this
+ * sandbox. They are readable only by the explicit library_import workflow,
+ * which copies them into AppData without ever writing back to the source.
  */
 export async function resolveAllowedPath(
   inputPath: string,
@@ -105,12 +69,9 @@ export async function resolveAllowedPath(
 ): Promise<string> {
   const trimmed = inputPath.trim();
   if (!trimmed) throw new Error("Path is empty");
+  if (path.isAbsolute(trimmed)) throw new Error("Absolute paths are not editable through CadGPT file tools");
 
-  const candidate = path.isAbsolute(trimmed)
-    ? path.resolve(trimmed)
-    : resolveVirtualPath(trimmed);
-
-  // Lexical boundary first: reject ../ and foreign absolute paths early.
+  const candidate = resolveVirtualPath(trimmed);
   assertInsideAllowed(candidate);
 
   if (!options.forCreate) {
@@ -125,7 +86,7 @@ export async function resolveAllowedPath(
   return candidate;
 }
 
-/** Stable display/tool path independent of where packaged appdata lives. */
+/** Stable display/tool path independent of where packaged AppData lives. */
 export function toCadgptPath(absolutePath: string): string {
   const absolute = path.resolve(absolutePath);
   const appDataRoot = getAppDataRoot();
@@ -136,7 +97,6 @@ export function toCadgptPath(absolutePath: string): string {
   return path.relative(REPO_ROOT, absolute).replaceAll("\\", "/");
 }
 
-/** Repository-only compatibility helper. */
 export function toRepoRelative(absolutePath: string): string {
   return path.relative(REPO_ROOT, absolutePath).replaceAll("\\", "/");
 }

@@ -4,8 +4,10 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { resolveAllowedPath, toRepoRelative } from "../lib/path-security.js";
+import { resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+
+export type LispAuthoringProfile = "syntax" | "cadgpt" | "tbh";
 
 export interface LispDiagnostic {
   severity: "error" | "warning";
@@ -33,51 +35,19 @@ export interface LispValidationResult {
 }
 
 const COMMON_LISP_ONLY_FORMS = [
-  "let",
-  "let*",
-  "flet",
-  "labels",
-  "macrolet",
-  "defmacro",
-  "defpackage",
-  "in-package",
-  "defclass",
-  "defgeneric",
-  "defmethod",
-  "loop",
-  "dolist",
-  "dotimes",
-  "do",
-  "do*",
-  "setf",
-  "psetf",
-  "incf",
-  "decf",
-  "push",
-  "pop",
-  "multiple-value-bind",
-  "multiple-value-setq",
-  "handler-case",
-  "unwind-protect",
-  "destructuring-bind",
-  "with-open-file",
-  "with-output-to-string",
+  "let", "let*", "flet", "labels", "macrolet", "defmacro", "defpackage", "in-package",
+  "defclass", "defgeneric", "defmethod", "loop", "dolist", "dotimes", "do", "do*", "setf",
+  "psetf", "incf", "decf", "push", "pop", "multiple-value-bind", "multiple-value-setq",
+  "handler-case", "unwind-protect", "destructuring-bind", "with-open-file", "with-output-to-string",
 ];
-
-const COMMON_LISP_LAMBDA_KEYWORDS = [
-  "optional",
-  "rest",
-  "key",
-  "aux",
-  "body",
-  "whole",
-  "environment",
+const COMMON_LISP_LAMBDA_KEYWORDS = ["optional", "rest", "key", "aux", "body", "whole", "environment"];
+const REQUIRED_HEADER_FIELDS = [
+  "File", "Module", "Command", "Description", "Inputs", "Effects", "Interaction",
+  "Risk", "Dependencies", "Notes", "Revision",
 ];
 
 function uniqueSorted(values: string[]): string[] {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b)
-  );
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 
 function extractDefuns(clean: string): { commands: string[]; functions: string[] } {
@@ -109,142 +79,105 @@ function checkAutoLispDialect(clean: string, source: string, diagnostics: LispDi
     const escaped = form.replace("*", "\\*");
     const regex = new RegExp(`\\(\\s*${escaped}(?=[\\s()])`, "gi");
     for (const match of clean.matchAll(regex)) {
-      const loc = locationAt(source, match.index ?? 0);
       diagnostics.push({
         severity: "error",
         code: "COMMON_LISP_FORM",
         message: `\`${form}\` is not an AutoLISP form. Rewrite this using AutoLISP/Visual LISP constructs.`,
-        ...loc,
+        ...locationAt(source, match.index ?? 0),
       });
     }
   }
 
-  const keywordPattern = COMMON_LISP_LAMBDA_KEYWORDS.join("|");
-  const keywordRegex = new RegExp(`&(?:${keywordPattern})\\b`, "gi");
+  const keywordRegex = new RegExp(`&(?:${COMMON_LISP_LAMBDA_KEYWORDS.join("|")})\\b`, "gi");
   for (const match of clean.matchAll(keywordRegex)) {
-    const loc = locationAt(source, match.index ?? 0);
     diagnostics.push({
       severity: "error",
       code: "COMMON_LISP_LAMBDA_KEYWORD",
-      message: `\`${match[0]}\` is Common Lisp lambda-list syntax. AutoLISP declares locals after \`/\` in the defun argument list.`,
-      ...loc,
+      message: `\`${match[0]}\` is Common Lisp lambda-list syntax. AutoLISP declares locals after \`/\` in defun arguments.`,
+      ...locationAt(source, match.index ?? 0),
     });
   }
 
   for (const match of clean.matchAll(/#'/g)) {
-    const loc = locationAt(source, match.index ?? 0);
     diagnostics.push({
       severity: "error",
       code: "COMMON_LISP_READER_SYNTAX",
-      message: "`#'` function reader shorthand is not AutoLISP syntax. Use an AutoLISP-compatible quoted symbol or `(function (lambda ...))` where appropriate.",
-      ...loc,
+      message: "`#'` function reader shorthand is not AutoLISP syntax.",
+      ...locationAt(source, match.index ?? 0),
     });
   }
 }
 
-function checkLibraryStyle(
+function checkAuthoringStyle(
   source: string,
   commands: string[],
   diagnostics: LispDiagnostic[],
+  profile: Exclude<LispAuthoringProfile, "syntax">,
   fileName?: string
 ): void {
-  const hasHeaderStart = /;;;\s*TBH-HEADER-START/i.test(source);
-  const hasHeaderEnd = /;;;\s*TBH-HEADER-END/i.test(source);
-  if (!hasHeaderStart || !hasHeaderEnd) {
+  const brand = profile === "tbh" ? "TBH" : "CADGPT";
+  const start = new RegExp(`;;;\\s*${brand}-HEADER-START`, "i");
+  const end = new RegExp(`;;;\\s*${brand}-HEADER-END`, "i");
+  if (!start.test(source) || !end.test(source)) {
     diagnostics.push({
       severity: "error",
-      code: "MISSING_TBH_HEADER",
-      message: "Production AutoLISP must use the canonical TBH-HEADER-START/TBH-HEADER-END metadata block.",
+      code: `MISSING_${brand}_HEADER`,
+      message: `${brand} authoring profile requires the canonical ${brand}-HEADER-START/${brand}-HEADER-END metadata block.`,
     });
     return;
   }
 
-  const fileField = headerField(source, "File");
-  const moduleField = headerField(source, "Module");
-  const commandField = headerField(source, "Command");
-  const descriptionField = headerField(source, "Description");
-
-  for (const [name, value] of [
-    ["File", fileField],
-    ["Module", moduleField],
-    ["Command", commandField],
-    ["Description", descriptionField],
-  ] as const) {
-    if (!value) {
+  for (const field of REQUIRED_HEADER_FIELDS) {
+    if (!headerField(source, field)) {
       diagnostics.push({
         severity: "error",
-        code: "MISSING_TBH_HEADER_FIELD",
-        message: `TBH header is missing required \`${name}\` metadata.`,
+        code: `MISSING_${brand}_HEADER_FIELD`,
+        message: `${brand} header is missing required \`${field}\` metadata.`,
       });
     }
   }
 
+  const fileField = headerField(source, "File");
   if (fileName && fileField && fileField.toLowerCase() !== fileName.toLowerCase()) {
     diagnostics.push({
       severity: "warning",
       code: "HEADER_FILENAME_MISMATCH",
-      message: `TBH header File is \`${fileField}\` but the repository file is \`${fileName}\`.`,
+      message: `Header File is \`${fileField}\` but the actual file is \`${fileName}\`.`,
     });
   }
 
+  const commandField = headerField(source, "Command");
   if (commandField && commands.length) {
     const normalized = commandField.toUpperCase();
     for (const command of commands) {
-      if (!new RegExp(`(^|[^A-Z0-9_-])${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Z0-9_-]|$)`).test(normalized)) {
-        diagnostics.push({
-          severity: "error",
-          code: "HEADER_COMMAND_MISMATCH",
-          message: `Public command ${command} is not declared in the TBH header Command field.`,
-        });
+      const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (!new RegExp(`(^|[^A-Z0-9_-])${escaped}([^A-Z0-9_-]|$)`).test(normalized)) {
+        diagnostics.push({ severity: "error", code: "HEADER_COMMAND_MISMATCH", message: `Public command ${command} is not declared in the header Command field.` });
       }
     }
   }
 
-  if (commands.length && !/\[TBH\]/i.test(source)) {
-    diagnostics.push({
-      severity: "warning",
-      code: "NO_TBH_LOAD_BANNER",
-      message: "Public command file has no TBH load banner; keep new command files consistent with the library scaffold.",
-    });
-  }
-
   if (commands.length && !/\(\s*princ\s*\)\s*$/i.test(source.trim())) {
-    diagnostics.push({
-      severity: "warning",
-      code: "NO_QUIET_FILE_END",
-      message: "Public command file should normally end with a quiet `(princ)` like the TBH library scaffold.",
-    });
+    diagnostics.push({ severity: "warning", code: "NO_QUIET_FILE_END", message: "Public command file should normally end with a quiet `(princ)`." });
   }
-
   if (/\bTODO\b/i.test(source)) {
-    diagnostics.push({
-      severity: "warning",
-      code: "TODO_MARKER",
-      message: "Source still contains TODO markers; remove or resolve them before declaring the command complete.",
-    });
+    diagnostics.push({ severity: "warning", code: "TODO_MARKER", message: "Source still contains TODO markers." });
   }
 }
 
-/**
- * Lightweight AutoLISP reader-aware validation.
- *
- * It intentionally validates AutoLISP/Visual LISP rather than generic Lisp.
- * Comments and strings are masked before dialect/structure checks. Runtime CAD
- * behavior remains the responsibility of load/run/postcondition gates.
- */
 export function validateLispSource(
   source: string,
   expectedCommands: string[] = [],
-  options: { enforceLibraryStyle?: boolean; fileName?: string } = {}
+  options: { profile?: LispAuthoringProfile; fileName?: string } = {}
 ): LispValidationResult {
   const diagnostics: LispDiagnostic[] = [];
   const stack: Array<{ line: number; column: number }> = [];
   let line = 1;
   let column = 0;
   let inString = false;
-  let stringStart = { line: 1, column: 1 };
   let escaped = false;
   let inComment = false;
+  let stringStart = { line: 1, column: 1 };
   let parenPairs = 0;
   let maxDepth = 0;
   let clean = "";
@@ -252,180 +185,70 @@ export function validateLispSource(
   for (let index = 0; index < source.length; index++) {
     const ch = source[index];
     column += 1;
-
     if (inComment) {
-      if (ch === "\n") {
-        inComment = false;
-        clean += "\n";
-        line += 1;
-        column = 0;
-      } else {
-        clean += " ";
-      }
+      if (ch === "\n") { inComment = false; clean += "\n"; line += 1; column = 0; }
+      else clean += " ";
       continue;
     }
-
     if (inString) {
-      if (escaped) {
-        escaped = false;
-        clean += " ";
-      } else if (ch === "\\") {
-        escaped = true;
-        clean += " ";
-      } else if (ch === '"') {
-        inString = false;
-        clean += " ";
-      } else {
+      if (escaped) { escaped = false; clean += " "; }
+      else if (ch === "\\") { escaped = true; clean += " "; }
+      else if (ch === '"') { inString = false; clean += " "; }
+      else {
         clean += ch === "\n" ? "\n" : " ";
-        if (ch === "\n") {
-          line += 1;
-          column = 0;
-        }
+        if (ch === "\n") { line += 1; column = 0; }
       }
       continue;
     }
-
-    if (ch === ";") {
-      inComment = true;
-      clean += " ";
-      continue;
-    }
-
-    if (ch === '"') {
-      inString = true;
-      stringStart = { line, column };
-      clean += " ";
-      continue;
-    }
-
-    if (ch === "(") {
-      stack.push({ line, column });
-      maxDepth = Math.max(maxDepth, stack.length);
-      clean += ch;
-      continue;
-    }
-
+    if (ch === ";") { inComment = true; clean += " "; continue; }
+    if (ch === '"') { inString = true; stringStart = { line, column }; clean += " "; continue; }
+    if (ch === "(") { stack.push({ line, column }); maxDepth = Math.max(maxDepth, stack.length); clean += ch; continue; }
     if (ch === ")") {
-      if (!stack.length) {
-        diagnostics.push({
-          severity: "error",
-          code: "UNMATCHED_CLOSE_PAREN",
-          message: "Closing parenthesis has no matching opening parenthesis.",
-          line,
-          column,
-        });
-      } else {
-        stack.pop();
-        parenPairs += 1;
-      }
+      if (!stack.length) diagnostics.push({ severity: "error", code: "UNMATCHED_CLOSE_PAREN", message: "Closing parenthesis has no matching opening parenthesis.", line, column });
+      else { stack.pop(); parenPairs += 1; }
       clean += ch;
       continue;
     }
-
     clean += ch;
-    if (ch === "\n") {
-      line += 1;
-      column = 0;
-    }
+    if (ch === "\n") { line += 1; column = 0; }
   }
 
-  if (inString) {
-    diagnostics.push({
-      severity: "error",
-      code: "UNCLOSED_STRING",
-      message: "String literal is not closed before end of file.",
-      line: stringStart.line,
-      column: stringStart.column,
-    });
-  }
-
-  for (const opening of stack.slice(-5)) {
-    diagnostics.push({
-      severity: "error",
-      code: "UNCLOSED_PAREN",
-      message: "Opening parenthesis is not closed before end of file.",
-      line: opening.line,
-      column: opening.column,
-    });
-  }
-  if (stack.length > 5) {
-    diagnostics.push({
-      severity: "error",
-      code: "UNCLOSED_PAREN_MORE",
-      message: `${stack.length - 5} additional opening parentheses are not closed.`,
-    });
-  }
+  if (inString) diagnostics.push({ severity: "error", code: "UNCLOSED_STRING", message: "String literal is not closed before end of file.", ...stringStart });
+  for (const opening of stack.slice(-5)) diagnostics.push({ severity: "error", code: "UNCLOSED_PAREN", message: "Opening parenthesis is not closed before end of file.", ...opening });
+  if (stack.length > 5) diagnostics.push({ severity: "error", code: "UNCLOSED_PAREN_MORE", message: `${stack.length - 5} additional opening parentheses are not closed.` });
 
   checkAutoLispDialect(clean, source, diagnostics);
-
   const { commands, functions } = extractDefuns(clean);
+
   const commandCounts = new Map<string, number>();
-  const commandRegex = /\(\s*defun\s+c:([^\s()]+)/gi;
-  for (const match of clean.matchAll(commandRegex)) {
+  for (const match of clean.matchAll(/\(\s*defun\s+c:([^\s()]+)/gi)) {
     const command = match[1].toUpperCase();
     commandCounts.set(command, (commandCounts.get(command) ?? 0) + 1);
   }
   for (const [command, count] of commandCounts) {
-    if (count > 1) {
-      diagnostics.push({
-        severity: "error",
-        code: "DUPLICATE_PUBLIC_COMMAND",
-        message: `Public command ${command} is defined ${count} times in the same file.`,
-      });
-    }
+    if (count > 1) diagnostics.push({ severity: "error", code: "DUPLICATE_PUBLIC_COMMAND", message: `Public command ${command} is defined ${count} times in the same file.` });
   }
 
-  const expected = uniqueSorted(expectedCommands.map((value) => value.toUpperCase()));
-  for (const command of expected) {
-    if (!commands.includes(command)) {
-      diagnostics.push({
-        severity: "error",
-        code: "MISSING_EXPECTED_COMMAND",
-        message: `Expected public command ${command} was not found.`,
-      });
-    }
+  for (const command of uniqueSorted(expectedCommands.map((value) => value.toUpperCase()))) {
+    if (!commands.includes(command)) diagnostics.push({ severity: "error", code: "MISSING_EXPECTED_COMMAND", message: `Expected public command ${command} was not found.` });
   }
 
   const usesCom = /\b(?:vla-|vlax-|vl-catch-all-apply|vlax-get-acad-object)/i.test(clean);
-  const hasVlLoadCom = /\(\s*vl-load-com\s*\)/i.test(clean);
-  if (usesCom && !hasVlLoadCom) {
-    diagnostics.push({
-      severity: "error",
-      code: "COM_WITHOUT_VL_LOAD_COM",
-      message: "Visual LISP/ActiveX APIs are used but `(vl-load-com)` was not found.",
-    });
+  if (usesCom && !/\(\s*vl-load-com\s*\)/i.test(clean)) {
+    diagnostics.push({ severity: "error", code: "COM_WITHOUT_VL_LOAD_COM", message: "Visual LISP/ActiveX APIs are used but `(vl-load-com)` was not found." });
   }
 
   const usesSetvar = /\(\s*setvar\b/i.test(clean);
-  const hasErrorHandler = /\(\s*defun\s+\*error\*/i.test(clean);
-  if (usesSetvar && !hasErrorHandler) {
-    diagnostics.push({
-      severity: "warning",
-      code: "SETVAR_WITHOUT_ERROR_HANDLER",
-      message: "The file changes system variables but no local `*error*` handler was found.",
-    });
+  if (usesSetvar && !/\(\s*defun\s+\*error\*/i.test(clean)) {
+    diagnostics.push({ severity: "warning", code: "SETVAR_WITHOUT_ERROR_HANDLER", message: "The file changes system variables but no local `*error*` handler was found." });
   }
 
   const usesCommand = /\(\s*command(?:-s)?\b/i.test(clean);
-  if (usesCommand) {
-    diagnostics.push({
-      severity: "warning",
-      code: "COMMAND_API_USED",
-      message: "The file uses `(command)`/`(command-s)`; verify that direct DXF/VLA APIs are not safer for this operation.",
-    });
-  }
+  if (usesCommand) diagnostics.push({ severity: "warning", code: "COMMAND_API_USED", message: "The file uses `(command)`/`(command-s)`; verify whether direct DXF/VLA APIs are safer." });
+  if (!commands.length) diagnostics.push({ severity: "warning", code: "NO_PUBLIC_COMMAND", message: "No `c:` public command was found. This is valid for helper/library files but should be intentional." });
 
-  if (!commands.length) {
-    diagnostics.push({
-      severity: "warning",
-      code: "NO_PUBLIC_COMMAND",
-      message: "No `c:` public command was found. This is valid for helper/library files but should be intentional.",
-    });
-  }
-
-  if (options.enforceLibraryStyle !== false) {
-    checkLibraryStyle(source, commands, diagnostics, options.fileName);
-  }
+  const profile = options.profile ?? "syntax";
+  if (profile !== "syntax") checkAuthoringStyle(source, commands, diagnostics, profile, options.fileName);
 
   return {
     valid: !diagnostics.some((item) => item.severity === "error"),
@@ -435,13 +258,7 @@ export function validateLispSource(
     commands,
     functions,
     diagnostics,
-    stats: {
-      paren_pairs: parenPairs,
-      max_depth: maxDepth,
-      uses_com: usesCom,
-      uses_command: usesCommand,
-      uses_setvar: usesSetvar,
-    },
+    stats: { paren_pairs: parenPairs, max_depth: maxDepth, uses_com: usesCom, uses_command: usesCommand, uses_setvar: usesSetvar },
   };
 }
 
@@ -449,7 +266,37 @@ function cleanCommentValue(value: string): string {
   return value.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
+export function profileForLibrary(libraryId?: string | null): Exclude<LispAuthoringProfile, "syntax"> {
+  return libraryId?.trim().toLowerCase() === "tbh-toolkit" ? "tbh" : "cadgpt";
+}
+
+export function makeAuthoringHeader(args: {
+  profile: Exclude<LispAuthoringProfile, "syntax">;
+  fileName: string;
+  module: string;
+  command: string;
+  description: string;
+  inputs?: string;
+  effects?: string;
+  interaction?: string;
+  risk?: string;
+  dependencies?: string;
+  notes?: string;
+  revision?: string;
+}): string {
+  const brand = args.profile === "tbh" ? "TBH" : "CADGPT";
+  return `;;; =============================================================================\n;;; ${brand}-HEADER-START\n;;;\n;;; File         : ${cleanCommentValue(args.fileName)}\n;;; Module       : ${cleanCommentValue(args.module)}\n;;; Command      : ${cleanCommentValue(args.command).toUpperCase()}\n;;; Description  : ${cleanCommentValue(args.description)}\n;;; Inputs       : ${cleanCommentValue(args.inputs || "As prompted by the command.")}\n;;; Effects      : ${cleanCommentValue(args.effects || "See implementation and registry metadata.")}\n;;; Interaction  : ${cleanCommentValue(args.interaction || "Interactive unless documented otherwise.")}\n;;; Risk         : ${cleanCommentValue(args.risk || "Medium; verify on an approved drawing.")}\n;;; Dependencies : ${cleanCommentValue(args.dependencies || "AutoLISP/Visual LISP as used by implementation.")}\n;;; Notes        : ${cleanCommentValue(args.notes || "Maintain behavior and registry metadata together when edited by CadGPT.")}\n;;; Revision     : ${cleanCommentValue(args.revision || "Managed by CadGPT write-lisp workflow.")}\n;;;\n;;; ${brand}-HEADER-END\n;;; =============================================================================`;
+}
+
+export function applyAuthoringHeader(source: string, args: Parameters<typeof makeAuthoringHeader>[0]): string {
+  const header = makeAuthoringHeader(args);
+  const knownHeader = /;;; ={20,}\r?\n;;; (?:TBH|CADGPT)-HEADER-START[\s\S]*?;;; (?:TBH|CADGPT)-HEADER-END\r?\n;;; ={20,}\r?\n?/i;
+  if (knownHeader.test(source)) return source.replace(knownHeader, `${header}\n`);
+  return `${header}\n\n${source.replace(/^\uFEFF/, "")}`;
+}
+
 function makeScaffold(args: {
+  profile: Exclude<LispAuthoringProfile, "syntax">;
   fileName: string;
   module: string;
   command: string;
@@ -457,18 +304,26 @@ function makeScaffold(args: {
   mutating: boolean;
   usesCom: boolean;
 }): string {
-  const fileName = args.fileName.trim();
-  const module = cleanCommentValue(args.module);
   const command = args.command.trim().toUpperCase();
-  const description = cleanCommentValue(args.description);
   const prefix = command.toLowerCase().replace(/[^a-z0-9]/g, "") || "cmd";
+  const header = makeAuthoringHeader({
+    profile: args.profile,
+    fileName: args.fileName,
+    module: args.module,
+    command,
+    description: args.description,
+    inputs: "Command prompts / selection as required.",
+    effects: args.mutating ? "May modify the current drawing; validate declared postconditions." : "Read/report only unless implementation is intentionally changed.",
+    interaction: "Interactive unless implementation is explicitly non-interactive.",
+    risk: args.mutating ? "Medium; test on an approved drawing before production use." : "Low.",
+    dependencies: args.usesCom ? "Visual LISP COM (`vl-load-com`)." : "AutoLISP.",
+  });
   const comLine = args.usesCom ? "\n(vl-load-com)\n" : "";
-
   const body = args.mutating
-    ? `(defun c:${command} (/ *error* cmde undo-open)\n\n  (defun *error* (errmsg)\n    (if (not (member errmsg '(\"Function cancelled\" \"quit / exit abort\" \"console break\")))\n      (princ (strcat \"\\n[Error] \" errmsg))\n    )\n    (if undo-open (command \"_.undo\" \"_end\"))\n    (if cmde (setvar 'CMDECHO cmde))\n    (princ)\n  )\n\n  (setq cmde (getvar 'CMDECHO))\n  (setvar 'CMDECHO 0)\n  (command \"_.undo\" \"_begin\")\n  (setq undo-open T)\n\n  ;; Implement command logic here.\n\n  (if undo-open\n    (progn\n      (command \"_.undo\" \"_end\")\n      (setq undo-open nil)\n    )\n  )\n  (if cmde (setvar 'CMDECHO cmde))\n  (princ \"\\n[Done] Command complete.\")\n  (princ)\n)`
-    : `(defun c:${command} (/ )\n\n  ;; Implement command logic here.\n\n  (princ \"\\n[Done] Command complete.\")\n  (princ)\n)`;
-
-  return `;;; =============================================================================\n;;; TBH-HEADER-START\n;;;\n;;; File        : ${fileName}\n;;; Module      : ${module}\n;;; Command     : ${command}\n;;; Description : ${description}\n;;;\n;;; Usage       :\n;;; 1. Run '${command}'.\n;;; 2. Follow command prompts.\n;;; TBH-HEADER-END\n;;; =============================================================================\n${comLine}\n;; =============================================================================\n;; Helpers\n;; =============================================================================\n\n;; Prefix helper functions with ${prefix}: to avoid global symbol collisions.\n\n;; =============================================================================\n;; Main command\n;; =============================================================================\n\n${body}\n\n(princ \"\\n[TBH] ${description} loaded. Type '${command}' to start.\")\n(princ)\n`;
+    ? `(defun c:${command} (/ *error* cmde undo-open)\n  (defun *error* (errmsg)\n    (if (not (member errmsg '(\"Function cancelled\" \"quit / exit abort\" \"console break\")))\n      (princ (strcat \"\\n[Error] \" errmsg)))\n    (if undo-open (command \"_.undo\" \"_end\"))\n    (if cmde (setvar 'CMDECHO cmde))\n    (princ))\n  (setq cmde (getvar 'CMDECHO))\n  (setvar 'CMDECHO 0)\n  (command \"_.undo\" \"_begin\")\n  (setq undo-open T)\n\n  ;; Implement command logic here.\n\n  (if undo-open (progn (command \"_.undo\" \"_end\") (setq undo-open nil)))\n  (if cmde (setvar 'CMDECHO cmde))\n  (princ \"\\n[Done] Command complete.\")\n  (princ))`
+    : `(defun c:${command} (/ )\n  ;; Implement command logic here.\n  (princ \"\\n[Done] Command complete.\")\n  (princ))`;
+  const brand = args.profile === "tbh" ? "TBH" : "CADGPT";
+  return `${header}\n${comLine}\n;; =============================================================================\n;; Helpers\n;; =============================================================================\n\n;; Prefix helper functions with ${prefix}: to avoid global symbol collisions.\n\n;; =============================================================================\n;; Main command\n;; =============================================================================\n\n${body}\n\n(princ \"\\n[${brand}] ${cleanCommentValue(args.description)} loaded. Type '${command}' to start.\")\n(princ)\n`;
 }
 
 export function registerLispHarnessTools(server: McpServer): void {
@@ -476,31 +331,27 @@ export function registerLispHarnessTools(server: McpServer): void {
     "lisp_scaffold",
     {
       title: "Create Canonical AutoLISP Scaffold",
-      description: "Return the canonical TBH AutoLISP command skeleton derived from the existing library. Use this before creating a new command draft.",
+      description: "Create CadGPT's canonical AutoLISP scaffold. Default profile is CadGPT; target_library_id=tbh-toolkit is the deliberate TBH header exception.",
       inputSchema: {
         file_name: z.string().regex(/^[^\\/]+\.lsp$/i),
         module: z.string().min(1).max(120),
         command: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
         description: z.string().min(1).max(500),
+        target_library_id: z.string().optional(),
         mutating: z.boolean().optional().default(true),
         uses_com: z.boolean().optional().default(true),
       },
     },
-    async ({ file_name, module, command, description, mutating, uses_com }) => {
+    async ({ file_name, module, command, description, target_library_id, mutating, uses_com }) => {
       try {
-        const content = makeScaffold({
-          fileName: file_name,
-          module,
-          command,
-          description,
-          mutating,
-          usesCom: uses_com,
-        });
+        const profile = profileForLibrary(target_library_id);
+        const content = makeScaffold({ profile, fileName: file_name, module, command, description, mutating, usesCom: uses_com });
         return toolResult("lisp_scaffold", {
           file_name,
           command: command.toUpperCase(),
+          authoring_profile: profile,
           content,
-          next: "Create the working file under appdata/lisp-draft/**, replace implementation placeholders, then run lisp_draft_validate before CAD load/testing.",
+          next: "Create the working file under appdata/workspace/lisp-draft/**, implement it, then run lisp_draft_validate before CAD load/testing.",
         });
       } catch (error) {
         return toolError("lisp_scaffold", error);
@@ -511,34 +362,24 @@ export function registerLispHarnessTools(server: McpServer): void {
   server.registerTool(
     "lisp_validate",
     {
-      title: "Validate Permanent AutoLISP Source",
-      description: "Validate AutoLISP dialect, TBH library structure, command contracts, and static source safety for one permanent .lsp file under lisp/**.",
+      title: "Validate Managed AutoLISP Source",
+      description: "Validate AutoLISP correctness/safety for a managed Lisp Library file. Header/style enforcement is opt-in via profile; imported Lisp is normally validated with profile=syntax and remains unmodified.",
       inputSchema: {
         path: z.string().min(1),
         expected_commands: z.array(z.string().min(1)).max(50).optional().default([]),
-        enforce_library_style: z.boolean().optional().default(true),
+        profile: z.enum(["syntax", "cadgpt", "tbh"]).optional().default("syntax"),
       },
     },
-    async ({ path: input, expected_commands, enforce_library_style }) => {
+    async ({ path: input, expected_commands, profile }) => {
       try {
         const target = await resolveAllowedPath(input);
-        const relative = toRepoRelative(target);
-        if (!(relative === "lisp" || relative.startsWith("lisp/"))) {
-          throw new Error("lisp_validate only accepts files under lisp/**");
-        }
-        if (path.extname(target).toLowerCase() !== ".lsp") {
-          throw new Error("lisp_validate only accepts .lsp files");
+        const virtual = toCadgptPath(target).replaceAll("\\", "/");
+        if (!virtual.toLowerCase().startsWith("appdata/libraries/lisp/") || path.extname(target).toLowerCase() !== ".lsp") {
+          throw new Error("lisp_validate accepts only managed .lsp files under appdata/libraries/lisp/**");
         }
         const source = await fs.readFile(target, "utf8");
-        const result = validateLispSource(source, expected_commands, {
-          enforceLibraryStyle: enforce_library_style,
-          fileName: path.basename(target),
-        });
-        return toolResult(
-          "lisp_validate",
-          { path: relative, dialect: "AutoLISP/Visual LISP", library_style: enforce_library_style ? "TBH" : "not-enforced", ...result },
-          result.valid ? "AutoLISP/TBH static validation passed" : "AutoLISP/TBH static validation failed"
-        );
+        const result = validateLispSource(source, expected_commands, { profile, fileName: path.basename(target) });
+        return toolResult("lisp_validate", { path: virtual, dialect: "AutoLISP/Visual LISP", authoring_profile: profile, ...result }, result.valid ? "AutoLISP static validation passed" : "AutoLISP static validation failed");
       } catch (error) {
         return toolError("lisp_validate", error);
       }

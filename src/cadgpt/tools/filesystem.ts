@@ -4,29 +4,14 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import {
-  getAllowedRoots,
-  resolveAllowedPath,
-  toCadgptPath,
-} from "../lib/path-security.js";
+import { getAllowedRoots, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 
-const TEXT_EXTENSIONS = new Set([
-  ".lsp",
-  ".dcl",
-  ".md",
-  ".txt",
-  ".json",
-  ".yaml",
-  ".yml",
-  ".csv",
-]);
+const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv"]);
 
 function assertTextExtension(target: string): void {
   const ext = path.extname(target).toLowerCase();
-  if (!TEXT_EXTENSIONS.has(ext)) {
-    throw new Error(`Unsupported CadGPT text asset type: ${ext || "<no extension>"}`);
-  }
+  if (!TEXT_EXTENSIONS.has(ext)) throw new Error(`Unsupported CadGPT text asset type: ${ext || "<no extension>"}`);
 }
 
 async function atomicWrite(target: string, content: string): Promise<void> {
@@ -56,23 +41,20 @@ export function registerFilesystemTools(server: McpServer): void {
   server.registerTool(
     "file_roots",
     {
-      title: "CadGPT File Roots",
-      description: "Show the only local source/user-data roots accessible to CadGPT file tools.",
+      title: "CadGPT Managed File Roots",
+      description: "Show the managed AppData roots editable by CadGPT. User-provided source folders are never generic file roots.",
       inputSchema: {},
     },
-    async () =>
-      toolResult("file_roots", {
-        roots: getAllowedRoots().map(toCadgptPath),
-      })
+    async () => toolResult("file_roots", { roots: getAllowedRoots().map(toCadgptPath) })
   );
 
   server.registerTool(
     "file_list",
     {
-      title: "List CadGPT Files",
-      description: "List files/directories inside permanent lisp/** or jobs/**, or user-data appdata/data/** and appdata/lisp-draft/**. Other machine paths are rejected.",
+      title: "List CadGPT Managed Files",
+      description: "List files/directories inside appdata/libraries/**, appdata/workspace/** or appdata/data/**.",
       inputSchema: {
-        path: z.string().default("lisp"),
+        path: z.string().default("appdata/libraries"),
         recursive: z.boolean().optional().default(false),
         max_entries: z.number().int().positive().max(5000).optional().default(500),
       },
@@ -81,9 +63,7 @@ export function registerFilesystemTools(server: McpServer): void {
       try {
         const target = await resolveAllowedPath(input);
         const stat = await fs.stat(target);
-        if (stat.isFile()) {
-          return toolResult("file_list", { entries: [{ path: toCadgptPath(target), type: "file" }] });
-        }
+        if (stat.isFile()) return toolResult("file_list", { entries: [{ path: toCadgptPath(target), type: "file" }] });
 
         if (!recursive) {
           const entries = await fs.readdir(target, { withFileTypes: true });
@@ -112,8 +92,8 @@ export function registerFilesystemTools(server: McpServer): void {
   server.registerTool(
     "file_read",
     {
-      title: "Read CadGPT Text File",
-      description: "Read a text asset inside the CadGPT permanent source or editable AppData sandbox. Supports line ranges.",
+      title: "Read CadGPT Managed Text File",
+      description: "Read a text asset inside managed AppData. Supports line ranges.",
       inputSchema: {
         path: z.string(),
         start_line: z.number().int().positive().optional(),
@@ -146,11 +126,11 @@ export function registerFilesystemTools(server: McpServer): void {
   server.registerTool(
     "file_search",
     {
-      title: "Search CadGPT Files",
-      description: "Search text inside the CadGPT permanent source or editable AppData sandbox without accessing the rest of the machine.",
+      title: "Search CadGPT Managed Files",
+      description: "Search text inside managed AppData libraries/workspaces/data without accessing arbitrary machine paths.",
       inputSchema: {
         query: z.string().min(1),
-        path: z.string().optional().default("lisp"),
+        path: z.string().optional().default("appdata/libraries"),
         regex: z.boolean().optional().default(false),
         case_sensitive: z.boolean().optional().default(false),
         max_results: z.number().int().positive().max(1000).optional().default(100),
@@ -197,8 +177,8 @@ export function registerFilesystemTools(server: McpServer): void {
   server.registerTool(
     "file_create",
     {
-      title: "Create CadGPT Text File",
-      description: "Create a new text asset inside permanent source roots or editable AppData roots. Fails if the target already exists.",
+      title: "Create CadGPT Managed Text File",
+      description: "Create a new text asset inside managed AppData libraries/workspaces/data. External import-source folders are never writable here.",
       inputSchema: { path: z.string(), content: z.string() },
     },
     async ({ path: input, content }) => {
@@ -223,8 +203,8 @@ export function registerFilesystemTools(server: McpServer): void {
   server.registerTool(
     "file_edit",
     {
-      title: "Edit CadGPT Text File",
-      description: "Apply an exact text replacement inside permanent source roots or editable AppData roots. Read the target first.",
+      title: "Edit CadGPT Managed Text File",
+      description: "Apply an exact text replacement inside managed AppData. Read the target first.",
       inputSchema: {
         path: z.string(),
         old_text: z.string(),

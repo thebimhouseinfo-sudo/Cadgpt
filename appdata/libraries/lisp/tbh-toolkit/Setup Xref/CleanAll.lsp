@@ -1,14 +1,18 @@
 ;;; =============================================================================
 ;;; TBH-HEADER-START
 ;;;
-;;; File        : CleanAll.lsp
-;;; Module      : Setup Xref
-;;; Command     : CLEANALL
-;;; Description : Deep cleans drawing, removing DGN linetypes, regapps, and unreferenced data.
+;;; File         : CleanAll.lsp
+;;; Module       : Setup Xref
+;;; Command      : CLEANALL
+;;; Description  : Deletes AcDbSolid, AcDbTrace, AcDb3dFace, SOLID-pattern hatches and wipeouts from all block definitions/spaces, then regenerates the drawing.
+;;; Inputs       : None.
+;;; Effects      : Globally deletes matching geometry across drawing/block definitions and regenerates all viewports.
+;;; Interaction  : Non-interactive.
+;;; Risk         : High; destructive global cleanup across block definitions and spaces.
+;;; Dependencies : Visual LISP COM (`vl-load-com`).
+;;; Notes        : Does not purge DGN linetypes, regapps or other unreferenced data; metadata now follows current implementation.
+;;; Revision     : Metadata normalized 2026-09-17; function logic unchanged.
 ;;;
-;;; Usage       :
-;;; 1. Run command.
-;;; 2. Aggressively removes unreferenced regapps, DGN linetype bloat, and orphaned geometries.
 ;;; TBH-HEADER-END
 ;;; =============================================================================
 

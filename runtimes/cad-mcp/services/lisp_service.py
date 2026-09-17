@@ -1,14 +1,18 @@
 """Sandboxed AutoLISP execution bridge for the CadGPT-bound drawing.
 
-File editing belongs to CadGPT's outer file tools. This service only loads
-existing .lsp files from explicit CadGPT Lisp namespaces and invokes named
+File editing belongs to CadGPT's outer managed-AppData tools. This service only
+loads existing .lsp files from explicit CadGPT namespaces and invokes named
 AutoCAD commands on the already-bound drawing. Raw arbitrary SendCommand is
 intentionally not exposed.
 
 Allowed load namespaces:
-- lisp/**                         permanent reusable library
-- appdata/lisp-draft/**           work-in-progress Lisp approved for testing
-- appdata/runtime/dynamic-lisp/** parameterized/session-only Lisp artifacts
+- resources/cad/**                         internal CadGPT fixtures/resources
+- appdata/libraries/lisp/**               managed user Lisp libraries
+- appdata/workspace/lisp-draft/**         write-lisp working drafts
+- appdata/runtime/dynamic-lisp/**         parameterized/session-only artifacts
+
+External user source folders are never accepted here. They must first be
+imported into managed AppData through the outer library_import workflow.
 
 LISP loading is verified inside AutoCAD. A SendCommand enqueue is never treated
 as proof that source loaded successfully.
@@ -42,10 +46,6 @@ def _repo_root() -> str:
     return os.path.dirname(runtimes_dir)
 
 
-def _lisp_root() -> str:
-    return os.path.realpath(os.path.join(_repo_root(), "lisp"))
-
-
 def _appdata_root() -> str:
     configured = (os.environ.get("CADGPT_APPDATA_ROOT") or "appdata").strip() or "appdata"
     if os.path.isabs(configured):
@@ -71,21 +71,26 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
     normalized = raw[2:] if raw.startswith("./") else raw
     lower = normalized.lower()
 
-    if lower.startswith("lisp/"):
-        suffix = normalized[5:]
-        root = _lisp_root()
-        virtual_prefix = "lisp"
-    elif lower.startswith("appdata/lisp-draft/"):
-        suffix = normalized[len("appdata/lisp-draft/") :]
-        root = os.path.realpath(os.path.join(_appdata_root(), "lisp-draft"))
-        virtual_prefix = "appdata/lisp-draft"
+    if lower.startswith("resources/cad/"):
+        suffix = normalized[len("resources/cad/") :]
+        root = os.path.realpath(os.path.join(_repo_root(), "resources", "cad"))
+        virtual_prefix = "resources/cad"
+    elif lower.startswith("appdata/libraries/lisp/"):
+        suffix = normalized[len("appdata/libraries/lisp/") :]
+        root = os.path.realpath(os.path.join(_appdata_root(), "libraries", "lisp"))
+        virtual_prefix = "appdata/libraries/lisp"
+    elif lower.startswith("appdata/workspace/lisp-draft/"):
+        suffix = normalized[len("appdata/workspace/lisp-draft/") :]
+        root = os.path.realpath(os.path.join(_appdata_root(), "workspace", "lisp-draft"))
+        virtual_prefix = "appdata/workspace/lisp-draft"
     elif lower.startswith("appdata/runtime/dynamic-lisp/"):
         suffix = normalized[len("appdata/runtime/dynamic-lisp/") :]
         root = os.path.realpath(os.path.join(_appdata_root(), "runtime", "dynamic-lisp"))
         virtual_prefix = "appdata/runtime/dynamic-lisp"
     else:
         raise LispServiceError(
-            "LISP path must be under lisp/**, appdata/lisp-draft/**, or appdata/runtime/dynamic-lisp/**"
+            "LISP path must be under resources/cad/**, appdata/libraries/lisp/**, "
+            "appdata/workspace/lisp-draft/**, or appdata/runtime/dynamic-lisp/**"
         )
 
     candidate = os.path.realpath(os.path.join(root, suffix))
@@ -110,7 +115,6 @@ def _send(command: str) -> None:
             return
         except pywintypes.com_error as exc:
             last_error = exc
-            # RPC_E_CALL_REJECTED: AutoCAD is temporarily busy.
             if getattr(exc, "hresult", None) == -2147418111 and attempt < 2:
                 time.sleep(0.5 * (attempt + 1))
                 continue
@@ -177,7 +181,6 @@ def _verified_load_expression(lisp_path: str, token: str) -> str:
     """Build a controlled expression that records load success/error in USERS5."""
     ok = f"CADGPT_OK:{token}"
     err = f"CADGPT_ERR:{token}:"
-    # Keep the error payload short enough for a USER string system variable.
     return (
         "(progn "
         "(vl-load-com) "
@@ -190,11 +193,7 @@ def _verified_load_expression(lisp_path: str, token: str) -> str:
 
 
 def load_lisp_file(path: str) -> dict:
-    """Load one sandboxed LISP file and verify AutoCAD reached a success sentinel.
-
-    On failure, return captured AutoLISP error text when available and the
-    relevant command-history log tail as evidence for the write-lisp debug loop.
-    """
+    """Load one sandboxed Lisp file and verify AutoCAD reached a success sentinel."""
     absolute, relative = _resolve_lisp_path(path)
     lisp_path = absolute.replace("\\", "/")
     doc = get_active_document()
@@ -209,7 +208,6 @@ def load_lisp_file(path: str) -> dict:
     log_path = str(_safe_getvar(doc, "LOGFILENAME", "") or "")
     log_start = _log_position(log_path)
 
-    # Command history is diagnostic evidence. Restore the user's mode afterwards.
     _safe_setvar(doc, "LOGFILEMODE", 1)
     _safe_setvar(doc, "USERS5", pending)
 
@@ -224,7 +222,6 @@ def load_lisp_file(path: str) -> dict:
             if result.startswith(ok_prefix) or result.startswith(err_prefix):
                 break
 
-        # Give AutoCAD a moment to flush the command history before reading it.
         time.sleep(0.15)
         log_tail = _read_log_tail(log_path, log_start)
 
@@ -234,7 +231,7 @@ def load_lisp_file(path: str) -> dict:
                 "path": relative,
                 "error": None,
                 "log_tail": log_tail[-4000:] if log_tail else "",
-                "note": "AutoCAD reached the verified LISP load-success sentinel.",
+                "note": "AutoCAD reached the verified Lisp load-success sentinel.",
             }
 
         if result.startswith(err_prefix):
@@ -250,9 +247,9 @@ def load_lisp_file(path: str) -> dict:
         return {
             "loaded": False,
             "path": relative,
-            "error": "AutoCAD did not reach the LISP load-success sentinel before timeout.",
+            "error": "AutoCAD did not reach the Lisp load-success sentinel before timeout.",
             "log_tail": log_tail[-8000:] if log_tail else "",
-            "note": "Inspect the command-history evidence; do not run the Lisp command until load is verified.",
+            "note": "Inspect command-history evidence; do not run the Lisp command until load is verified.",
         }
     finally:
         _safe_setvar(doc, "USERS5", previous_users5 if isinstance(previous_users5, str) else str(previous_users5 or ""))

@@ -1,110 +1,85 @@
-# Coding Skill: TBH Library Style and Scaffold
+# Coding Skill: CadGPT AutoLISP Authoring Style and Scaffold
 
-Purpose: keep new and substantially rewritten AutoLISP files visually and structurally consistent with the existing TBH Toolkit rather than producing one-off styles.
+Purpose: keep Lisp created or actively maintained by CadGPT structurally predictable without deriving a template from arbitrary user libraries.
 
-## Style corpus
+## Profiles
 
-The canonical style is derived from the existing TBH AutoLISP library, especially production files that consistently use:
+CadGPT uses explicit authoring profiles:
 
-- `TBH-HEADER-START` / `TBH-HEADER-END` metadata blocks;
-- `File`, `Module`, `Command`, and `Description` fields;
-- public command functions named `c:COMMAND`;
-- locals declared after `/` in `defun`;
-- `(vl-load-com)` when Visual LISP / ActiveX is used;
-- local `*error*` cleanup when commands mutate system/undo state;
-- visible section comments for substantial commands;
-- a quiet final `(princ)` and a TBH load message for command files.
+- `cadgpt` — default for new or edited Lisp;
+- `tbh` — deliberate exception only for `library_id=tbh-toolkit`;
+- `syntax` — imported/unmodified source validation; no header/style requirement.
 
-Representative library patterns include the Setup Xref utilities, `Join Polyline.lsp`, takeoff commands, and the TBH AutoLISP guidelines. Existing files are evidence for API and presentation patterns, but do not copy known defects or obsolete implementation choices blindly.
+Import and registry indexing never rewrite source. Header normalization occurs only after the user explicitly activates `write-lisp` for an edit and `lisp_checkout` creates a workspace draft.
+
+## Canonical metadata
+
+CadGPT-authored/TBH-authored working files use the same semantic sections:
+
+```text
+File
+Module
+Command
+Description
+Inputs
+Effects
+Interaction
+Risk
+Dependencies
+Notes
+Revision
+```
+
+Marker brand depends on profile:
+
+```text
+CADGPT-HEADER-START / CADGPT-HEADER-END
+TBH-HEADER-START    / TBH-HEADER-END
+```
+
+The TBH profile preserves the user's company convention; it is not CadGPT's default product convention.
 
 ## New-file rule
 
-Do not compose a brand-new production `.lsp` from an empty page when `lisp_scaffold` is available.
+Use `lisp_scaffold` rather than inventing an ad-hoc file structure. For a TBH Toolkit target, pass `target_library_id="tbh-toolkit"`; otherwise omit it and receive the CadGPT profile.
 
-For a new command:
+Create the result under `appdata/workspace/lisp-draft/**`, implement the smallest required logic, validate using the matching profile, then test through the approved CAD workflow before promotion.
 
-1. call `lisp_scaffold` with file/module/command/description;
-2. create the file from that scaffold;
-3. fill helpers and command logic inside the existing sections;
-4. preserve the scaffold header and closing load banner;
-5. run `lisp_validate` before loading.
+## Existing-file rule
 
-This keeps files consistent even when different ChatGPT sessions create them.
+For existing managed Lisp:
+
+1. discover it through User Registry;
+2. call `lisp_checkout` before editing;
+3. checkout copies source into workspace and normalizes only the working header/description;
+4. preserve implementation style, public commands and behavior unless the requested change requires otherwise;
+5. do not cosmetically rewrite the full file;
+6. promote only after validation/testing succeeds.
+
+The managed library copy remains unchanged until promotion. The external source folder used during import is never modified.
 
 ## Canonical order
 
-Production command files should normally follow this order:
+A newly authored substantial command normally follows:
 
 ```text
-1. TBH metadata header
+1. canonical metadata header
 2. (vl-load-com) when required
 3. constants / narrow module globals only when necessary
 4. module-prefixed helper functions
 5. main c:COMMAND function
 6. load banner
-7. final (princ)
+7. final quiet (princ)
 ```
 
-Do not shuffle these sections without a concrete reason.
+## Main command and helpers
 
-## Header contract
+Use AutoLISP locals after `/` and module/command-prefixed helper names to avoid global symbol collisions. When sysvars or undo state change, restore them on normal and error/cancel paths.
 
-A production command file must contain:
-
-```text
-;;; TBH-HEADER-START
-;;; File        : ...
-;;; Module      : ...
-;;; Command     : ...
-;;; Description : ...
-;;; TBH-HEADER-END
-```
-
-`Command` must match the public `c:` command(s) in the file. Update metadata whenever behavior or public commands materially change.
-
-## Main-command presentation
-
-Use a predictable command shape:
-
-```lisp
-(defun c:COMMAND (/ *error* local1 local2)
-  ...
-  (princ)
-)
-```
-
-When sysvars or undo state are changed, save state before mutation and restore it on both normal and error/cancel paths.
-
-## Helpers
-
-Helper names should use a module/command prefix, for example:
-
-```lisp
-xrefmap:read-row
-rvt2cad:entity-system
-gr:collect-attributes
-```
-
-Avoid generic global helper names such as `get-data`, `process`, or `helper` that can collide when many `.lsp` files are loaded together.
-
-## Comments and section dividers
-
-Use comments to separate meaningful stages in a long CAD command, but do not turn every expression into a prose annotation. Prefer stable section labels such as:
-
-```text
-;; =============================================================================
-;; Selection / classification
-;; =============================================================================
-```
-
-or short `;;` comments that explain CAD-specific reasons.
-
-## Existing-file rule
-
-For a narrow patch, preserve the local style of a working legacy file unless style inconsistency directly causes a defect. Do not rewrite the whole file merely to match the newest scaffold.
-
-For a substantial rewrite or new file, use the canonical scaffold so the library gradually converges instead of becoming more fragmented.
+Prefer meaningful section comments for substantial commands, not prose on every expression.
 
 ## Harness expectation
 
-`lisp_validate` checks the production header contract, command/header agreement, AutoLISP dialect boundary, source structure, and selected library conventions. Style diagnostics are there to prevent drift, not to force cosmetic rewrites of untouched legacy code.
+`profile="syntax"` checks AutoLISP correctness/safety without requiring any CadGPT/TBH header and is therefore appropriate for untouched imported source.
+
+`profile="cadgpt"` or `profile="tbh"` additionally checks the canonical authored metadata block and command/header agreement. Style checks prevent drift only after CadGPT has entered the explicit authoring workflow; they are never a reason to mutate an imported library during registration.

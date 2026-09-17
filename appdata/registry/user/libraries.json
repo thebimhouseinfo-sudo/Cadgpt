@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "libraries": [
+    {
+      "id": "tbh-toolkit",
+      "kind": "lisp",
+      "name": "TBH Toolkit",
+      "enabled": true,
+      "managed_path": "appdata/libraries/lisp/tbh-toolkit",
+      "imported_from": "thebimhouseinfo-sudo/CAD-Agent:tool-kit",
+      "import_mode": "managed-copy",
+      "source_access": "read-only",
+      "authoring_profile": "tbh"
+    },
+    {
+      "id": "tbh-toolkit",
+      "kind": "job",
+      "name": "TBH Toolkit Jobs",
+      "enabled": true,
+      "managed_path": "appdata/libraries/jobs/tbh-toolkit",
+      "imported_from": "beta-repo:jobs/tbh-toolkit",
+      "import_mode": "managed-copy",
+      "source_access": "read-only"
+    }
+  ]
+}

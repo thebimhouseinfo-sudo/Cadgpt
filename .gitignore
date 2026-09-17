@@ -7,6 +7,12 @@ profiles/*.yaml
 .runtime/
 appdata/*
 !appdata/README.md
+!appdata/libraries/
+!appdata/libraries/**
+!appdata/registry/
+appdata/registry/*
+!appdata/registry/user/
+!appdata/registry/user/**
 *.log
 __pycache__/
 *.pyc

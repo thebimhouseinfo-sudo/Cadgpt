@@ -1,15 +1,18 @@
 ;;; =============================================================================
 ;;; TBH-HEADER-START
 ;;;
-;;; File        : CleanMtext.lsp
-;;; Module      : Setup Xref
-;;; Command     : CMText
-;;; Description : Strips formatting overrides from MText objects.
+;;; File         : CleanMtext.lsp
+;;; Module       : Setup Xref
+;;; Command      : CMTEXT
+;;; Description  : Removes embedded MText formatting control sequences from selected MTEXT objects and rewrites the DXF text as simplified plain content.
+;;; Inputs       : User selection of MTEXT entities.
+;;; Effects      : Rewrites MTEXT group 1/3 text content after parser-based formatting removal.
+;;; Interaction  : Interactive.
+;;; Risk         : Medium; complex formatted text content can be altered as well as formatting.
+;;; Dependencies : Visual LISP helpers and AutoLISP DXF APIs (`vl-load-com`).
+;;; Notes        : Static review found parser risks for stacked/escaped MText and repeated braces; function logic is intentionally not repaired in this phase.
+;;; Revision     : Metadata normalized 2026-09-17; function logic unchanged.
 ;;;
-;;; Usage       :
-;;; 1. Run command.
-;;; 2. Select MText objects.
-;;; 3. Removes native CAD formatting overrides (fonts, colors, line-spacing) forcing it to Style Defaults.
 ;;; TBH-HEADER-END
 ;;; =============================================================================
 
