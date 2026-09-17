@@ -26,7 +26,7 @@
       "risk": "medium",
       "dynamic_parameters": [],
       "semantic_status": "curated",
-      "implementation_notes": ["Current implementation clears attribute values; it does not implement duplicate-tag repair despite broader wording in the header. Registry description follows implementation, not filename/header intent."]
+      "implementation_notes": ["Current implementation only clears attribute values; it does not repair duplicate tags or normalize attribute constraints.", "TBH header metadata was normalized on 2026-09-17 without changing function logic."]
     },
     {
       "id": "drawing.cleanup.remove-visual-artifacts",
@@ -53,7 +53,7 @@
       "risk": "high",
       "dynamic_parameters": [],
       "semantic_status": "curated",
-      "implementation_notes": ["The current source does not perform DGN linetype/regapp cleanup even though the legacy header mentions it. Registry description follows implementation, not filename/header intent."]
+      "implementation_notes": ["The implementation does not purge DGN linetypes, regapps or other unreferenced data; registry and TBH header now describe the actual geometry cleanup only.", "Function logic was not changed during the 2026-09-17 metadata review."]
     },
     {
       "id": "text.mtext.strip-formatting",
@@ -68,19 +68,19 @@
       "tags": ["mtext", "formatting", "text", "cleanup", "selection"],
       "module": "Setup Xref",
       "commands": ["CMTEXT"],
-      "summary": "Removes embedded MText formatting control sequences from selected MTEXT objects and rewrites them as plain content that follows the text style defaults.",
-      "when_to_use": ["Imported MText carries local font/color/spacing formatting that should be normalized."],
+      "summary": "Parses selected MTEXT content, removes embedded formatting control sequences, and rewrites DXF text as simplified plain content.",
+      "when_to_use": ["Imported MText carries local formatting that should be normalized, after confirming that complex stacked or escaped content is not required."],
       "targets": ["Selected MTEXT entities"],
       "inputs": ["User selection of MTEXT entities"],
-      "effects": ["Rewrites MTEXT DXF text chunks after stripping formatting control sequences"],
+      "effects": ["Rewrites MTEXT DXF group 1/3 text after parser-based formatting removal"],
       "interaction": "interactive",
       "load_behavior": "define_only",
       "mutates_drawing": true,
-      "destructive": false,
+      "destructive": true,
       "risk": "medium",
       "dynamic_parameters": [],
       "semantic_status": "curated",
-      "implementation_notes": ["Formatting is removed by string parsing and DXF rewrite; verify text content after use on complex stacked/escaped MText."]
+      "implementation_notes": ["Known static-review issue: the parser skips content after \\S until the terminating semicolon, so stacked fractions/content can be lost rather than merely unformatted.", "Known static-review issue: generic backslash escape handling can skip escaped/literal content until a semicolon, and the final vl-string-subst calls remove only the first opening and closing brace occurrence.", "These function issues were documented on 2026-09-17 and intentionally not repaired in this phase."]
     },
     {
       "id": "layers.reconciliation.purge-metadata",
@@ -95,11 +95,11 @@
       "tags": ["layer", "xref", "reconciled", "notification", "metadata", "cleanup"],
       "module": "Setup Xref",
       "commands": ["PURGERECONCILEDLAYERS"],
-      "summary": "Removes reconciled-layer extension dictionary data across layers and sets LAYEREVAL/LAYERNOTIFY to 0.",
-      "when_to_use": ["Layer reconciliation metadata/notifications from Xrefs need to be cleared intentionally."],
-      "targets": ["All drawing layers", "Layer extension dictionaries", "LAYEREVAL", "LAYERNOTIFY"],
+      "summary": "On load or command execution, attempts to remove ADSK_XREC_LAYER_RECONCILED from every layer extension dictionary, then deletes each layer extension dictionary and sets LAYEREVAL/LAYERNOTIFY to 0.",
+      "when_to_use": ["Only when reconciliation metadata and layer notification state are intentionally being reset and the extension-dictionary deletion risk is acceptable."],
+      "targets": ["All drawing layers", "Layer extension dictionaries", "ADSK_XREC_LAYER_RECONCILED", "LAYEREVAL", "LAYERNOTIFY"],
       "inputs": [],
-      "effects": ["Deletes reconciliation-related extension-dictionary data", "Sets LAYEREVAL=0", "Sets LAYERNOTIFY=0"],
+      "effects": ["Attempts to remove ADSK_XREC_LAYER_RECONCILED from every layer extension dictionary", "Deletes each layer extension dictionary after the removal attempt", "Sets LAYEREVAL=0", "Sets LAYERNOTIFY=0"],
       "interaction": "non-interactive",
       "load_behavior": "execute_on_load",
       "mutates_drawing": true,
@@ -107,7 +107,7 @@
       "risk": "high",
       "dynamic_parameters": [],
       "semantic_status": "curated",
-      "implementation_notes": ["The file invokes c:PURGERECONCILEDLAYERS at top level, so verified load itself mutates the current drawing. Do not load merely for inspection/testing on a project drawing."]
+      "implementation_notes": ["The file invokes c:PURGERECONCILEDLAYERS at top level, so loading the file immediately mutates the active drawing.", "Known static-review issue: after attempting to remove the reconciliation XRecord, the source calls vla-delete on the entire layer extension dictionary; unrelated extension-dictionary metadata may therefore be removed. Function logic was intentionally not repaired in this phase."]
     },
     {
       "id": "xref.references.move-to-host-layer",
@@ -122,11 +122,11 @@
       "tags": ["xref", "layer", "insert", "lock", "normalization"],
       "module": "Setup Xref",
       "commands": ["XRLAYER"],
-      "summary": "Creates/configures layer XREF (ACI 254, locked), finds Xref block references, temporarily unlocks their current host layer when required, moves each Xref reference to XREF, then restores the original layer lock state.",
-      "when_to_use": ["Standardizing host-drawing Xref references onto one locked coordination layer."],
+      "summary": "Attempts to create/configure layer XREF (ACI 254), identify Xref block references, temporarily handle source-layer lock state, and move those references to XREF.",
+      "when_to_use": ["Standardizing host-drawing Xref references onto one coordination layer after the known -LAYER lock-option issue has been validated or repaired."],
       "targets": ["Xref block references", "Layer XREF", "Original host layers"],
       "inputs": [],
-      "effects": ["Creates/configures XREF layer", "Moves Xref references to XREF layer", "Temporarily changes and restores source-layer lock state"],
+      "effects": ["Attempts to create/configure XREF layer", "Moves identified Xref references to XREF when execution reaches the remap path", "Attempts to temporarily change and restore source-layer lock state"],
       "interaction": "non-interactive",
       "load_behavior": "define_only",
       "mutates_drawing": true,
@@ -134,7 +134,7 @@
       "risk": "medium",
       "dynamic_parameters": [],
       "semantic_status": "curated",
-      "implementation_notes": []
+      "implementation_notes": ["Known static-review issue: the source uses -LAYER option shorthand \"l\" in paths intended to lock a layer. AutoCAD command syntax may resolve this as Linetype rather than Lock (which normally requires LO), so the layer-lock path may fail or behave differently from the intended description.", "The function was not repaired in this phase; runtime validation/fix is deferred."]
     },
     {
       "id": "xref.layers.semantic-map",
@@ -153,7 +153,7 @@
       "when_to_use": ["Normalizing consultant/imported/Xref layer systems into the project's standard coordination layers.", "A project-specific mapping variant is needed without permanently editing the managed library source."],
       "targets": ["Drawing layers", "Entities on mapped source layers", "Nested block-definition entities", "Locked layers"],
       "inputs": ["Runtime/project mapping rules when using dynamic mode", "User choice if mapped target layers are off or frozen"],
-      "effects": ["Creates missing standard target layers with configured ACI/linetype", "Builds keyword-based source-to-target mapping", "Remaps entities and nested block content", "May delete objects mapped to off/frozen targets when the user chooses Delete", "Deletes obsolete source layers after successful mapping", "Restores previously locked layers"],
+      "effects": ["Creates missing standard target layers with configured ACI/linetype", "Builds keyword-based source-to-target mapping", "Remaps entities and nested block content", "May delete objects mapped to off/frozen targets when the user chooses Delete", "Deletes empty obsolete source layers after mapping when AutoCAD permits deletion", "Restores previously locked layers"],
       "interaction": "interactive",
       "load_behavior": "define_only",
       "mutates_drawing": true,
@@ -161,7 +161,7 @@
       "risk": "high",
       "dynamic_parameters": ["target layer definitions (name, ACI color, linetype)", "keyword/source classification rules", "source-to-target mapping policy", "off/frozen target handling policy"],
       "semantic_status": "curated",
-      "implementation_notes": ["The managed library file is normal AutoLISP. ai_mode=dynamic only permits bounded AI-derived runtime variants; it is not a Lisp source type."]
+      "implementation_notes": ["The managed library file is normal AutoLISP. ai_mode=dynamic only permits bounded AI-derived runtime variants; it is not a Lisp source type.", "TBH header metadata was normalized on 2026-09-17 without changing mapping logic. Live CAD behavior validation remains a later-phase task."]
     },
     {
       "id": "tbh.job.toolkit-command",

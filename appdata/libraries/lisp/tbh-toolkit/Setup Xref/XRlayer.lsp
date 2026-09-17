@@ -1,10 +1,20 @@
-;;; ==========================================================================
-;;; COMMAND: XRLAYER (Xref to Layer XREF & Lock)
-;;; Function:
-;;;   - Automatically checks/creates layer "XREF", color 254, LOCKED status.
-;;;   - Scans all Xrefs, temporarily UNLOCKS the host layer if it is locked,
-;;;     moves the Xref to layer "XREF", then RE-LOCKS the original layer.
-;;; ==========================================================================
+;;; =============================================================================
+;;; TBH-HEADER-START
+;;;
+;;; File         : XRlayer.lsp
+;;; Module       : Setup Xref
+;;; Command      : XRLAYER
+;;; Description  : Attempts to create/configure layer XREF and move Xref block references onto it while temporarily handling source-layer lock state.
+;;; Inputs       : None.
+;;; Effects      : Creates/configures XREF layer, scans INSERT entities for Xrefs, changes Xref reference layers, and temporarily unlocks/relocks source layers when required.
+;;; Interaction  : Non-interactive.
+;;; Risk         : Medium; changes Xref host layers and layer state.
+;;; Dependencies : AutoLISP command/DXF table APIs.
+;;; Notes        : Static review found `-LAYER` shorthand "l" in lock paths; AutoCAD may resolve this as Linetype rather than Lock, so the function requires later repair/runtime validation. Logic is unchanged in this phase.
+;;; Revision     : Metadata normalized 2026-09-17; function logic unchanged.
+;;;
+;;; TBH-HEADER-END
+;;; =============================================================================
 
 (defun c:XRLAYER ( / *error* oldCmd ss i ent ename layName blockDef layDef layFlags count)
   (defun *error* (msg)

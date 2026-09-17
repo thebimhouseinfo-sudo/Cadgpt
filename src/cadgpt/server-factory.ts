@@ -7,6 +7,7 @@ import { registerLispHarnessTools } from "./tools/lisp-harness.js";
 import { registerLispWorkspaceTools } from "./tools/lisp-workspace.js";
 import { registerCapabilityRegistryTools } from "./tools/registry.js";
 import { registerCadProxyTools } from "./tools/cad-proxy.js";
+import { registerObservatorTools } from "./tools/observator.js";
 
 export function createMcpServer(): McpServer {
   const server = new McpServer(
@@ -20,6 +21,8 @@ export function createMcpServer(): McpServer {
         "Internal Registry contains only MCP tools and system skills. User Registry contains only managed Lisp and concrete Jobs. Use registry_list/registry_get as the unified discovery surface.",
         "skills/** and knowledge/** are internal read-only CadGPT knowledge, not user libraries.",
         "Concrete Jobs are loaded from User Registry/AppData with job_list/job_get. Job rules/specification live in internal knowledge/jobs/JOB_RULES.md.",
+        "Observator discovers new manual-work candidates with a lightweight start/finish capture: during capture it stores only identities from AutoCAD ObjectAdded events; finish resolves only those identities, removes erased/undone/nested results, and returns top-level type headers. It never full-scans the drawing for this discovery path.",
+        "Observator deep-reads direct properties only after a Job chooses relevant candidate handles. Job-specific filtering, semantics, lifecycle intent and persistence projection remain Job Runtime responsibilities.",
         "Imported Lisp is indexed without source mutation. Only when the user activates write-lisp for an edit should lisp_checkout create a workspace draft and normalize its header/description.",
         "CadGPT is the default authoring profile for new/edited Lisp. The deliberate exception is library_id=tbh-toolkit, which keeps the TBH header profile.",
         "New Lisp work uses appdata/workspace/lisp-draft/**, then static validation, an explicitly approved CAD test drawing, verified load/runtime verification, and lisp_promote_draft into a managed AppData Lisp Library.",
@@ -38,6 +41,7 @@ export function createMcpServer(): McpServer {
   registerLispWorkspaceTools(server);
   registerCapabilityRegistryTools(server);
   registerCadProxyTools(server);
+  registerObservatorTools(server);
 
   return server;
 }
