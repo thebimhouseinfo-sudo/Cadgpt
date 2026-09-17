@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -15,6 +15,8 @@ import { toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 
 const LIBRARY_ID = /^[a-z0-9][a-z0-9._-]{0,79}$/;
+const MAX_IMPORT_FILES = 10000;
+const MAX_IMPORT_BYTES = 256 * 1024 * 1024;
 type LibraryKind = "lisp" | "job";
 
 interface LibraryRecord {
@@ -39,30 +41,53 @@ async function readJson<T>(target: string, fallback: T): Promise<T> {
   }
 }
 
-async function atomicJson(target: string, value: unknown): Promise<void> {
+async function readOptionalText(target: string): Promise<string | null> {
+  try {
+    return await fs.readFile(target, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function atomicText(target: string, content: string): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true });
   const temp = path.join(path.dirname(target), `.${path.basename(target)}.${randomUUID()}.tmp`);
   try {
-    await fs.writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await fs.writeFile(temp, content, "utf8");
     await fs.rename(temp, target);
   } finally {
     await fs.rm(temp, { force: true }).catch(() => undefined);
   }
 }
 
-async function assertSafeSourceTree(root: string, current = root): Promise<number> {
+async function atomicJson(target: string, value: unknown): Promise<void> {
+  await atomicText(target, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function restoreOptionalText(target: string, previous: string | null): Promise<void> {
+  if (previous === null) await fs.rm(target, { force: true });
+  else await atomicText(target, previous);
+}
+
+async function assertSafeSourceTree(current: string): Promise<{ files: number; bytes: number }> {
   const stat = await fs.lstat(current);
   if (stat.isSymbolicLink()) throw new Error(`Library import rejects symlinks: ${current}`);
-  if (stat.isFile()) return 1;
+  if (stat.isFile()) return { files: 1, bytes: stat.size };
   if (!stat.isDirectory()) throw new Error(`Unsupported filesystem entry in library source: ${current}`);
 
-  let count = 0;
+  let files = 0;
+  let bytes = 0;
   const entries = await fs.readdir(current, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.name === ".git" || entry.name === ".svn") continue;
-    count += await assertSafeSourceTree(root, path.join(current, entry.name));
+    const nested = await assertSafeSourceTree(path.join(current, entry.name));
+    files += nested.files;
+    bytes += nested.bytes;
+    if (files > MAX_IMPORT_FILES) throw new Error(`Library import exceeds ${MAX_IMPORT_FILES} files`);
+    if (bytes > MAX_IMPORT_BYTES) throw new Error(`Library import exceeds ${MAX_IMPORT_BYTES} bytes`);
   }
-  return count;
+  return { files, bytes };
 }
 
 async function walk(root: string, predicate: (value: string) => boolean, out: string[] = []): Promise<string[]> {
@@ -85,6 +110,15 @@ function extractCommands(source: string): string[] {
   return [...new Set(commands)].sort();
 }
 
+function sha256(content: string): string {
+  return createHash("sha256").update(content, "utf8").digest("hex");
+}
+
+function staleNotes(prior: Record<string, unknown>, note: string): string[] {
+  const existing = Array.isArray(prior.implementation_notes) ? prior.implementation_notes.map(String) : [];
+  return [...existing, note].slice(-50);
+}
+
 async function discoverLispEntries(libraryId: string, root: string, existing: Array<Record<string, unknown>>): Promise<Array<Record<string, unknown>>> {
   const files = await walk(root, (file) => path.extname(file).toLowerCase() === ".lsp");
   const byPath = new Map(
@@ -98,9 +132,33 @@ async function discoverLispEntries(libraryId: string, root: string, existing: Ar
     const relative = path.relative(root, file).replaceAll("\\", "/");
     const source = await fs.readFile(file, "utf8");
     const commands = extractCommands(source);
+    const implementationHash = sha256(source);
     const prior = byPath.get(relative.toLowerCase());
     if (prior) {
-      result.push({ ...prior, commands, relative_path: relative });
+      const sameImplementation = String(prior.implementation_sha256 || "") === implementationHash;
+      if (sameImplementation) {
+        result.push({ ...prior, commands, relative_path: relative, implementation_sha256: implementationHash });
+      } else {
+        result.push({
+          ...prior,
+          commands,
+          relative_path: relative,
+          implementation_sha256: implementationHash,
+          summary: "Re-imported AutoLISP implementation changed; semantic behavior requires review before trusted use.",
+          when_to_use: [],
+          targets: [],
+          inputs: [],
+          effects: [],
+          interaction: "unknown",
+          load_behavior: "unknown",
+          mutates_drawing: null,
+          destructive: null,
+          risk: "unknown",
+          dynamic_parameters: [],
+          semantic_status: "needs_review",
+          implementation_notes: staleNotes(prior, "Implementation hash changed during re-import; prior semantic/safety metadata was invalidated until reviewed."),
+        });
+      }
       continue;
     }
     result.push({
@@ -116,19 +174,20 @@ async function discoverLispEntries(libraryId: string, root: string, existing: Ar
       tags: ["imported"],
       module: path.dirname(relative) === "." ? libraryId : path.dirname(relative).replaceAll("\\", "/"),
       commands,
-      summary: "Imported AutoLISP capability; semantic description has not yet been curated.",
+      summary: "Imported AutoLISP capability; semantic and safety behavior has not yet been curated.",
       when_to_use: [],
       targets: [],
       inputs: [],
       effects: [],
-      interaction: "interactive",
-      load_behavior: "define_only",
-      mutates_drawing: false,
-      destructive: false,
-      risk: "medium",
+      interaction: "unknown",
+      load_behavior: "unknown",
+      mutates_drawing: null,
+      destructive: null,
+      risk: "unknown",
       dynamic_parameters: [],
       semantic_status: "indexed",
-      implementation_notes: ["Import/index never modifies the Lisp source. Curate behavior metadata from implementation before relying on semantic assumptions."],
+      implementation_sha256: implementationHash,
+      implementation_notes: ["Import/index never modifies the Lisp source. Curate behavior metadata from implementation before relying on semantic or safety assumptions."],
     });
   }
   return result;
@@ -146,11 +205,24 @@ async function discoverJobEntries(libraryId: string, root: string, existing: Arr
   for (const file of files.sort()) {
     const relative = path.relative(root, file).replaceAll("\\", "/");
     const content = await fs.readFile(file, "utf8");
+    const implementationHash = sha256(content);
     const title = content.match(/^#\s+(?:Job:\s*)?(.+)$/mi)?.[1]?.trim() || path.basename(path.dirname(file));
     const status = content.match(/^Status:\s*(.+)$/mi)?.[1]?.replace(/\*\*/g, "").trim();
     const prior = byPath.get(relative.toLowerCase());
     if (prior) {
-      result.push({ ...prior, title, ...(status ? { status } : {}), relative_path: relative });
+      const sameImplementation = String(prior.implementation_sha256 || "") === implementationHash;
+      result.push({
+        ...prior,
+        title,
+        ...(status ? { status } : {}),
+        relative_path: relative,
+        implementation_sha256: implementationHash,
+        ...(!sameImplementation ? {
+          semantic_status: "needs_review",
+          risk: "unknown",
+          summary: "Re-imported Job definition changed; workflow semantics require review before trusted execution.",
+        } : {}),
+      });
       continue;
     }
     result.push({
@@ -165,8 +237,9 @@ async function discoverJobEntries(libraryId: string, root: string, existing: Arr
       tags: ["imported"],
       summary: "Imported CadGPT Job; semantic description has not yet been curated.",
       ...(status ? { status } : {}),
-      risk: "medium",
+      risk: "unknown",
       semantic_status: "indexed",
+      implementation_sha256: implementationHash,
     });
   }
   return result;
@@ -207,22 +280,24 @@ export function registerLibraryTools(server: McpServer): void {
     "library_import",
     {
       title: "Import User Library into CadGPT AppData",
-      description: "Read one user-selected Lisp/Job source folder, copy it into managed CadGPT AppData, then index User Registry. CadGPT never writes to the source folder.",
+      description: "Read one explicitly user-approved Lisp/Job source folder, copy it into managed CadGPT AppData, then index User Registry. CadGPT never writes to the source folder. Repository metadata folders and symlinks are rejected/skipped.",
       inputSchema: {
         kind: z.enum(["lisp", "job"]),
         library_id: z.string().regex(LIBRARY_ID),
         name: z.string().min(1).max(160),
         source_path: z.string().min(1).describe("Absolute user-selected source directory. It is read only during import."),
+        user_approved_source: z.literal(true).describe("Must be true only after the user explicitly selected/approved this source folder."),
         replace_existing: z.boolean().optional().default(false),
       },
     },
-    async ({ kind, library_id, name, source_path, replace_existing }) => {
+    async ({ kind, library_id, name, source_path, user_approved_source, replace_existing }) => {
       try {
+        if (!user_approved_source) throw new Error("Library import requires explicit user approval of source_path");
         if (!path.isAbsolute(source_path)) throw new Error("source_path must be an absolute directory selected by the user");
         const source = await fs.realpath(source_path);
         const stat = await fs.stat(source);
         if (!stat.isDirectory()) throw new Error("source_path must be a directory");
-        const fileCount = await assertSafeSourceTree(source);
+        const sourceStats = await assertSafeSourceTree(source);
 
         const parent = kind === "lisp" ? getLispLibrariesRoot() : getJobLibrariesRoot();
         await fs.mkdir(parent, { recursive: true });
@@ -239,49 +314,67 @@ export function registerLibraryTools(server: McpServer): void {
         }
         if (existed && !replace_existing) throw new Error(`Managed library already exists: ${library_id}`);
 
-        await fs.cp(source, temp, { recursive: true, force: false, errorOnExist: true });
+        await fs.cp(source, temp, {
+          recursive: true,
+          force: false,
+          errorOnExist: true,
+          filter: (sourceItem) => {
+            const parts = path.resolve(sourceItem).split(path.sep);
+            return !parts.includes(".git") && !parts.includes(".svn");
+          },
+        });
+
+        const manifestPath = getUserLibrariesManifestPath();
+        const registryPath = getUserCapabilitiesPath();
+        const previousManifest = await readOptionalText(manifestPath);
+        const previousRegistry = await readOptionalText(registryPath);
+        let swapped = false;
+
         try {
           if (existed) await fs.rename(target, backup);
           await fs.rename(temp, target);
-          await fs.rm(backup, { recursive: true, force: true });
+          swapped = true;
+
+          await fs.mkdir(getUserRegistryRoot(), { recursive: true });
+          const manifest = await readJson<{ version: number; libraries: LibraryRecord[] }>(manifestPath, { version: 1, libraries: [] });
+          const record: LibraryRecord = {
+            id: library_id,
+            kind,
+            name,
+            enabled: true,
+            managed_path: toCadgptPath(target),
+            imported_from: source,
+            imported_at: new Date().toISOString(),
+            import_mode: "managed-copy",
+            source_access: "read-only",
+            ...(kind === "lisp" ? { authoring_profile: library_id === "tbh-toolkit" ? "tbh" : "cadgpt" } : {}),
+          };
+          const libraries = manifest.libraries.filter((item) => !(item.id === library_id && item.kind === kind));
+          libraries.push(record);
+          libraries.sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`));
+          await atomicJson(manifestPath, { version: manifest.version || 1, libraries });
+
+          const capabilityCount = await reindexLibrary(kind, library_id, target);
+          if (existed) await fs.rm(backup, { recursive: true, force: true });
+          return toolResult("library_import", {
+            library: record,
+            source_was_read_only: true,
+            files_copied: sourceStats.files,
+            bytes_copied: sourceStats.bytes,
+            capabilities_indexed: capabilityCount,
+            rollback_safe: true,
+            note: "All subsequent CadGPT operations use the managed AppData copy. Re-import is explicit; changed implementations invalidate prior trusted semantics until reviewed.",
+          });
         } catch (error) {
           await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined);
-          if (existed) {
-            try {
-              await fs.rename(backup, target);
-            } catch {}
+          if (swapped) {
+            await fs.rm(target, { recursive: true, force: true }).catch(() => undefined);
+            if (existed) await fs.rename(backup, target).catch(() => undefined);
           }
+          await restoreOptionalText(manifestPath, previousManifest).catch(() => undefined);
+          await restoreOptionalText(registryPath, previousRegistry).catch(() => undefined);
           throw error;
         }
-
-        await fs.mkdir(getUserRegistryRoot(), { recursive: true });
-        const manifestPath = getUserLibrariesManifestPath();
-        const manifest = await readJson<{ version: number; libraries: LibraryRecord[] }>(manifestPath, { version: 1, libraries: [] });
-        const record: LibraryRecord = {
-          id: library_id,
-          kind,
-          name,
-          enabled: true,
-          managed_path: toCadgptPath(target),
-          imported_from: source,
-          imported_at: new Date().toISOString(),
-          import_mode: "managed-copy",
-          source_access: "read-only",
-          ...(kind === "lisp" ? { authoring_profile: library_id === "tbh-toolkit" ? "tbh" : "cadgpt" } : {}),
-        };
-        const libraries = manifest.libraries.filter((item) => !(item.id === library_id && item.kind === kind));
-        libraries.push(record);
-        libraries.sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`));
-        await atomicJson(manifestPath, { version: manifest.version || 1, libraries });
-
-        const capabilityCount = await reindexLibrary(kind, library_id, target);
-        return toolResult("library_import", {
-          library: record,
-          source_was_read_only: true,
-          files_copied: fileCount,
-          capabilities_indexed: capabilityCount,
-          note: "All subsequent CadGPT operations use the managed AppData copy. Re-import is explicit; source folders are never mutated.",
-        });
       } catch (error) {
         return toolError("library_import", error);
       }
