@@ -4,7 +4,8 @@ import path from "node:path";
 import { getAppDataRoot } from "./appdata.js";
 
 const REPO_ROOT = path.resolve(process.cwd());
-const APPDATA_EDITABLE_ROOTS = ["data", "libraries", "workspace"];
+const APPDATA_READABLE_ROOTS = ["data", "libraries", "workspace"];
+const APPDATA_WRITABLE_ROOTS = ["data", "workspace"];
 
 function normalizeForCompare(value: string): string {
   const resolved = path.resolve(value);
@@ -23,13 +24,17 @@ export function getRepoRoot(): string {
 
 export function getAllowedRoots(): string[] {
   const appDataRoot = getAppDataRoot();
-  return APPDATA_EDITABLE_ROOTS.map((name) => path.resolve(appDataRoot, name));
+  return APPDATA_READABLE_ROOTS.map((name) => path.resolve(appDataRoot, name));
 }
 
-function assertInsideAllowed(candidate: string): void {
-  const allowed = getAllowedRoots();
-  if (!allowed.some((root) => isInside(candidate, root))) {
-    throw new Error(`Path is outside CadGPT managed AppData roots (${allowed.map(toCadgptPath).join(", ")}): ${candidate}`);
+export function getWritableRoots(): string[] {
+  const appDataRoot = getAppDataRoot();
+  return APPDATA_WRITABLE_ROOTS.map((name) => path.resolve(appDataRoot, name));
+}
+
+function assertInsideRoots(candidate: string, roots: string[], label: string): void {
+  if (!roots.some((root) => isInside(candidate, root))) {
+    throw new Error(`Path is outside CadGPT ${label} roots (${roots.map(toCadgptPath).join(", ")}): ${candidate}`);
   }
 }
 
@@ -53,36 +58,40 @@ function resolveVirtualPath(inputPath: string): string {
     const suffix = normalized === "appdata" ? "" : normalized.slice("appdata/".length);
     return path.resolve(getAppDataRoot(), suffix);
   }
-  throw new Error("CadGPT editable file paths must use the appdata/... virtual namespace");
+  throw new Error("CadGPT file paths must use the appdata/... virtual namespace");
 }
 
 /**
- * Resolve a tool-supplied path inside managed AppData only.
+ * Resolve a tool-supplied path inside managed AppData.
  *
- * External user library source folders are deliberately NOT part of this
- * sandbox. They are readable only by the explicit library_import workflow,
- * which copies them into AppData without ever writing back to the source.
+ * Generic reads may access data/libraries/workspace. Generic writes are
+ * deliberately restricted to data/workspace: managed permanent libraries are
+ * mutated only through controlled import/promotion tools so registry metadata
+ * cannot drift from implementation.
  */
 export async function resolveAllowedPath(
   inputPath: string,
-  options: { forCreate?: boolean } = {}
+  options: { forCreate?: boolean; forWrite?: boolean } = {}
 ): Promise<string> {
   const trimmed = inputPath.trim();
   if (!trimmed) throw new Error("Path is empty");
-  if (path.isAbsolute(trimmed)) throw new Error("Absolute paths are not editable through CadGPT file tools");
+  if (path.isAbsolute(trimmed)) throw new Error("Absolute paths are not accessible through CadGPT file tools");
 
   const candidate = resolveVirtualPath(trimmed);
-  assertInsideAllowed(candidate);
+  assertInsideRoots(candidate, getAllowedRoots(), "readable AppData");
+  if (options.forWrite || options.forCreate) assertInsideRoots(candidate, getWritableRoots(), "generic writable AppData");
 
   if (!options.forCreate) {
     const real = await fs.realpath(candidate);
-    assertInsideAllowed(real);
+    assertInsideRoots(real, getAllowedRoots(), "readable AppData");
+    if (options.forWrite) assertInsideRoots(real, getWritableRoots(), "generic writable AppData");
     return real;
   }
 
   const parent = await nearestExistingParent(path.dirname(candidate));
   const realParent = await fs.realpath(parent);
-  assertInsideAllowed(realParent);
+  assertInsideRoots(realParent, getAllowedRoots(), "readable AppData");
+  assertInsideRoots(realParent, getWritableRoots(), "generic writable AppData");
   return candidate;
 }
 
