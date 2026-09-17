@@ -135,11 +135,12 @@ jobs:
               if ($rootNames -notcontains $requiredRoot) { throw "file_roots missing managed root: $requiredRoot" }
             }
             foreach ($forbidden in @("lisp", "jobs")) {
-              if ($rootNames -contains $forbidden) { throw "Legacy repo root is still editable: $forbidden" }
+              if ($rootNames -contains $forbidden) { throw "Legacy repo root is still exposed: $forbidden" }
             }
 
             $imported = Invoke-Tool "library_import" @{
-              kind="lisp"; library_id="ci-user-lib"; name="CI User Library"; source_path=$external; replace_existing=$true
+              kind="lisp"; library_id="ci-user-lib"; name="CI User Library"; source_path=$external;
+              user_approved_source=$true; replace_existing=$true
             }
             if ($imported.result.isError -eq $true -or $imported.result.structuredContent.ok -ne $true) { throw "library_import failed" }
             $sourceHashAfter = (Get-FileHash $externalFile -Algorithm SHA256).Hash
