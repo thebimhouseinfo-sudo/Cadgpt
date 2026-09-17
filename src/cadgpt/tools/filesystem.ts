@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { getAllowedRoots, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
+import { getAllowedRoots, getWritableRoots, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 
 const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv"]);
@@ -42,10 +42,14 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_roots",
     {
       title: "CadGPT Managed File Roots",
-      description: "Show the managed AppData roots editable by CadGPT. User-provided source folders are never generic file roots.",
+      description: "Show managed AppData roots readable by generic file tools and the narrower roots writable by them. Permanent libraries are read-only here and change only through controlled import/promotion tools.",
       inputSchema: {},
     },
-    async () => toolResult("file_roots", { roots: getAllowedRoots().map(toCadgptPath) })
+    async () => toolResult("file_roots", {
+      roots: getAllowedRoots().map(toCadgptPath),
+      writable_roots: getWritableRoots().map(toCadgptPath),
+      managed_libraries_write_policy: "read-only to generic file tools; mutate through library_import/lisp_promote_draft/job_promote_draft",
+    })
   );
 
   server.registerTool(
@@ -178,12 +182,12 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_create",
     {
       title: "Create CadGPT Managed Text File",
-      description: "Create a new text asset inside managed AppData libraries/workspaces/data. External import-source folders are never writable here.",
+      description: "Create a new text asset inside generic writable AppData roots (workspace/data). Permanent managed libraries are not writable through this tool.",
       inputSchema: { path: z.string(), content: z.string() },
     },
     async ({ path: input, content }) => {
       try {
-        const target = await resolveAllowedPath(input, { forCreate: true });
+        const target = await resolveAllowedPath(input, { forCreate: true, forWrite: true });
         assertTextExtension(target);
         try {
           await fs.lstat(target);
@@ -204,7 +208,7 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_edit",
     {
       title: "Edit CadGPT Managed Text File",
-      description: "Apply an exact text replacement inside managed AppData. Read the target first.",
+      description: "Apply an exact text replacement inside generic writable AppData roots (workspace/data). Permanent managed libraries must use controlled promotion/import tools.",
       inputSchema: {
         path: z.string(),
         old_text: z.string(),
@@ -214,7 +218,7 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ path: input, old_text, new_text, replace_all }) => {
       try {
-        const target = await resolveAllowedPath(input);
+        const target = await resolveAllowedPath(input, { forWrite: true });
         assertTextExtension(target);
         const original = await fs.readFile(target, "utf8");
         if (!original.includes(old_text)) throw new Error("old_text not found; read the file and use an exact match");

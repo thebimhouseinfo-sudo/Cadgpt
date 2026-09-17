@@ -25,6 +25,8 @@ appdata/data/runs/**                       test/evidence outputs when applicable
 
 External user folders are import sources only. `jobcreate` works on managed AppData copies/drafts and never writes back to an external source folder.
 
+Permanent `appdata/libraries/**` content is read-only to generic file tools. `jobcreate` must use the controlled Job lifecycle tools for reusable Job mutation/promotion.
+
 ## Entry modes
 
 `jobcreate` supports the same authoring workflow from three entry points:
@@ -144,23 +146,34 @@ New Job:
 appdata/workspace/job-draft/<library-id>/<job-name>/JOB.md
 ```
 
+Create the new draft with generic workspace file tools only after J3 approval.
+
 Existing Job refinement:
 
 ```text
-managed Job
-→ workspace Job draft
+job_get
+→ job_checkout
+→ appdata/workspace/job-draft/**
 → edit the draft only
 ```
 
-The managed reusable Job remains unchanged until promotion.
+Do not copy/edit the permanent managed Job directly. The managed reusable Job remains unchanged until `job_promote_draft` succeeds.
 
 #### B2. Author against the canonical Job contract
 
 The draft must satisfy `knowledge/jobs/JOB_RULES.md` and the `jobcreate` harness.
 
-Every step must retain its agreed semantic purpose, tool scope, outputs, success criteria and failure behavior.
+Every step must retain its agreed semantic purpose, explicit tool/executor scope, outputs/postconditions, success criteria and failure behavior.
 
 Do not broaden tool access merely because a tool is available.
+
+Run:
+
+```text
+job_draft_validate
+```
+
+before real execution. A structurally invalid draft does not proceed to promotion.
 
 #### B3. Implement missing capabilities only when required
 
@@ -188,6 +201,8 @@ For CAD-mutating Jobs, use an explicitly approved test drawing or explicitly app
 
 If a step is interactive, the user may perform the required manual interaction, but the resulting state/output must still be checked against the step and final success criteria.
 
+Record concise test evidence and final-validation evidence suitable for the promotion call.
+
 #### B5. Refine loop
 
 If the real test exposes a problem:
@@ -196,6 +211,7 @@ If the real test exposes a problem:
 identify failing step
 → discuss semantic change with user if required
 → patch draft narrowly
+→ job_draft_validate
 → re-run affected test path
 → verify final result again
 ```
@@ -213,12 +229,15 @@ appdata/libraries/jobs/<library-id>/<job-name>/JOB.md
 only when:
 
 1. the agreed workflow is represented in the draft;
-2. required unresolved business decisions are closed or explicitly excluded;
-3. the real execution/test has passed the applicable success criteria;
-4. final output/postcondition has been verified;
-5. the user accepts the tested Job for permanent use.
+2. `job_draft_validate` passes;
+3. required unresolved business decisions are closed or explicitly excluded;
+4. the real execution/test has passed the applicable success criteria;
+5. final output/postcondition has been verified;
+6. the user explicitly accepts the tested Job for permanent use.
 
-Promotion must synchronize the User Registry entry for the Job.
+Then call `job_promote_draft` with the tested draft, metadata, test evidence, final-validation evidence and `user_accepted=true`.
+
+`job_promote_draft` is the only normal `jobcreate` path that mutates a permanent managed Job and synchronizes the User Registry entry.
 
 ## Refine-existing rule
 
@@ -228,13 +247,16 @@ The difference is only the starting point:
 
 ```text
 existing workflow
+→ job_checkout
 → identify weak/missing step(s)
 → discuss the intended delta
 → remap affected tools/validation
 → final plan approval
 → draft patch
+→ job_draft_validate
 → real test
-→ promote replacement only after pass
+→ final validation
+→ job_promote_draft only after pass + user acceptance
 ```
 
 Do not rewrite unaffected steps for cosmetic consistency.
@@ -262,6 +284,6 @@ skills/jobcreate/harness/README.md
 `jobcreate` is complete only when either:
 
 - Planning ends with an explicitly user-approved implementation plan and the user chooses not to implement yet; or
-- the Job has been drafted, actually tested, refined as necessary, accepted by the user, promoted to the managed Job Library and synchronized with User Registry.
+- the Job has been drafted, `job_draft_validate` has passed, the Job has been actually tested, refined as necessary, accepted by the user, promoted through `job_promote_draft`, and synchronized with User Registry.
 
 A written-but-untested Job is a **draft**, not a completed reusable Job.

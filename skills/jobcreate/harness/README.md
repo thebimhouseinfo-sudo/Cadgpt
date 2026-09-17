@@ -51,15 +51,17 @@ PASS only after explicit user approval to implement.
 
 ## Gate J4 — Draft contract
 
-The workspace Job draft must conform to `knowledge/jobs/JOB_RULES.md`.
+For existing Jobs, use `job_checkout`; do not mutate the managed library directly. New drafts are created only under `appdata/workspace/job-draft/**`.
+
+The workspace Job draft must conform to `knowledge/jobs/JOB_RULES.md`, then pass `job_draft_validate`.
 
 Check:
 
 - identity and goal;
 - preconditions;
 - ordered steps;
-- per-step tool scope;
-- outputs;
+- per-step tool/executor scope;
+- outputs/postconditions;
 - success/failure semantics;
 - final validation;
 - unresolved items.
@@ -80,13 +82,13 @@ Run the draft Job against an explicitly approved test context.
 
 PASS requires evidence from actual execution. Merely loading the Job definition or successfully dispatching a command is not enough.
 
-For each required step verify its success criteria from actual output/state.
+For each required step verify its success criteria from actual output/state. Preserve concise test evidence suitable for `job_promote_draft`.
 
 ## Gate J7 — Final validation
 
 Verify the end result defined by the approved plan.
 
-PASS only when the final drawing/file/result state is correct, not merely when every call returned without error.
+PASS only when the final drawing/file/result state is correct, not merely when every call returned without error. Preserve final-validation evidence suitable for `job_promote_draft`.
 
 ## Gate J8 — Promotion
 
@@ -97,14 +99,16 @@ J0 PASS
 J1 PASS
 J2 PASS
 J3 PASS
-J4 PASS
+J4 PASS (including job_draft_validate)
 J5 PASS
 J6 PASS
 J7 PASS
 user accepts tested Job
 ```
 
-Then promote into the managed Job Library and synchronize User Registry.
+Then call `job_promote_draft` with `user_accepted=true`, test evidence and final-validation evidence. The promotion tool performs the permanent managed-library write and User Registry synchronization as one rollback-safe operation.
+
+Generic file tools must never be used to edit `appdata/libraries/jobs/**` directly.
 
 ## Mandatory stop conditions
 
@@ -122,12 +126,14 @@ Existing Jobs use the same gates, but J0/J1 start from the current managed workf
 
 ```text
 load existing Job
+→ job_checkout
 → identify requested delta
 → preserve unaffected behavior
 → re-plan affected steps
 → approval
 → draft patch
+→ job_draft_validate
 → real test
 → final validation
-→ promotion
+→ job_promote_draft
 ```

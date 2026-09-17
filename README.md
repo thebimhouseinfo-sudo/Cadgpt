@@ -56,13 +56,15 @@ appdata/
 A user-selected Lisp or Job folder is an **import source only**:
 
 ```text
-external source folder (read-only)
+explicitly approved external source folder (read-only)
 → library_import
 → managed copy in AppData
 → User Registry
 ```
 
-CadGPT never writes to the external source folder. After import, all normal reading/editing/execution uses the managed AppData copy.
+CadGPT never writes to the external source folder. Import rejects symlinked source entries, excludes repository metadata such as `.git/.svn`, and bounds import size/file count.
+
+After import, execution reads from the managed AppData copy. Permanent managed-library changes do **not** use generic file editing: they go through controlled draft/validation/promotion flows so the implementation and User Registry stay synchronized.
 
 Most users need only Lisp Libraries. Job Libraries are optional for advanced/legacy CadGPT users.
 
@@ -80,25 +82,29 @@ User Registry
 └─ concrete Jobs
 ```
 
-Use `registry_list` / `registry_get` to search the unified view. User Registry cannot overwrite Internal Registry because the allowed capability kinds are disjoint.
+Use `registry_list` / `registry_get` to search the unified view. User Registry cannot overwrite Internal Registry because the allowed capability kinds are disjoint. User capability IDs are unique within User Registry.
+
+Re-imported implementation content is hash-tracked. When an imported Lisp/Job implementation changes, previously trusted semantic/safety metadata is invalidated to `needs_review` rather than silently retained as curated truth.
 
 ## AutoLISP lifecycle
 
 Lisp remains normal AutoLISP usable directly as AutoCAD commands and also discoverable/executable by CadGPT.
 
-Import/index does not modify source. When the user explicitly asks `write-lisp` to change an existing capability:
+Import/index does not modify source. When the user explicitly asks `write-lisp` to change or repair an existing capability:
 
 ```text
 User Registry discovery
 → lisp_checkout
 → appdata/workspace/lisp-draft/**
-→ update functionality + normalize working header/description
+→ update/repair functionality + normalize working header/description
 → static validation
 → user-approved AutoCAD test drawing
 → verified load/runtime verification
 → lisp_promote_draft
 → managed Lisp Library + User Registry
 ```
+
+Blocking syntax errors in the managed source do not prevent checkout for repair; they are reported as diagnostics and must be fixed before promotion. Helper/library Lisp files without public `c:` commands are valid when intentional and may be promoted.
 
 `write-lisp` uses a CadGPT-native canonical scaffold. TBH Toolkit is the explicit exception: `library_id=tbh-toolkit` retains the TBH header convention. Other imported libraries are not rewritten on registration; their headers are normalized only when `write-lisp` is explicitly activated to edit them.
 
@@ -107,6 +113,23 @@ User Registry discovery
 ## Jobs
 
 Concrete Jobs live under managed User Job Libraries in AppData and are registered in User Registry. Job rules, schema/authoring guidance and runtime semantics are internal CadGPT knowledge under `knowledge/jobs/**`.
+
+`jobcreate` uses the same controlled working-copy principle as `write-lisp`:
+
+```text
+existing Job (optional)
+→ job_checkout
+→ appdata/workspace/job-draft/**
+→ author/refine
+→ job_draft_validate
+→ explicitly approved real test
+→ final-result validation
+→ explicit user acceptance
+→ job_promote_draft
+→ managed Job Library + User Registry
+```
+
+New Jobs start directly in `appdata/workspace/job-draft/**` only after the `jobcreate` planning approval gate. `job_promote_draft` requires recorded test evidence, final-validation evidence and explicit user acceptance.
 
 CadGPT core must remain functional with no user Job Library and no user Lisp Library configured.
 
@@ -141,7 +164,7 @@ doctor.bat
 
 ## File safety
 
-Generic file tools have write access only inside managed AppData roots:
+Generic file tools have **read** access to:
 
 ```text
 appdata/libraries/**
@@ -149,7 +172,16 @@ appdata/workspace/**
 appdata/data/**
 ```
 
-External user folders are not generic file-tool roots. `library_import` is the controlled read/copy boundary. Runtime/state/log areas remain internal.
+Generic file tools have **write** access only to:
+
+```text
+appdata/workspace/**
+appdata/data/**
+```
+
+`appdata/libraries/**` is permanent managed content and is read-only to generic file tools. It changes only through controlled operations such as `library_import`, `lisp_promote_draft` and `job_promote_draft`.
+
+External user folders are not generic file-tool roots. `library_import` is the controlled read/copy boundary. Registry/runtime/state/log areas remain internal.
 
 ## Drawing binding
 
@@ -157,4 +189,4 @@ Before CAD business operations, CadGPT binds explicitly to one drawing identity.
 
 ## Development status
 
-Stage 1 — Beta Build / Code Complete is complete. Current work remains Beta Scope Review before Stage 2 real-AutoCAD validation.
+Stage 1 — Beta Build / Code Complete is complete. Current work remains Beta Scope Review before Stage 2 real-AutoCAD validation. Beta Scope Review includes closing authoring-integrity gaps so permanent libraries, User Registry metadata and tested drafts cannot drift from one another.

@@ -21,20 +21,23 @@ const INTERNAL_CAD_TOOLS = new Set([
 ]);
 
 const CORE_TOOLS = [
-  { name: "file_roots", class: "local.files", summary: "Show managed AppData roots editable by CadGPT." },
+  { name: "file_roots", class: "local.files", summary: "Show managed AppData roots readable/writable by generic file tools." },
   { name: "file_list", class: "local.files", summary: "List managed AppData library/workspace/data files." },
   { name: "file_read", class: "local.files", summary: "Read a managed AppData text file." },
   { name: "file_search", class: "local.files", summary: "Search managed AppData text files." },
-  { name: "file_create", class: "local.files", summary: "Create a managed AppData text file." },
-  { name: "file_edit", class: "local.files", summary: "Edit a managed AppData text file." },
+  { name: "file_create", class: "local.files", summary: "Create a managed workspace/data text file." },
+  { name: "file_edit", class: "local.files", summary: "Edit a managed workspace/data text file." },
   { name: "library_list", class: "libraries", summary: "List user Lisp/Job libraries imported into managed AppData." },
   { name: "library_import", class: "libraries", summary: "Read a user-selected source folder, copy it into AppData, and index User Registry without writing back to source." },
   { name: "job_list", class: "workflow.jobs", summary: "List concrete Jobs registered from managed user Job Libraries." },
   { name: "job_get", class: "workflow.jobs", summary: "Load one concrete registered Job from its managed AppData library." },
+  { name: "job_checkout", class: "workflow.authoring", summary: "Copy a registered Job into the Job workspace for controlled refinement." },
+  { name: "job_draft_validate", class: "workflow.authoring", summary: "Validate a Job workspace draft against the canonical structural contract." },
+  { name: "job_promote_draft", class: "workflow.authoring", summary: "Promote a tested Job draft into a managed Job Library and synchronize User Registry." },
   { name: "skill_list", class: "skills", summary: "List internal CadGPT system skills." },
   { name: "skill_get", class: "skills", summary: "Load one internal CadGPT skill resource." },
   { name: "lisp_scaffold", class: "lisp.authoring", summary: "Create a canonical CadGPT AutoLISP scaffold, with TBH profile only for target library tbh-toolkit." },
-  { name: "lisp_checkout", class: "lisp.authoring", summary: "Copy one managed Lisp capability into workspace for editing and normalize its working header only when write-lisp is activated." },
+  { name: "lisp_checkout", class: "lisp.authoring", summary: "Copy one managed Lisp capability into workspace for editing/repair and normalize its working header only when write-lisp is activated." },
   { name: "lisp_validate", class: "lisp.authoring", summary: "Statically validate managed AutoLISP source with an explicit authoring profile." },
   { name: "lisp_draft_validate", class: "lisp.authoring", summary: "Statically validate an AutoLISP workspace draft." },
   { name: "lisp_promote_draft", class: "lisp.authoring", summary: "Promote a tested workspace draft into a managed Lisp Library and synchronize User Registry." },
@@ -130,10 +133,23 @@ async function loadUserEntries(): Promise<Array<Record<string, unknown>>> {
   try {
     const parsed = JSON.parse(await fs.readFile(getUserCapabilitiesPath(), "utf8")) as { entries?: Array<Record<string, unknown>> };
     if (!Array.isArray(parsed.entries)) throw new Error("User Registry is missing entries[]");
+    const seen = new Set<string>();
     for (const entry of parsed.entries) {
       if (entry.kind !== "lisp" && entry.kind !== "job") throw new Error(`User Registry may contain only lisp/job entries: ${String(entry.id || "<unknown>")}`);
+      const id = String(entry.id || "").trim().toLowerCase();
+      if (!id) throw new Error("User Registry capability has an empty id");
+      if (seen.has(id)) throw new Error(`User Registry contains duplicate capability id: ${String(entry.id)}`);
+      seen.add(id);
     }
-    return parsed.entries.map((entry) => ({ ...entry, registry: "user" }));
+    return parsed.entries.map((entry) => {
+      const effective: Record<string, unknown> = { ...entry, registry: "user" };
+      if (entry.kind === "lisp" && entry.semantic_status !== "curated" && entry.ai_mode === "dynamic") {
+        effective.review_blocked_ai_mode = "dynamic";
+        effective.ai_mode = "static";
+        effective.dynamic_parameters = [];
+      }
+      return effective;
+    });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
@@ -154,7 +170,7 @@ export function registerCapabilityRegistryTools(server: McpServer): void {
     "registry_list",
     {
       title: "List CadGPT Effective Capability Registry",
-      description: "List the unified view of Internal Registry (MCP tools + system skills) and User Registry (managed Lisp + Jobs). Ownership is disjoint; User Registry cannot overwrite Internal Registry.",
+      description: "List the unified view of Internal Registry (MCP tools + system skills) and User Registry (managed Lisp + Jobs). Ownership is disjoint; User Registry cannot overwrite Internal Registry. Unreviewed Lisp cannot retain effective dynamic AI mode.",
       inputSchema: {
         kind: z.enum(["tool", "skill", "lisp", "job"]).optional(),
         registry: z.enum(["internal", "user"]).optional(),

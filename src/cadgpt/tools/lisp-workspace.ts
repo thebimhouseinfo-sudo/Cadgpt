@@ -4,7 +4,12 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { getLispLibrariesRoot, getLispDraftRoot, getUserCapabilitiesPath } from "../lib/appdata.js";
+import {
+  getLispLibrariesRoot,
+  getLispDraftRoot,
+  getUserCapabilitiesPath,
+  getUserLibrariesManifestPath,
+} from "../lib/appdata.js";
 import { resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import {
@@ -52,15 +57,25 @@ async function atomicWrite(target: string, content: string): Promise<void> {
   }
 }
 
-async function loadRegistry(): Promise<UserRegistry> {
+async function readJson<T>(target: string, fallback: T): Promise<T> {
   try {
-    const parsed = JSON.parse(await fs.readFile(getUserCapabilitiesPath(), "utf8")) as Partial<UserRegistry>;
-    if (!Array.isArray(parsed.entries)) throw new Error("User Registry is missing entries[]");
-    return { version: Number(parsed.version || 1), entries: parsed.entries };
+    return JSON.parse(await fs.readFile(target, "utf8")) as T;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, entries: [] };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return fallback;
     throw error;
   }
+}
+
+async function loadRegistry(): Promise<UserRegistry> {
+  const parsed = await readJson<Partial<UserRegistry>>(getUserCapabilitiesPath(), { version: 1, entries: [] });
+  if (!Array.isArray(parsed.entries)) throw new Error("User Registry is missing entries[]");
+  return { version: Number(parsed.version || 1), entries: parsed.entries };
+}
+
+async function assertManagedLibraryExists(libraryId: string): Promise<void> {
+  const manifest = await readJson<{ libraries?: Array<Record<string, unknown>> }>(getUserLibrariesManifestPath(), { libraries: [] });
+  const match = (manifest.libraries ?? []).find((item) => item.kind === "lisp" && item.id === libraryId && item.enabled !== false);
+  if (!match) throw new Error(`Enabled managed Lisp library not found in libraries.json: ${libraryId}`);
 }
 
 function safeRelativeLisp(value: string): string {
@@ -102,7 +117,7 @@ export function registerLispWorkspaceTools(server: McpServer): void {
     "lisp_checkout",
     {
       title: "Checkout Managed Lisp for write-lisp",
-      description: "Copy one registered managed Lisp into AppData workspace for editing. This is the first point where write-lisp normalizes header/description; import/registration never modifies source. TBH Toolkit keeps the TBH authoring profile.",
+      description: "Copy one registered managed Lisp into AppData workspace for editing or repair. Source syntax problems are reported but do not block checkout; promotion remains strict. TBH Toolkit keeps the TBH authoring profile.",
       inputSchema: {
         registry_id: z.string().min(1),
         description: z.string().min(1).max(1200).optional(),
@@ -118,7 +133,6 @@ export function registerLispWorkspaceTools(server: McpServer): void {
         const sourcePath = managedLispPath(libraryId, relativePath);
         const source = await fs.readFile(sourcePath, "utf8");
         const syntax = validateLispSource(source, asStringArray(entry.commands), { profile: "syntax", fileName: path.basename(sourcePath) });
-        if (!syntax.valid) throw new Error(`Managed source has blocking AutoLISP errors; checkout normalization stopped (${syntax.diagnostics.filter((d) => d.severity === "error").map((d) => d.code).join(", ")})`);
 
         const profile = profileForLibrary(libraryId);
         const command = syntax.commands.join(", ") || asStringArray(entry.commands).join(", ") || "HELPER";
@@ -134,7 +148,9 @@ export function registerLispWorkspaceTools(server: McpServer): void {
           risk: String(entry.risk || "medium"),
           dependencies: "AutoLISP/Visual LISP as used by implementation.",
           notes: `Checked out from User Registry capability ${String(entry.id)}. External import source is never modified.`,
-          revision: "Working copy prepared by CadGPT write-lisp.",
+          revision: syntax.valid
+            ? "Working copy prepared by CadGPT write-lisp."
+            : "Repair working copy prepared by CadGPT write-lisp; source contained blocking diagnostics.",
         });
         const draft = draftPathFor(libraryId, relativePath);
         await atomicWrite(draft, normalized);
@@ -144,9 +160,12 @@ export function registerLispWorkspaceTools(server: McpServer): void {
           source_path: toCadgptPath(sourcePath),
           draft_path: toCadgptPath(draft),
           authoring_profile: profile,
+          source_valid: syntax.valid,
+          source_diagnostics: syntax.diagnostics,
+          repair_required: !syntax.valid,
           header_normalized_in_draft_only: true,
           managed_source_unchanged: true,
-          note: "Use lisp_draft_validate, approved CAD testing, then lisp_promote_draft. Import source outside AppData remains untouched.",
+          note: "Repair/implement in the draft, run lisp_draft_validate, perform approved CAD testing, then lisp_promote_draft. Import source outside AppData remains untouched.",
         });
       } catch (error) {
         return toolError("lisp_checkout", error);
@@ -186,7 +205,7 @@ export function registerLispWorkspaceTools(server: McpServer): void {
     "lisp_promote_draft",
     {
       title: "Promote Tested Lisp Draft to Managed Library",
-      description: "Promote one tested workspace draft into a managed AppData Lisp Library and upsert its User Registry metadata as one rollback-safe operation.",
+      description: "Promote one tested workspace draft into an existing managed AppData Lisp Library and upsert its User Registry metadata as one rollback-safe operation. Helper-only Lisp without public c: commands is supported.",
       inputSchema: {
         draft_path: z.string().min(1),
         library_id: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,79}$/i),
@@ -198,6 +217,7 @@ export function registerLispWorkspaceTools(server: McpServer): void {
     async ({ draft_path, library_id, relative_path, metadata, overwrite }) => {
       try {
         assertDraftVirtualPath(draft_path);
+        await assertManagedLibraryExists(library_id);
         const normalizedRelative = safeRelativeLisp(relative_path);
         if (metadata.ai_mode === "static" && metadata.dynamic_parameters.length) throw new Error("dynamic_parameters must be empty when ai_mode=static");
         if (metadata.ai_mode === "dynamic" && !metadata.dynamic_parameters.length) throw new Error("ai_mode=dynamic requires at least one declared dynamic_parameter");
@@ -210,7 +230,6 @@ export function registerLispWorkspaceTools(server: McpServer): void {
         if (!validation.valid) {
           throw new Error(`Draft failed AutoLISP/${profile} validation; promotion blocked (${validation.diagnostics.filter((item) => item.severity === "error").map((item) => item.code).join(", ")})`);
         }
-        if (!validation.commands.length) throw new Error("Promotion requires at least one public c: command");
 
         let targetExists = false;
         let previousPermanent: string | null = null;
@@ -249,12 +268,14 @@ export function registerLispWorkspaceTools(server: McpServer): void {
           dynamic_parameters: metadata.dynamic_parameters,
           semantic_status: "curated",
           implementation_notes: metadata.implementation_notes,
+          implementation_sha256: validation.sha256,
         };
 
         const commandSet = new Set(validation.commands.map((item) => item.toUpperCase()));
         for (const entry of registry.entries) {
-          if (entry.kind !== "lisp") continue;
           const id = String(entry.id || "");
+          if (id === metadata.id && entry.kind !== "lisp") throw new Error(`Registry id belongs to a non-Lisp capability: ${metadata.id}`);
+          if (entry.kind !== "lisp") continue;
           const sameTarget = String(entry.library_id || "") === library_id && String(entry.relative_path || "").toLowerCase() === normalizedRelative.toLowerCase();
           const commands = asStringArray(entry.commands).map((item) => item.toUpperCase());
           if (id !== metadata.id && sameTarget) throw new Error(`Managed library path already belongs to another capability: ${id}`);
@@ -287,6 +308,7 @@ export function registerLispWorkspaceTools(server: McpServer): void {
           ai_mode: metadata.ai_mode,
           authoring_profile: profile,
           commands: validation.commands,
+          helper_only: validation.commands.length === 0,
           sha256: validation.sha256,
           registry_updated: true,
           rollback_safe: true,

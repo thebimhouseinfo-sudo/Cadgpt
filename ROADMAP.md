@@ -12,16 +12,19 @@ Real-AutoCAD behavior is not an exit requirement for Stage 1. Anything that can 
 
 - single CadGPT MCP endpoint for ChatGPT;
 - OpenAI Secure MCP Tunnel bootstrap/health/recovery;
-- local file sandbox restricted to `lisp/**` and `jobs/**`;
+- managed AppData model with narrow generic file access;
+- permanent managed Lisp/Job libraries isolated from generic writes;
 - drawing-binding/session contract;
 - CAD MCP read/query surface;
 - guarded mutation surface;
 - destructive preview/token execution guard;
 - AutoLISP load/run bridge;
 - `write-lisp` AutoLISP specialist skill and harness;
+- controlled Lisp draft/validate/promote lifecycle;
 - AutoLISP-only language rules, TBH scaffold/style rules, Common-Lisp misuse detection;
 - verified-load protocol and safe test-drawing policy;
-- Job discovery/contract infrastructure, without requiring concrete business Jobs;
+- Job discovery/contract infrastructure;
+- `jobcreate` planning/authoring skill plus controlled Job draft/validate/promote lifecycle;
 - `setup.bat`, `run.bat`, `doctor.bat`, `acceptance.bat` contracts;
 - reproducible Node/Python dependency locks;
 - migration tooling for TBH Toolkit and preserved Revit source;
@@ -34,37 +37,32 @@ Real-AutoCAD behavior is not an exit requirement for Stage 1. Anything that can 
 - executing real CAD mutations on project files;
 - validating AutoCAD-version-specific behavior;
 - production EXE packaging;
-- designing concrete business Jobs such as Create XREF;
+- completing a broad catalog of concrete business Jobs;
 - broad feature expansion based on real-host feedback.
 
 ### Stage 1 exit gate
 
-All of the following must be true:
+Stage 1 is complete. Its code-complete gate established the beta foundation without claiming real-host proof.
 
 ```text
-[ ] clean checkout has complete dependency lockfiles
-[ ] npm ci succeeds on Windows CI
-[ ] locked Python install succeeds on Python 3.11 Windows CI
-[ ] pip check passes
-[ ] TypeScript build passes
-[ ] CAD MCP compile/import passes
-[ ] protected MCP initialize/tools/list smoke passes
-[ ] stale-session recovery smoke passes
-[ ] file sandbox positive/negative tests pass
-[ ] write-lisp skill/scaffold/static validation surface passes
-[ ] drawing-binding and safe-test-drawing contracts are present
-[ ] migration contracts pass
-[ ] preserved Revit is not an active runtime dependency
-[ ] setup/run/doctor/acceptance scripts parse and their non-host contracts pass
-[ ] architecture and roadmap docs match the implemented design
-[ ] no known architecture-level blocker remains for real-host testing
+[x] reproducible Node/Python dependency locks
+[x] Windows build/compile/static gates
+[x] protected MCP initialize/tools/list smoke
+[x] stale-session recovery contract
+[x] managed AppData/file sandbox contract
+[x] write-lisp skill/scaffold/static validation surface
+[x] drawing-binding and safe-test-drawing contracts
+[x] migration contracts
+[x] preserved Revit excluded from active runtime dependency
+[x] setup/run/doctor/acceptance non-host contracts
+[x] coherent background wake-agent + stable MCP surface
 ```
 
-When this gate passes, the repository may be marked:
+Repository state after Stage 1:
 
 ```text
-CadGPT Beta 0.1
-CODE COMPLETE
+CadGPT Beta 0.1 foundation
+CODE COMPLETE FOR REVIEW
 REAL-CAD VALIDATION PENDING
 ```
 
@@ -72,19 +70,38 @@ REAL-CAD VALIDATION PENDING
 
 ## Review Gate — Beta Scope Review
 
-**This review happens after Stage 1 and before Stage 2.**
+**Current stage. This review happens after Stage 1 and before Stage 2.**
 
-The team/user reviews the complete beta as a product and may:
+The Beta Scope Review is allowed to change core beta behavior when a completed implementation exposes an architectural or integrity gap. Current review focus includes:
 
 - remove unnecessary tools or concepts;
 - add missing core capability that should exist before host testing;
 - simplify commands/tool schemas;
 - tighten security boundaries;
-- adjust `write-lisp` behavior/harness;
+- ensure permanent managed libraries cannot bypass draft/validate/promote lifecycles;
+- ensure User Registry metadata cannot silently drift from re-imported implementation;
+- ensure `write-lisp` supports repair and helper-library files consistently;
+- ensure `jobcreate` has an executable draft/validate/promote path rather than documentation-only semantics;
 - revise diagnostics/status presentation;
-- revise what is considered a core beta feature.
+- keep architecture/product docs synchronized with the implemented AppData/background-agent model.
 
 No real-CAD validation campaign begins until this review is complete and the Stage 2 scope is frozen.
+
+### Beta Scope Review exit gate
+
+```text
+[ ] generic file tools cannot mutate permanent managed libraries
+[ ] Lisp repair checkout works while promotion remains strict
+[ ] helper-only Lisp can follow the same managed promotion lifecycle
+[ ] Lisp/Job promotion verifies an existing enabled target library
+[ ] Job checkout/validate/promote tools are present and registered
+[ ] Job promotion records real-test/final-validation evidence and explicit user acceptance
+[ ] library re-import is rollback-safe across managed content + manifest + User Registry
+[ ] changed re-imported implementation invalidates stale trusted semantics
+[ ] import source approval, symlink/repository-metadata and size boundaries are enforced
+[ ] CI covers the authoring-integrity contracts above
+[ ] README/roadmap/implementation docs describe the same architecture
+```
 
 ---
 
@@ -94,7 +111,7 @@ Goal: validate the reviewed Beta Build on a real Windows + AutoCAD workstation.
 
 Primary work:
 
-- local `setup.bat` and `run.bat` validation;
+- local `setup.bat` and background-agent lifecycle validation;
 - ChatGPT Developer Mode / Secure MCP Tunnel end-to-end connection;
 - AutoCAD COM/host discovery;
 - drawing list/bind/close/tab-switch behavior;
@@ -103,9 +120,10 @@ Primary work:
 - geometry transforms/copy/mirror;
 - guarded destructive operations;
 - real AutoLISP verified-load behavior;
-- `write-lisp` test workflow on user-approved test/current drawings;
+- `write-lisp` repair/create/test/promotion workflow on user-approved test/current drawings;
+- `jobcreate` Job test/promotion workflow on user-approved test contexts;
 - reconnect/restart/network scenarios;
-- actual TBH Toolkit migration and actual Revit preservation from trusted local clones.
+- actual TBH Toolkit runtime validation against trusted local managed copies.
 
 Stage 2 discovers real-host defects. It is not the packaging stage.
 
@@ -124,7 +142,8 @@ Typical work:
 - drawing identity edge cases;
 - LISP load/runtime error evidence;
 - validator false positives/false negatives;
-- TBH style/scaffold refinements from the fully migrated library;
+- Job runtime edge cases exposed by real workflows;
+- TBH style/scaffold refinements from the fully validated library;
 - clearer status/doctor/error recovery;
 - regression tests for every real-host defect found.
 
@@ -152,22 +171,22 @@ Only after Stage 3 is stable:
 - signing if required;
 - clean-machine install/uninstall/reinstall validation.
 
-Concrete business Jobs and feature expansion can proceed after the core beta foundation is stable; they are not blockers for Stage 1.
+Concrete business Jobs and feature expansion can continue after the core beta foundation is stable; they are not prerequisites for starting real-host validation unless they are specifically needed as validation fixtures.
 
 ---
 
 ## Current position
 
 ```text
-NOW → Stage 1: Beta Build / Code Complete
-       ↓
-     Review Gate: add/remove/simplify features
-       ↓
-     Stage 2: Real CAD Beta Validation
-       ↓
-     Stage 3: Improve / Stabilize
-       ↓
-     Stage 4: Package / Release Prep
+Stage 1: Beta Build / Code Complete          ✓
+                 ↓
+NOW → Beta Scope Review: integrity + simplify
+                 ↓
+Stage 2: Real CAD Beta Validation
+                 ↓
+Stage 3: Improve / Stabilize
+                 ↓
+Stage 4: Package / Release Prep
 ```
 
-Current Stage 1 focus: finish reproducible installation/CI and close the remaining code/documentation gates before the Beta Scope Review.
+Current focus: close authoring/library/registry integrity findings, align CI/docs, then freeze the Stage 2 real-AutoCAD validation scope.
