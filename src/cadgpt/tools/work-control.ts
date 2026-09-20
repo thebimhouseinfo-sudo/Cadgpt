@@ -17,7 +17,11 @@ export function registerWorkControlTools(
   server: McpServer,
   options: {
     sessionKey: string;
-    prepareFamilies: (executionPath: ExecutionPath, ownerId: string) => Promise<void>;
+    prepareFamilies: (
+      executionPath: ExecutionPath,
+      ownerId: string,
+      executionId: string
+    ) => Promise<void>;
   }
 ): void {
   server.registerTool(
@@ -50,7 +54,7 @@ export function registerWorkControlTools(
           await cleanupExecutionState(previousExecution);
         }
         try {
-          await options.prepareFamilies(work.executionPath, work.ownerId);
+          await options.prepareFamilies(work.executionPath, work.ownerId, work.executionId);
         } catch (error) {
           releaseWorkRegistration(work.executionId, work.authorityToken, options.sessionKey);
           throw error;
