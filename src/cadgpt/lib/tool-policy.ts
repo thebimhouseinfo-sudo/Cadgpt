@@ -31,10 +31,10 @@ export function toolFamily(toolName: string): string {
   if (toolName.startsWith("registry_")) return "registry";
   if (toolName.startsWith("skill_")) return "skills";
   if (toolName.startsWith("observator_")) return "observator";
+  if (toolName.startsWith("cad_mcp_dev_")) return "cad-mcp-dev";
   if (toolName.startsWith("cad__") || toolName.startsWith("drawing_") || toolName.startsWith("cad_")) {
     return "cad";
   }
-  if (toolName.startsWith("cad_mcp_dev_")) return "cad-mcp-dev";
   return "core";
 }
 
