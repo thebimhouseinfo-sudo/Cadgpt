@@ -1008,8 +1008,8 @@ export function registerCadMcpDevTools(server: McpServer): void {
         }
 
         await restoreSnapshotFiles(found.snapshot);
-        await removePersistedSnapshot(found.executionId);
         await releasePersistentSourceLock(found.executionId);
+        await removePersistedSnapshot(found.executionId);
         snapshots.delete(found.executionId);
         validatedFingerprints.delete(found.executionId);
         knownSourceFingerprints.delete(found.executionId);
@@ -1172,8 +1172,8 @@ export function registerCadMcpDevTools(server: McpServer): void {
         await assertKnownSourceState(lease.workId);
 
         await restoreSnapshotFiles(snapshot);
-        await removePersistedSnapshot(lease.workId);
         await releasePersistentSourceLock(lease.workId);
+        await removePersistedSnapshot(lease.workId);
         snapshots.delete(lease.workId);
         knownSourceFingerprints.delete(lease.workId);
         const { endCadDevSourceTransaction } = await import(
@@ -1326,8 +1326,8 @@ export function registerCadMcpDevTools(server: McpServer): void {
           );
         }
 
-        await removePersistedSnapshot(lease.workId);
         await releasePersistentSourceLock(lease.workId);
+        await removePersistedSnapshot(lease.workId);
         snapshots.delete(lease.workId);
         validatedFingerprints.delete(lease.workId);
         knownSourceFingerprints.delete(lease.workId);
@@ -1480,8 +1480,8 @@ export function registerCadMcpDevTools(server: McpServer): void {
 
         const candidate = await acceptCadCandidate(lease.workId, validated_tool);
         try {
-          await removePersistedSnapshot(lease.workId);
           await releasePersistentSourceLock(lease.workId);
+          await removePersistedSnapshot(lease.workId);
         } catch (error) {
           await restoreSnapshotFiles(snapshot).catch(() => undefined);
           throw error;
@@ -1530,8 +1530,8 @@ export async function rollbackUnacceptedCadMcpDevStateForExecution(
   }
 
   await restoreSnapshotFiles(snapshot);
-  await removePersistedSnapshot(executionId);
   await releasePersistentSourceLock(executionId);
+  await removePersistedSnapshot(executionId);
   snapshots.delete(executionId);
   validatedFingerprints.delete(executionId);
   knownSourceFingerprints.delete(executionId);
