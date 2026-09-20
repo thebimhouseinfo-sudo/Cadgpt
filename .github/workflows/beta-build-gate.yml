@@ -171,8 +171,19 @@ jobs:
               if ($rootNames -contains $forbidden) { throw "Legacy repo root is still exposed: $forbidden" }
             }
 
+            $blockedRelativeImport = Invoke-Work "library_import" @{
+              kind="lisp"; library_id="ci-user-lib"; name="CI User Library"; source_path=$external;
+              target_path="appdata/libraries/lisp/ci-user-lib";
+              user_approved_source=$true; replace_existing=$true
+            }
+            if ($blockedRelativeImport.result.isError -ne $true -or $blockedRelativeImport.result.structuredContent.data.error -notmatch "ABSOLUTE_PATH_REQUIRED") {
+              throw "library_import accepted a relative managed target"
+            }
+
+            $managedLibraryTarget = Join-Path (Resolve-Path "appdata/libraries/lisp").Path "ci-user-lib"
             $imported = Invoke-Work "library_import" @{
               kind="lisp"; library_id="ci-user-lib"; name="CI User Library"; source_path=$external;
+              target_path=$managedLibraryTarget;
               user_approved_source=$true; replace_existing=$true
             }
             if ($imported.result.isError -eq $true -or $imported.result.structuredContent.ok -ne $true) { throw "library_import failed" }
