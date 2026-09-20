@@ -11,6 +11,7 @@ import {
   activeExecutionForSession,
   releaseSessionWork,
   runWithToolLease,
+  setWorkExpirationHandler,
   type ExecutionPath,
 } from "./lib/work-registration.js";
 import { revokeSessionAdmissions } from "./lib/admission.js";
@@ -22,9 +23,12 @@ import {
 import { markFamilyLoaded } from "./lib/runtime-state.js";
 import { registerAdmissionTool } from "./tools/admission.js";
 import { registerWorkControlTools } from "./tools/work-control.js";
+import { cleanupExecutionState } from "./runtime/execution-cleanup.js";
 
 const loadedByServer = new WeakMap<McpServer, Set<string>>();
 const sessionKeyByServer = new WeakMap<McpServer, string>();
+
+setWorkExpirationHandler(cleanupExecutionState);
 
 function serverFamilies(server: McpServer): Set<string> {
   let loaded = loadedByServer.get(server);
@@ -236,18 +240,7 @@ export async function disposeMcpServerRuntime(server: McpServer): Promise<void> 
   if (!sessionKey) return;
 
   const executionId = activeExecutionForSession(sessionKey);
-  if (executionId) {
-    try {
-      const [{ clearExecutionDrawingContexts }, { releaseObservationForExecution }] = await Promise.all([
-        import("./session/drawing-binding.js"),
-        import("./observator/engine.js"),
-      ]);
-      await releaseObservationForExecution(executionId);
-      clearExecutionDrawingContexts(executionId);
-    } catch {
-      // CAD/Observator family may never have loaded.
-    }
-  }
+  if (executionId) await cleanupExecutionState(executionId);
 
   releaseSessionWork(sessionKey);
   revokeSessionAdmissions(sessionKey);
