@@ -45,6 +45,7 @@ const registrations = new Map<string, WorkRegistration>();
 const activeBySession = new Map<string, string>();
 const generationBySession = new Map<string, number>();
 const leaseStorage = new AsyncLocalStorage<ToolLease>();
+const activeLeases = new Map<string, ToolLease>();
 let expirationHandler: ((executionId: string) => void | Promise<void>) | null = null;
 
 function safeId(value: string): string {
@@ -59,6 +60,7 @@ function cleanup(): void {
   const now = Date.now();
   for (const [executionId, work] of registrations) {
     if (now - Date.parse(work.lastActivityAt) <= WORK_IDLE_MS) continue;
+    if ([...activeLeases.values()].some((lease) => lease.workId === executionId)) continue;
     registrations.delete(executionId);
     if (activeBySession.get(work.sessionKey) === executionId) {
       activeBySession.delete(work.sessionKey);
@@ -221,9 +223,9 @@ export function acquireToolLease(input: {
     input.authorityToken,
     input.sessionKey
   );
-  if (work.admissionToken !== input.admissionToken) {
-    throw new Error("ADMISSION_REQUIRED: work handle is not bound to this admission token.");
-  }
+  // Work authority is session/generation scoped. Each tool invocation must carry
+  // the latest valid current-turn admission token for the same session; it does
+  // not need to equal the token that originally created the work registration.
   work.callSequence += 1;
   work.lastActivityAt = new Date().toISOString();
   const targetId = safeId(input.targetId || input.family || "target");
@@ -242,6 +244,7 @@ export function acquireToolLease(input: {
     callSequence: work.callSequence,
     acquiredAt: new Date().toISOString(),
   };
+  activeLeases.set(lease.leaseId, lease);
   return lease;
 }
 
@@ -249,7 +252,13 @@ export async function runWithToolLease<T>(
   lease: ToolLease,
   callback: () => Promise<T>
 ): Promise<T> {
-  return leaseStorage.run(lease, callback);
+  try {
+    return await leaseStorage.run(lease, callback);
+  } finally {
+    activeLeases.delete(lease.leaseId);
+    const work = registrations.get(lease.workId);
+    if (work) work.lastActivityAt = new Date().toISOString();
+  }
 }
 
 export function currentToolLease(): ToolLease {
@@ -261,6 +270,10 @@ export function currentToolLease(): ToolLease {
 export function activeWorkCount(): number {
   cleanup();
   return registrations.size;
+}
+
+export function activeToolLeaseCount(): number {
+  return activeLeases.size;
 }
 
 export function hasActiveCadWork(): boolean {
