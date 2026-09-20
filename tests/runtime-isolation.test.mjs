@@ -286,3 +286,50 @@ test("CAD candidate reservation is exclusive to its execution without starting C
   releaseWorkRegistration(workA.executionId, workA.authorityToken, "candidate-a");
   releaseWorkRegistration(workB.executionId, workB.authorityToken, "candidate-b");
 });
+
+
+test("cad-mcp-dev source tree admits only one active dev execution", async () => {
+  const previous = process.env.CADGPT_BUILD_PROFILE;
+  process.env.CADGPT_BUILD_PROFILE = "development";
+  try {
+    const { checkAdmission } = await import("../dist/cadgpt/lib/admission.js");
+    const {
+      createWorkRegistration,
+      releaseWorkRegistration,
+    } = await import("../dist/cadgpt/lib/work-registration.js");
+
+    const a = checkAdmission("dev-owner-a", "@cadgpt improve CAD MCP");
+    const b = checkAdmission("dev-owner-b", "@cadgpt improve CAD MCP");
+    assert.ok(a.admission_token);
+    assert.ok(b.admission_token);
+
+    const workA = createWorkRegistration({
+      sessionKey: "dev-owner-a",
+      admissionToken: a.admission_token,
+      ownerType: "skill",
+      ownerId: "cad-mcp-dev",
+      executionPath: "file",
+    });
+
+    assert.throws(
+      () =>
+        createWorkRegistration({
+          sessionKey: "dev-owner-b",
+          admissionToken: b.admission_token,
+          ownerType: "skill",
+          ownerId: "cad-mcp-dev",
+          executionPath: "file",
+        }),
+      /CAD_MCP_DEV_BUSY/
+    );
+
+    releaseWorkRegistration(
+      workA.executionId,
+      workA.authorityToken,
+      "dev-owner-a"
+    );
+  } finally {
+    if (previous === undefined) delete process.env.CADGPT_BUILD_PROFILE;
+    else process.env.CADGPT_BUILD_PROFILE = previous;
+  }
+});
