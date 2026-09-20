@@ -8,7 +8,6 @@ import {
 import { validateAdmissionToken } from "./lib/admission.js";
 import {
   acquireToolLease,
-  activeExecutionForSession,
   releaseSessionWork,
   runWithToolLease,
   setWorkExpirationHandler,
@@ -248,9 +247,10 @@ export async function disposeMcpServerRuntime(server: McpServer): Promise<void> 
   const sessionKey = sessionKeyByServer.get(server);
   if (!sessionKey) return;
 
-  const executionId = activeExecutionForSession(sessionKey);
-  releaseSessionWork(sessionKey);
-  if (executionId) await cleanupExecutionState(executionId);
+  const executionIdReadyForCleanup = releaseSessionWork(sessionKey);
+  if (executionIdReadyForCleanup) {
+    await cleanupExecutionState(executionIdReadyForCleanup);
+  }
 
   revokeSessionAdmissions(sessionKey);
   loadedByServer.delete(server);
