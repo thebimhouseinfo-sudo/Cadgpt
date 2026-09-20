@@ -368,10 +368,24 @@ export function registerLispWorkspaceTools(server: McpServer): void {
           await atomicWrite(registryPath, `${JSON.stringify({ version: registry.version, entries: nextEntries }, null, 2)}\n`);
         } catch (registryError) {
           try {
-            if (targetExists && previousPermanent !== null) await atomicWrite(permanent, previousPermanent);
-            else await fs.rm(permanent, { force: true });
+            const currentPermanent = await fs.readFile(permanent, "utf8").catch((error) => {
+              if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+              throw error;
+            });
+            if (currentPermanent !== source) {
+              throw new Error(
+                "RESOURCE_CONFLICT: managed Lisp source changed outside this promotion; refusing rollback overwrite"
+              );
+            }
+            if (targetExists && previousPermanent !== null) {
+              await atomicWrite(permanent, previousPermanent);
+            } else {
+              await fs.rm(permanent, { force: true });
+            }
           } catch (rollbackError) {
-            throw new Error(`Registry update failed and managed-source rollback failed. Registry: ${String(registryError)}; rollback: ${String(rollbackError)}`);
+            throw new Error(
+              `Registry update failed and rollback could not safely restore managed Lisp source. Registry: ${String(registryError)}; rollback: ${String(rollbackError)}`
+            );
           }
           throw registryError;
         }
