@@ -166,6 +166,29 @@ async function runPython(args: string[], cwd = runtimeRoot()) {
   };
 }
 
+async function validateLockedRequirements(): Promise<{
+  path: string;
+  packages: number;
+}> {
+  const requirements = path.join(runtimeRoot(), "requirements.lock.txt");
+  const text = await fs.readFile(requirements, "utf8");
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+
+  const safePin = /^[A-Za-z0-9_.-]+==[A-Za-z0-9_.+!-]+$/;
+  for (const line of lines) {
+    if (!safePin.test(line)) {
+      throw new Error(
+        `UNSAFE_DEPENDENCY_LOCK: only exact package==version pins are allowed in requirements.lock.txt; rejected '${line}'`
+      );
+    }
+  }
+
+  return { path: requirements, packages: lines.length };
+}
+
 async function runtimeFingerprint(): Promise<string> {
   const files: string[] = [];
   await walk(runtimeRoot(), runtimeRoot(), files, MAX_SNAPSHOT_FILES + 1);
@@ -636,6 +659,9 @@ export function registerCadMcpDevTools(server: McpServer): void {
           validatedFingerprints.delete(lease.workId);
         }
         const results: Record<string, unknown> = {};
+        if (action === "all") {
+          results.dependency_lock = await validateLockedRequirements();
+        }
         if (action === "compile" || action === "all") {
           results.compile = await runPython(["-m", "compileall", "-q", runtimeRoot()]);
         }
@@ -868,11 +894,12 @@ export function registerCadMcpDevTools(server: McpServer): void {
         const workId = await prepareDevMutation();
         const lease = currentToolLease();
         if (lease.workId !== workId) throw new Error("CAD_MCP_DEV_WORK_CHANGED");
-        const requirements = path.join(runtimeRoot(), "requirements.lock.txt");
-        const result = await runPython(["-m", "pip", "install", "-r", requirements], getRepoRoot());
+        const lock = await validateLockedRequirements();
+        const result = await runPython(["-m", "pip", "install", "-r", lock.path], getRepoRoot());
         return toolResult("cad_mcp_dev_sync_env", {
           synced: true,
-          requirements,
+          requirements: lock.path,
+          packages: lock.packages,
           ...result,
         });
       } catch (error) {
