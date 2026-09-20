@@ -10,7 +10,7 @@ This Skill is never part of the production packaged capability surface.
 
 ## Hard boundary
 
-The only writable source tree is the absolute local path resolving to:
+The only writable **source** tree is the absolute local path resolving to:
 
 ```text
 <repo>\runtimes\cad-mcp\**
@@ -20,20 +20,50 @@ Every create/edit/delete/move operation must use an absolute filesystem path. Re
 
 Supporting CadGPT source/contracts may be read when needed, but they are read-only. If a correct change requires editing CadGPT core, stop with `OUT_OF_SCOPE_CORE_CHANGE`.
 
-## Workflow
+CadGPT system runtime may persist rollback metadata under:
 
-1. Reproduce and understand the CAD MCP gap.
-2. Read/search runtime source and relevant read-only contracts.
-3. Explain the implementation plan and receive user confirmation.
-4. Start `skill:cad-mcp-dev` work with FILE or HYBRID execution path.
-5. Create an in-memory source snapshot.
-6. Edit only absolute paths under the runtime root.
-7. Run compile/import validation.
-8. Regenerate the CAD MCP manifest when tool schemas change.
-9. Validate the effective tool surface.
-10. When live CAD validation is necessary, use the normal CAD path and an explicitly approved test drawing.
-11. Roll back to the snapshot if the candidate fails.
-12. Stop when the local runtime source is validated and accepted.
+```text
+<appdata>\state\cad-mcp-dev-recovery\**
+```
+
+That directory is **not** a coding-agent write scope. It exists only for crash-safe baseline recovery.
+
+## Execution ownership
+
+Only one active `cad-mcp-dev` source execution may exist at a time.
+
+Within that execution, only one `cad-mcp-dev` ToolLease may be active at a time. Do not parallelize source mutations, validation, candidate lifecycle or dependency sync.
+
+Use:
+
+- `execution_path=file` for source-only work;
+- `execution_path=hybrid` when live AutoCAD validation will be required;
+- never `execution_path=cad` for this Skill.
+
+## Required workflow
+
+1. Start from an explicit current-turn `@cadgpt` admission.
+2. Start `skill:cad-mcp-dev` work with FILE or HYBRID execution path.
+3. Call `cad_mcp_dev_recovery_status`.
+4. If a pending recovery baseline exists from an older execution, do **not** edit source. Recover it first with `cad_mcp_dev_recover`.
+5. Reproduce and understand the CAD MCP gap.
+6. Read/search runtime source and relevant read-only contracts.
+7. Explain the implementation plan and receive user confirmation.
+8. Create exactly one `cad_mcp_dev_snapshot` baseline before the first source/environment mutation.
+9. Edit only absolute paths under the runtime root.
+10. Run `cad_mcp_dev_validate(action=all)` after the final source edit.
+11. Regenerate the CAD MCP manifest through validation whenever tool schemas change.
+12. Validate the effective public CadGPT tool surface, not only the raw upstream manifest.
+13. If live CAD validation is unnecessary, finish with `cad_mcp_dev_accept_local`.
+14. If live CAD validation is required:
+    - start a candidate with `cad_mcp_dev_candidate_start`;
+    - use only normal CadGPT CAD tools on an explicitly approved drawing;
+    - require at least one successful live CAD tool as candidate evidence;
+    - finish with `cad_mcp_dev_candidate_accept`.
+15. If the candidate fails, use `cad_mcp_dev_rollback`.
+16. Do not stop/replace the work while an active ToolLease is still running.
+
+If CadGPT/Windows exits before acceptance, the persistent baseline remains. The next development execution must recover it before any new CAD MCP mutation.
 
 ## Tool registry
 
@@ -43,12 +73,30 @@ CAD MCP tool source is authoritative. Adding/removing/changing a tool must regen
 runtimes/cad-mcp/tool-manifest.json
 ```
 
-through the named manifest validation action. Do not edit CadGPT core registry code or User Registry.
+through the named manifest validation action.
+
+`tool-manifest.json` is a generated artifact and must not be hand-edited through generic dev mutation tools.
+
+Outer CadGPT may deliberately wrap/hide raw upstream primitives when execution ownership is required. Examples include drawing activation, Observation capture, destructive preview tokens, and verified Lisp command execution. The effective Internal Registry must describe the **public CadGPT surface**, not expose those raw primitives.
+
+Do not edit CadGPT core registry code or User Registry from this Skill.
+
+## Dependency changes
+
+`cad_mcp_dev_sync_env` is a named privileged action only.
+
+- no arbitrary shell command is accepted;
+- `requirements.lock.txt` accepts exact `package==version` pins only;
+- run only after the crash-safe baseline exists;
+- dependency/environment changes require explicit confirmation.
 
 ## Prohibited
 
 - no unrestricted cmd/PowerShell/bash;
 - no Git branch/add/commit/push/PR;
-- no writes under `src/**`, `skills/**`, `knowledge/**`, `scripts/**`, `appdata/**`, repo-root config, or `.git/**`;
+- no generic writes under `src/**`, `skills/**`, `knowledge/**`, `scripts/**`, `appdata/**`, repo-root config, or `.git/**`;
+- no direct edit of generated `tool-manifest.json`;
+- no mutation before a crash-safe baseline exists;
+- no new mutation while foreign recovery is pending;
 - no silent self-modification triggered by a CAD failure;
 - no production availability.
