@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -8,6 +8,10 @@ import { getAllowedRoots, getWritableRoots, resolveAbsoluteMutationPath, resolve
 import { toolError, toolResult } from "../lib/tool-result.js";
 
 const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv"]);
+
+function sha256(content: string | Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
+}
 
 function assertTextExtension(target: string): void {
   const ext = path.extname(target).toLowerCase();
@@ -124,6 +128,7 @@ export function registerFilesystemTools(server: McpServer): void {
           end_line: start + selected.length,
           total_lines: lines.length,
           content: selected.join("\n"),
+          sha256: sha256(content),
         });
       } catch (error) {
         return toolError("file_read", error);
@@ -215,16 +220,21 @@ export function registerFilesystemTools(server: McpServer): void {
       description: "Apply an exact text replacement inside generic writable AppData roots (workspace/data). path MUST be an absolute filesystem path. Permanent managed libraries must use controlled promotion/import tools.",
       inputSchema: {
         path: z.string(),
+        expected_sha256: z.string().length(64).describe("sha256 returned by file_read; prevents silent overwrite if another execution changed the file"),
         old_text: z.string(),
         new_text: z.string(),
         replace_all: z.boolean().optional().default(false),
       },
     },
-    async ({ path: input, old_text, new_text, replace_all }) => {
+    async ({ path: input, expected_sha256, old_text, new_text, replace_all }) => {
       try {
         const target = await resolveAbsoluteMutationPath(input, { allowedRoots: getWritableRoots(), label: "generic writable AppData" });
         assertTextExtension(target);
         const original = await fs.readFile(target, "utf8");
+        const currentHash = sha256(original);
+        if (currentHash !== expected_sha256) {
+          throw new Error(`RESOURCE_CONFLICT: expected sha256 ${expected_sha256}, current ${currentHash}`);
+        }
         if (!original.includes(old_text)) throw new Error("old_text not found; read the file and use an exact match");
         const updated = replace_all ? original.split(old_text).join(new_text) : original.replace(old_text, new_text);
         await atomicWrite(target, updated);
@@ -233,6 +243,8 @@ export function registerFilesystemTools(server: McpServer): void {
           path: toCadgptPath(target),
           absolute_path: target,
           changed: true,
+          sha256_before: currentHash,
+          sha256_after: sha256(updated),
           bytes_before: Buffer.byteLength(original),
           bytes_after: Buffer.byteLength(updated),
         });
