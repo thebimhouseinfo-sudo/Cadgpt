@@ -250,7 +250,10 @@ if ($Init) {
     exit 0
 }
 
-$null = Ensure-McpToken
+$existingToken = Get-DotEnvValue "MCP_TOKEN"
+if (-not $existingToken) {
+    throw "MCP_TOKEN is missing. Run: powershell -File openai-tunnel.ps1 -Init"
+}
 $tunnelId = Get-DotEnvValue "OPENAI_TUNNEL_ID"
 $apiKey = Get-DotEnvValue "OPENAI_TUNNEL_API_KEY"
 
