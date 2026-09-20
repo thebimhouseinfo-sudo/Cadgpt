@@ -70,6 +70,54 @@ function sourceLockPath(): string {
   return path.join(recoveryRoot(), "source-owner.lock");
 }
 
+async function readPersistentSourceLock(): Promise<{
+  present: boolean;
+  execution_id: string | null;
+  acquired_at: string | null;
+  corrupt: boolean;
+}> {
+  try {
+    const raw = await fs.readFile(sourceLockPath(), "utf8");
+    try {
+      const parsed = JSON.parse(raw) as {
+        execution_id?: unknown;
+        acquired_at?: unknown;
+      };
+      const executionId =
+        typeof parsed.execution_id === "string" && parsed.execution_id
+          ? parsed.execution_id
+          : null;
+      const acquiredAt =
+        typeof parsed.acquired_at === "string" && parsed.acquired_at
+          ? parsed.acquired_at
+          : null;
+      return {
+        present: true,
+        execution_id: executionId,
+        acquired_at: acquiredAt,
+        corrupt: !executionId,
+      };
+    } catch {
+      return {
+        present: true,
+        execution_id: null,
+        acquired_at: null,
+        corrupt: true,
+      };
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {
+        present: false,
+        execution_id: null,
+        acquired_at: null,
+        corrupt: false,
+      };
+    }
+    throw error;
+  }
+}
+
 async function acquirePersistentSourceLock(executionId: string): Promise<void> {
   await fs.mkdir(recoveryRoot(), { recursive: true });
   const payload = `${JSON.stringify({
@@ -129,10 +177,10 @@ async function listRecoveryMetadata(): Promise<CadMcpDevRecoveryMetadata[]> {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     if (entry.name.startsWith(".") && entry.name.endsWith(".tmp")) {
-      await fs.rm(path.join(recoveryRoot(), entry.name), {
-        recursive: true,
-        force: true,
-      }).catch(() => undefined);
+      // Another CadGPT process may still be atomically constructing this
+      // recovery baseline. Never delete a temp directory merely because it is
+      // visible during discovery; incomplete temp state is ignored and the
+      // exclusive source-owner lock decides mutation ownership.
       continue;
     }
     try {
@@ -940,16 +988,24 @@ export function registerCadMcpDevTools(server: McpServer): void {
       try {
         await assertDevMode({ allowRecovery: true });
         const pending = await listRecoveryMetadata();
+        const sourceLock = await readPersistentSourceLock();
         const currentSourceFingerprint = await runtimeFingerprint();
+        const workId = currentToolLease().workId;
         return toolResult("cad_mcp_dev_recovery_status", {
-          blocked: pending.some(
-            (item) => item.execution_id !== currentToolLease().workId
-          ),
+          blocked:
+            sourceLock.corrupt ||
+            Boolean(
+              sourceLock.present &&
+                sourceLock.execution_id &&
+                sourceLock.execution_id !== workId
+            ) ||
+            pending.some((item) => item.execution_id !== workId),
           pending,
           count: pending.length,
+          source_lock: sourceLock,
           current_source_fingerprint: currentSourceFingerprint,
           note:
-            "Pass this exact current_source_fingerprint back to cad_mcp_dev_recover. Recovery refuses to overwrite source that changed after status was reviewed.",
+            "Pass this exact current_source_fingerprint back to cad_mcp_dev_recover. Recovery refuses to overwrite source that changed after status was reviewed. A corrupt source lock is fail-closed and requires maintainer inspection.",
         });
       } catch (error) {
         return toolError("cad_mcp_dev_recovery_status", error);
