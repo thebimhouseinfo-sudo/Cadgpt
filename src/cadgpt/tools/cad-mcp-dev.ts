@@ -373,9 +373,6 @@ export function registerCadMcpDevTools(server: McpServer): void {
           label: "CAD MCP developer",
         });
         assertNotGeneratedManifest(target);
-        assertNotGeneratedManifest(target);
-        assertNotGeneratedManifest(target);
-        assertNotGeneratedManifest(target);
         try {
           await fs.lstat(target);
           throw new Error(`Target already exists: ${target}`);
@@ -415,9 +412,6 @@ export function registerCadMcpDevTools(server: McpServer): void {
           allowedRoots: [runtimeRoot()],
           label: "CAD MCP developer",
         });
-        assertNotGeneratedManifest(target);
-        assertNotGeneratedManifest(target);
-        assertNotGeneratedManifest(target);
         assertNotGeneratedManifest(target);
         const original = await fs.readFile(target, "utf8");
         const currentHash = sha256(original);
@@ -463,6 +457,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
           allowedRoots: [runtimeRoot()],
           label: "CAD MCP developer",
         });
+        assertNotGeneratedManifest(target);
         const stat = await fs.stat(target);
         if (!stat.isFile()) throw new Error("Delete target must be a file");
         const data = await fs.readFile(target);
