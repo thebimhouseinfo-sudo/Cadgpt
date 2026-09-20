@@ -274,6 +274,20 @@ export function acquireToolLease(input: {
     input.authorityToken,
     input.sessionKey
   );
+
+  if (
+    input.family === "cad-mcp-dev" &&
+    [...activeLeases.values()].some(
+      (lease) =>
+        lease.workId === work.executionId &&
+        lease.family === "cad-mcp-dev"
+    )
+  ) {
+    throw new Error(
+      "CAD_MCP_DEV_BUSY: another cad-mcp-dev tool call is still active for this source execution."
+    );
+  }
+
   // Work authority is session/generation scoped. Each tool invocation must carry
   // the latest valid current-turn admission token for the same session; it does
   // not need to equal the token that originally created the work registration.
