@@ -11,6 +11,14 @@ import {
   type ObservationLogRecord,
 } from "./log-store.js";
 
+function isToolErrorResult(value: unknown): boolean {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as { isError?: boolean }).isError === true
+  );
+}
+
 interface CaptureOwner {
   workId: string;
   drawingId: string;
@@ -69,6 +77,9 @@ export async function startObservationCapture(
 
     await activateDrawingContext(binding);
     const result = await cadUpstream.callTool("cad_observation_capture_start", {});
+    if (isToolErrorResult(result)) {
+      return result;
+    }
     recordCadCandidateSuccess(lease.workId, "observator_capture_start");
     captureOwners.set(binding.host, {
       workId: lease.workId,
@@ -122,7 +133,9 @@ export async function finishObservationCapture(
       const result = await cadUpstream.callTool("cad_observation_capture_finish", {
         include_paper_space: includePaperSpace,
       });
-      recordCadCandidateSuccess(currentToolLease().workId, "observator_capture_finish");
+      if (!isToolErrorResult(result)) {
+        recordCadCandidateSuccess(currentToolLease().workId, "observator_capture_finish");
+      }
       return result;
     } finally {
       captureOwners.delete(owner.host);
@@ -137,7 +150,9 @@ export async function cancelObservationCapture(): Promise<unknown> {
   return withCadHostLock(owner.host, async () => {
     try {
       const result = await cadUpstream.callTool("cad_observation_capture_cancel", {});
-      recordCadCandidateSuccess(currentToolLease().workId, "observator_capture_cancel");
+      if (!isToolErrorResult(result)) {
+        recordCadCandidateSuccess(currentToolLease().workId, "observator_capture_cancel");
+      }
       return result;
     } finally {
       captureOwners.delete(owner.host);
@@ -161,7 +176,9 @@ export async function readEntityProperties(
       handles,
       include_paper_space: includePaperSpace,
     });
-    recordCadCandidateSuccess(currentToolLease().workId, "observator_read_entities");
+    if (!isToolErrorResult(result)) {
+      recordCadCandidateSuccess(currentToolLease().workId, "observator_read_entities");
+    }
     return result;
   });
 }
