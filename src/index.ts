@@ -218,6 +218,10 @@ async function shutdown(signal: string): Promise<void> {
   sessions.stopCleanup();
   clearInterval(workSweepTimer);
 
+  await sessions.closeAll(signal).catch((error) => {
+    console.error("[CadGPT] Session cleanup failed during shutdown", error);
+  });
+
   if (runtimeStateSnapshot().loaded_families.includes("cad")) {
     try {
       const { cadUpstream } = await import("./cadgpt/runtime/cad-upstream.js");
