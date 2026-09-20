@@ -37,9 +37,6 @@ export function registerWorkControlTools(
       try {
         validateAdmissionToken(admission_token, options.sessionKey);
         const previousExecution = activeExecutionForSession(options.sessionKey);
-        if (previousExecution) {
-          await cleanupExecutionState(previousExecution);
-        }
 
         const work = createWorkRegistration({
           sessionKey: options.sessionKey,
@@ -48,6 +45,10 @@ export function registerWorkControlTools(
           ownerId: owner_id,
           executionPath: execution_path as ExecutionPath,
         });
+
+        if (previousExecution) {
+          await cleanupExecutionState(previousExecution);
+        }
         try {
           await options.prepareFamilies(work.executionPath, work.ownerId);
         } catch (error) {
