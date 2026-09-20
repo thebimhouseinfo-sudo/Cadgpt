@@ -13,27 +13,43 @@ def iter_documents():
 
 
 def runtime_document_id(doc) -> str:
-    """Return an identity that is stable for this open document lifetime.
+    """Return an identity scoped to this open AutoCAD document lifetime.
 
-    AutoCAD's MDI document HWND is preferred because closing/reopening the same
-    file creates a different document window. A COM identity fallback is kept
-    for hosts where HWND is unavailable.
+    Prefer a composite of the MDI window handle and COM identity. HWND values
+    can be reused by Windows after a tab/document closes, while a COM identity
+    can also be represented by a fresh Python wrapper. Combining both gives the
+    outer CadGPT binding a stronger lifetime check than file name/path or either
+    component alone.
     """
+    hwnd = None
+    com_identity = None
+
     try:
-        hwnd = int(getattr(doc, "HWND"))
-        if hwnd:
-            return f"hwnd:{hwnd}"
+        value = int(getattr(doc, "HWND"))
+        if value:
+            hwnd = value
     except Exception:
         pass
 
     ole = getattr(doc, "_oleobj_", None)
     if ole is not None:
         try:
-            return f"com:{int(ole)}"
+            com_identity = str(int(ole))
         except Exception:
-            return f"comrepr:{repr(ole)}"
+            try:
+                com_identity = repr(ole)
+            except Exception:
+                com_identity = None
 
-    # Last-resort process-local identity. This is intentionally not persisted.
+    if hwnd is not None and com_identity:
+        return f"hwnd:{hwnd}:com:{com_identity}"
+    if com_identity:
+        return f"com:{com_identity}"
+    if hwnd is not None:
+        return f"hwnd:{hwnd}"
+
+    # Last-resort process-local identity. This is intentionally not persisted
+    # across CAD MCP process restarts.
     return f"py:{id(doc)}"
 
 
