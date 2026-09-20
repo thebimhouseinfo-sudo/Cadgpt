@@ -88,7 +88,7 @@ The Skill may edit dependency declaration/lock files only when those files are t
 - `requirements.lock.txt` accepts exact `package==version` pins only;
 - dependency lock edits are source edits and therefore require the crash-safe baseline;
 - the Skill does **not** install dependencies and does not write `.venv-cad/**`;
-- if a dependency change requires environment installation/rebuild, stop the Skill workflow and hand that step to setup/maintainer authority outside `cad-mcp-dev`.
+- if a dependency change requires environment installation/rebuild, pause further source mutation while keeping the same crash-safe baseline/work execution alive, hand the environment step to setup/maintainer authority outside `cad-mcp-dev`, then resume validation before acceptance; stopping the work before acceptance intentionally rolls the source back.
 
 ## Prohibited
 
