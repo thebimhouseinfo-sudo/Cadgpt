@@ -489,3 +489,62 @@ test("active ToolLease blocks explicit work replace/stop until the call finishes
   );
   assert.equal(released.executionId, work.executionId);
 });
+
+
+test("cad-mcp-dev permits only one active tool lease per source execution", async () => {
+  const previous = process.env.CADGPT_BUILD_PROFILE;
+  process.env.CADGPT_BUILD_PROFILE = "development";
+  try {
+    const { checkAdmission } = await import("../dist/cadgpt/lib/admission.js");
+    const {
+      createWorkRegistration,
+      acquireToolLease,
+      runWithToolLease,
+      releaseWorkRegistration,
+    } = await import("../dist/cadgpt/lib/work-registration.js");
+
+    const sessionKey = "dev-lease-serialize";
+    const admission = checkAdmission(sessionKey, "@cadgpt improve CAD MCP");
+    assert.ok(admission.admission_token);
+
+    const work = createWorkRegistration({
+      sessionKey,
+      admissionToken: admission.admission_token,
+      ownerType: "skill",
+      ownerId: "cad-mcp-dev",
+      executionPath: "file",
+    });
+
+    const first = acquireToolLease({
+      tool: "cad_mcp_dev_read",
+      family: "cad-mcp-dev",
+      executionId: work.executionId,
+      authorityToken: work.authorityToken,
+      admissionToken: admission.admission_token,
+      sessionKey,
+    });
+
+    assert.throws(
+      () =>
+        acquireToolLease({
+          tool: "cad_mcp_dev_search",
+          family: "cad-mcp-dev",
+          executionId: work.executionId,
+          authorityToken: work.authorityToken,
+          admissionToken: admission.admission_token,
+          sessionKey,
+        }),
+      /CAD_MCP_DEV_BUSY/
+    );
+
+    await runWithToolLease(first, async () => undefined);
+    releaseWorkRegistration(
+      work.executionId,
+      work.authorityToken,
+      sessionKey
+    );
+  } finally {
+    if (previous === undefined) delete process.env.CADGPT_BUILD_PROFILE;
+    else process.env.CADGPT_BUILD_PROFILE = previous;
+  }
+});
