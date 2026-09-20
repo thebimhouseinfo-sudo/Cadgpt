@@ -128,12 +128,8 @@ async function resolveLispSourceForCommandDiscovery(
 async function discoverLispCommands(virtualPath: string): Promise<string[]> {
   const sourcePath = await resolveLispSourceForCommandDiscovery(virtualPath);
   const source = await fs.promises.readFile(sourcePath, "utf8");
-  const commands = new Set<string>();
-  const regex = /\(\s*defun\s+c:([A-Za-z0-9_+\-.$:]+)/gi;
-  for (const match of source.matchAll(regex)) {
-    if (match[1]) commands.add(match[1].toUpperCase());
-  }
-  return [...commands].sort();
+  const { validateLispSource } = await import("./lisp-harness.js");
+  return validateLispSource(source).commands;
 }
 
 function purgeExpiredDeletePreviewOwners(): void {
