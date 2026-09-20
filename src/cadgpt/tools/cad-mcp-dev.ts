@@ -831,6 +831,10 @@ export function registerCadMcpDevTools(server: McpServer): void {
         await removePersistedSnapshot(found.executionId);
         snapshots.delete(found.executionId);
         validatedFingerprints.delete(found.executionId);
+        const { forceClearCadDevSourceTransaction } = await import(
+          "../runtime/cad-dev-source-transaction.js"
+        );
+        forceClearCadDevSourceTransaction(found.executionId);
 
         const { hasCadProxySurface, syncCadBusinessProxies } = await import("./cad-proxy.js");
         const proxySurface = hasCadProxySurface(server)
@@ -869,8 +873,23 @@ export function registerCadMcpDevTools(server: McpServer): void {
             `CAD_MCP_DEV_SNAPSHOT_EXISTS: baseline ${existingSnapshot.id} already exists for this work execution; accept/rollback/stop before starting a new baseline.`
           );
         }
-        const files: string[] = [];
-        await walk(runtimeRoot(), runtimeRoot(), files, MAX_SNAPSHOT_FILES + 1);
+        if (hasOtherActiveCadWork(lease.workId)) {
+          throw new Error(
+            "CAD_MCP_DEV_SOURCE_BUSY: finish other CAD/hybrid work before starting a mutable CAD MCP source transaction."
+          );
+        }
+
+        const snapshotId = `snapshot_${randomUUID()}`;
+        const { beginCadDevSourceTransaction, forceClearCadDevSourceTransaction } =
+          await import("../runtime/cad-dev-source-transaction.js");
+        beginCadDevSourceTransaction({
+          ownerExecutionId: lease.workId,
+          snapshotId,
+        });
+
+        try {
+          const files: string[] = [];
+          await walk(runtimeRoot(), runtimeRoot(), files, MAX_SNAPSHOT_FILES + 1);
         if (files.length > MAX_SNAPSHOT_FILES) {
           throw new Error("Snapshot exceeds file-count safety limit");
         }
@@ -884,20 +903,25 @@ export function registerCadMcpDevTools(server: McpServer): void {
           }
           captured.set(path.relative(runtimeRoot(), file), data);
         }
-        const snapshot = {
-          id: `snapshot_${randomUUID()}`,
-          files: captured,
-          createdAt: new Date().toISOString(),
-        };
-        await persistSnapshot(lease.workId, snapshot);
-        snapshots.set(lease.workId, snapshot);
-        return toolResult("cad_mcp_dev_snapshot", {
-          snapshot_id: snapshot.id,
-          files: captured.size,
-          bytes,
-          created_at: snapshot.createdAt,
-          crash_safe: true,
-        });
+          const snapshot = {
+            id: snapshotId,
+            files: captured,
+            createdAt: new Date().toISOString(),
+          };
+          await persistSnapshot(lease.workId, snapshot);
+          snapshots.set(lease.workId, snapshot);
+          return toolResult("cad_mcp_dev_snapshot", {
+            snapshot_id: snapshot.id,
+            files: captured.size,
+            bytes,
+            created_at: snapshot.createdAt,
+            crash_safe: true,
+            cad_runtime_reserved: true,
+          });
+        } catch (error) {
+          forceClearCadDevSourceTransaction(lease.workId);
+          throw error;
+        }
       } catch (error) {
         return toolError("cad_mcp_dev_snapshot", error);
       }
@@ -931,6 +955,10 @@ export function registerCadMcpDevTools(server: McpServer): void {
         await restoreSnapshotFiles(snapshot);
         await removePersistedSnapshot(lease.workId);
         snapshots.delete(lease.workId);
+        const { endCadDevSourceTransaction } = await import(
+          "../runtime/cad-dev-source-transaction.js"
+        );
+        endCadDevSourceTransaction(lease.workId);
 
         const { hasCadProxySurface, syncCadBusinessProxies } = await import("./cad-proxy.js");
         const proxySurface = hasCadProxySurface(server)
@@ -1067,6 +1095,10 @@ export function registerCadMcpDevTools(server: McpServer): void {
         await removePersistedSnapshot(lease.workId);
         snapshots.delete(lease.workId);
         validatedFingerprints.delete(lease.workId);
+        const { endCadDevSourceTransaction } = await import(
+          "../runtime/cad-dev-source-transaction.js"
+        );
+        endCadDevSourceTransaction(lease.workId);
         return toolResult("cad_mcp_dev_accept_local", {
           accepted: true,
           source_fingerprint: currentFingerprint,
@@ -1206,6 +1238,10 @@ export function registerCadMcpDevTools(server: McpServer): void {
         }
         snapshots.delete(lease.workId);
         validatedFingerprints.delete(lease.workId);
+        const { endCadDevSourceTransaction } = await import(
+          "../runtime/cad-dev-source-transaction.js"
+        );
+        endCadDevSourceTransaction(lease.workId);
         return toolResult("cad_mcp_dev_candidate_accept", {
           accepted: true,
           candidate,
@@ -1261,5 +1297,9 @@ export async function rollbackUnacceptedCadMcpDevStateForExecution(
   await removePersistedSnapshot(executionId);
   snapshots.delete(executionId);
   validatedFingerprints.delete(executionId);
+  const { forceClearCadDevSourceTransaction } = await import(
+    "../runtime/cad-dev-source-transaction.js"
+  );
+  forceClearCadDevSourceTransaction(executionId);
   return { restored: true };
 }
