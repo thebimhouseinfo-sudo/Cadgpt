@@ -11,6 +11,8 @@ import { cadUpstream } from "../runtime/cad-upstream.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import { getRepoRoot } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { currentToolLease } from "../lib/work-registration.js";
+import { assertCadCandidateAccess } from "../runtime/cad-candidate.js";
 import {
   activateDrawingContext,
   bindDrawing,
@@ -154,6 +156,8 @@ function schemaToShape(
 }
 
 export async function ensureCadRuntimeActive(): Promise<void> {
+  const lease = currentToolLease();
+  assertCadCandidateAccess(lease.workId);
   const status = cadUpstream.status();
   if (status.enabled && status.connected) return;
   await activateCadRuntime();
