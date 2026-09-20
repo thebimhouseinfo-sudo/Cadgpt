@@ -323,7 +323,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async () => {
       try {
-        assertDevMode();
+        await assertDevMode();
         return toolResult("cad_mcp_dev_root", {
           absolute_root: runtimeRoot(),
           write_scope: "runtimes/cad-mcp/** only",
@@ -349,7 +349,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ path: input, recursive, max_entries }) => {
       try {
-        assertDevMode();
+        await assertDevMode();
         const target = await assertDevReadPath(input);
         const stat = await fs.stat(target);
         if (stat.isFile()) {
@@ -401,7 +401,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ path: input, max_bytes }) => {
       try {
-        assertDevMode();
+        await assertDevMode();
         const target = await assertDevReadPath(input);
         const stat = await fs.stat(target);
         if (!stat.isFile()) throw new Error("Read target must be a file");
@@ -433,7 +433,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ query, path: input, case_sensitive, max_results }) => {
       try {
-        assertDevMode();
+        await assertDevMode();
         const target = await assertDevReadPath(input);
         const stat = await fs.stat(target);
         const candidates: string[] = [];
@@ -696,7 +696,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ snapshot_id }) => {
       try {
-        assertDevMode();
+        await assertDevMode();
         const lease = currentToolLease();
         const snapshot = snapshots.get(lease.workId);
         if (!snapshot || snapshot.id !== snapshot_id) {
@@ -742,7 +742,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ action }) => {
       try {
-        assertDevMode();
+        await assertDevMode();
         const lease = currentToolLease();
         if (action === "manifest" || action === "all") {
           if (!snapshots.has(lease.workId)) {
@@ -816,7 +816,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ confirmed }) => {
       try {
-        assertDevMode();
+        await assertDevMode();
         if (!confirmed) throw new Error("Explicit confirmation is required");
         const lease = currentToolLease();
         const { candidateStatus } = await import("../runtime/cad-candidate.js");
@@ -871,7 +871,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async () => {
       try {
-        assertDevMode();
+        await assertDevMode();
         const lease = currentToolLease();
         const { candidateStatus } = await import("../runtime/cad-candidate.js");
         const state = candidateStatus();
@@ -899,7 +899,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ snapshot_id, confirmed }) => {
       try {
-        assertDevMode();
+        await assertDevMode();
         if (!confirmed) throw new Error("Explicit confirmation is required");
         const lease = currentToolLease();
         if (!executionSupportsCad(lease.workId)) {
@@ -958,7 +958,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ validated_tool, confirmed }) => {
       try {
-        assertDevMode();
+        await assertDevMode();
         if (!confirmed) throw new Error("Explicit confirmation is required");
         const lease = currentToolLease();
         const { candidateStatus, acceptCadCandidate } = await import("../runtime/cad-candidate.js");
