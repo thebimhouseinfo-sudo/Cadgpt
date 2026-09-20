@@ -125,7 +125,7 @@ $healthPortValue = Get-DotEnvValue "OPENAI_TUNNEL_HEALTH_PORT"
 $healthPort = if ($healthPortValue) { [int]$healthPortValue } else { 8080 }
 
 $mcpToken = Get-DotEnvValue "MCP_TOKEN"
-if ($mcpToken) { Ok "Private MCP path token configured" } else { Warn "MCP_TOKEN is empty; re-run openai-tunnel init." }
+if ($mcpToken) { Ok "Private MCP path token configured" } else { Fail "MCP_TOKEN is empty; CadGPT refuses to start an unprotected MCP route. Re-run openai-tunnel.ps1 -Init." }
 
 $tunnelId = Get-DotEnvValue "OPENAI_TUNNEL_ID"
 $tunnelKey = Get-DotEnvValue "OPENAI_TUNNEL_API_KEY"
@@ -196,7 +196,7 @@ $healthPortValue = Get-DotEnvValue "OPENAI_TUNNEL_HEALTH_PORT"
 $healthPort = if ($healthPortValue) { [int]$healthPortValue } else { 8080 }
 
 $mcpToken = Get-DotEnvValue "MCP_TOKEN"
-if ($mcpToken) { Ok "Private MCP path token configured" } else { Warn "MCP_TOKEN is empty; re-run openai-tunnel init." }
+if ($mcpToken) { Ok "Private MCP path token configured" } else { Fail "MCP_TOKEN is empty; CadGPT refuses to start an unprotected MCP route. Re-run openai-tunnel.ps1 -Init." }
 
 $tunnelId = Get-DotEnvValue "OPENAI_TUNNEL_ID"
 $tunnelKey = Get-DotEnvValue "OPENAI_TUNNEL_API_KEY"
