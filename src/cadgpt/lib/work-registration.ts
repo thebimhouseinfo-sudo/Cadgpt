@@ -45,6 +45,7 @@ const registrations = new Map<string, WorkRegistration>();
 const activeBySession = new Map<string, string>();
 const generationBySession = new Map<string, number>();
 const leaseStorage = new AsyncLocalStorage<ToolLease>();
+let expirationHandler: ((executionId: string) => void | Promise<void>) | null = null;
 
 function safeId(value: string): string {
   return value.trim().replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 80) || "work";
@@ -62,7 +63,16 @@ function cleanup(): void {
     if (activeBySession.get(work.sessionKey) === executionId) {
       activeBySession.delete(work.sessionKey);
     }
+    if (expirationHandler) {
+      void Promise.resolve(expirationHandler(executionId)).catch(() => undefined);
+    }
   }
+}
+
+export function setWorkExpirationHandler(
+  handler: ((executionId: string) => void | Promise<void>) | null
+): void {
+  expirationHandler = handler;
 }
 
 export function isDevelopmentBuild(): boolean {
@@ -156,6 +166,7 @@ export function releaseSessionWork(sessionKey: string): string | null {
   const executionId = activeBySession.get(sessionKey) ?? null;
   if (executionId) registrations.delete(executionId);
   activeBySession.delete(sessionKey);
+  generationBySession.delete(sessionKey);
   return executionId;
 }
 
@@ -219,7 +230,7 @@ export function acquireToolLease(input: {
   const lease: ToolLease = {
     leaseId:
       `tool:cadgpt:${safeId(input.family)}@${work.ownerId}@${targetId}` +
-      `:e${work.driverEpoch}:g${work.generation}:c${work.callSequence}`,
+      `:s${sessionTag(work.sessionKey)}:e${work.driverEpoch}:g${work.generation}:c${work.callSequence}`,
     family: input.family,
     tool: input.tool,
     targetId,
