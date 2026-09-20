@@ -140,8 +140,13 @@ echo [9/10] Installing and starting CadGPT tray runtime...
 call "%~dp0run.bat" install
 if errorlevel 1 goto :failed
 
-echo Waiting for slim MCP + Secure Tunnel...
-powershell -NoProfile -Command "$ok=$false; foreach($i in 1..150){ try{$h=Invoke-RestMethod 'http://127.0.0.1:3000/health' -TimeoutSec 1; $t=Invoke-WebRequest 'http://127.0.0.1:8080/readyz' -UseBasicParsing -TimeoutSec 1; if($h.status -eq 'ok' -and $h.name -eq 'cadgpt' -and $t.StatusCode -eq 200){$ok=$true;break}}catch{}; Start-Sleep -Milliseconds 500}; if(-not $ok){exit 1}"
+set "CADGPT_PORT=3000"
+for /f "tokens=2 delims==" %%A in ('findstr /B /C:"PORT=" ".env"') do set "CADGPT_PORT=%%A"
+set "CADGPT_TUNNEL_HEALTH_PORT=8080"
+for /f "tokens=2 delims==" %%A in ('findstr /B /C:"OPENAI_TUNNEL_HEALTH_PORT=" ".env"') do set "CADGPT_TUNNEL_HEALTH_PORT=%%A"
+
+echo Waiting for slim MCP + Secure Tunnel on ports %CADGPT_PORT% / %CADGPT_TUNNEL_HEALTH_PORT%...
+powershell -NoProfile -Command "$ok=$false; foreach($i in 1..150){ try{$h=Invoke-RestMethod 'http://127.0.0.1:%CADGPT_PORT%/health' -TimeoutSec 1; $t=Invoke-WebRequest 'http://127.0.0.1:%CADGPT_TUNNEL_HEALTH_PORT%/readyz' -UseBasicParsing -TimeoutSec 1; if($h.status -eq 'ok' -and $h.name -eq 'cadgpt' -and $t.StatusCode -eq 200){$ok=$true;break}}catch{}; Start-Sleep -Milliseconds 500}; if(-not $ok){exit 1}"
 if errorlevel 1 (
   echo [ERROR] Tray started but slim MCP or Secure Tunnel did not become ready.
   goto :failed
