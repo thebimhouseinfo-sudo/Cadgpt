@@ -192,8 +192,7 @@ export function registerJobDiscoveryTools(server: McpServer): void {
         const jobs = await loadJobs();
         const entry = jobs.find((job) => job.id.toLowerCase() === id.trim().toLowerCase());
         if (!entry) throw new Error(`Job not found in User Registry: ${id}`);
-        const target = resolveManagedJob(entry);
-        const real = await fs.realpath(target);
+        const real = await resolveAllowedPath(resolveManagedJob(entry));
         const content = await fs.readFile(real, "utf8");
         return toolResult("job_get", {
           id: entry.id,
@@ -228,7 +227,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
         const jobs = await loadJobs();
         const entry = jobs.find((job) => job.id.toLowerCase() === registry_id.trim().toLowerCase());
         if (!entry) throw new Error(`Managed Job not found in User Registry: ${registry_id}`);
-        const source = resolveManagedJob(entry);
+        const source = await resolveAllowedPath(resolveManagedJob(entry));
         const content = await fs.readFile(source, "utf8");
         const draft = await resolveAbsoluteMutationPath(draft_path, {
           allowedRoots: [getJobDraftRoot()],
