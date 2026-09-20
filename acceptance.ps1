@@ -57,7 +57,7 @@ $initBody = @{
 try {
     $initResp = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $headers -ContentType "application/json" -Body $initBody -TimeoutSec 10
 } catch { Fail "Could not initialize CadGPT MCP at $mcpUrl : $($_.Exception.Message)" }
-$sessionId = $initResp.Headers["Mcp-Session-Id"]
+$sessionId = @($initResp.Headers["Mcp-Session-Id"])[0]
 if (-not $sessionId) { Fail "MCP initialize returned no session id" }
 $mcpHeaders = @{ Accept="application/json, text/event-stream"; "Mcp-Session-Id"=$sessionId; "Mcp-Protocol-Version"="2025-06-18" }
 $null = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body (@{ jsonrpc="2.0"; method="notifications/initialized" } | ConvertTo-Json) -TimeoutSec 10
