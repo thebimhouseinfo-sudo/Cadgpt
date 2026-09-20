@@ -51,9 +51,17 @@ interface DeletePreviewOwner {
   drawingId: string;
   host: string;
   acquiredAt: string;
+  expiresAtMs: number;
 }
 
 const deletePreviewOwners = new Map<string, DeletePreviewOwner>();
+
+function purgeExpiredDeletePreviewOwners(): void {
+  const now = Date.now();
+  for (const [token, owner] of deletePreviewOwners) {
+    if (owner.expiresAtMs <= now) deletePreviewOwners.delete(token);
+  }
+}
 
 function extractUpstreamPayload(raw: unknown): unknown {
   if (!raw || typeof raw !== "object") return raw;
@@ -349,11 +357,21 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
                 "token"
               );
               if (typeof token === "string" && token.trim()) {
+                purgeExpiredDeletePreviewOwners();
+                const expiresRaw = findPayloadField(
+                  extractUpstreamPayload(result),
+                  "expires_in_seconds"
+                );
+                const expiresInSeconds =
+                  typeof expiresRaw === "number" && Number.isFinite(expiresRaw)
+                    ? Math.max(1, expiresRaw)
+                    : 300;
                 deletePreviewOwners.set(token, {
                   workId: currentToolLease().workId,
                   drawingId: binding.drawing_id,
                   host: binding.host,
                   acquiredAt: new Date().toISOString(),
+                  expiresAtMs: Date.now() + expiresInSeconds * 1000,
                 });
               }
               recordCadCandidateSuccess(
@@ -393,6 +411,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
       async ({ token, drawing_id }) => {
         try {
           await ensureCadRuntimeActive();
+          purgeExpiredDeletePreviewOwners();
           const owner = deletePreviewOwners.get(token);
           if (!owner || owner.workId !== currentToolLease().workId) {
             throw new Error(
