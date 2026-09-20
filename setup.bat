@@ -46,7 +46,7 @@ if errorlevel 1 (
 )
 
 if not exist "package-lock.json" (
-  echo [ERROR] package-lock.json is missing. Reproducible Node install cannot continue.
+  echo [ERROR] package-lock.json is missing.
   pause
   exit /b 1
 )
@@ -62,7 +62,7 @@ if not exist ".env" (
 )
 
 echo.
-echo [1/9] Initializing CadGPT Beta AppData...
+echo [1/10] Initializing CadGPT AppData...
 for %%D in (
   "appdata\libraries\lisp"
   "appdata\libraries\jobs"
@@ -71,6 +71,7 @@ for %%D in (
   "appdata\workspace\job-draft"
   "appdata\data\runs"
   "appdata\runtime\dynamic-lisp"
+  "appdata\drawings"
   "appdata\state"
   "appdata\logs"
 ) do (
@@ -82,12 +83,12 @@ for %%D in (
 )
 
 echo.
-echo [2/9] Installing locked CadGPT connector dependencies...
+echo [2/10] Installing locked Node dependencies...
 call npm ci
 if errorlevel 1 goto :failed
 
 echo.
-echo [3/9] Generating stable CAD tool manifest...
+echo [3/10] Generating CAD MCP tool manifest...
 python "%~dp0scripts\generate-cad-tool-manifest.py"
 if errorlevel 1 goto :failed
 if not exist "runtimes\cad-mcp\tool-manifest.json" (
@@ -96,17 +97,22 @@ if not exist "runtimes\cad-mcp\tool-manifest.json" (
 )
 
 echo.
-echo [4/9] Building CadGPT connector and wake-agent...
+echo [4/10] Building CadGPT...
 call npm run build
 if errorlevel 1 goto :failed
 
 echo.
-echo [5/9] Rebuilding isolated CAD MCP Python environment from lock...
+echo [5/10] Running static regression tests...
+call npm test
+if errorlevel 1 goto :failed
+
+echo.
+echo [6/10] Rebuilding isolated CAD MCP Python environment...
 call "%~dp0run.bat" stop >nul 2>nul
 if exist ".venv-cad" (
   rmdir /s /q ".venv-cad"
   if exist ".venv-cad" (
-    echo [ERROR] Could not remove existing .venv-cad. Stop running CadGPT/CAD MCP processes and retry setup.
+    echo [ERROR] Could not remove existing .venv-cad.
     goto :failed
   )
 )
@@ -120,22 +126,29 @@ if errorlevel 1 goto :failed
 if errorlevel 1 goto :failed
 
 echo.
-echo [6/9] Configuring OpenAI Secure MCP Tunnel...
+echo [7/10] Configuring OpenAI Secure MCP Tunnel...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0openai-tunnel.ps1" -Init
 if errorlevel 1 goto :failed
 
 echo.
-echo [7/9] Installing CadGPT background autostart agent...
+echo [8/10] Removing legacy Scheduled Task startup if present...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=Get-ScheduledTask -TaskName 'CadGPT Background Agent' -ErrorAction SilentlyContinue; if($t){ Stop-ScheduledTask -TaskName 'CadGPT Background Agent' -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName 'CadGPT Background Agent' -Confirm:$false; Write-Host '[OK] Removed legacy CadGPT Scheduled Task.' }"
+if errorlevel 1 goto :failed
+
+echo.
+echo [9/10] Installing and starting CadGPT tray runtime...
 call "%~dp0run.bat" install
 if errorlevel 1 goto :failed
 
-echo.
-echo [8/9] Verifying background listener status...
-call "%~dp0run.bat" status
-if errorlevel 1 goto :failed
+echo Waiting for slim MCP + Secure Tunnel...
+powershell -NoProfile -Command "$ok=$false; foreach($i in 1..150){ try{$h=Invoke-RestMethod 'http://127.0.0.1:3000/health' -TimeoutSec 1; $t=Invoke-WebRequest 'http://127.0.0.1:8080/readyz' -UseBasicParsing -TimeoutSec 1; if($h.status -eq 'ok' -and $h.name -eq 'cadgpt' -and $t.StatusCode -eq 200){$ok=$true;break}}catch{}; Start-Sleep -Milliseconds 500}; if(-not $ok){exit 1}"
+if errorlevel 1 (
+  echo [ERROR] Tray started but slim MCP or Secure Tunnel did not become ready.
+  goto :failed
+)
 
 echo.
-echo [9/9] Running installation doctor...
+echo [10/10] Running installation doctor...
 call "%~dp0doctor.bat"
 if errorlevel 1 goto :failed
 
@@ -143,15 +156,12 @@ echo.
 echo ========================================
 echo   Setup complete
 echo ========================================
-echo CadGPT is installed as a hidden per-user wake-agent.
-echo It starts automatically when you sign in to Windows.
-echo Full CadGPT wakes only after ChatGPT calls it.
-echo CAD MCP runs only while CadGPT is active and AutoCAD is running.
-echo Beta AppData is stored under repo\appdata and can move to per-user LocalAppData when packaged.
-echo User Lisp/Job source folders are imported read-only into managed AppData copies.
-echo No daily launcher is required.
+echo CadGPT now starts as a Windows tray app for this user.
+echo Idle runtime: tray + slim admission MCP + Secure Tunnel.
+echo Heavy FILE/CAD capabilities load only after valid @cadgpt admission and work registration.
+echo CAD MCP starts only on actual CAD demand; AutoCAD is never launched by CadGPT.
+echo cad-mcp-dev is development-only and is excluded from production packaging.
 echo.
-echo Enable ChatGPT Developer Mode and add/select the CadGPT tunnel connection once.
 echo Manual control: run.bat status ^| start ^| stop ^| restart ^| uninstall
 echo Diagnostics: doctor.bat
 echo.
