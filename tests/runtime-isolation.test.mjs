@@ -664,3 +664,23 @@ test("ToolLease family authority survives lazy tool registration across work rep
     cadSession
   );
 });
+
+
+test("admission does not mistake email/identifier text for @cadgpt invocation", async () => {
+  const { checkAdmission } = await import(
+    "../dist/cadgpt/lib/admission.js"
+  );
+
+  assert.equal(
+    checkAdmission("mention-boundary-email", "send this to foo@cadgpt.com").mode,
+    "inactive"
+  );
+  assert.equal(
+    checkAdmission("mention-boundary-identifier", "prefix_@cadgpt should not invoke").mode,
+    "inactive"
+  );
+  assert.equal(
+    checkAdmission("mention-boundary-valid", "please use @cadgpt for this").mode,
+    "active"
+  );
+});
