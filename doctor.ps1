@@ -84,6 +84,20 @@ foreach ($relative in @(
 }
 Ok "CadGPT AppData root: $appDataRoot"
 
+$recoveryRoot = Join-Path $appDataRoot "state\cad-mcp-dev-recovery"
+if (Test-Path $recoveryRoot) {
+    $pendingRecovery = @(Get-ChildItem -Path $recoveryRoot -Directory -ErrorAction SilentlyContinue | Where-Object {
+        -not ($_.Name.StartsWith(".") -and $_.Name.EndsWith(".tmp"))
+    })
+    if ($pendingRecovery.Count -gt 0) {
+        Warn "CAD MCP development has $($pendingRecovery.Count) pending crash-recovery baseline(s). Use cad_mcp_dev_recovery_status/recover before new CAD MCP mutation."
+    } else {
+        Ok "No pending CAD MCP development recovery baseline"
+    }
+} else {
+    Ok "No pending CAD MCP development recovery baseline"
+}
+
 $startup = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CadGPT" -ErrorAction SilentlyContinue
 if ($startup -and $startup.CadGPT -match "cadgpt-tray\.ps1") { Ok "HKCU Run startup points to CadGPT tray" }
 else { Warn "CadGPT tray is not registered in HKCU Run. Run run.bat install." }
