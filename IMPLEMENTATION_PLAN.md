@@ -1039,11 +1039,11 @@ without merging the two execution subsystems.
 
 The Skill may edit dependency declaration/lock files under `runtimes/cad-mcp/**`.
 
-It must not directly mutate `.venv-cad` through generic filesystem/shell authority.
+It must not mutate `.venv-cad` or any dependency environment, whether through generic filesystem, shell, or a special dev action.
 
-If dependency installation/rebuild is required, use a separate named privileged environment-sync action with explicit confirmation and deterministic input from the runtime lock file.
+If dependency installation/rebuild is required, `cad-mcp-dev` stops after updating and validating the runtime lock/source files. Environment installation is handed back to setup/maintainer authority outside the Skill.
 
-Environment mutation is operational state, not an excuse to widen the source-write root.
+This keeps the development mutation boundary literal: every `cad-mcp-dev` write remains inside `runtimes/cad-mcp/**`, except the Skill's own crash-recovery baseline under managed AppData state, which is runtime recovery metadata rather than CAD MCP source.
 
 ### 17.10 CAD MCP Internal Registry update exception
 
