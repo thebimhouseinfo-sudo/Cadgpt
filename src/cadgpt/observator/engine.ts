@@ -1,7 +1,10 @@
 import { cadUpstream } from "../runtime/cad-upstream.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import { currentToolLease } from "../lib/work-registration.js";
-import { assertCadCandidateAccess, recordCadCandidateSuccess } from "../runtime/cad-candidate.js";
+import {
+  assertCadRuntimeGenerationAccess,
+  recordCadCandidateSuccess,
+} from "../runtime/cad-candidate.js";
 import {
   activateDrawingContext,
   resolveDrawingContext,
@@ -47,7 +50,7 @@ const captureOwners = new Map<string, CaptureOwner>();
 
 async function ensureCadAvailable(): Promise<void> {
   const lease = currentToolLease();
-  assertCadCandidateAccess(lease.workId);
+  assertCadRuntimeGenerationAccess(lease.workId);
   const status = cadUpstream.status();
   if (status.enabled && status.connected) return;
   await cadUpstream.activate();
