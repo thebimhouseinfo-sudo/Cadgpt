@@ -165,7 +165,11 @@ async function loadFileFamily(server: McpServer): Promise<void> {
 
 async function loadCadFamily(server: McpServer): Promise<void> {
   const loaded = serverFamilies(server);
-  if (loaded.has("cad")) return;
+  if (loaded.has("cad")) {
+    const { syncCadBusinessProxies } = await import("./tools/cad-proxy.js");
+    syncCadBusinessProxies(server);
+    return;
+  }
 
   const [{ registerCadProxyTools }, { registerObservatorTools }] = await Promise.all([
     import("./tools/cad-proxy.js"),
