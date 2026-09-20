@@ -110,10 +110,12 @@ jobs:
 
             $afterAdmission = Invoke-Mcp "tools/list" @{}
             $afterAdmissionNames = @($afterAdmission.result.tools | ForEach-Object { $_.name })
-            foreach ($required in @("library_list","registry_list","job_list","skill_list")) {
+            foreach ($required in @("library_list","registry_list","job_list","job_get","skill_list","skill_get")) {
               if ($afterAdmissionNames -notcontains $required) { throw "Discovery family missing after admission: $required" }
             }
-            if ($afterAdmissionNames -contains "file_roots") { throw "FILE family loaded before work start" }
+            foreach ($forbidden in @("file_roots","file_create","file_edit","library_import","job_checkout","job_draft_validate","job_promote_draft","lisp_checkout","drawing_list")) {
+              if ($afterAdmissionNames -contains $forbidden) { throw "Execution/mutation tool leaked into admission-only discovery surface: $forbidden" }
+            }
 
             $work = Invoke-Tool "cadgpt_work_start" @{ admission_token=$admissionToken; owner_type="skill"; owner_id="write-lisp"; execution_path="file" }
             $handle = $work.result.structuredContent.data.work_handle
