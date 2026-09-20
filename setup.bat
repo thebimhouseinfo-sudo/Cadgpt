@@ -70,6 +70,14 @@ echo.
 echo Stopping any previously owned CadGPT tray/runtime before dependency/build changes...
 call "%~dp0run.bat" stop >nul 2>nul
 
+echo.
+echo Checking for pending CAD MCP development recovery...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$repo=[System.IO.Path]::GetFullPath('%~dp0'); $line=Get-Content '.env' -ErrorAction SilentlyContinue | Where-Object { $_ -match '^\s*CADGPT_APPDATA_ROOT\s*=' -and -not $_.TrimStart().StartsWith('#') } | Select-Object -First 1; $configured=if($line){(($line -split '=',2)[1].Trim()).Trim([char]39).Trim([char]34)}else{'appdata'}; $root=if([System.IO.Path]::IsPathRooted($configured)){[System.IO.Path]::GetFullPath($configured)}else{[System.IO.Path]::GetFullPath((Join-Path $repo $configured))}; $recovery=Join-Path $root 'state\cad-mcp-dev-recovery'; $pending=@(); if(Test-Path $recovery){$pending=@(Get-ChildItem $recovery -Directory -ErrorAction SilentlyContinue | Where-Object { -not ($_.Name.StartsWith('.') -and $_.Name.EndsWith('.tmp')) })}; if($pending.Count -gt 0){ Write-Host '[ERROR] Pending CAD MCP development recovery baseline found.' -ForegroundColor Red; Write-Host 'Run CadGPT development recovery before setup so setup cannot overwrite an unaccepted runtime.' -ForegroundColor Yellow; exit 42 }"
+if errorlevel 1 (
+  echo [ERROR] Setup stopped to preserve CAD MCP crash-recovery state.
+  pause
+  exit /b 1
+)
 
 echo.
 echo [1/10] Initializing CadGPT AppData...
