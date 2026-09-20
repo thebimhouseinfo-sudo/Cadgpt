@@ -197,7 +197,12 @@ jobs:
             }
             if ($tbhScaffold.result.structuredContent.data.content -notmatch "TBH-HEADER-START") { throw "TBH authoring exception missing" }
 
-            $checkout = Invoke-Work "lisp_checkout" @{ registry_id="ci-user-lib.lisp.userhello"; description="User hello edited by CadGPT" }
+            $checkoutDraft = Join-Path (Resolve-Path "appdata/workspace/lisp-draft").Path "ci-user-lib\UserHello.lsp"
+            $checkout = Invoke-Work "lisp_checkout" @{
+              registry_id="ci-user-lib.lisp.userhello";
+              draft_path=$checkoutDraft;
+              description="User hello edited by CadGPT"
+            }
             if ($checkout.result.isError -eq $true -or $checkout.result.structuredContent.ok -ne $true) { throw "lisp_checkout failed" }
             $draftPath = $checkout.result.structuredContent.data.draft_path
             $draft = Get-Content -LiteralPath $draftPath -Raw
