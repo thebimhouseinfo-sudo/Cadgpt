@@ -1,9 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { getAppDataRoot } from "./appdata.js";
 
-const REPO_ROOT = path.resolve(process.cwd());
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(MODULE_DIR, "..", "..", "..");
 const APPDATA_READABLE_ROOTS = ["data", "libraries", "workspace"];
 const APPDATA_WRITABLE_ROOTS = ["data", "workspace"];
 
