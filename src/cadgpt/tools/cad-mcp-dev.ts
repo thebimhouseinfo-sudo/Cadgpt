@@ -66,6 +66,56 @@ function recoveryMetadataPath(executionId: string): string {
   return path.join(recoveryDir(executionId), "metadata.json");
 }
 
+function sourceLockPath(): string {
+  return path.join(recoveryRoot(), "source-owner.lock");
+}
+
+async function acquirePersistentSourceLock(executionId: string): Promise<void> {
+  await fs.mkdir(recoveryRoot(), { recursive: true });
+  const payload = `${JSON.stringify({
+    execution_id: executionId,
+    acquired_at: new Date().toISOString(),
+  }, null, 2)}\n`;
+  try {
+    await fs.writeFile(sourceLockPath(), payload, {
+      encoding: "utf8",
+      flag: "wx",
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    let owner = "unknown";
+    try {
+      const parsed = JSON.parse(await fs.readFile(sourceLockPath(), "utf8")) as {
+        execution_id?: string;
+      };
+      owner = parsed.execution_id || owner;
+    } catch {
+      // Keep fail-closed if the lock itself is unreadable/corrupt.
+    }
+    throw new Error(
+      `CAD_MCP_DEV_SOURCE_LOCKED: another process/execution owns the CAD MCP source lock (${owner}). Recover or finish that source transaction first.`
+    );
+  }
+}
+
+async function releasePersistentSourceLock(executionId: string): Promise<void> {
+  let parsed: { execution_id?: string };
+  try {
+    parsed = JSON.parse(await fs.readFile(sourceLockPath(), "utf8")) as {
+      execution_id?: string;
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (parsed.execution_id !== executionId) {
+    throw new Error(
+      `CAD_MCP_DEV_SOURCE_LOCKED: refusing to release source lock owned by ${parsed.execution_id || "unknown"}.`
+    );
+  }
+  await fs.rm(sourceLockPath(), { force: true });
+}
+
 async function listRecoveryMetadata(): Promise<CadMcpDevRecoveryMetadata[]> {
   let entries: Array<import("node:fs").Dirent>;
   try {
@@ -959,6 +1009,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
 
         await restoreSnapshotFiles(found.snapshot);
         await removePersistedSnapshot(found.executionId);
+        await releasePersistentSourceLock(found.executionId);
         snapshots.delete(found.executionId);
         validatedFingerprints.delete(found.executionId);
         knownSourceFingerprints.delete(found.executionId);
@@ -1065,6 +1116,12 @@ export function registerCadMcpDevTools(server: McpServer): void {
             baselineFingerprint,
           };
           await persistSnapshot(lease.workId, snapshot);
+          try {
+            await acquirePersistentSourceLock(lease.workId);
+          } catch (error) {
+            await removePersistedSnapshot(lease.workId).catch(() => undefined);
+            throw error;
+          }
           snapshots.set(lease.workId, snapshot);
           knownSourceFingerprints.set(
             lease.workId,
@@ -1116,6 +1173,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
 
         await restoreSnapshotFiles(snapshot);
         await removePersistedSnapshot(lease.workId);
+        await releasePersistentSourceLock(lease.workId);
         snapshots.delete(lease.workId);
         knownSourceFingerprints.delete(lease.workId);
         const { endCadDevSourceTransaction } = await import(
@@ -1269,6 +1327,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
         }
 
         await removePersistedSnapshot(lease.workId);
+        await releasePersistentSourceLock(lease.workId);
         snapshots.delete(lease.workId);
         validatedFingerprints.delete(lease.workId);
         knownSourceFingerprints.delete(lease.workId);
@@ -1422,6 +1481,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
         const candidate = await acceptCadCandidate(lease.workId, validated_tool);
         try {
           await removePersistedSnapshot(lease.workId);
+          await releasePersistentSourceLock(lease.workId);
         } catch (error) {
           await restoreSnapshotFiles(snapshot).catch(() => undefined);
           throw error;
@@ -1471,6 +1531,7 @@ export async function rollbackUnacceptedCadMcpDevStateForExecution(
 
   await restoreSnapshotFiles(snapshot);
   await removePersistedSnapshot(executionId);
+  await releasePersistentSourceLock(executionId);
   snapshots.delete(executionId);
   validatedFingerprints.delete(executionId);
   knownSourceFingerprints.delete(executionId);
