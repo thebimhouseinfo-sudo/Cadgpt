@@ -57,7 +57,7 @@ test("work registrations and tool leases remain isolated across sessions", async
   const leaseA = acquireToolLease({
     tool: "file_edit",
     family: "filesystem",
-    targetId: "draft-a",
+    targetId: "same-draft",
     executionId: workA.executionId,
     authorityToken: workA.authorityToken,
     admissionToken: admissionA.admission_token,
@@ -66,7 +66,7 @@ test("work registrations and tool leases remain isolated across sessions", async
   const leaseB = acquireToolLease({
     tool: "file_edit",
     family: "filesystem",
-    targetId: "draft-b",
+    targetId: "same-draft",
     executionId: workB.executionId,
     authorityToken: workB.authorityToken,
     admissionToken: admissionB.admission_token,
