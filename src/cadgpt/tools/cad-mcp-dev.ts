@@ -596,6 +596,11 @@ export function registerCadMcpDevTools(server: McpServer): void {
         }
         if (action === "manifest" || action === "all") {
           results.manifest = await refreshManifest();
+          const { syncCadBusinessProxies } = await import("./cad-proxy.js");
+          results.proxy_surface = {
+            tools: syncCadBusinessProxies(server),
+            refreshed: true,
+          };
         }
 
         let validatedFingerprint: string | null = null;
