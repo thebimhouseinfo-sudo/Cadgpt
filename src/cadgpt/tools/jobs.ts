@@ -149,7 +149,7 @@ async function assertManagedLibraryExists(libraryId: string): Promise<void> {
   if (!match) throw new Error(`Enabled managed Job library not found in libraries.json: ${libraryId}`);
 }
 
-export function registerJobTools(server: McpServer): void {
+export function registerJobDiscoveryTools(server: McpServer): void {
   server.registerTool(
     "job_list",
     {
@@ -208,7 +208,9 @@ export function registerJobTools(server: McpServer): void {
       }
     }
   );
+}
 
+export function registerJobAuthoringTools(server: McpServer): void {
   server.registerTool(
     "job_checkout",
     {
