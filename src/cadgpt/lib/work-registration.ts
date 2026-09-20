@@ -147,10 +147,16 @@ export function releaseWorkRegistration(
   return { ...work };
 }
 
-export function releaseSessionWork(sessionKey: string): void {
-  const executionId = activeBySession.get(sessionKey);
+export function activeExecutionForSession(sessionKey: string): string | null {
+  cleanup();
+  return activeBySession.get(sessionKey) ?? null;
+}
+
+export function releaseSessionWork(sessionKey: string): string | null {
+  const executionId = activeBySession.get(sessionKey) ?? null;
   if (executionId) registrations.delete(executionId);
   activeBySession.delete(sessionKey);
+  return executionId;
 }
 
 export function workStatus(
