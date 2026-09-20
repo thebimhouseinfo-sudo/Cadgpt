@@ -149,6 +149,18 @@ export async function resolveAbsoluteMutationPath(
     return real;
   }
 
+  // "Create" tools may intentionally replace an existing file. If the target
+  // already exists, canonicalize the target itself first so an existing
+  // symlink/junction cannot redirect a mutation outside the approved root.
+  try {
+    await fs.lstat(candidate);
+    const realExisting = await fs.realpath(candidate);
+    assertInsideRoots(realExisting, roots, options.label || "mutation");
+    return candidate;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
   const parent = await nearestExistingParent(path.dirname(candidate));
   const realParent = await fs.realpath(parent);
   assertInsideRoots(realParent, roots, options.label || "mutation");
