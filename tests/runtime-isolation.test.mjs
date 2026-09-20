@@ -417,3 +417,75 @@ test("file mutation scheduler serializes same path and permits independent resou
   release();
   await Promise.all([first, second]);
 });
+
+
+test("active ToolLease blocks explicit work replace/stop until the call finishes", async () => {
+  const { checkAdmission } = await import("../dist/cadgpt/lib/admission.js");
+  const {
+    createWorkRegistration,
+    acquireToolLease,
+    runWithToolLease,
+    releaseWorkRegistration,
+  } = await import("../dist/cadgpt/lib/work-registration.js");
+
+  const sessionKey = "busy-work-session";
+  const admission = checkAdmission(sessionKey, "@cadgpt run a long file operation");
+  assert.ok(admission.admission_token);
+
+  const work = createWorkRegistration({
+    sessionKey,
+    admissionToken: admission.admission_token,
+    ownerType: "file",
+    ownerId: "busy-test",
+    executionPath: "file",
+  });
+
+  const lease = acquireToolLease({
+    tool: "file_read",
+    family: "filesystem",
+    executionId: work.executionId,
+    authorityToken: work.authorityToken,
+    admissionToken: admission.admission_token,
+    sessionKey,
+  });
+
+  let releaseGate;
+  const gate = new Promise((resolve) => {
+    releaseGate = resolve;
+  });
+  const running = runWithToolLease(lease, async () => {
+    await gate;
+  });
+
+  assert.throws(
+    () =>
+      createWorkRegistration({
+        sessionKey,
+        admissionToken: admission.admission_token,
+        ownerType: "file",
+        ownerId: "replacement",
+        executionPath: "file",
+      }),
+    /WORK_BUSY/
+  );
+
+  assert.throws(
+    () =>
+      releaseWorkRegistration(
+        work.executionId,
+        work.authorityToken,
+        sessionKey
+      ),
+    /WORK_BUSY/
+  );
+
+  releaseGate();
+  await running;
+
+  const released = releaseWorkRegistration(
+    work.executionId,
+    work.authorityToken,
+    sessionKey
+  );
+  assert.equal(released.executionId, work.executionId);
+});
