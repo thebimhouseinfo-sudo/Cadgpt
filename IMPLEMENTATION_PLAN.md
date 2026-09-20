@@ -206,6 +206,66 @@ This avoids the MCP-session handoff problem and keeps invalid/guessed CadGPT cal
 
 ---
 
+## 4. Absolute-path mutation invariant
+
+Every file mutation performed by CadGPT authoring/development workflows must use an **explicit absolute target path**.
+
+This applies to all current and future source-authoring workflows, including:
+
+```text
+write-lisp
+write-skill
+cad-mcp-dev
+jobcreate/file-authoring helpers
+```
+
+Required mutation sequence:
+
+```text
+caller supplies absolute path
+→ reject if path is relative
+→ canonicalize/resolve real path
+→ verify path is inside the exact workflow-owned allowed root
+→ reject symlink/junction/root escape
+→ acquire ToolLease/resource protection
+→ mutate file
+```
+
+Forbidden:
+
+```text
+relative path
+path resolved from process CWD
+"current folder" assumptions
+implicit workspace-relative write
+../ traversal
+symlink/junction escape outside the allowed root
+fallback to a similarly named file elsewhere
+```
+
+A mutation tool must fail closed when the canonical target cannot be proven to be inside its allowed root.
+
+Examples of workflow-owned roots:
+
+```text
+write-lisp
+→ absolute path under the approved Lisp draft root
+
+write-skill
+→ absolute path under the approved Skill authoring root
+
+cad-mcp-dev
+→ absolute path under <repo-absolute-path>\runtimes\cad-mcp\**
+```
+
+The workflow may still expose friendly virtual paths for display/discovery, but before mutation it must resolve them to an absolute canonical filesystem path and pass that absolute path into the actual write/edit/delete/move operation.
+
+Invariant:
+
+> **No CadGPT source mutation is authorized by a relative path or ambient working directory. Absolute canonical path + allowed-root proof are mandatory.**
+
+---
+
 ## 4. Execution authority model
 
 Admission means “the user invoked CadGPT.” It does **not** itself authorize arbitrary mutation.
@@ -394,7 +454,11 @@ Unexpected families remain lazy fallback.
 
 Do not rely on global process CWD as authority.
 
-Resolved target path must be checked against the current execution scope and existing CadGPT path-safety rules.
+Every mutating FILE operation must receive an absolute path. Relative paths are rejected before execution.
+
+The target is canonicalized/realpathed and must be proven to remain inside the current workflow-owned allowed root and execution scope. Symlink/junction traversal outside that root is rejected.
+
+Read/discovery APIs may use virtual/display paths when useful, but mutation handlers must operate on the resolved absolute canonical target only.
 
 ### 6.3 Cross-provider concurrency
 
@@ -812,8 +876,10 @@ No failure, missing capability, or runtime exception automatically grants `cad-m
 The only source tree this Skill may modify is:
 
 ```text
-runtimes/cad-mcp/**
+<absolute-repo-root>\runtimes\cad-mcp\**
 ```
+
+Every mutation request must carry the absolute target path. `cad-mcp-dev` must reject relative paths even when its runner CWD is already inside `runtimes/cad-mcp`.
 
 This includes the runtime's Python source, runtime-local tests, documentation, and dependency declaration/lock files that live under that root.
 
@@ -870,7 +936,8 @@ However, do not expose an unrestricted raw shell merely to call this a “full c
 
 Use a scoped coding runner with:
 
-- canonical cwd anchored to `runtimes/cad-mcp`;
+- canonical cwd anchored to `runtimes/cad-mcp` for tool execution convenience only, never as write authority;
+- every source mutation requires an absolute canonical target path;
 - explicit executable/subcommand policy;
 - no shell chaining/metacharacter escape;
 - path arguments canonicalized and checked;
@@ -1433,7 +1500,18 @@ runtime restart
 → prior epoch rejected
 ```
 
-### 24.3 CadGPT + GPTWorker FILE concurrency
+### 24.3 Absolute-path mutation safety
+
+Verify for `write-lisp`, `write-skill` (when present), `jobcreate` file authoring, and `cad-mcp-dev`:
+
+- relative mutation path is rejected;
+- path containing `..` that resolves outside the allowed root is rejected;
+- symlink/junction target escaping the allowed root is rejected;
+- absolute path inside the allowed root succeeds;
+- changing process CWD cannot change the resolved mutation target;
+- a similarly named file outside the intended root is never selected as fallback.
+
+### 24.4 CadGPT + GPTWorker FILE concurrency
 
 ```text
 Chat A → @cadgpt → write-lisp → filesystem write
@@ -1448,7 +1526,7 @@ Verify:
 - different-file writes may proceed independently;
 - same-file conflicting write is detected rather than silently overwritten.
 
-### 24.4 Two chats / two drawings / same CAD tool
+### 24.5 Two chats / two drawings / same CAD tool
 
 ```text
 Chat A
@@ -1473,14 +1551,14 @@ Verify:
 - no cross-Job state;
 - same-host mutation is serialized safely.
 
-### 24.5 Multi-drawing one execution
+### 24.6 Multi-drawing one execution
 
 - one work execution binds drawing A + B;
 - read calls can identify either explicitly;
 - mutation requires explicit `drawing_id` when more than one is bound;
 - closing drawing A does not silently retarget to B.
 
-### 24.6 Lazy runtime
+### 24.7 Lazy runtime
 
 ```text
 Windows idle
@@ -1508,7 +1586,7 @@ work ends / idle timeout
 → tray/slim MCP/tunnel remain
 ```
 
-### 24.7 CAD MCP self-improve
+### 24.8 CAD MCP self-improve
 
 ```text
 @cadgpt improve CAD MCP
@@ -1533,7 +1611,7 @@ Verify:
 - User Registry remains unchanged by `cad-mcp-dev`;
 - production build/profile does not register or expose `cad-mcp-dev` at all.
 
-### 24.8 Tray
+### 24.9 Tray
 
 - Windows logon creates exactly one CadGPT tray icon;
 - second tray launch exits via mutex;
@@ -1632,6 +1710,7 @@ Stage 2 begins only after:
 - WorkRegistration + ToolLease isolation is tested;
 - multi-chat/multi-drawing targeting is safe;
 - CAD scheduler prevents ActiveDocument races;
+- all source/file mutation paths require absolute canonical targets and reject CWD/relative-path authority;
 - FILE and CAD execution paths are lazy and independent;
 - development build: `cad-mcp-dev` can complete a scoped edit/test/rollback cycle without writing outside `runtimes/cad-mcp/**`, including regeneration of the CAD MCP tool manifest/Internal Registry artifact;
 - production/package build: `cad-mcp-dev`, runtime coding tools, and source-mutation authority are absent;
