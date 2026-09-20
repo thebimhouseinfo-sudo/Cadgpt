@@ -78,7 +78,7 @@ jobs:
               params=@{ protocolVersion="2025-06-18"; capabilities=@{}; clientInfo=@{ name="cadgpt-ci"; version="0.2.0" } }
             } | ConvertTo-Json -Depth 10
             $initResp = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $headers -ContentType "application/json" -Body $initBody
-            $sessionId = $initResp.Headers["Mcp-Session-Id"]
+            $sessionId = @($initResp.Headers["Mcp-Session-Id"])[0]
             if (-not $sessionId) { throw "MCP initialize returned no session id" }
             $mcpHeaders = @{ Accept="application/json, text/event-stream"; "Mcp-Session-Id"=$sessionId; "Mcp-Protocol-Version"="2025-06-18" }
             $null = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body (@{ jsonrpc="2.0"; method="notifications/initialized" } | ConvertTo-Json)
