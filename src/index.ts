@@ -19,6 +19,11 @@ import { activeToolLeaseCount, activeWorkCount, sweepExpiredWork } from "./cadgp
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
 const MCP_TOKEN = (process.env.MCP_TOKEN || "").trim();
+if (!MCP_TOKEN) {
+  throw new Error(
+    "MCP_TOKEN is required. Run setup.bat / openai-tunnel.ps1 -Init before starting CadGPT."
+  );
+}
 const SESSION_RECOVERY =
   (process.env.MCP_SESSION_RECOVERY || "true").toLowerCase() !== "false";
 const STARTED_AT = Date.now();
@@ -32,7 +37,7 @@ const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "20mb" }));
 
-const mcpPaths = MCP_TOKEN ? [`/mcp/${MCP_TOKEN}`] : ["/mcp"];
+const mcpPaths = [`/mcp/${MCP_TOKEN}`];
 const mcpPathSet = new Set(mcpPaths);
 const sessions = createSessionManager(PORT);
 sessions.startCleanup();
@@ -97,18 +102,16 @@ app.get("/health", async (_req, res) => {
     },
     last_mcp_activity_at: new Date(lastMcpActivityAt).toISOString(),
     session_recovery: SESSION_RECOVERY,
-    mcp_path_protected: Boolean(MCP_TOKEN),
+    mcp_path_protected: true,
     mcp_paths: mcpPaths,
     ...runtime,
     cad_mcp: cadMcp,
   });
 });
 
-if (MCP_TOKEN) {
-  app.all("/mcp", (_req, res) =>
-    res.status(404).json({ ok: false, error: "Not found" })
-  );
-}
+app.all("/mcp", (_req, res) =>
+  res.status(404).json({ ok: false, error: "Not found" })
+);
 
 async function handlePost(
   req: express.Request,
