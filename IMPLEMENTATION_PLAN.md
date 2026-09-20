@@ -1,176 +1,440 @@
 # CadGPT — Current Implementation Plan
 
-Status: **Stage 1 complete; Beta Scope Review in progress**  
+Status: **Stage 1 complete; Runtime Isolation / Admission Refactor planned before Stage 2**  
 Repository: `thebimhouseinfo-sudo/Cadgpt`  
-Real-AutoCAD validation: **Stage 2, not yet claimed**
+Real-AutoCAD validation: **Stage 2, not yet claimed**  
+Revision focus: **explicit @cadgpt admission, execution/tool leases, FILE vs CAD isolation, multi-drawing concurrency, lazy runtime, Windows tray startup**
 
 This file is the current implementation authority. Historical migration details belong in `MIGRATION_PLAN.md` / `MIGRATION_MATRIX.md`; old CAD-Agent layout assumptions are not architectural requirements.
 
 ---
 
+## 0. Refactor objective
+
+CadGPT must remain a thin ChatGPT-controlled local execution layer, but the current Beta runtime needs one architectural tightening before Stage 2:
+
+1. ChatGPT may decide to call CadGPT even when the user did not intend to use it. CadGPT must therefore enforce its own **server-side admission gate**.
+2. CadGPT and GPTWorker may be loaded at the same time and may use the same underlying Windows/file capabilities. Execution context must never drift between providers, chats, Jobs, Skills, files, or drawings.
+3. Multiple ChatGPT sessions must be able to work on different AutoCAD drawings without sharing a global drawing target.
+4. File work and CAD work are different execution paths and must stay separated.
+5. Windows idle state must stay lightweight: tray + slim control plane + Secure MCP Tunnel only.
+
+The refactor deliberately learns from GPTWorker's current architecture:
+
+- lightweight admission handshake;
+- `ACTIVE / CONTROL / INACTIVE` control signal;
+- admission token before discovery/nomination;
+- WorkRegistration;
+- opaque authority token;
+- generation/epoch protection;
+- per-call ToolLease IDs;
+- lazy family loading;
+- low-frequency tray health checks.
+
+CadGPT does **not** copy GPTWorker's Job+Workspace model as a universal CAD model.
+
+---
+
 ## 1. Product boundary
 
-CadGPT is a **thin local execution/orchestration layer that lets ChatGPT work directly with AutoCAD**.
+CadGPT is a **thin local execution/orchestration layer that lets ChatGPT work with AutoCAD and CadGPT-managed files**.
 
 CadGPT does not provide:
 
 - a separate chat UI;
 - a local AI/model runtime;
 - model-provider abstraction;
-- Chat/Observer/Operator personas;
-- a general-purpose coding shell;
-- a second autonomous local reasoning agent.
+- a second autonomous reasoning agent;
+- a general-purpose coding shell competing with GPTWorker.
 
 ChatGPT remains the reasoning/chat surface.
 
+CadGPT has exactly two work execution paths:
+
 ```text
-ChatGPT
-   ⇅
-OpenAI Secure MCP Tunnel
-   ⇅
-CadGPT MCP endpoint
-   ├── managed file tools
-   ├── registry/library tools
-   ├── Jobs + system Skills
-   └── CAD proxy tools
-          ↓
-        CAD MCP
-          ↓
-       AutoCAD
+CadGPT
+├── FILE work
+│   └── managed file/Lisp/Job authoring capabilities
+└── CAD work
+    └── CAD MCP capabilities against explicit drawing contexts
 ```
 
-CAD MCP is the only active CAD runtime. AutoCAD is never launched implicitly by CadGPT.
+Control/admission is not a third work path; it is the lightweight gate before work.
 
 ---
 
-## 2. Runtime/lifecycle model
+## 2. Hard ChatGPT admission gate
 
-CadGPT behaves like a lightweight per-user driver.
+### 2.1 Why the gate exists
 
-### Installed state
+CadGPT cannot change ChatGPT's plugin/router behavior. ChatGPT may call CadGPT because the request looks CAD-related even when the user did not invoke CadGPT.
 
-One-time `setup.bat` installs/configures:
+Therefore CadGPT must reject its own use unless the **current user turn** explicitly invokes it.
 
-- locked Node/Python dependencies;
-- stable CAD tool manifest;
-- managed AppData layout;
-- OpenAI Secure MCP Tunnel profile;
-- hidden per-user wake-agent Scheduled Task;
-- diagnostics/acceptance prerequisites.
+### 2.2 Admission contract
 
-### Normal Windows logon
+Reference pattern from GPTWorker:
 
 ```text
-Windows logon
-→ tiny hidden wake-agent
-→ Secure MCP Tunnel/listener available
-→ full CadGPT core still asleep
+ChatGPT considers provider
+→ admission_check(current user turn)
+→ ACTIVE / CONTROL / INACTIVE
 ```
 
-### ChatGPT activation
+CadGPT adopts the same lightweight control-plane handshake as:
 
 ```text
-first ChatGPT MCP call
+cadgpt_admission(current_user_turn)
+→ ACTIVE / CONTROL / INACTIVE
+```
+
+The result is an **internal control signal**, not user-facing content.
+
+### 2.3 CadGPT is stricter than GPTWorker
+
+The only valid invocation evidence is:
+
+```text
+literal "@cadgpt" in the exact current user turn
+```
+
+There is no exception for:
+
+- a CAD-looking task;
+- an AutoLISP file;
+- an absolute local path;
+- AutoCAD already running;
+- an open drawing;
+- previous CadGPT use in this conversation;
+- another chat;
+- saved state;
+- memory;
+- project familiarity;
+- ChatGPT deciding CadGPT is probably appropriate.
+
+Invariant:
+
+> **CadGPT is explicit-invocation only. No literal `@cadgpt` in the current user turn means the user did not invoke CadGPT.**
+
+### 2.4 Admission modes
+
+`INACTIVE`
+
+- current user turn does not contain literal `@cadgpt`;
+- return internal signal telling ChatGPT to stop all CadGPT flow;
+- do not load Jobs, Skills, registry, files, drawings, CAD manifest, or CAD MCP;
+- do not ask the user to activate CadGPT;
+- ChatGPT continues normally or uses the provider the user actually requested.
+
+`CONTROL`
+
+- current turn contains `@cadgpt`;
+- request is explicitly a lightweight CadGPT control/status/help action;
+- only control-plane allowlisted operations may run;
+- no FILE/CAD execution authority is created.
+
+`ACTIVE`
+
+- current turn contains literal `@cadgpt`;
+- CadGPT work may proceed;
+- mint a short-lived opaque `admission_token`.
+
+### 2.5 Admission token
+
+An ACTIVE token must be:
+
+- opaque;
+- scoped to the current MCP/chat session;
+- short-lived;
+- non-transferable to another chat;
+- invalid after expiry/restart/session teardown.
+
+Every CadGPT discovery/work entry point after admission must require the token.
+
+No direct-entry bypass is permitted.
+
+Conceptual flow:
+
+```text
+ChatGPT calls cadgpt_admission
+        ↓
+exact current turn contains @cadgpt?
+   ├─ no  → INACTIVE → STOP CadGPT
+   └─ yes → ACTIVE/CONTROL
+                    ↓
+             admission_token
+```
+
+---
+
+## 3. Slim control plane and Windows idle state
+
+The current wake-agent behavior:
+
+```text
+first MCP request
 → wake full CadGPT core
-→ expose stable tool descriptors
 ```
 
-CAD MCP runs only when both conditions are true:
+must be retired.
 
-1. CadGPT has been activated by ChatGPT;
-2. `acad.exe` / supported AutoCAD host is available.
+A generic ChatGPT initialize/tool probe must not wake the heavy CadGPT runtime.
 
-AutoCAD starting by itself does not wake full CadGPT.
-
-`run.bat` is a control shim, not a daily launcher:
+Target idle state:
 
 ```text
-run.bat install
-run.bat start
-run.bat stop
-run.bat restart
-run.bat status
-run.bat uninstall
+Windows sign-in
+├── CadGPT tray host
+├── slim CadGPT MCP control/admission plane
+└── OpenAI Secure MCP Tunnel
+
+Full FILE execution modules = unloaded
+CAD manifest/business modules = unloaded
+CAD MCP = off
+AutoCAD polling = off
 ```
 
-Normal daily use should require no command after setup.
+The externally connected MCP endpoint must be able to perform admission without activating heavy execution code.
+
+Implementation direction:
+
+- move admission/control handling into the always-on slim MCP process;
+- do not hand the external MCP session to a separate heavy server merely to perform admission;
+- heavy CadGPT capability families are dynamic/lazy modules behind the same admitted control plane, or are delegated to internal executors that do not own external admission authority.
+
+This avoids the MCP-session handoff problem and keeps invalid/guessed CadGPT calls cheap.
 
 ---
 
-## 3. Managed AppData is the user-asset boundary
+## 4. Execution authority model
 
-Beta default:
+Admission means “the user invoked CadGPT.” It does **not** itself authorize arbitrary mutation.
 
-```text
-<repo>/appdata
-```
+After ACTIVE admission, actual work gets a separate WorkRegistration.
 
-Packaged target:
+CadGPT work owners may be:
 
 ```text
-%LOCALAPPDATA%\CadGPT
+skill:write-lisp
+skill:jobcreate
+job:<concrete-job-id>
+direct-cad
+other future CadGPT-owned workflow
 ```
 
-selected through `CADGPT_APPDATA_ROOT` while preserving the same virtual paths.
+CadGPT must not force every CAD action into a concrete Job.
 
-Canonical layout:
+### 4.1 WorkRegistration
+
+Target structure:
 
 ```text
-appdata/
-├── libraries/
-│   ├── lisp/                 permanent managed Lisp libraries
-│   └── jobs/                 permanent managed Job libraries
-├── registry/
-│   └── user/                 User Registry + library manifest
-├── workspace/
-│   ├── lisp-draft/           write-lisp working copies
-│   └── job-draft/            jobcreate working copies
-├── runtime/
-│   └── dynamic-lisp/         temporary bounded runtime variants
-├── drawings/                 drawing-scoped Observator/semantic data
-├── data/
-│   └── runs/                 persistent run/test evidence
-├── state/                    internal process/session state
-└── logs/                     diagnostics
+WorkRegistration
+├── execution_id
+├── authority_token
+├── admission_id / admission_token reference
+├── mcp_session_id
+├── owner_type
+├── owner_id
+├── job_id?              # only when owner is a concrete Job
+├── driver_epoch
+├── generation
+├── call_sequence
+├── created_at
+└── last_activity_at
 ```
 
-The repository's Beta `appdata/libraries/**` and `appdata/registry/user/**` may contain committed fixtures representing an already-imported environment. Other runtime/generated areas remain non-authoritative generated state.
+Conceptual execution ID:
+
+```text
+exec:{ownerId}@{sessionKey}:e{driverEpoch}:g{generation}
+```
+
+The `authority_token` is opaque and must be validated before execution.
+
+### 4.2 Epoch and generation
+
+Learn directly from GPTWorker:
+
+- `driver_epoch` prevents stale authority surviving runtime restart;
+- `generation` prevents stale authority surviving work/context replacement;
+- switching owner/context invalidates the old generation.
+
+No tool invocation may trust “last active Job”, “last drawing”, or “last workspace” global state.
 
 ---
 
-## 4. External user folders are import sources only
+## 5. Tool capability lease model
 
-A user-selected Lisp or Job folder is never a normal editable workspace.
+The important identity is not a globally unique display name for a tool. The important identity is a **runtime lease for each actual invocation**.
+
+Shared implementation:
 
 ```text
-explicitly approved external source folder
-        ↓ read only
-library_import
-        ↓
-managed copy in appdata/libraries/**
-        ↓
-User Registry indexing
+write_file
+set_layer
+read_entity
+...
 ```
 
-Rules:
+Each call receives a lease owned by one exact execution.
 
-- `source_path` must be an explicitly user-approved absolute directory;
-- CadGPT never writes back to that source;
-- symlink source entries are rejected;
-- `.git` / `.svn` metadata is excluded from the managed copy;
-- import file-count and byte-size bounds are enforced;
-- replacement import is rollback-safe across managed content, library manifest and User Registry;
-- re-import is explicit, never background synchronization.
+### 5.1 ToolLease
 
-After import, CadGPT reads/executes the managed copy, not the external source.
+```text
+ToolLease
+├── lease_id
+├── provider_id = cadgpt
+├── execution_id
+├── owner_id
+├── family
+├── actual_tool
+├── target_id
+├── driver_epoch
+├── generation
+├── call_sequence
+└── acquired_at
+```
+
+CadGPT lease ID follows the GPTWorker pattern but is provider-namespaced:
+
+```text
+tool:cadgpt:{family}@{ownerId}@{targetKey}:e{epoch}:g{generation}:c{sequence}
+```
+
+Examples:
+
+```text
+tool:cadgpt:filesystem@write-lisp@lisp-draft#82ac31:e7:g2:c11
+
+tool:cadgpt:cad-layer@RVT2CAD@dwg_01:e7:g1:c18
+```
+
+GPTWorker may simultaneously have its own independent lease:
+
+```text
+tool:gptworker:filesystem@coding@repo#1a44ff:e9:g1:c37
+```
+
+The underlying Windows/filesystem capability is shared, but execution authority and scope are not.
+
+### 5.2 Central wrapper
+
+Do not implement lease checks separately in every tool.
+
+Pattern:
+
+```text
+tool request
+→ validate admission/work authority
+→ acquireToolLease()
+→ resolve target scope
+→ execute handler
+→ releaseToolLease()
+```
+
+The tool handler performs business work only.
+
+### 5.3 What ToolLease solves
+
+ToolLease prevents:
+
+- Job A call being treated as Job B;
+- one chat inheriting another chat's work context;
+- CadGPT file work inheriting GPTWorker workspace state;
+- CAD call inheriting a different drawing context;
+- stale generation calls continuing after context replacement.
+
+ToolLease does **not** by itself solve two processes modifying the exact same physical resource. Resource locking/version checks handle that separately.
 
 ---
 
-## 5. File safety model
+## 6. FILE execution path
 
-Generic file tools are intentionally asymmetric.
+FILE work includes:
 
-### Generic readable roots
+- generic managed reads/writes;
+- `write-lisp`;
+- `jobcreate`;
+- Lisp/Job draft operations;
+- validation;
+- controlled promotion/import flows.
+
+FILE work never needs CAD MCP unless a later workflow step explicitly enters CAD testing.
+
+### 6.1 Lazy FILE capability families
+
+Current static registration/import of all file/Lisp/Job modules must be replaced by lazy capability loading.
+
+Internal families may include:
+
+```text
+filesystem
+library
+lisp-authoring
+job-authoring
+registry
+```
+
+They remain one conceptual FILE execution path.
+
+On first use:
+
+```text
+ACTIVE admission
+→ work registration
+→ first FILE operation
+→ dynamic import required family
+→ cache family for current core lifetime
+```
+
+Unexpected families remain lazy fallback.
+
+### 6.2 File scope
+
+Do not rely on global process CWD as authority.
+
+Resolved target path must be checked against the current execution scope and existing CadGPT path-safety rules.
+
+### 6.3 Cross-provider concurrency
+
+Acceptance scenario:
+
+```text
+Chat A → @cadgpt → write-lisp → file write
+Chat B → @gptworker → coding → file write
+```
+
+Both may run at the same time because they have separate provider/work leases and scopes.
+
+### 6.4 Same-file conflict
+
+If two executions intentionally or accidentally target the same physical file, lease identity is not enough.
+
+Mutation must use optimistic/resource conflict protection:
+
+```text
+read version/hash/mtime
+→ prepare mutation
+→ verify current version still matches
+→ atomic write/replace
+```
+
+If it changed:
+
+```text
+FILE_CHANGED / RESOURCE_CONFLICT
+```
+
+Do not silently overwrite.
+
+Existing rollback-safe permanent-library promotion behavior must remain intact.
+
+---
+
+## 7. File safety and managed AppData invariants
+
+Generic readable roots remain:
 
 ```text
 appdata/libraries/**
@@ -178,20 +442,22 @@ appdata/workspace/**
 appdata/data/**
 ```
 
-### Generic writable roots
+Generic writable roots remain:
 
 ```text
 appdata/workspace/**
 appdata/data/**
 ```
 
-### Permanent library rule
+Permanent managed content:
 
 ```text
-appdata/libraries/** = generic read-only
+appdata/libraries/**
 ```
 
-Permanent library mutation is allowed only through controlled operations that keep implementation and registry state synchronized:
+is still generic read-only.
+
+Permanent changes are allowed only through controlled operations such as:
 
 ```text
 library_import
@@ -199,92 +465,46 @@ lisp_promote_draft
 job_promote_draft
 ```
 
-Generic `file_create` / `file_edit` must never be able to bypass these lifecycles.
+A valid FILE ToolLease never bypasses these rules.
 
-`appdata/registry/**`, `runtime/**`, `state/**`, `logs/**` remain internal and are not generic file roots.
+Runtime lease authority and managed-content governance are separate layers.
 
 ---
 
-## 6. Capability Registry
+## 8. Capability Registry and system Skills
 
-CadGPT presents one effective discovery view with disjoint ownership.
+The existing ownership model stays:
 
 ```text
 Internal Registry
-├── MCP tools
+├── MCP capabilities
 └── system Skills
 
 User Registry
 ├── managed Lisp capabilities
-└── managed concrete Jobs
+└── concrete Jobs
 ```
 
-Primary discovery tools:
+Primary user capability discovery remains registry-driven.
 
-```text
-registry_list
-registry_get
-```
+Do **not** add another persistent registry merely to store ToolLease IDs or execution IDs.
 
-Ownership rules:
+Lease/work registration is runtime state only.
 
-- User Registry may contain only `lisp` and `job` entries;
-- Internal Registry is generated from CadGPT tools/Skills;
-- User capability IDs are unique within User Registry;
-- Lisp promotion cannot replace a Job ID and Job promotion cannot replace a Lisp ID;
-- permanent promoted capabilities must point to an existing enabled managed library.
-
-### Implementation freshness
-
-Imported Lisp/Job implementation content is hash-tracked.
-
-When re-import changes implementation bytes:
-
-```text
-previous curated semantics
-        ↓ implementation hash changed
-semantic_status = needs_review
-risk/safety claims = no longer trusted as curated facts
-```
-
-CadGPT must not silently preserve old `mutates_drawing`, `destructive`, `effects`, or equivalent behavior claims as trusted metadata after implementation changes.
-
----
-
-## 7. System Skills
-
-System Skills are internal read-only expert capabilities under:
-
-```text
-skills/**
-```
-
-They are not user libraries and are not generic writable content.
-
-Current critical Skills:
+Current critical system Skills remain:
 
 ```text
 write-lisp
 jobcreate
 ```
 
-A Skill constrains ChatGPT reasoning/workflow for a specialized task. It is not another AI agent or local model.
-
 ---
 
-## 8. AutoLISP model
+## 9. AutoLISP lifecycle
 
-Managed Lisp remains ordinary AutoLISP/Visual LISP usable directly from AutoCAD commands and discoverable by CadGPT.
+The current controlled lifecycle remains authoritative.
 
-### 8.1 Import/index
-
-Import does not rewrite source headers or implementation.
-
-Unreviewed imported Lisp must not be represented as known-safe merely because indexing succeeded. Unknown semantic/safety properties remain unknown until curated.
-
-### 8.2 `write-lisp` lifecycle
-
-Existing capability:
+Existing Lisp:
 
 ```text
 registry discovery
@@ -292,449 +512,767 @@ registry discovery
 → appdata/workspace/lisp-draft/**
 → edit/repair
 → lisp_draft_validate
-→ explicitly approved CAD test context
-→ verified load/runtime verification
-→ user-accepted result
+→ explicitly approved CAD test
+→ verified runtime result
+→ user acceptance
 → lisp_promote_draft
-→ permanent managed Lisp + User Registry
 ```
 
-New capability:
+New Lisp:
 
 ```text
 lisp_scaffold
-→ create under appdata/workspace/lisp-draft/**
+→ workspace draft
 → implement
-→ lisp_draft_validate
+→ validate
 → approved CAD test
-→ verified runtime behavior
-→ lisp_promote_draft
+→ runtime verification
+→ promote
 ```
 
-### 8.3 Repair rule
+Source syntax errors may be checked out for repair.
 
-A managed Lisp source may contain syntax/blocking errors. That is precisely a valid `write-lisp` repair case.
+Helper-only Lisp without public `c:` commands remains valid when intentional.
 
-Therefore:
-
-- `lisp_checkout` reports source diagnostics;
-- source errors do **not** block checkout into the draft workspace;
-- promotion remains strict and is blocked until the draft passes validation.
-
-### 8.4 Helper Lisp rule
-
-A Lisp file without a public `c:` command may be an intentional helper/library module.
-
-- validator may report no public command as informational/warning;
-- helper-only files may be promoted;
-- absence of `c:` must not itself make promotion impossible.
-
-### 8.5 Authoring profiles
-
-Default:
-
-```text
-CadGPT canonical header/profile
-```
-
-Explicit compatibility exception:
-
-```text
-library_id=tbh-toolkit → TBH header/profile
-```
-
-### 8.6 Dynamic AI mode
-
-`ai_mode=dynamic` is metadata permitting bounded temporary derivation from normal AutoLISP using registry-declared `dynamic_parameters`.
-
-It is not another source type and does not authorize permanent source mutation outside the normal draft/promote lifecycle.
+TBH Toolkit remains the explicit authoring-profile exception.
 
 ---
 
-## 9. Job semantic model
+## 10. Job model
 
-A **Job** is a small, repeatable CAD workflow / unit of work.
+A Job remains a repeatable CAD workflow, not an autonomous local agent.
 
-A Job is not:
+CadGPT does not adopt GPTWorker's compulsory Job+Workspace contract.
 
-- a chat session;
-- a persona;
-- an autonomous AI agent;
-- a fixed wrapper around one tool.
+A user may perform direct CAD work after valid admission without selecting a concrete Job.
 
-A Job defines:
+Concrete Jobs still define:
 
-- identity and goal;
+- goal;
 - preconditions;
 - ordered steps;
-- per-step instruction;
-- step inputs and expected output/postcondition;
-- explicit tool/executor scope;
-- preferred and viable executors where useful;
+- explicit capability/executor scope;
 - success criteria;
 - failure handling;
-- mutation scope;
-- required evidence;
-- final validation.
+- validation/evidence.
 
-Canonical rules live in:
+When a concrete Job is the work owner, `job_id` is recorded in the WorkRegistration and ToolLease.
 
-```text
-knowledge/jobs/JOB_RULES.md
-```
-
-Concrete reusable Jobs are user assets in managed Job libraries.
+When `write-lisp` or `jobcreate` is the owner, no fake Job ID is invented.
 
 ---
 
-## 10. Job execution model
+## 11. CAD execution path
 
-Current Beta does **not** introduce another autonomous local Job agent.
+CAD work includes:
 
-ChatGPT remains the reasoning/sequencing layer. CadGPT provides:
+- drawing discovery/binding;
+- structured entity/layer/block/xref/property reads;
+- mutation;
+- command dispatch;
+- AutoLISP load/run/test;
+- Observator CAD capture/read operations.
 
-- Job discovery/loading;
-- explicit per-step capability contracts;
-- drawing/session binding;
-- constrained execution tools;
-- validation/evidence surfaces;
-- controlled Job authoring/promotion.
+CAD execution uses CAD MCP as the only AutoCAD backend.
 
-Conceptual execution:
+No CAD MCP process starts merely because CadGPT was initialized or because FILE work is active.
 
 ```text
-ChatGPT selects/loads Job
-→ follows ordered Job step contract
-→ uses only suitable declared capabilities
-→ checks step success/postcondition
-→ handles explicit failure rule
-→ continues
-→ verifies final Job result
+ACTIVE admission
+→ CAD operation actually requested
+→ detect supported AutoCAD host
+→ lazy-load CAD family/manifest
+→ activate/connect CAD MCP
+→ acquire CAD ToolLease
+→ execute against explicit drawing context
 ```
 
-`src/cadgpt/job_runtime/**` represents this execution contract/boundary; it must not evolve into an unnecessary second AI orchestration system.
+AutoCAD is never launched implicitly.
 
 ---
 
-## 11. `jobcreate` authoring lifecycle
+## 12. Multi-chat and multi-drawing model
 
-`jobcreate` creates/refines concrete Jobs but does not invent missing company/domain policy.
+The current implementation uses one `BoundDrawing` per `McpServer` through a WeakMap. This must be replaced.
 
-### Phase A — planning
-
-```text
-goal/skeleton/current Job
-→ clarify boundaries
-→ agree skeleton
-→ map every step + preferred/viable tools
-→ define validation + real test
-→ explicit user approval
-```
-
-No Job draft is created before planning approval.
-
-### Phase B — draft
-
-New Job:
+Target model:
 
 ```text
-file_create under appdata/workspace/job-draft/<library>/<job>/JOB.md
+CadGPT execution
+├── drawing context A
+├── drawing context B
+└── drawing context C
 ```
 
-Existing Job:
+### 12.1 DrawingContext
 
 ```text
-job_get
-→ job_checkout
-→ edit workspace draft only
+DrawingContext
+├── drawing_id
+├── execution_id
+├── name
+├── full_name
+├── host_id
+├── runtime_document_identity
+├── bound_at
+└── availability state
 ```
 
-### Phase C — structural gate
+`drawing_id` is an opaque CadGPT-generated ID. It is not just the filename.
+
+Same filenames in different folders/hosts must remain distinct.
+
+### 12.2 One execution may own multiple drawings
+
+Example:
 
 ```text
-job_draft_validate
+Job RVT2CAD
+├── dwg_01
+├── dwg_02
+└── dwg_03
 ```
 
-The draft must contain the canonical workflow semantics before real testing.
+Do not create one Job per drawing.
 
-### Phase D — actual test
+If an execution has exactly one drawing, it may use that as its default target.
+
+If it has multiple drawing contexts, CAD business mutations must require explicit `drawing_id`.
+
+Never guess.
+
+### 12.3 Two chats, two Jobs, one CAD MCP tool
+
+Required acceptance scenario:
 
 ```text
-execute actual workflow steps
-→ collect actual outputs/postconditions
-→ verify each required success criterion
-→ verify final result
+Chat 1
+@cadgpt
+Job A
+Drawing 1
+→ set_layer
+
+Chat 2
+@cadgpt
+Job B
+Drawing 2
+→ set_layer
 ```
 
-CAD-mutating tests require an explicitly approved test/bound drawing.
-
-### Phase E — promotion
+Both calls may use the same CAD MCP implementation but must have independent leases:
 
 ```text
-explicit user acceptance
-+ test evidence
-+ final-validation evidence
-+ valid draft
-        ↓
-job_promote_draft
-        ↓
-managed Job Library + User Registry
+tool:cadgpt:cad-layer@JobA@dwg_01:e5:g1:c12
+
+tool:cadgpt:cad-layer@JobB@dwg_02:e5:g1:c4
 ```
 
-`job_promote_draft` is the normal permanent mutation path for authored Jobs.
+No binding or Job state from one request may affect the other.
 
 ---
 
-## 12. Executor choice inside Jobs
+## 13. Eliminate ActiveDocument race
 
-A Job defines **what must happen**. The executor may differ by step while preserving the same semantics.
+The target drawing cannot be authorized by ambient AutoCAD `ActiveDocument`.
 
-### Existing managed Lisp
-
-Use when a curated/reviewed registered Lisp capability already performs the required work.
-
-### `write-lisp`
-
-Use when agreed AutoLISP is missing, broken or insufficient.
+Current pattern:
 
 ```text
-Job step
-→ write-lisp lifecycle
-→ validated/tested/promoted capability
-→ return to interrupted Job step
+set active document
+→ execute business tool
 ```
 
-### Direct CAD MCP
+is vulnerable if two requests interleave.
 
-Use for small explicit CAD operations better expressed directly than by creating automation.
-
-### Structured reasoning
-
-Use ChatGPT reasoning for decisions from structured CAD evidence, mappings, diagnostics and explicit rules.
-
-Prefer structured CAD data over visual inference whenever the same decision can be made reliably from data.
-
----
-
-## 13. Drawing-centric session model
-
-CadGPT binds explicitly to one drawing identity before CAD business operations.
+Required pattern:
 
 ```text
-ChatGPT conversation
-→ CadGPT session
-→ bound drawing identity
+validated CAD ToolLease
+→ resolve drawing_id
+→ resolve host_id/runtime document
+→ acquire host execution lock
+→ activate/verify exact document
+→ execute CAD MCP call
+→ verify/result
+→ release host lock
+→ release ToolLease
 ```
 
-Rules:
+ToolLease provides identity isolation.
 
-- never silently use AutoCAD `ActiveDocument` as target authority;
-- AutoCAD tab switching does not silently retarget CadGPT;
-- proxied CAD calls re-establish/verify the bound drawing;
-- if the bound drawing closes, CAD workspace becomes disconnected;
-- do not silently choose another open drawing.
+The CAD scheduler/lock provides AutoCAD execution safety.
 
-One conversation/session may execute many Jobs sequentially against the same bound drawing.
+These are separate responsibilities.
 
 ---
 
-## 14. CAD MCP boundary
+## 14. CAD scheduler
 
-CAD MCP is the only live AutoCAD runtime.
+Assume conservative safety until real AutoCAD validation proves more concurrency is safe.
 
-Responsibilities include:
+Initial rule:
 
-- host/runtime health;
-- list/open drawing identities;
-- explicit drawing targeting;
-- structured layer/entity/block/xref/property queries;
-- bounded mutation operations;
-- AutoCAD command dispatch where appropriate;
-- AutoLISP load/reload/run;
-- runtime result/error evidence;
-- safe test drawing support;
-- selected AutoCAD events used by Observator.
+```text
+one AutoCAD host
+→ one serialized CAD execution queue for mutation-sensitive operations
+```
 
-CadGPT exposes stable proxied CAD tool descriptors even while CAD MCP is asleep/unavailable. Backend availability changes; ChatGPT's tool schema should not churn simply because AutoCAD is closed.
+Two drawings in the same AutoCAD host may have separate leases but physical operations serialize.
+
+Architecture should retain `host_id` so future multiple AutoCAD hosts can have independent queues if Stage 2 proves that safe.
+
+Multi-host parallelism is not required for the first refactor milestone.
 
 ---
 
-## 15. Observator boundary
+## 15. CAD manifest and tool loading
 
-Observator is an internal evidence/discovery subsystem, not a separate AI agent/persona.
+Current `registerCadProxyTools()` eagerly reads the generated CAD tool manifest and registers all stable business descriptors whenever a CadGPT MCP server is created.
 
-Current design:
+This is too eager for the new idle model.
+
+Required change:
+
+```text
+idle/control plane
+→ do not load CAD manifest/business modules
+
+ACTIVE FILE work
+→ do not load CAD manifest
+→ CAD MCP stays off
+
+first actual CAD capability need
+→ load/cache CAD manifest
+→ load CAD proxy/business family
+→ connect CAD MCP only if execution needs it
+```
+
+Do not combine this phase with an unnecessary public API redesign unless measurements show the MCP descriptor surface itself is still a dominant cost.
+
+First preserve compatibility where practical; isolate and lazy-load implementation before considering a generic `cad_execute` gateway.
+
+---
+
+## 16. Observator boundary
+
+Observator remains an evidence/discovery subsystem, not a separate agent.
+
+Existing capture design remains:
 
 ```text
 capture start
-→ collect identities from ObjectAdded events
-→ capture finish resolves only those identities
+→ collect ObjectAdded identities
+→ finish resolves only those identities
 → remove erased/undone/nested results
 → return top-level type headers
 ```
 
-It must not full-scan the drawing for this discovery path.
+Observator CAD activity must use the same admission, WorkRegistration, ToolLease, drawing context, and CAD scheduler rules as other CAD operations.
 
-Deep property reads occur only after a Job chooses relevant candidate handles.
-
-Job-specific filtering, semantics, lifecycle intent and persistence projection remain Job/runtime responsibilities.
-
-Drawing-scoped Observator state lives under `appdata/drawings/<drawing_id>/**` and follows the Drawing Anchor rules documented in `appdata/README.md`.
+No special bypass.
 
 ---
 
-## 16. Connection architecture
+## 17. Windows tray and startup
 
-CadGPT exposes one MCP surface to ChatGPT.
+CadGPT should adopt GPTWorker's proven Windows desktop pattern.
+
+### 17.1 Replace Scheduled Task startup
+
+Current:
 
 ```text
-ChatGPT Developer Mode
-        ⇅
-OpenAI Secure MCP Tunnel
-        ⇅
-protected local CadGPT MCP endpoint
+Windows Scheduled Task
+→ hidden wake-agent
 ```
 
-Do not require separate ChatGPT connectors for:
+Target:
 
 ```text
-file worker
-Job runtime
+HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+→ cadgpt-tray.ps1
+```
+
+No admin elevation is required.
+
+Setup must remove the old CadGPT Scheduled Task during migration so both mechanisms cannot run simultaneously.
+
+### 17.2 Tray host
+
+Use PowerShell STA + Windows Forms `NotifyIcon`, matching GPTWorker's source tray design.
+
+Required behaviors:
+
+- single-instance mutex, e.g. `Local\CadGPTTray`;
+- custom CadGPT icon with Windows fallback;
+- hidden launch;
+- logs under CadGPT AppData/logs;
+- ready marker for setup/doctor;
+- low-frequency health update (target ~60 s);
+- immediate refresh when tray menu opens;
+- never kill an unknown process just because a configured port is occupied.
+
+Minimal menu:
+
+```text
+Status: Ready | Working | CAD Connected | Degraded
+
+Open diagnostics/logs
+Restart CadGPT
+----------------
+Exit CadGPT
+```
+
+Do not put Job management in the tray. ChatGPT remains the main UI.
+
+### 17.3 Tray-owned idle components
+
+The tray owns/ensures only:
+
+```text
+slim CadGPT control/admission MCP
+Secure MCP Tunnel
+```
+
+It must not bootstrap:
+
+```text
+heavy FILE families
+CAD manifest/business modules
 CAD MCP
 ```
 
-Internal routing is CadGPT's implementation detail.
+---
 
-Normal operation uses one stable tunnel identity/profile rather than disposable public tunnel URLs.
+## 18. Remove idle AutoCAD polling
 
-Secrets remain outside source control.
+Current wake-agent polls AutoCAD using `tasklist` at a short interval.
+
+That is unnecessary while CadGPT is uninvoked.
+
+Target idle behavior:
+
+```text
+no AutoCAD tasklist polling
+no CAD MCP probing
+no CAD manifest loading
+```
+
+When an admitted request actually enters CAD work:
+
+```text
+detect AutoCAD immediately
+→ activate CAD runtime if available
+```
+
+While CAD work is active, use only the minimum monitoring needed for host-close/disconnect detection.
+
+Tray health checks remain low-frequency and are not CAD polling.
 
 ---
 
-## 17. Installation contract
+## 19. Preload policy
 
-### `setup.bat`
+CadGPT may use GPTWorker's “warm while waiting” idea only where CadGPT already has a real confirmation gate.
 
-One-time bootstrap must:
+Examples:
+
+- `write-lisp` after the user has selected/approved an authoring flow;
+- `jobcreate` after its planning confirmation;
+- a concrete Job with known executor families.
+
+Rules:
+
+- preload means module/code warmup only;
+- preload never grants mutation authority;
+- preload never auto-connects CAD MCP;
+- changed owner/context invalidates stale preload generation;
+- undeclared/unexpected family still lazy-loads on first real use.
+
+Do not build a new universal Job nomination system for CadGPT.
+
+---
+
+## 20. Connection architecture
+
+CadGPT continues to expose one ChatGPT plugin/MCP connection:
+
+```text
+ChatGPT
+   ⇅
+OpenAI Secure MCP Tunnel
+   ⇅
+CadGPT slim control/admission MCP
+   ├── lazy FILE capability families
+   └── lazy CAD capability family
+          ↓
+        CAD MCP
+          ↓
+       AutoCAD
+```
+
+Do not require separate ChatGPT connectors for file work, Jobs, or CAD MCP.
+
+---
+
+## 21. Installation contract
+
+### setup.bat
+
+One-time setup must eventually:
 
 1. verify Windows + Node/Python requirements;
-2. use locked dependencies;
+2. install locked dependencies;
 3. initialize managed AppData;
-4. generate the stable CAD tool manifest;
-5. build CadGPT/wake-agent;
+4. generate/validate CAD manifest artifacts without forcing them into idle memory;
+5. build CadGPT;
 6. build isolated CAD MCP Python environment;
 7. configure Secure MCP Tunnel;
-8. install/start hidden per-user background task;
-9. run status + doctor diagnostics.
+8. remove legacy CadGPT Scheduled Task if present;
+9. register CadGPT tray in HKCU Run;
+10. start tray immediately;
+11. wait for tray-ready + slim MCP + tunnel readiness;
+12. run doctor/acceptance diagnostics.
 
-### `run.bat`
+### run.bat
 
-`run.bat` controls the installed background agent; it is not the normal daily stack launcher.
+Keep familiar control verbs:
+
+```text
+run.bat start
+run.bat stop
+run.bat restart
+run.bat status
+run.bat uninstall
+```
+
+Internally these now control the tray/slim runtime rather than a Scheduled Task.
 
 ### EXE-last rule
 
-Do not package into installer/EXE until Stage 2/3 proves the BAT/runtime lifecycle on real Windows + AutoCAD.
-
-Packaging must preserve a proven architecture rather than introduce a new one.
+Do not package into an installer/EXE until this source/BAT/tray architecture passes real Windows + AutoCAD validation.
 
 ---
 
-## 18. Repository structure
+## 22. Implementation phases
 
-Current conceptual structure:
+### P0 — Baseline and invariants
+
+- capture current startup memory and latency;
+- capture current initialize/tools-list timing;
+- record current CAD manifest tool count;
+- add regression scaffolding before major refactor;
+- freeze the explicit invariants in this plan.
+
+### P1 — Admission handshake
+
+Implement `cadgpt_admission` in the slim control plane.
+
+Required result:
 
 ```text
-Cadgpt/
-├── setup.bat
-├── run.bat
-├── doctor.bat
-├── acceptance.bat
-│
-├── src/
-│   ├── index.ts
-│   ├── wake-agent.ts
-│   └── cadgpt/
-│       ├── tools/
-│       ├── session/
-│       ├── runtime/
-│       ├── launcher/
-│       ├── observator/
-│       ├── job_runtime/
-│       ├── skill_runtime/
-│       └── lib/
-│
-├── runtimes/
-│   └── cad-mcp/
-│
-├── skills/
-│   ├── write-lisp/
-│   └── jobcreate/
-│
-├── knowledge/
-│   └── jobs/
-│
-├── resources/
-│   └── cad/
-│
-├── appdata/                   # Beta managed-user simulation root
-│   ├── libraries/
-│   ├── registry/
-│   ├── workspace/
-│   ├── data/
-│   ├── runtime/
-│   ├── drawings/
-│   ├── state/
-│   └── logs/
-│
-├── preserved/
-│   └── revit-mcp/
-│
-├── scripts/
-├── tests/
-└── .github/workflows/
+current user turn has @cadgpt
+→ ACTIVE/CONTROL
+
+no @cadgpt
+→ INACTIVE
+→ stop CadGPT flow
 ```
 
-There are no authoritative root `lisp/**` / `jobs/**` writable workspaces in the current design.
+Mint session-scoped admission token.
+
+No contextual exception.
+
+### P2 — Admission token enforcement
+
+Require admission authority before:
+
+- registry/Job/Skill discovery used for work;
+- FILE discovery/work;
+- drawing discovery/binding;
+- CAD work;
+- work registration.
+
+CONTROL token may call only control allowlist.
+
+Direct entry without admission is rejected.
+
+### P3 — WorkRegistration and ToolLease
+
+Port GPTWorker's proven runtime concepts:
+
+- execution ID;
+- opaque authority token;
+- driver epoch;
+- generation;
+- call sequence;
+- acquire/release ToolLease;
+- stale handle rejection;
+- idle cleanup.
+
+Use general `owner_type/owner_id`, not a fake Job ID for every workflow.
+
+### P4 — FILE path isolation
+
+- lazy-load FILE families;
+- bind each operation to its WorkRegistration;
+- ensure paths come from execution scope, not global CWD authority;
+- add file version/hash conflict detection;
+- preserve controlled library promotion rules.
+
+### P5 — DrawingContext registry
+
+Replace one-binding-per-McpServer model with explicit execution-scoped drawing contexts.
+
+- generate opaque `drawing_id`;
+- support several drawings per execution;
+- support separate chats/executions concurrently;
+- invalidate only the closed/stale drawing context.
+
+### P6 — CAD lease and scheduler
+
+- acquire CAD ToolLease per invocation;
+- resolve exact drawing + host from lease target;
+- serialize mutation-sensitive calls per host;
+- remove ambient ActiveDocument authority;
+- preserve explicit drawing verification.
+
+### P7 — Lazy CAD path
+
+- remove eager CAD manifest/business registration from idle startup;
+- load CAD family on actual CAD demand;
+- connect CAD MCP only when CAD execution requires it;
+- FILE work never wakes CAD MCP.
+
+### P8 — Tray/startup migration
+
+- add `cadgpt-tray.ps1`;
+- add icon + tray-ready marker;
+- add mutex;
+- register HKCU Run;
+- remove legacy Scheduled Task;
+- adapt setup/run/doctor;
+- low-frequency health checks.
+
+### P9 — Idle optimization and telemetry
+
+- remove idle AutoCAD `tasklist` polling;
+- report loaded capability families;
+- report active work/lease counts;
+- measure RSS/heap/latency in idle, admitted FILE, admitted CAD states.
+
+### P10 — Real acceptance and documentation cleanup
+
+Run the full scenarios below before Stage 2 scope is frozen.
+
+Update README/ROADMAP/doctor/acceptance only after behavior is implemented and tests pass.
 
 ---
 
-## 19. Beta Scope Review — current fixes
+## 23. Mandatory regression tests
 
-Before Stage 2 is frozen, the following integrity contracts must be true:
+### 23.1 Admission
 
 ```text
-[ ] generic file writes cannot mutate appdata/libraries/**
-[ ] Lisp syntax errors can be checked out for repair
-[ ] helper-only Lisp can validate/promote intentionally
-[ ] promotion cannot target a ghost/disabled library
-[ ] User Registry IDs cannot be replaced across Lisp/Job kinds
-[ ] Job checkout/validate/promote lifecycle is executable
-[ ] Job promotion requires actual-test evidence + final-validation evidence + explicit acceptance
-[ ] library replacement import is rollback-safe
-[ ] changed imported implementation invalidates stale trusted semantics
-[ ] import requires explicit source approval and bounded safe tree copying
-[ ] CI exercises authoring-integrity invariants
-[ ] product/roadmap/implementation docs all describe this same architecture
+MCP initialize
+→ heavy execution families remain unloaded
+
+ChatGPT calls CadGPT without @cadgpt
+→ cadgpt_admission = INACTIVE
+→ no discovery
+→ no core work
+→ no CAD MCP
+
+previous turn/chat contained @cadgpt
+current user turn does not
+→ INACTIVE
+
+current exact user turn contains @cadgpt
+→ ACTIVE/CONTROL as appropriate
 ```
 
-These are Beta Scope Review items, not Stage 2 real-CAD findings.
+Missing/forged/stale admission token must be rejected by downstream work tools.
+
+CONTROL authority must not enter FILE/CAD execution.
+
+### 23.2 Work/lease identity
+
+```text
+same capability + two executions
+→ distinct lease IDs
+
+same Job/Skill after generation replacement
+→ old handle rejected
+
+runtime restart
+→ prior epoch rejected
+```
+
+### 23.3 CadGPT + GPTWorker FILE concurrency
+
+```text
+Chat A → @cadgpt → write-lisp → filesystem write
+Chat B → @gptworker → coding → filesystem write
+```
+
+Verify:
+
+- provider/work IDs remain distinct;
+- CadGPT scope never becomes GPTWorker workspace;
+- GPTWorker scope never becomes CadGPT draft scope;
+- different-file writes may proceed independently;
+- same-file conflicting write is detected rather than silently overwritten.
+
+### 23.4 Two chats / two drawings / same CAD tool
+
+```text
+Chat A
+@cadgpt
+Job A
+Drawing 1
+
+Chat B
+@cadgpt
+Job B
+Drawing 2
+
+both invoke the same CAD MCP operation
+```
+
+Verify:
+
+- distinct admission/work authority;
+- distinct ToolLeases;
+- correct drawing target for each;
+- no ActiveDocument drift;
+- no cross-Job state;
+- same-host mutation is serialized safely.
+
+### 23.5 Multi-drawing one execution
+
+- one work execution binds drawing A + B;
+- read calls can identify either explicitly;
+- mutation requires explicit `drawing_id` when more than one is bound;
+- closing drawing A does not silently retarget to B.
+
+### 23.6 Lazy runtime
+
+```text
+Windows idle
+→ tray ON
+→ slim MCP ON
+→ tunnel ON
+→ FILE heavy modules unloaded
+→ CAD modules unloaded
+→ CAD MCP OFF
+
+invalid/uninvoked CadGPT call
+→ state unchanged
+
+admitted FILE work
+→ FILE family loads
+→ CAD MCP remains OFF
+
+admitted CAD work
+→ CAD family loads
+→ CAD MCP activates on demand
+
+work ends / idle timeout
+→ execution authority expires
+→ heavy runtime can return to idle
+→ tray/slim MCP/tunnel remain
+```
+
+### 23.7 Tray
+
+- Windows logon creates exactly one CadGPT tray icon;
+- second tray launch exits via mutex;
+- old Scheduled Task is removed;
+- status does not busy-poll;
+- restart stops only verified CadGPT-owned processes;
+- an unrelated process occupying a configured port is never killed.
 
 ---
 
-## 20. Stage 2 entry condition
+## 24. Final acceptance demo before Stage 2
 
-Stage 2 begins only after the Beta Scope Review exit gate passes and scope is frozen.
+The refactor is not complete until this full demo works:
 
-Stage 2 then validates on a real Windows + AutoCAD workstation:
+```text
+WINDOWS LOGIN
 
-- setup/background-agent/tunnel end-to-end behavior;
-- real AutoCAD host discovery and reconnect;
-- explicit drawing binding across tab/close/reopen scenarios;
-- structured read/query operations;
-- reversible + guarded destructive mutations;
-- real Lisp load/repair/test/promotion path;
-- real Job execution/test/promotion path;
-- TBH Toolkit runtime behaviors;
-- reconnect/network/restart edge cases.
+CadGPT tray visible
+slim CadGPT MCP ready
+Secure MCP Tunnel ready
+heavy FILE runtime unloaded
+CAD MCP off
+```
 
-No documentation or static CI result should be presented as proof of real AutoCAD behavior.
+Then:
+
+```text
+Chat 1:
+@cadgpt
+Job A
+Drawing A
+
+Chat 2:
+@cadgpt
+Job B
+Drawing B
+
+→ both invoke the same CAD operation near-simultaneously
+→ independent work/tool leases
+→ correct drawings
+→ no conflict
+```
+
+At the same time:
+
+```text
+Chat 3:
+@gptworker
+coding on Repo X
+
+Chat 1:
+CadGPT write-lisp
+
+→ both use filesystem capabilities
+→ separate provider/execution scopes
+→ no workspace/path leakage
+```
+
+And:
+
+```text
+Chat 4:
+user does NOT write @cadgpt
+ChatGPT nevertheless considers/calls CadGPT
+
+→ cadgpt_admission returns INACTIVE
+→ internal instruction: stop CadGPT flow
+→ no side effect
+→ ChatGPT continues normally or with the requested provider
+```
+
+Only after these scenarios pass may the runtime-isolation refactor be considered complete.
+
+---
+
+## 25. Stage 2 entry condition
+
+Stage 2 begins only after:
+
+- admission gate is server-enforced;
+- no downstream work path bypasses admission;
+- WorkRegistration + ToolLease isolation is tested;
+- multi-chat/multi-drawing targeting is safe;
+- CAD scheduler prevents ActiveDocument races;
+- FILE and CAD execution paths are lazy and independent;
+- Windows tray/startup migration is stable;
+- managed library authoring integrity remains intact;
+- CI/regression tests pass.
+
+Stage 2 then validates the architecture against real Windows + AutoCAD behavior.
+
+No static test or documentation claim is a substitute for real AutoCAD validation.
