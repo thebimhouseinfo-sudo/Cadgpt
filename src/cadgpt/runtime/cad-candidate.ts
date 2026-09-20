@@ -10,6 +10,8 @@ export interface CadCandidateState {
   snapshotId: string;
   sourceFingerprint: string;
   startedAt: string;
+  successfulTools: string[];
+  lastSuccessAt: string | null;
 }
 
 let candidateGeneration = 0;
@@ -67,8 +69,33 @@ export async function beginCadCandidate(input: {
     snapshotId: input.snapshotId,
     sourceFingerprint: input.sourceFingerprint,
     startedAt: new Date().toISOString(),
+    successfulTools: [],
+    lastSuccessAt: null,
   };
   return { ...activeCandidate };
+}
+
+export function assertCadCandidateSourceMutationAllowed(executionId: string): void {
+  if (!activeCandidate) return;
+  if (activeCandidate.ownerExecutionId === executionId) {
+    throw new Error(
+      "CAD_CANDIDATE_ACTIVE: source/environment mutation is blocked while the live candidate is reserved. Accept it or rollback first."
+    );
+  }
+  throw new Error(
+    "CAD_CANDIDATE_RESERVED: another execution owns the live CAD MCP candidate."
+  );
+}
+
+export function recordCadCandidateSuccess(
+  executionId: string,
+  toolName: string
+): void {
+  if (!activeCandidate || activeCandidate.ownerExecutionId !== executionId) return;
+  if (!activeCandidate.successfulTools.includes(toolName)) {
+    activeCandidate.successfulTools.push(toolName);
+  }
+  activeCandidate.lastSuccessAt = new Date().toISOString();
 }
 
 function requireOwner(executionId: string): CadCandidateState {
@@ -79,8 +106,16 @@ function requireOwner(executionId: string): CadCandidateState {
   return activeCandidate;
 }
 
-export async function acceptCadCandidate(executionId: string): Promise<CadCandidateState> {
+export async function acceptCadCandidate(
+  executionId: string,
+  validatedTool: string
+): Promise<CadCandidateState> {
   const candidate = requireOwner(executionId);
+  if (!candidate.successfulTools.includes(validatedTool)) {
+    throw new Error(
+      `CAD_CANDIDATE_NOT_LIVE_VALIDATED: '${validatedTool}' has no successful live CAD call in this candidate generation.`
+    );
+  }
   // Stop the candidate process so the next normal CAD work starts a clean
   // known accepted generation rather than inheriting dev-session process state.
   await stopCadBackendIfLoaded();
