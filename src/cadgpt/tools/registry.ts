@@ -49,7 +49,7 @@ const CORE_TOOLS = [
   { name: "file_create", class: "local.files", summary: "Create a managed workspace/data text file." },
   { name: "file_edit", class: "local.files", summary: "Edit a managed workspace/data text file." },
   { name: "library_list", class: "libraries", summary: "List user Lisp/Job libraries imported into managed AppData." },
-  { name: "library_import", class: "libraries", summary: "Read a user-selected source folder, copy it into AppData, and index User Registry without writing back to source." },
+  { name: "library_import", class: "libraries", summary: "Read an approved absolute source folder, copy it only to an explicit absolute managed AppData target, and index User Registry without writing back to source." },
   { name: "job_list", class: "workflow.jobs", summary: "List concrete Jobs registered from managed user Job Libraries." },
   { name: "job_get", class: "workflow.jobs", summary: "Load one concrete registered Job from its managed AppData library." },
   { name: "job_checkout", class: "workflow.authoring", summary: "Copy a registered Job into the Job workspace for controlled refinement." },
