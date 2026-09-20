@@ -5,13 +5,14 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import {
+  getAppDataRoot,
   getJobLibrariesRoot,
   getLispLibrariesRoot,
   getUserCapabilitiesPath,
   getUserLibrariesManifestPath,
   getUserRegistryRoot,
 } from "../lib/appdata.js";
-import { resolveAbsoluteMutationPath, toCadgptPath } from "../lib/path-security.js";
+import { isPathInside, resolveAbsoluteMutationPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
@@ -308,6 +309,17 @@ export function registerLibraryMutationTools(server: McpServer): void {
         const source = await fs.realpath(source_path);
         const stat = await fs.stat(source);
         if (!stat.isDirectory()) throw new Error("source_path must be a directory");
+
+        const appDataRoot = path.resolve(getAppDataRoot());
+        if (
+          isPathInside(source, appDataRoot) ||
+          isPathInside(appDataRoot, source)
+        ) {
+          throw new Error(
+            "LIBRARY_IMPORT_SOURCE_SCOPE: source_path must be an external folder that does not overlap CadGPT AppData."
+          );
+        }
+
         const sourceStats = await assertSafeSourceTree(source);
 
         const parent = kind === "lisp" ? getLispLibrariesRoot() : getJobLibrariesRoot();
