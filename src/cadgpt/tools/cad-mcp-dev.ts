@@ -99,7 +99,7 @@ async function assertNoForeignRecovery(executionId: string): Promise<void> {
   }
 }
 
-async async function assertDevMode(): Promise<void> {
+async function assertDevMode(): Promise<void> {
   if (!isDevelopmentBuild()) {
     throw new Error("DEVELOPMENT_ONLY: cad-mcp-dev is unavailable in production builds.");
   }
