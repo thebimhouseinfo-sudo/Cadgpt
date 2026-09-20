@@ -672,24 +672,31 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ path: input, content }) => {
       try {
-        await prepareDevSourceMutation();
+        const workId = await prepareDevSourceMutation();
         const target = await resolveAbsoluteMutationPath(input, {
           allowedRoots: [runtimeRoot()],
           forCreate: true,
           label: "CAD MCP developer",
         });
         assertNotGeneratedManifest(target);
+        await fs.mkdir(path.dirname(target), { recursive: true });
         try {
-          await fs.lstat(target);
-          throw new Error(`Target already exists: ${target}`);
+          await fs.writeFile(target, content, {
+            encoding: "utf8",
+            flag: "wx",
+          });
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+            throw new Error(`Target already exists: ${target}`);
+          }
+          throw error;
         }
-        await atomicWrite(target, content);
+        const sourceFingerprint = await recordKnownSourceState(workId);
         return toolResult("cad_mcp_dev_create", {
           absolute_path: target,
           sha256: sha256(content),
           bytes: Buffer.byteLength(content),
+          source_fingerprint: sourceFingerprint,
         });
       } catch (error) {
         return toolError("cad_mcp_dev_create", error);
@@ -713,7 +720,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ path: input, expected_sha256, old_text, new_text, replace_all }) => {
       try {
-        await prepareDevSourceMutation();
+        const workId = await prepareDevSourceMutation();
         const target = await resolveAbsoluteMutationPath(input, {
           allowedRoots: [runtimeRoot()],
           label: "CAD MCP developer",
@@ -732,12 +739,20 @@ export function registerCadMcpDevTools(server: McpServer): void {
         const updated = replace_all
           ? original.split(old_text).join(new_text)
           : original.replace(old_text, new_text);
+        const latest = await fs.readFile(target, "utf8");
+        if (sha256(latest) !== currentHash) {
+          throw new Error(
+            "RESOURCE_CONFLICT: file changed during edit preparation"
+          );
+        }
         await atomicWrite(target, updated);
+        const sourceFingerprint = await recordKnownSourceState(workId);
         return toolResult("cad_mcp_dev_edit", {
           absolute_path: target,
           sha256_before: currentHash,
           sha256_after: sha256(updated),
           changed: updated !== original,
+          source_fingerprint: sourceFingerprint,
         });
       } catch (error) {
         return toolError("cad_mcp_dev_edit", error);
@@ -758,7 +773,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ path: input, expected_sha256 }) => {
       try {
-        await prepareDevSourceMutation();
+        const workId = await prepareDevSourceMutation();
         const target = await resolveAbsoluteMutationPath(input, {
           allowedRoots: [runtimeRoot()],
           label: "CAD MCP developer",
@@ -771,11 +786,19 @@ export function registerCadMcpDevTools(server: McpServer): void {
         if (currentHash !== expected_sha256) {
           throw new Error("RESOURCE_CONFLICT: file changed after it was read");
         }
+        const latest = await fs.readFile(target);
+        if (sha256(latest) !== currentHash) {
+          throw new Error(
+            "RESOURCE_CONFLICT: file changed during delete preparation"
+          );
+        }
         await fs.rm(target);
+        const sourceFingerprint = await recordKnownSourceState(workId);
         return toolResult("cad_mcp_dev_delete", {
           absolute_path: target,
           deleted: true,
           sha256: currentHash,
+          source_fingerprint: sourceFingerprint,
         });
       } catch (error) {
         return toolError("cad_mcp_dev_delete", error);
@@ -797,7 +820,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ source, destination, expected_sha256 }) => {
       try {
-        await prepareDevSourceMutation();
+        const workId = await prepareDevSourceMutation();
         const from = await resolveAbsoluteMutationPath(source, {
           allowedRoots: [runtimeRoot()],
           label: "CAD MCP developer",
@@ -813,18 +836,37 @@ export function registerCadMcpDevTools(server: McpServer): void {
         if (sha256(data) !== expected_sha256) {
           throw new Error("RESOURCE_CONFLICT: source changed after it was read");
         }
-        try {
-          await fs.lstat(to);
-          throw new Error(`Destination already exists: ${to}`);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
         await fs.mkdir(path.dirname(to), { recursive: true });
-        await fs.rename(from, to);
+        try {
+          await fs.writeFile(to, data, { flag: "wx" });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+            throw new Error(`Destination already exists: ${to}`);
+          }
+          throw error;
+        }
+
+        const latest = await fs.readFile(from);
+        if (sha256(latest) !== expected_sha256) {
+          await fs.rm(to, { force: true }).catch(() => undefined);
+          throw new Error(
+            "RESOURCE_CONFLICT: source changed during move preparation"
+          );
+        }
+
+        try {
+          await fs.rm(from);
+        } catch (error) {
+          await fs.rm(to, { force: true }).catch(() => undefined);
+          throw error;
+        }
+
+        const sourceFingerprint = await recordKnownSourceState(workId);
         return toolResult("cad_mcp_dev_move", {
           source: from,
           destination: to,
           moved: true,
+          source_fingerprint: sourceFingerprint,
         });
       } catch (error) {
         return toolError("cad_mcp_dev_move", error);
