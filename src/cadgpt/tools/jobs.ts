@@ -12,6 +12,7 @@ import {
 } from "../lib/appdata.js";
 import { isPathInside, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
 interface JobEntry {
   id: string;
