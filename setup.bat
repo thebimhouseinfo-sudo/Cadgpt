@@ -67,6 +67,11 @@ if errorlevel 1 (
 )
 
 echo.
+echo Stopping any previously owned CadGPT tray/runtime before dependency/build changes...
+call "%~dp0run.bat" stop >nul 2>nul
+
+
+echo.
 echo [1/10] Initializing CadGPT AppData...
 for %%D in (
   "appdata\libraries\lisp"
@@ -113,7 +118,6 @@ if errorlevel 1 goto :failed
 
 echo.
 echo [6/10] Rebuilding isolated CAD MCP Python environment...
-call "%~dp0run.bat" stop >nul 2>nul
 if exist ".venv-cad" (
   rmdir /s /q ".venv-cad"
   if exist ".venv-cad" (
