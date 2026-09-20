@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -10,7 +10,7 @@ import {
   getUserCapabilitiesPath,
   getUserLibrariesManifestPath,
 } from "../lib/appdata.js";
-import { isPathInside, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
+import { isPathInside, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import {
   applyAuthoringHeader,
@@ -44,6 +44,10 @@ const semanticMetadataSchema = z.object({
 interface UserRegistry {
   version: number;
   entries: Array<Record<string, unknown>>;
+}
+
+function sha256(content: string | Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
 }
 
 async function atomicWrite(target: string, content: string): Promise<void> {
@@ -124,13 +128,16 @@ export function registerLispWorkspaceTools(server: McpServer): void {
     "lisp_checkout",
     {
       title: "Checkout Managed Lisp for write-lisp",
-      description: "Copy one registered managed Lisp into AppData workspace for editing or repair. Source syntax problems are reported but do not block checkout; promotion remains strict. TBH Toolkit keeps the TBH authoring profile.",
+      description: "Copy one registered managed Lisp into an explicit absolute draft path under the Lisp workspace. Existing drafts are never overwritten without hash confirmation.",
       inputSchema: {
         registry_id: z.string().min(1),
+        draft_path: z.string().min(1).describe("Absolute .lsp path under the approved Lisp draft root"),
         description: z.string().min(1).max(1200).optional(),
+        overwrite_existing: z.boolean().optional().default(false),
+        expected_sha256: z.string().length(64).optional(),
       },
     },
-    async ({ registry_id, description }) => {
+    async ({ registry_id, draft_path, description, overwrite_existing, expected_sha256 }) => {
       try {
         const registry = await loadRegistry();
         const entry = registry.entries.find((item) => item.kind === "lisp" && String(item.id).toLowerCase() === registry_id.trim().toLowerCase());
@@ -159,7 +166,30 @@ export function registerLispWorkspaceTools(server: McpServer): void {
             ? "Working copy prepared by CadGPT write-lisp."
             : "Repair working copy prepared by CadGPT write-lisp; source contained blocking diagnostics.",
         });
-        const draft = draftPathFor(libraryId, relativePath);
+        const draft = await resolveAbsoluteMutationPath(draft_path, {
+          allowedRoots: [getLispDraftRoot()],
+          forCreate: true,
+          label: "Lisp draft",
+        });
+        if (path.extname(draft).toLowerCase() !== ".lsp") {
+          throw new Error("Lisp checkout draft_path must end in .lsp");
+        }
+
+        let previousDraft: string | null = null;
+        try {
+          previousDraft = await fs.readFile(draft, "utf8");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        if (previousDraft !== null) {
+          if (!overwrite_existing) {
+            throw new Error(`Draft already exists; explicit overwrite_existing=true is required: ${draft}`);
+          }
+          if (!expected_sha256 || sha256(previousDraft) !== expected_sha256) {
+            throw new Error("RESOURCE_CONFLICT: existing Lisp draft changed or expected_sha256 was not supplied");
+          }
+        }
+
         await atomicWrite(draft, normalized);
         return toolResult("lisp_checkout", {
           registry_id: entry.id,
@@ -213,17 +243,22 @@ export function registerLispWorkspaceTools(server: McpServer): void {
     "lisp_promote_draft",
     {
       title: "Promote Tested Lisp Draft to Managed Library",
-      description: "Promote one tested workspace draft into an existing managed AppData Lisp Library and upsert its User Registry metadata as one rollback-safe operation. Helper-only Lisp without public c: commands is supported.",
+      description: "Promote one tested absolute-path workspace draft into one explicit absolute managed-library target and update User Registry rollback-safely. Existing targets require hash-confirmed overwrite.",
       inputSchema: {
         draft_path: z.string().min(1),
+        target_path: z.string().min(1).describe("Absolute target path that must exactly match library_id + relative_path"),
         library_id: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,79}$/i),
         relative_path: z.string().min(1),
         metadata: semanticMetadataSchema,
         overwrite: z.boolean().optional().default(false),
+        expected_target_sha256: z.string().length(64).optional(),
       },
     },
-    async ({ draft_path, library_id, relative_path, metadata, overwrite }) => {
+    async ({ draft_path, target_path, library_id, relative_path, metadata, overwrite, expected_target_sha256 }) => {
       try {
+        if (!path.isAbsolute(draft_path)) {
+          throw new Error("ABSOLUTE_PATH_REQUIRED: lisp_promote_draft draft_path must be absolute");
+        }
         assertDraftVirtualPath(draft_path);
         await assertManagedLibraryExists(library_id);
         const normalizedRelative = safeRelativeLisp(relative_path);
@@ -232,7 +267,17 @@ export function registerLispWorkspaceTools(server: McpServer): void {
 
         const draft = await resolveAllowedPath(draft_path);
         const source = await fs.readFile(draft, "utf8");
-        const permanent = managedLispPath(library_id, normalizedRelative);
+        const expectedPermanent = managedLispPath(library_id, normalizedRelative);
+        const permanent = await resolveAbsoluteMutationPath(target_path, {
+          allowedRoots: [path.resolve(getLispLibrariesRoot(), library_id)],
+          forCreate: true,
+          label: "managed Lisp library",
+        });
+        if (path.relative(expectedPermanent, permanent) !== "") {
+          throw new Error(
+            `TARGET_PATH_MISMATCH: target_path must exactly match managed library target ${expectedPermanent}`
+          );
+        }
         const profile = profileForLibrary(library_id);
         const validation = validateLispSource(source, [], { profile, fileName: path.basename(permanent) });
         if (!validation.valid) {
@@ -248,6 +293,11 @@ export function registerLispWorkspaceTools(server: McpServer): void {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         }
         if (targetExists && !overwrite) throw new Error(`Managed target already exists; set overwrite=true for an intentional replacement: ${toCadgptPath(permanent)}`);
+        if (targetExists && overwrite) {
+          if (!expected_target_sha256 || previousPermanent === null || sha256(previousPermanent) !== expected_target_sha256) {
+            throw new Error("RESOURCE_CONFLICT: managed Lisp target changed or expected_target_sha256 was not supplied");
+          }
+        }
 
         const registry = await loadRegistry();
         const newEntry: Record<string, unknown> = {
@@ -311,6 +361,7 @@ export function registerLispWorkspaceTools(server: McpServer): void {
         return toolResult("lisp_promote_draft", {
           draft_path: toCadgptPath(draft),
           managed_path: toCadgptPath(permanent),
+          managed_absolute_path: permanent,
           library_id,
           registry_id: metadata.id,
           ai_mode: metadata.ai_mode,
