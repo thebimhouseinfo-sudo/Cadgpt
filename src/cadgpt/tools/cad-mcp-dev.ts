@@ -755,11 +755,91 @@ export function registerCadMcpDevTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "cad_mcp_dev_recovery_status",
+    {
+      title: "CAD MCP Development Recovery Status",
+      description:
+        "Read-only crash-recovery status. Shows persistent unaccepted baselines that block new CAD MCP mutations.",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        await assertDevMode({ allowRecovery: true });
+        const pending = await listRecoveryMetadata();
+        return toolResult("cad_mcp_dev_recovery_status", {
+          blocked: pending.some(
+            (item) => item.execution_id !== currentToolLease().workId
+          ),
+          pending,
+          count: pending.length,
+        });
+      } catch (error) {
+        return toolError("cad_mcp_dev_recovery_status", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "cad_mcp_dev_recover",
+    {
+      title: "Recover CAD MCP Source Baseline",
+      description:
+        "Restore one persistent unaccepted CAD MCP baseline after a crash/failed cleanup. This is the only mutation allowed while a foreign recovery baseline is pending.",
+      inputSchema: {
+        snapshot_id: z.string().min(1),
+        confirmed: z.literal(true),
+      },
+    },
+    async ({ snapshot_id, confirmed }) => {
+      try {
+        await assertDevMode({ allowRecovery: true });
+        if (!confirmed) throw new Error("Explicit confirmation is required");
+
+        const found = await findPersistedSnapshotById(snapshot_id);
+        if (!found) {
+          throw new Error(
+            `CAD_MCP_DEV_RECOVERY_NOT_FOUND: ${snapshot_id}`
+          );
+        }
+
+        try {
+          const { cadUpstream } = await import("../runtime/cad-upstream.js");
+          if (cadUpstream.status().enabled || cadUpstream.status().connected) {
+            await cadUpstream.deactivate();
+          }
+        } catch {
+          // Source recovery proceeds even if the backend was already absent.
+        }
+
+        await restoreSnapshotFiles(found.snapshot);
+        await removePersistedSnapshot(found.executionId);
+        snapshots.delete(found.executionId);
+        validatedFingerprints.delete(found.executionId);
+
+        const { hasCadProxySurface, syncCadBusinessProxies } = await import("./cad-proxy.js");
+        const proxySurface = hasCadProxySurface(server)
+          ? { refreshed: true, tools: syncCadBusinessProxies(server) }
+          : { refreshed: false };
+
+        return toolResult("cad_mcp_dev_recover", {
+          recovered: true,
+          snapshot_id,
+          recovered_execution_id: found.executionId,
+          files: found.snapshot.files.size,
+          proxy_surface: proxySurface,
+        });
+      } catch (error) {
+        return toolError("cad_mcp_dev_recover", error);
+      }
+    }
+  );
+
+  server.registerTool(
     "cad_mcp_dev_snapshot",
     {
       title: "Snapshot CAD MCP Runtime Source",
       description:
-        "Capture an in-memory source baseline for rollback. Git is not used.",
+        "Capture an immutable crash-safe source baseline for rollback under CadGPT AppData state. Git is not used.",
       inputSchema: {},
     },
     async () => {
@@ -793,12 +873,14 @@ export function registerCadMcpDevTools(server: McpServer): void {
           files: captured,
           createdAt: new Date().toISOString(),
         };
+        await persistSnapshot(lease.workId, snapshot);
         snapshots.set(lease.workId, snapshot);
         return toolResult("cad_mcp_dev_snapshot", {
           snapshot_id: snapshot.id,
           files: captured.size,
           bytes,
           created_at: snapshot.createdAt,
+          crash_safe: true,
         });
       } catch (error) {
         return toolError("cad_mcp_dev_snapshot", error);
@@ -831,6 +913,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
         validatedFingerprints.delete(lease.workId);
 
         await restoreSnapshotFiles(snapshot);
+        await removePersistedSnapshot(lease.workId);
         snapshots.delete(lease.workId);
 
         const { hasCadProxySurface, syncCadBusinessProxies } = await import("./cad-proxy.js");
@@ -965,6 +1048,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
           );
         }
 
+        await removePersistedSnapshot(lease.workId);
         snapshots.delete(lease.workId);
         validatedFingerprints.delete(lease.workId);
         return toolResult("cad_mcp_dev_accept_local", {
@@ -1092,7 +1176,18 @@ export function registerCadMcpDevTools(server: McpServer): void {
             "CAD_CANDIDATE_SOURCE_CHANGED: local runtime source changed after candidate validation; rollback and validate a new candidate."
           );
         }
+        const snapshot = snapshots.get(lease.workId);
+        if (!snapshot) {
+          throw new Error("CAD_MCP_DEV_SNAPSHOT_REQUIRED: candidate baseline is missing.");
+        }
+
         const candidate = await acceptCadCandidate(lease.workId, validated_tool);
+        try {
+          await removePersistedSnapshot(lease.workId);
+        } catch (error) {
+          await restoreSnapshotFiles(snapshot).catch(() => undefined);
+          throw error;
+        }
         snapshots.delete(lease.workId);
         validatedFingerprints.delete(lease.workId);
         return toolResult("cad_mcp_dev_candidate_accept", {
@@ -1138,13 +1233,16 @@ export function registerCadMcpDevTools(server: McpServer): void {
 export async function rollbackUnacceptedCadMcpDevStateForExecution(
   executionId: string
 ): Promise<{ restored: boolean }> {
-  const snapshot = snapshots.get(executionId);
+  const snapshot =
+    snapshots.get(executionId) ??
+    (await loadPersistedSnapshot(executionId));
   if (!snapshot) {
     validatedFingerprints.delete(executionId);
     return { restored: false };
   }
 
   await restoreSnapshotFiles(snapshot);
+  await removePersistedSnapshot(executionId);
   snapshots.delete(executionId);
   validatedFingerprints.delete(executionId);
   return { restored: true };
