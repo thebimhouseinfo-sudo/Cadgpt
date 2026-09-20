@@ -19,6 +19,24 @@ function isToolErrorResult(value: unknown): boolean {
   );
 }
 
+async function forceResetCadBackend(reason: string): Promise<void> {
+  console.warn(`[Observator] Resetting CAD MCP backend after capture cleanup failure: ${reason}`);
+  await cadUpstream.deactivate().catch(() => undefined);
+}
+
+async function cancelCaptureFailSafe(): Promise<void> {
+  try {
+    const result = await cadUpstream.callTool("cad_observation_capture_cancel", {});
+    if (isToolErrorResult(result)) {
+      await forceResetCadBackend("cad_observation_capture_cancel returned isError");
+    }
+  } catch (error) {
+    await forceResetCadBackend(
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+}
+
 interface CaptureOwner {
   workId: string;
   drawingId: string;
@@ -133,10 +151,15 @@ export async function finishObservationCapture(
       const result = await cadUpstream.callTool("cad_observation_capture_finish", {
         include_paper_space: includePaperSpace,
       });
-      if (!isToolErrorResult(result)) {
+      if (isToolErrorResult(result)) {
+        await cancelCaptureFailSafe();
+      } else {
         recordCadCandidateSuccess(currentToolLease().workId, "observator_capture_finish");
       }
       return result;
+    } catch (error) {
+      await cancelCaptureFailSafe();
+      throw error;
     } finally {
       captureOwners.delete(owner.host);
     }
@@ -150,10 +173,17 @@ export async function cancelObservationCapture(): Promise<unknown> {
   return withCadHostLock(owner.host, async () => {
     try {
       const result = await cadUpstream.callTool("cad_observation_capture_cancel", {});
-      if (!isToolErrorResult(result)) {
+      if (isToolErrorResult(result)) {
+        await forceResetCadBackend("explicit Observation cancel returned isError");
+      } else {
         recordCadCandidateSuccess(currentToolLease().workId, "observator_capture_cancel");
       }
       return result;
+    } catch (error) {
+      await forceResetCadBackend(
+        error instanceof Error ? error.message : String(error)
+      );
+      throw error;
     } finally {
       captureOwners.delete(owner.host);
     }
@@ -198,7 +228,10 @@ export async function releaseObservationForExecution(executionId: string): Promi
     try {
       if (cadUpstream.status().connected) {
         await withCadHostLock(host, async () => {
-          await cadUpstream.callTool("cad_observation_capture_cancel", {});
+          const result = await cadUpstream.callTool("cad_observation_capture_cancel", {});
+          if (isToolErrorResult(result)) {
+            await forceResetCadBackend("work cleanup cancel returned isError");
+          }
         });
       }
     } catch {
