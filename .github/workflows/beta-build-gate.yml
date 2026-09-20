@@ -51,8 +51,8 @@ jobs:
       - name: Generate stable CAD tool manifest
         run: python scripts/generate-cad-tool-manifest.py
 
-      - name: Build connector
-        run: npm run build
+      - name: Build and unit tests
+        run: npm test
 
       - name: Exercise libraries, registry and write-lisp through MCP
         shell: pwsh
@@ -65,6 +65,7 @@ jobs:
             "appdata/workspace/job-draft",
             "appdata/data/runs",
             "appdata/runtime/dynamic-lisp",
+            "appdata/drawings",
             "appdata/state",
             "appdata/logs"
           ) | Out-Null
@@ -86,7 +87,8 @@ jobs:
           $env:CAD_MCP_PYTHON = "python"
           $env:CAD_MCP_ENTRY = "runtimes\cad-mcp\main.py"
           $env:MCP_TOKEN = "beta-gate-token"
-          $env:CADGPT_APPDATA_ROOT = "appdata"
+          $env:CADGPT_APPDATA_ROOT = (Resolve-Path "appdata").Path
+          $env:CADGPT_BUILD_PROFILE = "development"
           $mcpUrl = "http://127.0.0.1:3000/mcp/beta-gate-token"
           $proc = Start-Process -FilePath "node" -ArgumentList "dist/index.js" -PassThru -NoNewWindow
           try {
@@ -118,18 +120,49 @@ jobs:
               $resp = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body $body
               return ($resp.Content | ConvertFrom-Json)
             }
-            function Invoke-Tool([string]$Name, $Arguments) { return Invoke-Mcp "tools/call" @{ name=$Name; arguments=$Arguments } }
+            function Invoke-Tool([string]$Name, $Arguments=@{}) { return Invoke-Mcp "tools/call" @{ name=$Name; arguments=$Arguments } }
+
+            $initialTools = Invoke-Mcp "tools/list" @{}
+            $initialNames = @($initialTools.result.tools | ForEach-Object { $_.name })
+            if ($initialNames -contains "file_roots") { throw "FILE family loaded before admission/work" }
+
+            $admit = Invoke-Tool "cadgpt_admission" @{ user_turn="@cadgpt run beta authoring gate" }
+            $admissionToken = [string]$admit.result.structuredContent.data.admission_token
+            if (-not $admissionToken) { throw "ACTIVE admission returned no token" }
+
+            $work = Invoke-Tool "cadgpt_work_start" @{
+              admission_token=$admissionToken; owner_type="skill"; owner_id="write-lisp"; execution_path="file"
+            }
+            $handle = $work.result.structuredContent.data.work_handle
+            if (-not $handle.execution_id -or -not $handle.authority_token) { throw "FILE work handle missing" }
+            $workAuth = @{
+              admission_token=$admissionToken;
+              execution_id=[string]$handle.execution_id;
+              authority_token=[string]$handle.authority_token
+            }
+            function Invoke-Work([string]$Name, $Arguments=@{}) {
+              $merged=@{}
+              foreach($k in $workAuth.Keys){$merged[$k]=$workAuth[$k]}
+              foreach($k in $Arguments.Keys){$merged[$k]=$Arguments[$k]}
+              return Invoke-Tool $Name $merged
+            }
+            function Invoke-Discovery([string]$Name, $Arguments=@{}) {
+              $merged=@{ admission_token=$admissionToken }
+              foreach($k in $Arguments.Keys){$merged[$k]=$Arguments[$k]}
+              return Invoke-Tool $Name $merged
+            }
 
             $tools = Invoke-Mcp "tools/list" @{}
             $toolNames = @($tools.result.tools | ForEach-Object { $_.name })
             foreach ($requiredTool in @(
               "library_list", "library_import", "registry_list", "registry_get",
-              "lisp_scaffold", "lisp_checkout", "lisp_validate", "lisp_draft_validate", "lisp_promote_draft"
+              "lisp_scaffold", "lisp_checkout", "lisp_validate", "lisp_draft_validate", "lisp_promote_draft",
+              "file_roots", "file_create"
             )) {
               if ($toolNames -notcontains $requiredTool) { throw "Missing managed-library/write-lisp tool: $requiredTool" }
             }
 
-            $roots = Invoke-Tool "file_roots" @{}
+            $roots = Invoke-Work "file_roots" @{}
             $rootNames = @($roots.result.structuredContent.data.roots)
             foreach ($requiredRoot in @("appdata/data", "appdata/libraries", "appdata/workspace")) {
               if ($rootNames -notcontains $requiredRoot) { throw "file_roots missing managed root: $requiredRoot" }
@@ -138,7 +171,7 @@ jobs:
               if ($rootNames -contains $forbidden) { throw "Legacy repo root is still exposed: $forbidden" }
             }
 
-            $imported = Invoke-Tool "library_import" @{
+            $imported = Invoke-Work "library_import" @{
               kind="lisp"; library_id="ci-user-lib"; name="CI User Library"; source_path=$external;
               user_approved_source=$true; replace_existing=$true
             }
@@ -147,43 +180,43 @@ jobs:
             if ($sourceHashBefore -ne $sourceHashAfter) { throw "External user source was modified during import" }
             if (-not (Test-Path "appdata/libraries/lisp/ci-user-lib/UserHello.lsp")) { throw "Managed copy was not created" }
 
-            $userCap = Invoke-Tool "registry_get" @{ id="USERHELLO"; kind="lisp" }
+            $userCap = Invoke-Discovery "registry_get" @{ id="USERHELLO"; kind="lisp" }
             if ($userCap.result.isError -eq $true -or $userCap.result.structuredContent.data.entry.library_id -ne "ci-user-lib") { throw "Imported Lisp not indexed in User Registry" }
             if ($userCap.result.structuredContent.data.entry.semantic_status -ne "indexed") { throw "Fresh import should remain indexed/unmodified, not pretend curated" }
 
-            $scaffold = Invoke-Tool "lisp_scaffold" @{
+            $scaffold = Invoke-Work "lisp_scaffold" @{
               file_name="Beta Smoke.lsp"; module="CadGPT Beta Gate"; command="BETASMOKE";
               description="Static beta scaffold smoke test"; mutating=$false; uses_com=$false
             }
             $scaffoldSource = $scaffold.result.structuredContent.data.content
             if ($scaffoldSource -notmatch "CADGPT-HEADER-START" -or $scaffoldSource -match "TBH-HEADER-START") { throw "Default scaffold is not CadGPT-native" }
 
-            $tbhScaffold = Invoke-Tool "lisp_scaffold" @{
+            $tbhScaffold = Invoke-Work "lisp_scaffold" @{
               file_name="TBH Smoke.lsp"; module="Beta"; command="TBHSMOKE";
               description="TBH exception"; target_library_id="tbh-toolkit"; mutating=$false; uses_com=$false
             }
             if ($tbhScaffold.result.structuredContent.data.content -notmatch "TBH-HEADER-START") { throw "TBH authoring exception missing" }
 
-            $checkout = Invoke-Tool "lisp_checkout" @{ registry_id="ci-user-lib.lisp.userhello"; description="User hello edited by CadGPT" }
+            $checkout = Invoke-Work "lisp_checkout" @{ registry_id="ci-user-lib.lisp.userhello"; description="User hello edited by CadGPT" }
             if ($checkout.result.isError -eq $true -or $checkout.result.structuredContent.ok -ne $true) { throw "lisp_checkout failed" }
             $draftPath = $checkout.result.structuredContent.data.draft_path
-            $draft = Get-Content ($draftPath -replace '^appdata/', 'appdata/') -Raw
+            $draft = Get-Content -LiteralPath $draftPath -Raw
             if ($draft -notmatch "CADGPT-HEADER-START") { throw "Non-TBH checkout did not normalize draft to CadGPT header" }
             if ((Get-FileHash $externalFile -Algorithm SHA256).Hash -ne $sourceHashBefore) { throw "External source changed after checkout" }
 
-            $draftValid = Invoke-Tool "lisp_draft_validate" @{ path=$draftPath; expected_commands=@("USERHELLO"); profile="cadgpt" }
+            $draftValid = Invoke-Work "lisp_draft_validate" @{ path=$draftPath; expected_commands=@("USERHELLO"); profile="cadgpt" }
             if ($draftValid.result.structuredContent.data.valid -ne $true) { throw "CadGPT checkout draft failed validation" }
 
-            $managedValid = Invoke-Tool "lisp_validate" @{
+            $managedValid = Invoke-Work "lisp_validate" @{
               path="appdata/libraries/lisp/tbh-toolkit/Setup Xref/XRlayer.lsp"; expected_commands=@("XRLAYER"); profile="syntax"
             }
             if ($managedValid.result.structuredContent.data.valid -ne $true) { throw "Untouched imported Lisp should pass syntax validation without header normalization" }
 
-            $badPath = "appdata/workspace/lisp-draft/CI_BAD.lsp"
+            $badPath = Join-Path (Resolve-Path "appdata/workspace/lisp-draft").Path "CI_BAD.lsp"
             $bad = $scaffoldSource -replace "\(defun c:BETASMOKE \(/ \)", "(defun c:BETASMOKE (/ x)`n  (let ((x 1)) (princ x))"
-            $created = Invoke-Tool "file_create" @{ path=$badPath; content=$bad }
+            $created = Invoke-Work "file_create" @{ path=$badPath; content=$bad }
             if ($created.result.isError -eq $true) { throw "Could not create Common Lisp reject fixture" }
-            $invalid = Invoke-Tool "lisp_draft_validate" @{ path=$badPath; expected_commands=@("BETASMOKE"); profile="cadgpt" }
+            $invalid = Invoke-Work "lisp_draft_validate" @{ path=$badPath; expected_commands=@("BETASMOKE"); profile="cadgpt" }
             if ($invalid.result.structuredContent.data.valid -ne $false) { throw "Common Lisp form was not rejected" }
             $codes = @($invalid.result.structuredContent.data.diagnostics | ForEach-Object { $_.code })
             if ($codes -notcontains "COMMON_LISP_FORM") { throw "COMMON_LISP_FORM diagnostic missing" }
