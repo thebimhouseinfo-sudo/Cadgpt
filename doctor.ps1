@@ -34,6 +34,7 @@ if (Test-Command "node") {
 if (Test-Command "npm") { Ok "npm available" } else { Fail "npm not found in PATH." }
 if (Test-Path "package-lock.json") { Ok "Node dependency lock exists" } else { Fail "package-lock.json missing." }
 if (Test-Path "runtimes\cad-mcp\requirements.lock.txt") { Ok "CAD MCP Python dependency lock exists" } else { Fail "CAD MCP requirements.lock.txt missing." }
+if (Test-Path "runtimes\cad-mcp\tool-manifest.json") { Ok "CAD MCP tool manifest exists" } else { Fail "CAD MCP tool manifest missing; rerun setup.bat." }
 
 if (Test-Command "python") {
     $pyVersion = (& python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>$null).Trim()
@@ -44,7 +45,12 @@ if (Test-Command "python") {
 
 if (Test-Path ".env") { Ok ".env exists" } else { Fail ".env missing; run setup.bat." }
 if (Test-Path "knowledge\jobs\JOB_RULES.md") { Ok "Internal Job rules exist" } else { Fail "Internal Job rules missing." }
+if (Test-Path "skills\cad-mcp-dev\SKILL.md") { Ok "Development-only cad-mcp-dev Skill source exists" } else { Fail "cad-mcp-dev Skill source missing." }
 if (Test-Path "resources\cad\CADGPT_LOAD_SMOKE.lsp") { Ok "Internal AutoLISP smoke fixture exists" } else { Fail "Internal AutoLISP smoke fixture missing." }
+
+$buildProfile = Get-DotEnvValue "CADGPT_BUILD_PROFILE"
+if (-not $buildProfile) { $buildProfile = "development" }
+Ok "Build profile: $buildProfile"
 
 $appDataConfigured = Get-DotEnvValue "CADGPT_APPDATA_ROOT"
 if (-not $appDataConfigured) { $appDataConfigured = "appdata" }
@@ -61,6 +67,7 @@ foreach ($relative in @(
     "workspace\job-draft",
     "data\runs",
     "runtime\dynamic-lisp",
+    "drawings",
     "state",
     "logs"
 )) {
@@ -70,13 +77,31 @@ foreach ($relative in @(
 }
 Ok "CadGPT AppData root: $appDataRoot"
 
+$startup = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CadGPT" -ErrorAction SilentlyContinue
+if ($startup -and $startup.CadGPT -match "cadgpt-tray\.ps1") { Ok "HKCU Run startup points to CadGPT tray" }
+else { Warn "CadGPT tray is not registered in HKCU Run. Run run.bat install." }
+
+$legacy = Get-ScheduledTask -TaskName "CadGPT Background Agent" -ErrorAction SilentlyContinue
+if ($legacy) { Warn "Legacy CadGPT Scheduled Task still exists; rerun setup.bat to remove it." }
+else { Ok "Legacy Scheduled Task startup is absent" }
+
+$trayMarker = Join-Path $appDataRoot "state\tray-ready.json"
+if (Test-Path $trayMarker) {
+    try {
+        $trayState = Get-Content $trayMarker -Raw | ConvertFrom-Json
+        if ([int]$trayState.pid -gt 0 -and (Get-Process -Id ([int]$trayState.pid) -ErrorAction SilentlyContinue)) {
+            Ok "CadGPT tray host is running (PID $($trayState.pid))"
+        } else { Warn "CadGPT tray marker exists but PID is not running." }
+    } catch { Warn "CadGPT tray marker is unreadable." }
+} else { Warn "CadGPT tray is not currently running." }
+
 $portValue = Get-DotEnvValue "PORT"
 $port = if ($portValue) { [int]$portValue } else { 3000 }
 $healthPortValue = Get-DotEnvValue "OPENAI_TUNNEL_HEALTH_PORT"
 $healthPort = if ($healthPortValue) { [int]$healthPortValue } else { 8080 }
 
 $mcpToken = Get-DotEnvValue "MCP_TOKEN"
-if ($mcpToken) { Ok "Private MCP path token configured" } else { Warn "MCP_TOKEN is empty; re-run setup/openai-tunnel init to generate one." }
+if ($mcpToken) { Ok "Private MCP path token configured" } else { Warn "MCP_TOKEN is empty; re-run openai-tunnel init." }
 
 $tunnelId = Get-DotEnvValue "OPENAI_TUNNEL_ID"
 $tunnelKey = Get-DotEnvValue "OPENAI_TUNNEL_API_KEY"
@@ -88,35 +113,26 @@ if (Test-Path $cadPython) {
     & $cadPython -m pip check *> $null
     if ($LASTEXITCODE -eq 0) { Ok "CAD MCP Python dependency graph passes pip check" } else { Fail "CAD MCP Python dependency graph failed pip check; rerun setup.bat." }
 
+    & $cadPython -m compileall -q "runtimes\cad-mcp" *> $null
+    if ($LASTEXITCODE -eq 0) { Ok "CAD MCP Python source compiles" } else { Fail "CAD MCP source compile failed." }
+
     & $cadPython -c "import sys; sys.path.insert(0, r'runtimes\cad-mcp'); import main; print('cad-mcp import ok')" *> $null
     if ($LASTEXITCODE -eq 0) { Ok "CAD MCP entrypoint imports cleanly" } else { Fail "CAD MCP entrypoint import failed." }
-
-    $oldPythonPath = $env:PYTHONPATH
-    $env:PYTHONPATH = "$ScriptDir\runtimes\cad-mcp"
-    try {
-        $hostProbe = & $cadPython -c "from connection.acad import get_acad_app; app=get_acad_app(); print(f'{app.Name}|{app.Version}|{app.Documents.Count}')" 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            $line = ($hostProbe | Select-Object -Last 1).ToString()
-            $parts = $line -split '\|', 3
-            if ($parts.Count -eq 3) { Ok "AutoCAD COM reachable: $($parts[0]) $($parts[1]); open drawings=$($parts[2])" }
-            else { Ok "AutoCAD COM reachable" }
-        } else { Warn "AutoCAD COM is not currently reachable. This is acceptable before real CAD validation." }
-    }
-    finally {
-        if ($null -eq $oldPythonPath) { Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue }
-        else { $env:PYTHONPATH = $oldPythonPath }
-    }
 } else { Fail "CAD MCP virtual environment missing; run setup.bat." }
 
 try {
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -Method Get -TimeoutSec 2
     if ($health.status -eq "ok" -and $health.name -eq "cadgpt") {
-        Ok "CadGPT local MCP healthy on port $port"
-        if ($health.cad_mcp.connected) { Ok "CAD MCP upstream connected ($($health.cad_mcp.tool_count) tools)" }
-        elseif ($health.cad_mcp.last_error) { Warn "CAD MCP upstream not connected: $($health.cad_mcp.last_error)" }
-        else { Warn "CAD MCP upstream is idle/not connected yet." }
+        Ok "CadGPT slim MCP healthy on port $port"
+        if ($health.mode -eq "slim-control-plane") { Ok "Slim control plane mode confirmed" }
+        else { Warn "Unexpected CadGPT mode: $($health.mode)" }
+        $families = @($health.loaded_families)
+        if ($families.Count -eq 0) { Ok "Heavy capability families remain unloaded at idle" }
+        else { Ok "Loaded capability families: $($families -join ', ')" }
+        if ($health.cad_mcp.connected) { Ok "CAD MCP currently connected ($($health.cad_mcp.tool_count) tools)" }
+        else { Ok "CAD MCP is sleeping/not connected (expected at idle)" }
     } else { Fail "Unexpected service responded on CadGPT port $port." }
-} catch { Warn "CadGPT local MCP is not currently running on port $port." }
+} catch { Warn "CadGPT slim MCP is not currently running on port $port." }
 
 try {
     $ready = Invoke-WebRequest -Uri "http://127.0.0.1:$healthPort/readyz" -UseBasicParsing -TimeoutSec 2
@@ -139,5 +155,5 @@ if ($failures -gt 0) {
     Write-Host "CadGPT needs attention before reliable use." -ForegroundColor Red
     exit 1
 }
-Write-Host "CadGPT core environment is healthy. Warnings may only mean a service/AutoCAD is not currently running." -ForegroundColor Green
+Write-Host "CadGPT environment is healthy. Idle CAD MCP is expected." -ForegroundColor Green
 exit 0
