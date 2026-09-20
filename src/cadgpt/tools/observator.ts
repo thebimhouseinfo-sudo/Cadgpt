@@ -55,11 +55,11 @@ export function registerObservatorTools(server: McpServer): void {
       title: "Start Observation Capture",
       description:
         "Start lightweight ObjectAdded capture on the explicitly bound drawing. During capture only new-object identities are retained; no full-drawing scan or deep property read occurs.",
-      inputSchema: {},
+      inputSchema: { drawing_id: z.string().optional() },
     },
-    async () => {
+    async ({ drawing_id }) => {
       try {
-        const upstream = await startObservationCapture(server);
+        const upstream = await startObservationCapture(drawing_id);
         return toolResult("observator_capture_start", extractUpstreamData(upstream));
       } catch (error) {
         return toolError("observator_capture_start", error);
@@ -92,12 +92,13 @@ export function registerObservatorTools(server: McpServer): void {
       description:
         "Stop capture and return only surviving top-level candidate headers created since capture start. Erased/undone/nested/block-definition objects are filtered without enumerating the whole drawing.",
       inputSchema: {
+        drawing_id: z.string().optional(),
         include_paper_space: z.boolean().default(true),
       },
     },
-    async ({ include_paper_space }) => {
+    async ({ drawing_id, include_paper_space }) => {
       try {
-        const upstream = await finishObservationCapture(server, include_paper_space);
+        const upstream = await finishObservationCapture(drawing_id, include_paper_space);
         return toolResult("observator_capture_finish", extractUpstreamData(upstream));
       } catch (error) {
         return toolError("observator_capture_finish", error);
@@ -130,13 +131,14 @@ export function registerObservatorTools(server: McpServer): void {
       description:
         "Read all discoverable direct properties for one or many top-level entities in the explicitly bound drawing. Handles are resolved directly; no full-drawing scan and no nested entity traversal.",
       inputSchema: {
+        drawing_id: z.string().optional(),
         handles: z.array(z.string().min(1)).min(1),
         include_paper_space: z.boolean().default(true),
       },
     },
-    async ({ handles, include_paper_space }) => {
+    async ({ drawing_id, handles, include_paper_space }) => {
       try {
-        const upstream = await readEntityProperties(server, handles, include_paper_space);
+        const upstream = await readEntityProperties(drawing_id, handles, include_paper_space);
         return toolResult("observator_read_entities", extractUpstreamData(upstream));
       } catch (error) {
         return toolError("observator_read_entities", error);
