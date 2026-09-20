@@ -13,12 +13,17 @@ export async function cleanupExecutionState(executionId: string): Promise<void> 
 
   if (loaded.has("cad")) {
     try {
-      const [{ clearExecutionDrawingContexts }, { releaseObservationForExecution }] =
-        await Promise.all([
-          import("../session/drawing-binding.js"),
-          import("../observator/engine.js"),
-        ]);
+      const [
+        { clearExecutionDrawingContexts },
+        { releaseObservationForExecution },
+        { clearDestructivePreviewOwnershipForExecution },
+      ] = await Promise.all([
+        import("../session/drawing-binding.js"),
+        import("../observator/engine.js"),
+        import("../tools/cad-proxy.js"),
+      ]);
       await releaseObservationForExecution(executionId);
+      clearDestructivePreviewOwnershipForExecution(executionId);
       clearExecutionDrawingContexts(executionId);
     } catch {
       // Cleanup remains best-effort; stale authority has already been revoked.
