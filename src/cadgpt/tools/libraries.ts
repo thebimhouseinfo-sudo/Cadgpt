@@ -13,6 +13,7 @@ import {
 } from "../lib/appdata.js";
 import { toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
 const LIBRARY_ID = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const MAX_IMPORT_FILES = 10000;
