@@ -20,6 +20,7 @@ export interface WorkRegistration {
   callSequence: number;
   createdAt: string;
   lastActivityAt: string;
+  closing?: boolean;
 }
 
 export interface ToolLease {
@@ -56,11 +57,17 @@ function sessionTag(sessionKey: string): string {
   return createHash("sha256").update(sessionKey).digest("hex").slice(0, 12);
 }
 
+function hasActiveLeaseForWork(executionId: string): boolean {
+  return [...activeLeases.values()].some(
+    (lease) => lease.workId === executionId
+  );
+}
+
 function cleanup(): void {
   const now = Date.now();
   for (const [executionId, work] of registrations) {
     if (now - Date.parse(work.lastActivityAt) <= WORK_IDLE_MS) continue;
-    if ([...activeLeases.values()].some((lease) => lease.workId === executionId)) continue;
+    if (hasActiveLeaseForWork(executionId)) continue;
     registrations.delete(executionId);
     if (activeBySession.get(work.sessionKey) === executionId) {
       activeBySession.delete(work.sessionKey);
@@ -115,6 +122,11 @@ export function createWorkRegistration(input: {
   }
 
   const priorId = activeBySession.get(input.sessionKey);
+  if (priorId && hasActiveLeaseForWork(priorId)) {
+    throw new Error(
+      "WORK_BUSY: current CadGPT work still has an active ToolLease; wait for it to finish before replacing work."
+    );
+  }
   if (priorId) registrations.delete(priorId);
 
   const generation = (generationBySession.get(input.sessionKey) || 0) + 1;
@@ -155,6 +167,7 @@ export function validateWorkHandle(
   const work = registrations.get(executionId);
   if (
     !work ||
+    work.closing === true ||
     work.sessionKey !== sessionKey ||
     work.authorityToken !== authorityToken ||
     work.driverEpoch !== DRIVER_EPOCH
@@ -173,6 +186,11 @@ export function releaseWorkRegistration(
   sessionKey: string
 ): WorkRegistration {
   const work = validateWorkHandle(executionId, authorityToken, sessionKey);
+  if (hasActiveLeaseForWork(work.executionId)) {
+    throw new Error(
+      "WORK_BUSY: cannot stop CadGPT work while a ToolLease is still active."
+    );
+  }
   registrations.delete(work.executionId);
   if (activeBySession.get(sessionKey) === work.executionId) activeBySession.delete(sessionKey);
   return { ...work };
@@ -185,8 +203,21 @@ export function activeExecutionForSession(sessionKey: string): string | null {
 
 export function releaseSessionWork(sessionKey: string): string | null {
   const executionId = activeBySession.get(sessionKey) ?? null;
-  if (executionId) registrations.delete(executionId);
   activeBySession.delete(sessionKey);
+  if (!executionId) return null;
+
+  const work = registrations.get(executionId);
+  if (!work) return executionId;
+
+  if (hasActiveLeaseForWork(executionId)) {
+    // Session authority is gone immediately, but resource cleanup must wait for
+    // the in-flight capability call to release its final ToolLease.
+    work.closing = true;
+    work.lastActivityAt = new Date().toISOString();
+    return null;
+  }
+
+  registrations.delete(executionId);
   // Keep generationBySession for the lifetime of this driver epoch so a
   // recovered/recreated MCP session cannot reuse an earlier execution ID.
   return executionId;
@@ -277,7 +308,17 @@ export async function runWithToolLease<T>(
   } finally {
     activeLeases.delete(lease.leaseId);
     const work = registrations.get(lease.workId);
-    if (work) work.lastActivityAt = new Date().toISOString();
+    if (work) {
+      work.lastActivityAt = new Date().toISOString();
+      if (work.closing && !hasActiveLeaseForWork(work.executionId)) {
+        registrations.delete(work.executionId);
+        if (expirationHandler) {
+          await Promise.resolve(expirationHandler(work.executionId)).catch(
+            () => undefined
+          );
+        }
+      }
+    }
   }
 }
 
