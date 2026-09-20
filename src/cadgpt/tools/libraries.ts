@@ -248,12 +248,19 @@ async function discoverJobEntries(libraryId: string, root: string, existing: Arr
 
 async function reindexLibrary(kind: LibraryKind, libraryId: string, root: string): Promise<number> {
   const registryPath = getUserCapabilitiesPath();
-  const registry = await readJson<{ version: number; entries: Array<Record<string, unknown>> }>(registryPath, { version: 1, entries: [] });
+  const baseline = await readOptionalText(registryPath);
+  const registry = baseline
+    ? (JSON.parse(baseline) as { version: number; entries: Array<Record<string, unknown>> })
+    : { version: 1, entries: [] as Array<Record<string, unknown>> };
   const others = registry.entries.filter((entry) => !(entry.kind === kind && entry.library_id === libraryId));
   const discovered = kind === "lisp"
     ? await discoverLispEntries(libraryId, root, registry.entries)
     : await discoverJobEntries(libraryId, root, registry.entries);
   const entries = [...others, ...discovered].sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
+  const current = await readOptionalText(registryPath);
+  if (current !== baseline) {
+    throw new Error("RESOURCE_CONFLICT: User Registry changed during library reindex");
+  }
   await atomicJson(registryPath, { version: registry.version || 1, entries });
   return discovered.length;
 }
@@ -353,7 +360,10 @@ export function registerLibraryTools(server: McpServer): void {
               swapped = true;
 
           await fs.mkdir(getUserRegistryRoot(), { recursive: true });
-          const manifest = await readJson<{ version: number; libraries: LibraryRecord[] }>(manifestPath, { version: 1, libraries: [] });
+          const manifestBaseline = await readOptionalText(manifestPath);
+          const manifest = manifestBaseline
+            ? (JSON.parse(manifestBaseline) as { version: number; libraries: LibraryRecord[] })
+            : { version: 1, libraries: [] as LibraryRecord[] };
           const record: LibraryRecord = {
             id: library_id,
             kind,
@@ -369,6 +379,10 @@ export function registerLibraryTools(server: McpServer): void {
           const libraries = manifest.libraries.filter((item) => !(item.id === library_id && item.kind === kind));
           libraries.push(record);
           libraries.sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`));
+          const manifestCurrent = await readOptionalText(manifestPath);
+          if (manifestCurrent !== manifestBaseline) {
+            throw new Error("RESOURCE_CONFLICT: User Library manifest changed during import");
+          }
           await atomicJson(manifestPath, { version: manifest.version || 1, libraries });
 
           const capabilityCount = await reindexLibrary(kind, library_id, target);
