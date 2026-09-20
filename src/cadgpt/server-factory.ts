@@ -238,10 +238,14 @@ export async function disposeMcpServerRuntime(server: McpServer): Promise<void> 
   const executionId = activeExecutionForSession(sessionKey);
   if (executionId) {
     try {
-      const { clearExecutionDrawingContexts } = await import("./session/drawing-binding.js");
+      const [{ clearExecutionDrawingContexts }, { releaseObservationForExecution }] = await Promise.all([
+        import("./session/drawing-binding.js"),
+        import("./observator/engine.js"),
+      ]);
+      await releaseObservationForExecution(executionId);
       clearExecutionDrawingContexts(executionId);
     } catch {
-      // Drawing family may never have loaded.
+      // CAD/Observator family may never have loaded.
     }
   }
 
