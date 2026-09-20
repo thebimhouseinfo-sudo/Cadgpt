@@ -4,6 +4,13 @@ import { hasActiveCadWork } from "../lib/work-registration.js";
 export async function cleanupExecutionState(executionId: string): Promise<void> {
   const loaded = new Set(runtimeStateSnapshot().loaded_families);
 
+  try {
+    const { releaseCadCandidateForExecution } = await import("./cad-candidate.js");
+    await releaseCadCandidateForExecution(executionId);
+  } catch {
+    // Candidate ownership cleanup is best-effort.
+  }
+
   if (loaded.has("cad")) {
     try {
       const [{ clearExecutionDrawingContexts }, { releaseObservationForExecution }] =
