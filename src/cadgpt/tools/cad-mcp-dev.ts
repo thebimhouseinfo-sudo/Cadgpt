@@ -880,7 +880,17 @@ export function registerCadMcpDevTools(server: McpServer): void {
         assertDevMode();
         if (!confirmed) throw new Error("Explicit confirmation is required");
         const lease = currentToolLease();
-        const { acceptCadCandidate } = await import("../runtime/cad-candidate.js");
+        const { candidateStatus, acceptCadCandidate } = await import("../runtime/cad-candidate.js");
+        const active = candidateStatus();
+        if (!active || active.ownerExecutionId !== lease.workId) {
+          throw new Error("NO_CAD_CANDIDATE: this execution does not own an active candidate.");
+        }
+        const currentFingerprint = await runtimeFingerprint();
+        if (currentFingerprint !== active.sourceFingerprint) {
+          throw new Error(
+            "CAD_CANDIDATE_SOURCE_CHANGED: local runtime source changed after candidate validation; rollback and validate a new candidate."
+          );
+        }
         const candidate = await acceptCadCandidate(lease.workId, validated_tool);
         snapshots.delete(lease.workId);
         validatedFingerprints.delete(lease.workId);
