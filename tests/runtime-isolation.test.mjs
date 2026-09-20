@@ -590,3 +590,77 @@ test("dirty CAD MCP source blocks live CAD until candidate generation starts", a
   await abortCadCandidate(owner);
   forceClearCadDevSourceTransaction(owner);
 });
+
+
+test("ToolLease family authority survives lazy tool registration across work replacement", async () => {
+  const { checkAdmission } = await import("../dist/cadgpt/lib/admission.js");
+  const {
+    createWorkRegistration,
+    acquireToolLease,
+    releaseWorkRegistration,
+  } = await import("../dist/cadgpt/lib/work-registration.js");
+
+  const fileSession = "path-authority-file";
+  const fileAdmission = checkAdmission(
+    fileSession,
+    "@cadgpt do file-only work"
+  );
+  const fileWork = createWorkRegistration({
+    sessionKey: fileSession,
+    admissionToken: fileAdmission.admission_token,
+    ownerType: "file",
+    ownerId: "file-only",
+    executionPath: "file",
+  });
+
+  assert.throws(
+    () =>
+      acquireToolLease({
+        tool: "drawing_list",
+        family: "cad",
+        executionId: fileWork.executionId,
+        authorityToken: fileWork.authorityToken,
+        admissionToken: fileAdmission.admission_token,
+        sessionKey: fileSession,
+      }),
+    /EXECUTION_PATH_MISMATCH/
+  );
+
+  releaseWorkRegistration(
+    fileWork.executionId,
+    fileWork.authorityToken,
+    fileSession
+  );
+
+  const cadSession = "path-authority-cad";
+  const cadAdmission = checkAdmission(
+    cadSession,
+    "@cadgpt do cad-only work"
+  );
+  const cadWork = createWorkRegistration({
+    sessionKey: cadSession,
+    admissionToken: cadAdmission.admission_token,
+    ownerType: "direct-cad",
+    ownerId: "cad-only",
+    executionPath: "cad",
+  });
+
+  assert.throws(
+    () =>
+      acquireToolLease({
+        tool: "file_read",
+        family: "filesystem",
+        executionId: cadWork.executionId,
+        authorityToken: cadWork.authorityToken,
+        admissionToken: cadAdmission.admission_token,
+        sessionKey: cadSession,
+      }),
+    /EXECUTION_PATH_MISMATCH/
+  );
+
+  releaseWorkRegistration(
+    cadWork.executionId,
+    cadWork.authorityToken,
+    cadSession
+  );
+});
