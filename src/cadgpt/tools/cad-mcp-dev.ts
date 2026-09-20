@@ -572,6 +572,12 @@ export function registerCadMcpDevTools(server: McpServer): void {
         const workId = await prepareDevMutation();
         const lease = currentToolLease();
         if (lease.workId !== workId) throw new Error("CAD_MCP_DEV_WORK_CHANGED");
+        const existingSnapshot = snapshots.get(lease.workId);
+        if (existingSnapshot) {
+          throw new Error(
+            `CAD_MCP_DEV_SNAPSHOT_EXISTS: baseline ${existingSnapshot.id} already exists for this work execution; accept/rollback/stop before starting a new baseline.`
+          );
+        }
         const files: string[] = [];
         await walk(runtimeRoot(), runtimeRoot(), files, MAX_SNAPSHOT_FILES + 1);
         if (files.length > MAX_SNAPSHOT_FILES) {
