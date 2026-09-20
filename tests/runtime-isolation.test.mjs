@@ -1,0 +1,153 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+test("admission requires literal @cadgpt in the exact current turn", async () => {
+  const { checkAdmission, validateAdmissionToken } = await import(
+    "../dist/cadgpt/lib/admission.js"
+  );
+
+  const inactive = checkAdmission("session-a", "Please edit this AutoCAD drawing");
+  assert.equal(inactive.mode, "inactive");
+  assert.equal(inactive.claimed, false);
+  assert.equal(inactive.admission_token, undefined);
+
+  const active = checkAdmission("session-a", "@cadgpt edit this AutoCAD drawing");
+  assert.equal(active.mode, "active");
+  assert.ok(active.admission_token);
+  assert.doesNotThrow(() =>
+    validateAdmissionToken(active.admission_token, "session-a")
+  );
+  assert.throws(
+    () => validateAdmissionToken(active.admission_token, "session-b"),
+    /another ChatGPT session/
+  );
+});
+
+test("work registrations and tool leases remain isolated across sessions", async () => {
+  const { checkAdmission } = await import("../dist/cadgpt/lib/admission.js");
+  const {
+    createWorkRegistration,
+    acquireToolLease,
+    releaseWorkRegistration,
+  } = await import("../dist/cadgpt/lib/work-registration.js");
+
+  const admissionA = checkAdmission("lease-session-a", "@cadgpt do file work");
+  const admissionB = checkAdmission("lease-session-b", "@cadgpt do file work");
+  assert.ok(admissionA.admission_token);
+  assert.ok(admissionB.admission_token);
+
+  const workA = createWorkRegistration({
+    sessionKey: "lease-session-a",
+    admissionToken: admissionA.admission_token,
+    ownerType: "skill",
+    ownerId: "write-lisp",
+    executionPath: "file",
+  });
+  const workB = createWorkRegistration({
+    sessionKey: "lease-session-b",
+    admissionToken: admissionB.admission_token,
+    ownerType: "skill",
+    ownerId: "write-lisp",
+    executionPath: "file",
+  });
+
+  assert.notEqual(workA.executionId, workB.executionId);
+  assert.notEqual(workA.authorityToken, workB.authorityToken);
+
+  const leaseA = acquireToolLease({
+    tool: "file_edit",
+    family: "filesystem",
+    targetId: "draft-a",
+    executionId: workA.executionId,
+    authorityToken: workA.authorityToken,
+    admissionToken: admissionA.admission_token,
+    sessionKey: "lease-session-a",
+  });
+  const leaseB = acquireToolLease({
+    tool: "file_edit",
+    family: "filesystem",
+    targetId: "draft-b",
+    executionId: workB.executionId,
+    authorityToken: workB.authorityToken,
+    admissionToken: admissionB.admission_token,
+    sessionKey: "lease-session-b",
+  });
+
+  assert.notEqual(leaseA.leaseId, leaseB.leaseId);
+  assert.equal(leaseA.workId, workA.executionId);
+  assert.equal(leaseB.workId, workB.executionId);
+
+  assert.throws(
+    () =>
+      acquireToolLease({
+        tool: "file_edit",
+        family: "filesystem",
+        executionId: workA.executionId,
+        authorityToken: workA.authorityToken,
+        admissionToken: admissionA.admission_token,
+        sessionKey: "lease-session-b",
+      }),
+    /another ChatGPT session|NO_ACTIVE_WORK/
+  );
+
+  releaseWorkRegistration(
+    workA.executionId,
+    workA.authorityToken,
+    "lease-session-a"
+  );
+  releaseWorkRegistration(
+    workB.executionId,
+    workB.authorityToken,
+    "lease-session-b"
+  );
+});
+
+test("CAD host scheduler serializes calls on the same host", async () => {
+  const { withCadHostLock } = await import(
+    "../dist/cadgpt/runtime/cad-scheduler.js"
+  );
+  const events = [];
+
+  const first = withCadHostLock("acad-host-1", async () => {
+    events.push("a:start");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    events.push("a:end");
+  });
+  const second = withCadHostLock("acad-host-1", async () => {
+    events.push("b:start");
+    events.push("b:end");
+  });
+
+  await Promise.all([first, second]);
+  assert.deepEqual(events, ["a:start", "a:end", "b:start", "b:end"]);
+});
+
+test("production profile blocks cad-mcp-dev work registration", async () => {
+  const previous = process.env.CADGPT_BUILD_PROFILE;
+  process.env.CADGPT_BUILD_PROFILE = "production";
+  try {
+    const { checkAdmission } = await import("../dist/cadgpt/lib/admission.js");
+    const { createWorkRegistration } = await import(
+      "../dist/cadgpt/lib/work-registration.js"
+    );
+    const admission = checkAdmission(
+      "production-session",
+      "@cadgpt improve CAD MCP"
+    );
+    assert.ok(admission.admission_token);
+    assert.throws(
+      () =>
+        createWorkRegistration({
+          sessionKey: "production-session",
+          admissionToken: admission.admission_token,
+          ownerType: "skill",
+          ownerId: "cad-mcp-dev",
+          executionPath: "file",
+        }),
+      /DEVELOPMENT_ONLY/
+    );
+  } finally {
+    if (previous === undefined) delete process.env.CADGPT_BUILD_PROFILE;
+    else process.env.CADGPT_BUILD_PROFILE = previous;
+  }
+});
