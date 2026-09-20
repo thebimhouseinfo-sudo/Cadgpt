@@ -163,15 +163,30 @@ export async function ensureCadRuntimeActive(): Promise<void> {
   await activateCadRuntime();
 }
 
-function registerStableBusinessProxies(server: McpServer): string[] {
+export function syncCadBusinessProxies(server: McpServer): string[] {
   const registry = registryFor(server);
+  const desiredTools = loadManifest().tools.filter(
+    (tool) => !INTERNAL_DOCUMENT_TOOLS.has(tool.name)
+  );
+  const desiredNames = new Set(desiredTools.map((tool) => `cad__${tool.name}`));
+
+  for (const [name, registered] of registry) {
+    if (desiredNames.has(name)) continue;
+    registered.remove();
+    registry.delete(name);
+  }
+
   const publicNames: string[] = [];
 
-  for (const tool of loadManifest().tools) {
-    if (INTERNAL_DOCUMENT_TOOLS.has(tool.name)) continue;
+  for (const tool of desiredTools) {
     const publicName = `cad__${tool.name}`;
     publicNames.push(publicName);
-    if (registry.has(publicName)) continue;
+
+    const prior = registry.get(publicName);
+    if (prior) {
+      prior.remove();
+      registry.delete(publicName);
+    }
 
     const registered = server.registerTool(
       publicName,
@@ -250,7 +265,7 @@ export async function deactivateCadRuntime(): Promise<void> {
 }
 
 export function registerCadProxyTools(server: McpServer): void {
-  registerStableBusinessProxies(server);
+  syncCadBusinessProxies(server);
 
   server.registerTool(
     "cad_status",
