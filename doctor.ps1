@@ -45,12 +45,19 @@ if (Test-Command "python") {
 
 if (Test-Path ".env") { Ok ".env exists" } else { Fail ".env missing; run setup.bat." }
 if (Test-Path "knowledge\jobs\JOB_RULES.md") { Ok "Internal Job rules exist" } else { Fail "Internal Job rules missing." }
-if (Test-Path "skills\cad-mcp-dev\SKILL.md") { Ok "Development-only cad-mcp-dev Skill source exists" } else { Fail "cad-mcp-dev Skill source missing." }
+# Development-only Skill is required only for source/development profiles.
+
 if (Test-Path "resources\cad\CADGPT_LOAD_SMOKE.lsp") { Ok "Internal AutoLISP smoke fixture exists" } else { Fail "Internal AutoLISP smoke fixture missing." }
 
 $buildProfile = Get-DotEnvValue "CADGPT_BUILD_PROFILE"
-if (-not $buildProfile) { $buildProfile = "development" }
+if (-not $buildProfile) { $buildProfile = "production" }
 Ok "Build profile: $buildProfile"
+if ($buildProfile.Trim().ToLowerInvariant() -eq "development") {
+    if (Test-Path "skills\cad-mcp-dev\SKILL.md") { Ok "Development-only cad-mcp-dev Skill source exists" }
+    else { Fail "Development profile requires skills\cad-mcp-dev\SKILL.md." }
+} else {
+    Ok "cad-mcp-dev is disabled by non-development build profile"
+}
 
 $appDataConfigured = Get-DotEnvValue "CADGPT_APPDATA_ROOT"
 if (-not $appDataConfigured) { $appDataConfigured = "appdata" }
