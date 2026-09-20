@@ -96,7 +96,6 @@ const DEV_ONLY_TOOLS = [
   { name: "cad_mcp_dev_candidate_status", class: "dev.cad-mcp", summary: "Inspect exclusive live CAD MCP candidate-generation state." },
   { name: "cad_mcp_dev_candidate_start", class: "dev.cad-mcp", summary: "Reserve and start a validated exclusive CAD MCP candidate generation for live testing." },
   { name: "cad_mcp_dev_candidate_accept", class: "dev.cad-mcp", summary: "Accept a live-tested CAD MCP candidate after successful tool evidence." },
-  { name: "cad_mcp_dev_sync_env", class: "dev.cad-mcp", summary: "Synchronize the CAD MCP Python environment from exact pinned dependencies only." },
 ];
 
 function toolClass(name: string): string {
