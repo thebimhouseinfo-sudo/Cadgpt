@@ -958,13 +958,33 @@ If dependency installation/rebuild is required, use a separate named privileged 
 
 Environment mutation is operational state, not an excuse to widen the source-write root.
 
-### 16.9 No automatic Git authority
+### 16.9 Local-source only; no Git workflow
 
-`cad-mcp-dev` edits the local tracked runtime source, but it does not automatically receive generic Git commit/push authority.
+`cad-mcp-dev` is a local development capability only.
 
-GitHub/branch/commit/push operations remain separate capabilities/workflows.
+It may modify the tracked source files under:
 
-This keeps “can improve CAD MCP source” distinct from “can publish arbitrary repository changes”.
+```text
+runtimes/cad-mcp/**
+```
+
+but it must not perform any Git operation:
+
+```text
+no git status requirement
+no branch creation
+no git add
+no commit
+no push
+no pull request
+no repository publish step
+```
+
+The repository may remain dirty after a successful self-improve session. That is expected.
+
+`cad-mcp-dev` must never write under `.git/**` and must not use Git as an execution or rollback mechanism. Rollback is handled by the Skill's own source snapshot/baseline mechanism inside its controlled runtime workflow.
+
+The self-improve task ends when the local CAD MCP runtime source has been validated and accepted; publishing/version-control decisions remain outside this Skill.
 
 ---
 
@@ -1271,7 +1291,7 @@ Replace one-binding-per-McpServer model with explicit execution-scoped drawing c
 - add manifest/schema compatibility validation;
 - add controlled AutoCAD integration-test path;
 - add out-of-scope core-change reporting;
-- keep Git publication authority separate.
+- provide no Git workflow at all; changes remain local under `runtimes/cad-mcp/**`.
 
 ### P9 — Tray/startup migration
 
@@ -1432,7 +1452,7 @@ Verify:
 - no unrelated active Job/drawing context is inherited;
 - live integration test requires an explicitly approved drawing;
 - dependency environment rebuild requires its separate privileged action;
-- Git commit/push is not implicitly granted.
+- no Git command, commit, push, branch, or PR capability is available.
 
 ### 24.8 Tray
 
