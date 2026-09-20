@@ -431,6 +431,10 @@ async function runPython(args: string[], cwd = runtimeRoot()) {
     windowsHide: true,
     timeout: 120_000,
     maxBuffer: 4 * 1024 * 1024,
+    env: {
+      ...process.env,
+      PYTHONDONTWRITEBYTECODE: "1",
+    },
   });
   return {
     stdout: result.stdout?.toString() ?? "",
@@ -1166,7 +1170,15 @@ export function registerCadMcpDevTools(server: McpServer): void {
           results.dependency_lock = await validateLockedRequirements();
         }
         if (action === "compile" || action === "all") {
-          results.compile = await runPython(["-m", "compileall", "-q", runtimeRoot()]);
+          const runtimePathLiteral = JSON.stringify(runtimeRoot());
+          const compileCode = [
+            "import pathlib",
+            `root = pathlib.Path(${runtimePathLiteral})`,
+            "files = sorted(p for p in root.rglob('*.py') if '__pycache__' not in p.parts)",
+            "for p in files: compile(p.read_text(encoding='utf-8'), str(p), 'exec')",
+            "print(f'compiled {len(files)} python files in-memory')",
+          ].join("; ");
+          results.compile = await runPython(["-c", compileCode], runtimeRoot());
         }
         if (action === "runtime_import" || action === "all") {
           const runtimePathLiteral = JSON.stringify(runtimeRoot());
