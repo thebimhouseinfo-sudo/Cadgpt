@@ -56,7 +56,8 @@ export function registerWorkControlTools(
         try {
           await options.prepareFamilies(work.executionPath, work.ownerId, work.executionId);
         } catch (error) {
-          releaseWorkRegistration(work.executionId, work.authorityToken, options.sessionKey);
+          const released = releaseWorkRegistration(work.executionId, work.authorityToken, options.sessionKey);
+          await cleanupExecutionState(released.executionId);
           throw error;
         }
         return toolResult("cadgpt_work_start", {
@@ -83,12 +84,14 @@ export function registerWorkControlTools(
       title: "CadGPT Work Status",
       description: "Show this ChatGPT session's CadGPT work state. It never exposes an authority token.",
       inputSchema: {
+        admission_token: z.string().min(1),
         execution_id: z.string().optional(),
         authority_token: z.string().optional(),
       },
     },
-    async ({ execution_id, authority_token }) => {
+    async ({ admission_token, execution_id, authority_token }) => {
       try {
+        validateAdmissionToken(admission_token, options.sessionKey, "control_or_active");
         return toolResult(
           "cadgpt_work_status",
           workStatus(options.sessionKey, execution_id, authority_token)
@@ -105,12 +108,14 @@ export function registerWorkControlTools(
       title: "Stop CadGPT Work",
       description: "Release only this ChatGPT session's supplied work handle.",
       inputSchema: {
+        admission_token: z.string().min(1),
         execution_id: z.string().min(1),
         authority_token: z.string().min(1),
       },
     },
-    async ({ execution_id, authority_token }) => {
+    async ({ admission_token, execution_id, authority_token }) => {
       try {
+        validateAdmissionToken(admission_token, options.sessionKey, "control_or_active");
         const released = releaseWorkRegistration(
           execution_id,
           authority_token,
