@@ -80,25 +80,9 @@ if errorlevel 1 (
 )
 
 echo.
-echo [1/10] Initializing CadGPT AppData...
-for %%D in (
-  "appdata\libraries\lisp"
-  "appdata\libraries\jobs"
-  "appdata\registry\user"
-  "appdata\workspace\lisp-draft"
-  "appdata\workspace\job-draft"
-  "appdata\data\runs"
-  "appdata\runtime\dynamic-lisp"
-  "appdata\drawings"
-  "appdata\state"
-  "appdata\logs"
-) do (
-  if not exist "%%~D" mkdir "%%~D"
-  if not exist "%%~D" (
-    echo [ERROR] Could not create AppData directory: %%~D
-    goto :failed
-  )
-)
+echo [1/10] Initializing configured CadGPT AppData...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$repo=[System.IO.Path]::GetFullPath('%~dp0'); $line=Get-Content '.env' -ErrorAction SilentlyContinue | Where-Object { $_ -match '^\s*CADGPT_APPDATA_ROOT\s*=' -and -not $_.TrimStart().StartsWith('#') } | Select-Object -First 1; $configured=if($line){(($line -split '=',2)[1].Trim()).Trim([char]39).Trim([char]34)}else{'appdata'}; $root=if([System.IO.Path]::IsPathRooted($configured)){[System.IO.Path]::GetFullPath($configured)}else{[System.IO.Path]::GetFullPath((Join-Path $repo $configured))}; $dirs=@('libraries\lisp','libraries\jobs','registry\user','workspace\lisp-draft','workspace\job-draft','data\runs','runtime\dynamic-lisp','drawings','state','logs'); New-Item -ItemType Directory -Force -Path $root | Out-Null; foreach($rel in $dirs){$target=Join-Path $root $rel; New-Item -ItemType Directory -Force -Path $target | Out-Null; if(-not (Test-Path $target)){Write-Error ('Could not create AppData directory: '+$target); exit 1}}; Write-Host ('[OK] CadGPT AppData root: '+$root)"
+if errorlevel 1 goto :failed
 
 echo.
 echo [2/10] Installing locked Node dependencies...
