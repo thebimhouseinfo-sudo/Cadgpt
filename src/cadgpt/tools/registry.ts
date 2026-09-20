@@ -6,6 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getUserCapabilitiesPath } from "../lib/appdata.js";
 import { getRepoRoot } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { isDevelopmentBuild } from "../lib/work-registration.js";
 
 interface ToolManifestEntry {
   name: string;
@@ -106,6 +107,7 @@ async function loadSkillEntries(): Promise<Array<Record<string, unknown>>> {
   }
   for (const dir of dirs) {
     if (!dir.isDirectory() || dir.name.startsWith(".")) continue;
+    if (dir.name === "cad-mcp-dev" && !isDevelopmentBuild()) continue;
     try {
       const content = await fs.readFile(path.join(root, dir.name, "SKILL.md"), "utf8");
       const title = content.match(/^#\s+(?:Skill:\s*)?(.+)$/mi)?.[1]?.trim() || dir.name;
