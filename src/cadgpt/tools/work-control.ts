@@ -38,10 +38,14 @@ export function registerWorkControlTools(
         const previousExecution = activeExecutionForSession(options.sessionKey);
         if (previousExecution) {
           try {
-            const { clearExecutionDrawingContexts } = await import("../session/drawing-binding.js");
+            const [{ clearExecutionDrawingContexts }, { releaseObservationForExecution }] = await Promise.all([
+              import("../session/drawing-binding.js"),
+              import("../observator/engine.js"),
+            ]);
+            await releaseObservationForExecution(previousExecution);
             clearExecutionDrawingContexts(previousExecution);
           } catch {
-            // CAD family may not have loaded for the prior work.
+            // CAD/Observator family may not have loaded for the prior work.
           }
         }
 
@@ -116,10 +120,14 @@ export function registerWorkControlTools(
           options.sessionKey
         );
         try {
-          const { clearExecutionDrawingContexts } = await import("../session/drawing-binding.js");
+          const [{ clearExecutionDrawingContexts }, { releaseObservationForExecution }] = await Promise.all([
+            import("../session/drawing-binding.js"),
+            import("../observator/engine.js"),
+          ]);
+          await releaseObservationForExecution(released.executionId);
           clearExecutionDrawingContexts(released.executionId);
         } catch {
-          // CAD family may not have loaded.
+          // CAD/Observator family may not have loaded.
         }
         return toolResult("cadgpt_work_stop", {
           released: true,
