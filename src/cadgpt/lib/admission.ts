@@ -44,6 +44,12 @@ function isControlOnly(userTurn: string): boolean {
 
 export function checkAdmission(sessionKey: string, userTurnRaw: string): AdmissionDecision {
   cleanup();
+
+  // A new admission check represents a new current-turn decision for this MCP session.
+  // Revoke every older proof first so a token minted for a previous @cadgpt turn
+  // cannot authorize a later turn that did not invoke CadGPT.
+  revokeSessionAdmissions(sessionKey);
+
   const userTurn = userTurnRaw?.trim() || "";
   if (!userTurn || !hasExplicitInvocation(userTurn)) {
     return {
