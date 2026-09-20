@@ -107,9 +107,12 @@ async function atomicWrite(target: string, content: string | Buffer): Promise<vo
 }
 
 async function runPython(args: string[], cwd = runtimeRoot()) {
-  const python =
+  const configured =
     process.env.CAD_MCP_PYTHON ||
-    path.join(getRepoRoot(), ".venv-cad", "Scripts", "python.exe");
+    path.join(".venv-cad", "Scripts", "python.exe");
+  const python = path.isAbsolute(configured)
+    ? configured
+    : path.resolve(getRepoRoot(), configured);
   const result = await execFileAsync(python, args, {
     cwd,
     windowsHide: true,
@@ -588,10 +591,11 @@ export function registerCadMcpDevTools(server: McpServer): void {
           results.compile = await runPython(["-m", "compileall", "-q", runtimeRoot()]);
         }
         if (action === "runtime_import" || action === "all") {
+          const runtimePathLiteral = JSON.stringify(runtimeRoot());
           const code =
-            "import sys; sys.path.insert(0, r'" +
-            runtimeRoot().replaceAll("\\", "\\\\") +
-            "'); import main; print('cad-mcp import ok')";
+            "import sys; sys.path.insert(0, " +
+            runtimePathLiteral +
+            "); import main; print('cad-mcp import ok')";
           results.runtime_import = await runPython(["-c", code], runtimeRoot());
         }
         if (action === "manifest" || action === "all") {
