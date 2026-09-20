@@ -305,6 +305,11 @@ export function registerLispWorkspaceTools(server: McpServer): void {
           }
         }
 
+        const registryPath = getUserCapabilitiesPath();
+        const registryBaseline = await fs.readFile(registryPath, "utf8").catch((error) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+          throw error;
+        });
         const registry = await loadRegistry();
         const newEntry: Record<string, unknown> = {
           id: metadata.id,
@@ -353,7 +358,14 @@ export function registerLispWorkspaceTools(server: McpServer): void {
         await fs.mkdir(path.dirname(permanent), { recursive: true });
         await atomicWrite(permanent, source);
         try {
-          await atomicWrite(getUserCapabilitiesPath(), `${JSON.stringify({ version: registry.version, entries: nextEntries }, null, 2)}\n`);
+          const registryCurrent = await fs.readFile(registryPath, "utf8").catch((error) => {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+            throw error;
+          });
+          if (registryCurrent !== registryBaseline) {
+            throw new Error("RESOURCE_CONFLICT: User Registry changed during Lisp promotion");
+          }
+          await atomicWrite(registryPath, `${JSON.stringify({ version: registry.version, entries: nextEntries }, null, 2)}\n`);
         } catch (registryError) {
           try {
             if (targetExists && previousPermanent !== null) await atomicWrite(permanent, previousPermanent);
