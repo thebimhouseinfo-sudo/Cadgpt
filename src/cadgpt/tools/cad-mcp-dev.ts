@@ -115,6 +115,29 @@ async function atomicWrite(target: string, content: string | Buffer): Promise<vo
   }
 }
 
+async function restoreSnapshotFiles(
+  snapshot: { id: string; files: Map<string, Buffer>; createdAt: string }
+): Promise<void> {
+  const current: string[] = [];
+  await walk(runtimeRoot(), runtimeRoot(), current, MAX_SNAPSHOT_FILES + 1);
+  if (current.length > MAX_SNAPSHOT_FILES) {
+    throw new Error("Rollback exceeds file-count safety limit");
+  }
+
+  for (const file of current) {
+    const rel = path.relative(runtimeRoot(), file);
+    if (!snapshot.files.has(rel)) await fs.rm(file, { force: true });
+  }
+
+  for (const [rel, data] of snapshot.files) {
+    const target = path.resolve(runtimeRoot(), rel);
+    if (!isPathInside(target, runtimeRoot())) {
+      throw new Error("Snapshot contains an invalid runtime path");
+    }
+    await atomicWrite(target, data);
+  }
+}
+
 async function runPython(args: string[], cwd = runtimeRoot()) {
   const configured =
     process.env.CAD_MCP_PYTHON ||
@@ -559,19 +582,8 @@ export function registerCadMcpDevTools(server: McpServer): void {
         });
         validatedFingerprints.delete(lease.workId);
 
-        const current: string[] = [];
-        await walk(runtimeRoot(), runtimeRoot(), current, MAX_SNAPSHOT_FILES + 1);
-        for (const file of current) {
-          const rel = path.relative(runtimeRoot(), file);
-          if (!snapshot.files.has(rel)) await fs.rm(file, { force: true });
-        }
-        for (const [rel, data] of snapshot.files) {
-          const target = path.resolve(runtimeRoot(), rel);
-          if (!isPathInside(target, runtimeRoot())) {
-            throw new Error("Snapshot contains an invalid runtime path");
-          }
-          await atomicWrite(target, data);
-        }
+        await restoreSnapshotFiles(snapshot);
+        snapshots.delete(lease.workId);
 
         const { hasCadProxySurface, syncCadBusinessProxies } = await import("./cad-proxy.js");
         const proxySurface = hasCadProxySurface(server)
@@ -652,6 +664,57 @@ export function registerCadMcpDevTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError("cad_mcp_dev_validate", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "cad_mcp_dev_accept_local",
+    {
+      title: "Accept Validated CAD MCP Local Source",
+      description:
+        "Accept the validated local CAD MCP source without live AutoCAD candidate testing when live CAD validation is not required. Requires cad_mcp_dev_validate(action=all), unchanged source fingerprint, and explicit confirmation.",
+      inputSchema: {
+        confirmed: z.literal(true),
+      },
+    },
+    async ({ confirmed }) => {
+      try {
+        assertDevMode();
+        if (!confirmed) throw new Error("Explicit confirmation is required");
+        const lease = currentToolLease();
+        const { candidateStatus } = await import("../runtime/cad-candidate.js");
+        if (candidateStatus()) {
+          throw new Error(
+            "CAD_CANDIDATE_ACTIVE: accept or rollback the live candidate instead of using local-only acceptance."
+          );
+        }
+
+        const validatedFingerprint = validatedFingerprints.get(lease.workId);
+        if (!validatedFingerprint) {
+          throw new Error(
+            "CAD_MCP_DEV_NOT_VALIDATED: run cad_mcp_dev_validate with action=all after the final source edit."
+          );
+        }
+        const currentFingerprint = await runtimeFingerprint();
+        if (currentFingerprint !== validatedFingerprint) {
+          throw new Error(
+            "CAD_MCP_DEV_SOURCE_CHANGED: source changed after validation; validate action=all again."
+          );
+        }
+
+        snapshots.delete(lease.workId);
+        validatedFingerprints.delete(lease.workId);
+        return toolResult("cad_mcp_dev_accept_local", {
+          accepted: true,
+          source_fingerprint: currentFingerprint,
+          live_cad_tested: false,
+          git_used: false,
+          note:
+            "Local CAD MCP source is accepted for this development cycle. No Git action was performed.",
+        });
+      } catch (error) {
+        return toolError("cad_mcp_dev_accept_local", error);
       }
     }
   );
@@ -799,7 +862,16 @@ export function registerCadMcpDevTools(server: McpServer): void {
   );
 }
 
-export function clearCadMcpDevStateForExecution(executionId: string): void {
-  snapshots.delete(executionId);
-  validatedFingerprints.delete(executionId);
+export async function rollbackUnacceptedCadMcpDevStateForExecution(
+  executionId: string
+): Promise<{ restored: boolean }> {
+  const snapshot = snapshots.get(executionId);
+  try {
+    if (!snapshot) return { restored: false };
+    await restoreSnapshotFiles(snapshot);
+    return { restored: true };
+  } finally {
+    snapshots.delete(executionId);
+    validatedFingerprints.delete(executionId);
+  }
 }
