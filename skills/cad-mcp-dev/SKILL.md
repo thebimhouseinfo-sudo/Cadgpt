@@ -83,12 +83,12 @@ Do not edit CadGPT core registry code or User Registry from this Skill.
 
 ## Dependency changes
 
-`cad_mcp_dev_sync_env` is a named privileged action only.
+The Skill may edit dependency declaration/lock files only when those files are themselves under `runtimes/cad-mcp/**`.
 
-- no arbitrary shell command is accepted;
 - `requirements.lock.txt` accepts exact `package==version` pins only;
-- run only after the crash-safe baseline exists;
-- dependency/environment changes require explicit confirmation.
+- dependency lock edits are source edits and therefore require the crash-safe baseline;
+- the Skill does **not** install dependencies and does not write `.venv-cad/**`;
+- if a dependency change requires environment installation/rebuild, stop the Skill workflow and hand that step to setup/maintainer authority outside `cad-mcp-dev`.
 
 ## Prohibited
 
