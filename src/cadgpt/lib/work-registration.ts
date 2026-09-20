@@ -1,0 +1,247 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { randomBytes } from "node:crypto";
+
+import { validateAdmissionToken } from "./admission.js";
+
+export type WorkOwnerType = "skill" | "job" | "direct-cad" | "file";
+export type ExecutionPath = "file" | "cad" | "hybrid";
+
+export interface WorkRegistration {
+  executionId: string;
+  authorityToken: string;
+  admissionToken: string;
+  sessionKey: string;
+  ownerType: WorkOwnerType;
+  ownerId: string;
+  jobId?: string;
+  executionPath: ExecutionPath;
+  driverEpoch: number;
+  generation: number;
+  callSequence: number;
+  createdAt: string;
+  lastActivityAt: string;
+}
+
+export interface ToolLease {
+  leaseId: string;
+  family: string;
+  tool: string;
+  targetId: string;
+  workId: string;
+  ownerId: string;
+  sessionKey: string;
+  driverEpoch: number;
+  generation: number;
+  callSequence: number;
+  acquiredAt: string;
+}
+
+const WORK_IDLE_MS = Math.max(
+  60_000,
+  Number(process.env.CADGPT_WORK_IDLE_MS || 10 * 60 * 1000)
+);
+const DRIVER_EPOCH = Date.now();
+const registrations = new Map<string, WorkRegistration>();
+const activeBySession = new Map<string, string>();
+const generationBySession = new Map<string, number>();
+const leaseStorage = new AsyncLocalStorage<ToolLease>();
+
+function safeId(value: string): string {
+  return value.trim().replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 80) || "work";
+}
+
+function sessionTag(sessionKey: string): string {
+  return safeId(sessionKey).slice(0, 12);
+}
+
+function cleanup(): void {
+  const now = Date.now();
+  for (const [executionId, work] of registrations) {
+    if (now - Date.parse(work.lastActivityAt) <= WORK_IDLE_MS) continue;
+    registrations.delete(executionId);
+    if (activeBySession.get(work.sessionKey) === executionId) {
+      activeBySession.delete(work.sessionKey);
+    }
+  }
+}
+
+export function isDevelopmentBuild(): boolean {
+  return (process.env.CADGPT_BUILD_PROFILE || "development").trim().toLowerCase() !== "production";
+}
+
+export function createWorkRegistration(input: {
+  sessionKey: string;
+  admissionToken: string;
+  ownerType: WorkOwnerType;
+  ownerId: string;
+  executionPath: ExecutionPath;
+}): WorkRegistration {
+  cleanup();
+  validateAdmissionToken(input.admissionToken, input.sessionKey);
+
+  if (input.ownerId === "cad-mcp-dev" && !isDevelopmentBuild()) {
+    throw new Error("DEVELOPMENT_ONLY: cad-mcp-dev is unavailable in production builds.");
+  }
+
+  const priorId = activeBySession.get(input.sessionKey);
+  if (priorId) registrations.delete(priorId);
+
+  const generation = (generationBySession.get(input.sessionKey) || 0) + 1;
+  generationBySession.set(input.sessionKey, generation);
+  const ownerId = safeId(input.ownerId);
+  const executionId =
+    `exec:${ownerId}@${sessionTag(input.sessionKey)}:e${DRIVER_EPOCH}:g${generation}`;
+  const now = new Date().toISOString();
+  const work: WorkRegistration = {
+    executionId,
+    authorityToken: randomBytes(24).toString("base64url"),
+    admissionToken: input.admissionToken,
+    sessionKey: input.sessionKey,
+    ownerType: input.ownerType,
+    ownerId,
+    ...(input.ownerType === "job" ? { jobId: ownerId } : {}),
+    executionPath: input.executionPath,
+    driverEpoch: DRIVER_EPOCH,
+    generation,
+    callSequence: 0,
+    createdAt: now,
+    lastActivityAt: now,
+  };
+  registrations.set(executionId, work);
+  activeBySession.set(input.sessionKey, executionId);
+  return { ...work };
+}
+
+export function validateWorkHandle(
+  executionId: string | undefined,
+  authorityToken: string | undefined,
+  sessionKey: string
+): WorkRegistration {
+  cleanup();
+  if (!executionId || !authorityToken) {
+    throw new Error("NO_ACTIVE_WORK: execution_id and authority_token are required.");
+  }
+  const work = registrations.get(executionId);
+  if (
+    !work ||
+    work.sessionKey !== sessionKey ||
+    work.authorityToken !== authorityToken ||
+    work.driverEpoch !== DRIVER_EPOCH
+  ) {
+    throw new Error(
+      "NO_ACTIVE_WORK: work handle is stale, invalid, or belongs to another ChatGPT session."
+    );
+  }
+  work.lastActivityAt = new Date().toISOString();
+  return work;
+}
+
+export function releaseWorkRegistration(
+  executionId: string | undefined,
+  authorityToken: string | undefined,
+  sessionKey: string
+): WorkRegistration {
+  const work = validateWorkHandle(executionId, authorityToken, sessionKey);
+  registrations.delete(work.executionId);
+  if (activeBySession.get(sessionKey) === work.executionId) activeBySession.delete(sessionKey);
+  return { ...work };
+}
+
+export function releaseSessionWork(sessionKey: string): void {
+  const executionId = activeBySession.get(sessionKey);
+  if (executionId) registrations.delete(executionId);
+  activeBySession.delete(sessionKey);
+}
+
+export function workStatus(
+  sessionKey: string,
+  executionId?: string,
+  authorityToken?: string
+): Record<string, unknown> {
+  cleanup();
+  if (!executionId && !authorityToken) {
+    const activeId = activeBySession.get(sessionKey);
+    if (!activeId) return { active: false, idle_timeout_ms: WORK_IDLE_MS };
+    const active = registrations.get(activeId);
+    if (!active) return { active: false, idle_timeout_ms: WORK_IDLE_MS };
+    return {
+      active: true,
+      execution_id: active.executionId,
+      owner_type: active.ownerType,
+      owner_id: active.ownerId,
+      execution_path: active.executionPath,
+      generation: active.generation,
+      last_activity_at: active.lastActivityAt,
+      idle_timeout_ms: WORK_IDLE_MS,
+      note: "Authority token is intentionally omitted from status output.",
+    };
+  }
+  const active = validateWorkHandle(executionId, authorityToken, sessionKey);
+  return {
+    active: true,
+    execution_id: active.executionId,
+    owner_type: active.ownerType,
+    owner_id: active.ownerId,
+    execution_path: active.executionPath,
+    generation: active.generation,
+    last_activity_at: active.lastActivityAt,
+    idle_timeout_ms: WORK_IDLE_MS,
+  };
+}
+
+export function acquireToolLease(input: {
+  tool: string;
+  family: string;
+  targetId?: string;
+  executionId?: string;
+  authorityToken?: string;
+  admissionToken?: string;
+  sessionKey: string;
+}): ToolLease {
+  validateAdmissionToken(input.admissionToken, input.sessionKey);
+  const work = validateWorkHandle(
+    input.executionId,
+    input.authorityToken,
+    input.sessionKey
+  );
+  if (work.admissionToken !== input.admissionToken) {
+    throw new Error("ADMISSION_REQUIRED: work handle is not bound to this admission token.");
+  }
+  work.callSequence += 1;
+  work.lastActivityAt = new Date().toISOString();
+  const targetId = safeId(input.targetId || input.family || "target");
+  const lease: ToolLease = {
+    leaseId:
+      `tool:cadgpt:${safeId(input.family)}@${work.ownerId}@${targetId}` +
+      `:e${work.driverEpoch}:g${work.generation}:c${work.callSequence}`,
+    family: input.family,
+    tool: input.tool,
+    targetId,
+    workId: work.executionId,
+    ownerId: work.ownerId,
+    sessionKey: work.sessionKey,
+    driverEpoch: work.driverEpoch,
+    generation: work.generation,
+    callSequence: work.callSequence,
+    acquiredAt: new Date().toISOString(),
+  };
+  return lease;
+}
+
+export async function runWithToolLease<T>(
+  lease: ToolLease,
+  callback: () => Promise<T>
+): Promise<T> {
+  return leaseStorage.run(lease, callback);
+}
+
+export function currentToolLease(): ToolLease {
+  const lease = leaseStorage.getStore();
+  if (!lease) throw new Error("NO_TOOL_LEASE: operation requires an active CadGPT ToolLease.");
+  return lease;
+}
+
+export function activeWorkCount(): number {
+  cleanup();
+  return registrations.size;
+}
