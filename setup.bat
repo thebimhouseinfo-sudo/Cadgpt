@@ -60,6 +60,11 @@ if not exist ".env" (
   copy /y ".env.example" ".env" >nul
   echo [OK] Created .env
 )
+findstr /B /C:"CADGPT_BUILD_PROFILE=" ".env" >nul 2>nul
+if errorlevel 1 (
+  >>".env" echo CADGPT_BUILD_PROFILE=development
+  echo [OK] Enabled development profile for this source checkout.
+)
 
 echo.
 echo [1/10] Initializing CadGPT AppData...
@@ -103,7 +108,7 @@ if errorlevel 1 goto :failed
 
 echo.
 echo [5/10] Running static regression tests...
-call npm test
+call npm run test:unit
 if errorlevel 1 goto :failed
 
 echo.
