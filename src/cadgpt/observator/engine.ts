@@ -1,59 +1,71 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-
 import { cadUpstream } from "../runtime/cad-upstream.js";
-import { ensureBoundDrawingActive } from "../session/drawing-binding.js";
+import { withCadHostLock } from "../runtime/cad-scheduler.js";
+import {
+  activateDrawingContext,
+  resolveDrawingContext,
+} from "../session/drawing-binding.js";
 import {
   appendObservationRecords,
   type ObservationLogRecord,
 } from "./log-store.js";
 
-function assertCadAvailable(): void {
-  if (!cadUpstream.status().enabled) {
-    throw new Error("CAD backend is sleeping. AutoCAD must be running and CadGPT must be active.");
-  }
+async function ensureCadAvailable(): Promise<void> {
+  const status = cadUpstream.status();
+  if (status.enabled && status.connected) return;
+  await cadUpstream.activate();
 }
 
-export async function startObservationCapture(server: McpServer): Promise<unknown> {
-  assertCadAvailable();
-  await ensureBoundDrawingActive(server);
-  return cadUpstream.callTool("cad_observation_capture_start", {});
+export async function startObservationCapture(
+  drawingId?: string
+): Promise<unknown> {
+  await ensureCadAvailable();
+  const binding = resolveDrawingContext(drawingId);
+  return withCadHostLock(binding.host, async () => {
+    await activateDrawingContext(binding);
+    return cadUpstream.callTool("cad_observation_capture_start", {});
+  });
 }
 
 export async function observationCaptureStatus(): Promise<unknown> {
-  assertCadAvailable();
+  await ensureCadAvailable();
   return cadUpstream.callTool("cad_observation_capture_status", {});
 }
 
 export async function finishObservationCapture(
-  server: McpServer,
+  drawingId?: string,
   includePaperSpace = true
 ): Promise<unknown> {
-  assertCadAvailable();
-  await ensureBoundDrawingActive(server);
-  return cadUpstream.callTool("cad_observation_capture_finish", {
-    include_paper_space: includePaperSpace,
+  await ensureCadAvailable();
+  const binding = resolveDrawingContext(drawingId);
+  return withCadHostLock(binding.host, async () => {
+    await activateDrawingContext(binding);
+    return cadUpstream.callTool("cad_observation_capture_finish", {
+      include_paper_space: includePaperSpace,
+    });
   });
 }
 
 export async function cancelObservationCapture(): Promise<unknown> {
-  assertCadAvailable();
+  await ensureCadAvailable();
   return cadUpstream.callTool("cad_observation_capture_cancel", {});
 }
 
 export async function readEntityProperties(
-  server: McpServer,
+  drawingId: string | undefined,
   handles: string[],
   includePaperSpace = true
 ): Promise<unknown> {
   if (!Array.isArray(handles) || handles.length === 0) {
     throw new Error("handles must be a non-empty array");
   }
-  assertCadAvailable();
-
-  await ensureBoundDrawingActive(server);
-  return cadUpstream.callTool("cad_read_entity_properties", {
-    handles,
-    include_paper_space: includePaperSpace,
+  await ensureCadAvailable();
+  const binding = resolveDrawingContext(drawingId);
+  return withCadHostLock(binding.host, async () => {
+    await activateDrawingContext(binding);
+    return cadUpstream.callTool("cad_read_entity_properties", {
+      handles,
+      include_paper_space: includePaperSpace,
+    });
   });
 }
 
