@@ -287,8 +287,11 @@ export function registerLispWorkspaceTools(server: McpServer): void {
           throw new Error(`Draft failed AutoLISP/${profile} validation; promotion blocked (${validation.diagnostics.filter((item) => item.severity === "error").map((item) => item.code).join(", ")})`);
         }
 
-        let targetExists = false;
-        let previousPermanent: string | null = null;
+        return await withFileMutationLocks(
+          [permanent, getUserCapabilitiesPath()],
+          async () => {
+            let targetExists = false;
+            let previousPermanent: string | null = null;
         try {
           previousPermanent = await fs.readFile(permanent, "utf8");
           targetExists = true;
@@ -375,7 +378,9 @@ export function registerLispWorkspaceTools(server: McpServer): void {
           registry_updated: true,
           rollback_safe: true,
           draft_retained: true,
-        });
+            });
+          }
+        );
       } catch (error) {
         return toolError("lisp_promote_draft", error);
       }
