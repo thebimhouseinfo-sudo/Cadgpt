@@ -28,9 +28,17 @@ export async function cleanupExecutionState(executionId: string): Promise<void> 
   if (loaded.has("cad-mcp-dev")) {
     try {
       const { rollbackUnacceptedCadMcpDevStateForExecution } = await import("../tools/cad-mcp-dev.js");
-      await rollbackUnacceptedCadMcpDevStateForExecution(executionId);
-    } catch {
-      // Development-only snapshot cleanup is best-effort.
+      const rollback = await rollbackUnacceptedCadMcpDevStateForExecution(executionId);
+      if (rollback.restored) {
+        console.warn(
+          `[CAD MCP DEV] Restored unaccepted source snapshot during cleanup: ${executionId}`
+        );
+      }
+    } catch (error) {
+      console.error(
+        `[CAD MCP DEV] CRITICAL: automatic rollback failed for ${executionId}; snapshot retained for recovery.`,
+        error
+      );
     }
   }
 
