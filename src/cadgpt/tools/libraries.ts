@@ -306,15 +306,20 @@ export function registerLibraryTools(server: McpServer): void {
         const temp = path.join(parent, `.${library_id}.import-${randomUUID()}`);
         const backup = path.join(parent, `.${library_id}.backup-${randomUUID()}`);
 
-        await fs.cp(source, temp, {
-          recursive: true,
-          force: false,
-          errorOnExist: true,
-          filter: (sourceItem) => {
-            const parts = path.resolve(sourceItem).split(path.sep);
-            return !parts.includes(".git") && !parts.includes(".svn");
-          },
-        });
+        try {
+          await fs.cp(source, temp, {
+            recursive: true,
+            force: false,
+            errorOnExist: true,
+            filter: (sourceItem) => {
+              const parts = path.resolve(sourceItem).split(path.sep);
+              return !parts.includes(".git") && !parts.includes(".svn");
+            },
+          });
+        } catch (error) {
+          await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined);
+          throw error;
+        }
 
         const manifestPath = getUserLibrariesManifestPath();
         const registryPath = getUserCapabilitiesPath();
@@ -336,12 +341,16 @@ export function registerLibraryTools(server: McpServer): void {
 
             const previousManifest = await readOptionalText(manifestPath);
             const previousRegistry = await readOptionalText(registryPath);
+            let backedUp = false;
             let swapped = false;
 
             try {
-              if (existed) await fs.rename(target, backup);
-          await fs.rename(temp, target);
-          swapped = true;
+              if (existed) {
+                await fs.rename(target, backup);
+                backedUp = true;
+              }
+              await fs.rename(temp, target);
+              swapped = true;
 
           await fs.mkdir(getUserRegistryRoot(), { recursive: true });
           const manifest = await readJson<{ version: number; libraries: LibraryRecord[] }>(manifestPath, { version: 1, libraries: [] });
@@ -377,11 +386,13 @@ export function registerLibraryTools(server: McpServer): void {
           await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined);
           if (swapped) {
             await fs.rm(target, { recursive: true, force: true }).catch(() => undefined);
-            if (existed) await fs.rename(backup, target).catch(() => undefined);
+          }
+          if (backedUp) {
+            await fs.rename(backup, target).catch(() => undefined);
           }
           await restoreOptionalText(manifestPath, previousManifest).catch(() => undefined);
-              await restoreOptionalText(registryPath, previousRegistry).catch(() => undefined);
-              throw error;
+          await restoreOptionalText(registryPath, previousRegistry).catch(() => undefined);
+          throw error;
             }
           }
         );
