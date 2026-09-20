@@ -35,11 +35,61 @@ const INTERNAL_UPSTREAM_TOOLS = new Set([
   "cad_observation_capture_finish",
   "cad_observation_capture_cancel",
   "cad_read_entity_properties",
+
+  // Outer CadGPT owns destructive preview token execution scope.
+  "cad_preview_delete_entities",
+  "cad_execute_delete_preview",
 ]);
 
 interface ToolManifest {
   version: number;
   tools: Tool[];
+}
+
+interface DeletePreviewOwner {
+  workId: string;
+  drawingId: string;
+  host: string;
+  acquiredAt: string;
+}
+
+const deletePreviewOwners = new Map<string, DeletePreviewOwner>();
+
+function extractUpstreamPayload(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const obj = raw as {
+    structuredContent?: unknown;
+    content?: Array<{ type?: string; text?: string }>;
+  };
+  if (obj.structuredContent !== undefined) return obj.structuredContent;
+  const text = obj.content?.find(
+    (item) => item.type === "text" && typeof item.text === "string"
+  )?.text;
+  if (text === undefined) return raw;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function findPayloadField(raw: unknown, field: string, depth = 0): unknown {
+  if (depth > 4 || raw === null || raw === undefined) return undefined;
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      const found = findPayloadField(item, field, depth + 1);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+  if (field in obj) return obj[field];
+  for (const value of Object.values(obj)) {
+    const found = findPayloadField(value, field, depth + 1);
+    if (found !== undefined) return found;
+  }
+  return undefined;
 }
 
 function loadManifest(): ToolManifest {
@@ -185,10 +235,21 @@ export async function ensureCadRuntimeActive(): Promise<void> {
 
 export function syncCadBusinessProxies(server: McpServer): string[] {
   const registry = registryFor(server);
-  const desiredTools = loadManifest().tools.filter(
+  const manifestTools = loadManifest().tools;
+  const desiredTools = manifestTools.filter(
     (tool) => !INTERNAL_UPSTREAM_TOOLS.has(tool.name)
   );
+  const destructiveAvailable = new Set(
+    manifestTools
+      .map((tool) => tool.name)
+      .filter(
+        (name) =>
+          name === "cad_preview_delete_entities" ||
+          name === "cad_execute_delete_preview"
+      )
+  );
   const desiredNames = new Set(desiredTools.map((tool) => `cad__${tool.name}`));
+  for (const name of destructiveAvailable) desiredNames.add(`cad__${name}`);
 
   for (const [name, registered] of registry) {
     if (desiredNames.has(name)) continue;
@@ -250,7 +311,138 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
     registry.set(publicName, registered);
   }
 
+  const previewPublicName = "cad__cad_preview_delete_entities";
+  if (destructiveAvailable.has("cad_preview_delete_entities")) {
+    const prior = registry.get(previewPublicName);
+    if (prior) {
+      prior.remove();
+      registry.delete(previewPublicName);
+    }
+    const registered = server.registerTool(
+      previewPublicName,
+      {
+        title: "Preview Delete Entities",
+        description:
+          "[CAD MCP / execution-owned destructive token] Preview a guarded entity deletion on one bound drawing. The returned token belongs only to this work execution and drawing context.",
+        inputSchema: {
+          filter: z.record(z.string(), z.unknown()),
+          include_paper_space: z.boolean().optional().default(false),
+          drawing_id: z.string().optional(),
+        },
+      },
+      async ({ filter, include_paper_space, drawing_id }) => {
+        try {
+          await ensureCadRuntimeActive();
+          const binding = resolveDrawingContext(drawing_id);
+          return await withCadHostLock(binding.host, async () => {
+            await activateDrawingContext(binding);
+            const result = await cadUpstream.callTool(
+              "cad_preview_delete_entities",
+              {
+                filter,
+                include_paper_space,
+              }
+            );
+            if (!isToolErrorResult(result)) {
+              const token = findPayloadField(
+                extractUpstreamPayload(result),
+                "token"
+              );
+              if (typeof token === "string" && token.trim()) {
+                deletePreviewOwners.set(token, {
+                  workId: currentToolLease().workId,
+                  drawingId: binding.drawing_id,
+                  host: binding.host,
+                  acquiredAt: new Date().toISOString(),
+                });
+              }
+              recordCadCandidateSuccess(
+                currentToolLease().workId,
+                previewPublicName
+              );
+            }
+            return result as any;
+          });
+        } catch (error) {
+          return toolError(previewPublicName, error);
+        }
+      }
+    );
+    registry.set(previewPublicName, registered);
+    publicNames.push(previewPublicName);
+  }
+
+  const executePublicName = "cad__cad_execute_delete_preview";
+  if (destructiveAvailable.has("cad_execute_delete_preview")) {
+    const prior = registry.get(executePublicName);
+    if (prior) {
+      prior.remove();
+      registry.delete(executePublicName);
+    }
+    const registered = server.registerTool(
+      executePublicName,
+      {
+        title: "Execute Delete Preview",
+        description:
+          "[CAD MCP / execution-owned destructive token] Execute one previously previewed one-shot delete token. The token must belong to this exact work execution and drawing context.",
+        inputSchema: {
+          token: z.string().min(1),
+          drawing_id: z.string().optional(),
+        },
+      },
+      async ({ token, drawing_id }) => {
+        try {
+          await ensureCadRuntimeActive();
+          const owner = deletePreviewOwners.get(token);
+          if (!owner || owner.workId !== currentToolLease().workId) {
+            throw new Error(
+              "DELETE_PREVIEW_OWNERSHIP: token is missing, expired at the outer runtime, or belongs to another execution."
+            );
+          }
+
+          const binding = resolveDrawingContext(drawing_id);
+          if (binding.drawing_id !== owner.drawingId) {
+            throw new Error(
+              "DELETE_PREVIEW_OWNERSHIP: drawing_id does not match the drawing used for this preview."
+            );
+          }
+
+          // Consume outer authority before the upstream destructive call, matching
+          // the CAD MCP one-shot semantics even if transport fails afterward.
+          deletePreviewOwners.delete(token);
+
+          return await withCadHostLock(owner.host, async () => {
+            await activateDrawingContext(binding);
+            const result = await cadUpstream.callTool(
+              "cad_execute_delete_preview",
+              { token }
+            );
+            if (!isToolErrorResult(result)) {
+              recordCadCandidateSuccess(
+                currentToolLease().workId,
+                executePublicName
+              );
+            }
+            return result as any;
+          });
+        } catch (error) {
+          return toolError(executePublicName, error);
+        }
+      }
+    );
+    registry.set(executePublicName, registered);
+    publicNames.push(executePublicName);
+  }
+
   return publicNames;
+}
+
+export function clearDestructivePreviewOwnershipForExecution(
+  executionId: string
+): void {
+  for (const [token, owner] of deletePreviewOwners) {
+    if (owner.workId === executionId) deletePreviewOwners.delete(token);
+  }
 }
 
 function manifestToolNames(): Set<string> {
