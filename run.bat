@@ -6,45 +6,80 @@ set "ACTION=%~1"
 if "%ACTION%"=="" set "ACTION=start"
 
 if /I "%ACTION%"=="help" goto :usage
-if /I "%ACTION%"=="install" goto :control
-if /I "%ACTION%"=="start" goto :control
-if /I "%ACTION%"=="stop" goto :control
-if /I "%ACTION%"=="restart" goto :control
-if /I "%ACTION%"=="status" goto :control
-if /I "%ACTION%"=="uninstall" goto :control
+if /I "%ACTION%"=="install" goto :install
+if /I "%ACTION%"=="start" goto :start
+if /I "%ACTION%"=="stop" goto :stop
+if /I "%ACTION%"=="restart" goto :restart
+if /I "%ACTION%"=="status" goto :status
+if /I "%ACTION%"=="uninstall" goto :uninstall
 
 echo [ERROR] Unknown action: %ACTION%
 goto :usage
 
-:control
+:preflight
 if not exist ".env" (
   echo [ERROR] CadGPT is not set up yet. Run setup.bat first.
   exit /b 1
 )
-if not exist "agent-task.ps1" (
-  echo [ERROR] agent-task.ps1 is missing.
+if not exist "cadgpt-tray.ps1" (
+  echo [ERROR] cadgpt-tray.ps1 is missing.
   exit /b 1
 )
+exit /b 0
 
-set "WAIT_ARG="
-if /I "%ACTION%"=="install" set "WAIT_ARG=-WaitReady"
-if /I "%ACTION%"=="start" set "WAIT_ARG=-WaitReady"
-if /I "%ACTION%"=="restart" set "WAIT_ARG=-WaitReady"
+:install
+call :preflight
+if errorlevel 1 exit /b 1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1" -InstallStartup
+if errorlevel 1 exit /b 1
+goto :start
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0agent-task.ps1" -Action %ACTION% %WAIT_ARG%
+:start
+call :preflight
+if errorlevel 1 exit /b 1
+start "" powershell -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wait-tray-ready.ps1" -TimeoutSeconds 15
+if errorlevel 1 exit /b 1
+exit /b 0
+
+:stop
+call :preflight
+if errorlevel 1 exit /b 1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1" -StopInstalled
+exit /b %ERRORLEVEL%
+
+:restart
+call :preflight
+if errorlevel 1 exit /b 1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1" -StopInstalled
+start "" powershell -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1" -RestartRuntimeOnStart
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wait-tray-ready.ps1" -TimeoutSeconds 15
+exit /b %ERRORLEVEL%
+
+:status
+call :preflight
+if errorlevel 1 exit /b 1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1" -StatusOnly
+exit /b %ERRORLEVEL%
+
+:uninstall
+call :preflight
+if errorlevel 1 exit /b 1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1" -StopInstalled
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1" -RemoveStartup
 exit /b %ERRORLEVEL%
 
 :usage
 echo.
-echo CadGPT background agent control
+echo CadGPT tray/runtime control
 echo.
-echo   run.bat              Start/wake the installed background agent
-echo   run.bat install      Install autostart task and start now
-echo   run.bat start        Start/wake the background agent
-echo   run.bat stop         Stop until manually started or next logon
-echo   run.bat restart      Restart background agent
-echo   run.bat status       Show task/listener/tunnel status
-echo   run.bat uninstall    Remove autostart task, keep CadGPT files/config
+echo   run.bat              Start CadGPT tray
+echo   run.bat install      Register per-user Windows startup and start tray
+echo   run.bat start        Start tray + slim MCP + Secure Tunnel
+echo   run.bat stop         Stop tray + verified CadGPT runtime
+echo   run.bat restart      Restart tray/runtime
+echo   run.bat status       Show tray/slim MCP/tunnel/CAD status
+echo   run.bat uninstall    Remove startup registration and stop runtime
 echo.
-echo Normal daily use requires no command: CadGPT starts hidden at Windows logon.
+echo Normal daily use requires no command after setup.
 exit /b 2
