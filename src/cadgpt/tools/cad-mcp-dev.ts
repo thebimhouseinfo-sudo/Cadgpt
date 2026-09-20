@@ -15,6 +15,7 @@ import {
 import {
   currentToolLease,
   executionSupportsCad,
+  hasActiveCadCapabilityLease,
   hasOtherActiveCadWork,
   isDevelopmentBuild,
 } from "../lib/work-registration.js";
@@ -878,6 +879,11 @@ export function registerCadMcpDevTools(server: McpServer): void {
             "CAD_MCP_DEV_SOURCE_BUSY: finish other CAD/hybrid work before starting a mutable CAD MCP source transaction."
           );
         }
+        if (hasActiveCadCapabilityLease()) {
+          throw new Error(
+            "CAD_MCP_DEV_SOURCE_BUSY: wait for all in-flight CAD/Observator ToolLeases to finish before snapshot."
+          );
+        }
 
         const snapshotId = `snapshot_${randomUUID()}`;
         const { beginCadDevSourceTransaction, forceClearCadDevSourceTransaction } =
@@ -888,6 +894,11 @@ export function registerCadMcpDevTools(server: McpServer): void {
         });
 
         try {
+          const { cadUpstream } = await import("../runtime/cad-upstream.js");
+          if (cadUpstream.status().enabled || cadUpstream.status().connected) {
+            await cadUpstream.deactivate();
+          }
+
           const files: string[] = [];
           await walk(runtimeRoot(), runtimeRoot(), files, MAX_SNAPSHOT_FILES + 1);
         if (files.length > MAX_SNAPSHOT_FILES) {
