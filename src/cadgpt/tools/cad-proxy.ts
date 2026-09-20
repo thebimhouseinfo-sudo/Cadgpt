@@ -12,7 +12,7 @@ import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import { getRepoRoot } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { currentToolLease } from "../lib/work-registration.js";
-import { assertCadCandidateAccess } from "../runtime/cad-candidate.js";
+import { assertCadCandidateAccess, recordCadCandidateSuccess } from "../runtime/cad-candidate.js";
 import {
   activateDrawingContext,
   bindDrawing,
@@ -220,7 +220,9 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
 
           return await withCadHostLock(binding.host, async () => {
             await activateDrawingContext(binding);
-            return (await cadUpstream.callTool(tool.name, upstreamArgs)) as any;
+            const result = (await cadUpstream.callTool(tool.name, upstreamArgs)) as any;
+            recordCadCandidateSuccess(currentToolLease().workId, publicName);
+            return result;
           });
         } catch (error) {
           return toolError(publicName, error);
@@ -299,6 +301,7 @@ export function registerCadProxyTools(server: McpServer): void {
         await ensureCadRuntimeActive();
         return await withCadHostLock("autocad", async () => {
           const drawings = await listOpenDrawings();
+          recordCadCandidateSuccess(currentToolLease().workId, "drawing_list");
           return toolResult("drawing_list", {
             drawings,
             count: drawings.length,
@@ -348,6 +351,7 @@ export function registerCadProxyTools(server: McpServer): void {
             throw new Error("New test drawing has no usable identity");
           }
           const drawing = await bindDrawing(identity);
+          recordCadCandidateSuccess(currentToolLease().workId, "drawing_create_test");
           return toolResult("drawing_create_test", {
             created: true,
             bound: true,
@@ -377,6 +381,7 @@ export function registerCadProxyTools(server: McpServer): void {
         await ensureCadRuntimeActive();
         return await withCadHostLock("autocad", async () => {
           const drawing = await bindDrawing(document);
+          recordCadCandidateSuccess(currentToolLease().workId, "drawing_bind");
           return toolResult("drawing_bind", { bound: true, drawing });
         });
       } catch (error) {
@@ -397,10 +402,13 @@ export function registerCadProxyTools(server: McpServer): void {
       try {
         await ensureCadRuntimeActive();
         return await withCadHostLock("autocad", async () =>
-          toolResult(
-            "drawing_status",
-            await drawingBindingStatus(drawing_id)
-          )
+          (() => {
+            const statusPromise = drawingBindingStatus(drawing_id);
+            return statusPromise.then((status) => {
+              recordCadCandidateSuccess(currentToolLease().workId, "drawing_status");
+              return toolResult("drawing_status", status);
+            });
+          })()
         );
       } catch (error) {
         return toolError("drawing_status", error);
@@ -421,6 +429,7 @@ export function registerCadProxyTools(server: McpServer): void {
         await ensureCadRuntimeActive();
         const runtimeTools = await cadUpstream.listTools(true);
         const diff = diffRuntimeAgainstManifest(runtimeTools);
+        recordCadCandidateSuccess(currentToolLease().workId, "cad_refresh_tools");
         return toolResult("cad_refresh_tools", {
           runtime_count: runtimeTools.length,
           manifest_match:
