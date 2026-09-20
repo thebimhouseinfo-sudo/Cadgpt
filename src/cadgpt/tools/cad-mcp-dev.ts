@@ -38,17 +38,38 @@ function runtimeRoot(): string {
   return getCadMcpRuntimeRoot();
 }
 
+function devReadRoots(): string[] {
+  return [
+    runtimeRoot(),
+    path.join(getRepoRoot(), "src", "cadgpt"),
+    path.join(getRepoRoot(), "knowledge"),
+    path.join(getRepoRoot(), "registry"),
+    path.join(getRepoRoot(), "IMPLEMENTATION_PLAN.md"),
+    path.join(getRepoRoot(), "README.md"),
+    path.join(getRepoRoot(), "scripts", "generate-cad-tool-manifest.py"),
+  ].map((item) => path.resolve(item));
+}
+
+function isApprovedDevReadTarget(target: string): boolean {
+  return devReadRoots().some((root) => {
+    if (root === target) return true;
+    return isPathInside(target, root);
+  });
+}
+
 function sha256(data: string | Buffer): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
-async function assertRuntimeReadPath(input: string): Promise<string> {
+async function assertDevReadPath(input: string): Promise<string> {
   if (!path.isAbsolute(input)) {
     throw new Error("ABSOLUTE_PATH_REQUIRED: CAD MCP developer paths must be absolute.");
   }
   const target = await fs.realpath(path.resolve(input));
-  if (!isPathInside(target, runtimeRoot())) {
-    throw new Error("CAD_MCP_DEV_SCOPE: read target is outside runtimes/cad-mcp/**");
+  if (!isApprovedDevReadTarget(target)) {
+    throw new Error(
+      "CAD_MCP_DEV_SCOPE: read target is outside the CAD MCP runtime and approved read-only supporting contract roots"
+    );
   }
   return target;
 }
@@ -134,6 +155,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
         return toolResult("cad_mcp_dev_root", {
           absolute_root: runtimeRoot(),
           write_scope: "runtimes/cad-mcp/** only",
+          read_only_support_roots: devReadRoots().filter((item) => item !== runtimeRoot()),
           git_authority: false,
         });
       } catch (error) {
@@ -146,7 +168,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     "cad_mcp_dev_list",
     {
       title: "List CAD MCP Runtime Files",
-      description: "List files under the CAD MCP runtime. path must be absolute.",
+      description: "List files under the CAD MCP runtime or approved read-only supporting roots. path must be absolute. Only runtimes/cad-mcp/** is writable.",
       inputSchema: {
         path: z.string().min(1),
         recursive: z.boolean().optional().default(false),
@@ -156,7 +178,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     async ({ path: input, recursive, max_entries }) => {
       try {
         assertDevMode();
-        const target = await assertRuntimeReadPath(input);
+        const target = await assertDevReadPath(input);
         const stat = await fs.stat(target);
         if (stat.isFile()) {
           return toolResult("cad_mcp_dev_list", {
@@ -193,7 +215,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     {
       title: "Read CAD MCP Runtime File",
       description:
-        "Read one CAD MCP runtime file by absolute path and return sha256 for conflict-safe editing.",
+        "Read one CAD MCP runtime/supporting contract file by absolute path and return sha256. Supporting roots are read-only.",
       inputSchema: {
         path: z.string().min(1),
         max_bytes: z
@@ -208,7 +230,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     async ({ path: input, max_bytes }) => {
       try {
         assertDevMode();
-        const target = await assertRuntimeReadPath(input);
+        const target = await assertDevReadPath(input);
         const stat = await fs.stat(target);
         if (!stat.isFile()) throw new Error("Read target must be a file");
         const data = await fs.readFile(target);
@@ -229,7 +251,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     "cad_mcp_dev_search",
     {
       title: "Search CAD MCP Runtime Source",
-      description: "Search text within CAD MCP runtime files.",
+      description: "Search text within CAD MCP runtime or approved read-only supporting contract roots.",
       inputSchema: {
         query: z.string().min(1),
         path: z.string().min(1),
@@ -240,7 +262,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     async ({ query, path: input, case_sensitive, max_results }) => {
       try {
         assertDevMode();
-        const target = await assertRuntimeReadPath(input);
+        const target = await assertDevReadPath(input);
         const stat = await fs.stat(target);
         const candidates: string[] = [];
         if (stat.isFile()) candidates.push(target);
