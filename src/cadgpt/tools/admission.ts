@@ -35,7 +35,7 @@ export function registerAdmissionTool(
           decision.mode === "inactive"
             ? "STOP CadGPT. Do not call discovery/work/CAD tools. Continue ordinary ChatGPT or use the provider the user actually invoked."
             : decision.mode === "control"
-              ? "Handle only this explicit CadGPT control request. No FILE/CAD execution authority was created."
+              ? "Use this CONTROL admission_token only for CadGPT control/status/stop. It cannot authorize discovery, FILE, CAD, or new work."
               : "CadGPT is admitted for this current user turn. Carry admission_token into discovery and work registration.",
       });
     }
