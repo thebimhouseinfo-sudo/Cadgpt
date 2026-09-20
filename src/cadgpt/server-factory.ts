@@ -190,10 +190,15 @@ async function loadCadMcpDevFamily(server: McpServer): Promise<void> {
 async function prepareFamilies(
   server: McpServer,
   executionPath: ExecutionPath,
-  ownerId: string
+  ownerId: string,
+  executionId: string
 ): Promise<void> {
   if (executionPath === "file" || executionPath === "hybrid") await loadFileFamily(server);
-  if (executionPath === "cad" || executionPath === "hybrid") await loadCadFamily(server);
+  if (executionPath === "cad" || executionPath === "hybrid") {
+    const { assertCadCandidateAccess } = await import("./runtime/cad-candidate.js");
+    assertCadCandidateAccess(executionId);
+    await loadCadFamily(server);
+  }
   if (ownerId === "cad-mcp-dev") await loadCadMcpDevFamily(server);
 }
 
@@ -227,8 +232,8 @@ export function createMcpServer(): McpServer {
   });
   registerWorkControlTools(server, {
     sessionKey,
-    prepareFamilies: (executionPath, ownerId) =>
-      prepareFamilies(server, executionPath, ownerId),
+    prepareFamilies: (executionPath, ownerId, executionId) =>
+      prepareFamilies(server, executionPath, ownerId, executionId),
   });
 
   return server;
