@@ -11,7 +11,7 @@ import {
   getUserLibrariesManifestPath,
   getUserRegistryRoot,
 } from "../lib/appdata.js";
-import { toCadgptPath } from "../lib/path-security.js";
+import { resolveAbsoluteMutationPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
@@ -294,11 +294,12 @@ export function registerLibraryTools(server: McpServer): void {
         library_id: z.string().regex(LIBRARY_ID),
         name: z.string().min(1).max(160),
         source_path: z.string().min(1).describe("Absolute user-selected source directory. It is read only during import."),
+        target_path: z.string().min(1).describe("Absolute managed AppData library directory. Must exactly match kind + library_id."),
         user_approved_source: z.literal(true).describe("Must be true only after the user explicitly selected/approved this source folder."),
         replace_existing: z.boolean().optional().default(false),
       },
     },
-    async ({ kind, library_id, name, source_path, user_approved_source, replace_existing }) => {
+    async ({ kind, library_id, name, source_path, target_path, user_approved_source, replace_existing }) => {
       try {
         if (!user_approved_source) throw new Error("Library import requires explicit user approval of source_path");
         if (!path.isAbsolute(source_path)) throw new Error("source_path must be an absolute directory selected by the user");
@@ -309,7 +310,20 @@ export function registerLibraryTools(server: McpServer): void {
 
         const parent = kind === "lisp" ? getLispLibrariesRoot() : getJobLibrariesRoot();
         await fs.mkdir(parent, { recursive: true });
-        const target = path.join(parent, library_id);
+        if (!path.isAbsolute(target_path)) {
+          throw new Error("ABSOLUTE_PATH_REQUIRED: library_import target_path must be absolute");
+        }
+        const expectedTarget = path.resolve(parent, library_id);
+        const target = await resolveAbsoluteMutationPath(target_path, {
+          allowedRoots: [parent],
+          forCreate: true,
+          label: "managed library import",
+        });
+        if (path.relative(expectedTarget, target) !== "") {
+          throw new Error(
+            `TARGET_PATH_MISMATCH: target_path must exactly match managed library target ${expectedTarget}`
+          );
+        }
         const temp = path.join(parent, `.${library_id}.import-${randomUUID()}`);
         const backup = path.join(parent, `.${library_id}.backup-${randomUUID()}`);
 
