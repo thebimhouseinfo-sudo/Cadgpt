@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import {
+  activeExecutionForSession,
   createWorkRegistration,
   releaseWorkRegistration,
   workStatus,
@@ -34,6 +35,16 @@ export function registerWorkControlTools(
     async ({ admission_token, owner_type, owner_id, execution_path }) => {
       try {
         validateAdmissionToken(admission_token, options.sessionKey);
+        const previousExecution = activeExecutionForSession(options.sessionKey);
+        if (previousExecution) {
+          try {
+            const { clearExecutionDrawingContexts } = await import("../session/drawing-binding.js");
+            clearExecutionDrawingContexts(previousExecution);
+          } catch {
+            // CAD family may not have loaded for the prior work.
+          }
+        }
+
         const work = createWorkRegistration({
           sessionKey: options.sessionKey,
           admissionToken: admission_token,
@@ -104,6 +115,12 @@ export function registerWorkControlTools(
           authority_token,
           options.sessionKey
         );
+        try {
+          const { clearExecutionDrawingContexts } = await import("../session/drawing-binding.js");
+          clearExecutionDrawingContexts(released.executionId);
+        } catch {
+          // CAD family may not have loaded.
+        }
         return toolResult("cadgpt_work_stop", {
           released: true,
           execution_id: released.executionId,
