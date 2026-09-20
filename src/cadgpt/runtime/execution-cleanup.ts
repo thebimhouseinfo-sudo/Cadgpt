@@ -27,8 +27,8 @@ export async function cleanupExecutionState(executionId: string): Promise<void> 
 
   if (loaded.has("cad-mcp-dev")) {
     try {
-      const { clearCadMcpDevStateForExecution } = await import("../tools/cad-mcp-dev.js");
-      clearCadMcpDevStateForExecution(executionId);
+      const { rollbackUnacceptedCadMcpDevStateForExecution } = await import("../tools/cad-mcp-dev.js");
+      await rollbackUnacceptedCadMcpDevStateForExecution(executionId);
     } catch {
       // Development-only snapshot cleanup is best-effort.
     }
