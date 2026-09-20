@@ -8,7 +8,7 @@ It is **not** a generic autonomous agent and it must not invent missing business
 
 ## Core rule
 
-> Discuss before drafting. Map the workflow before implementation. Never invent domain rules. Implementation includes real execution/testing. Promote only after the Job has passed its intended test.
+> Discuss before drafting. Map the workflow before implementation. Never invent domain rules. Every Job source mutation uses an explicit absolute canonical path inside its approved root. Implementation includes real execution/testing. Promote only after the Job has passed its intended test.
 
 `jobcreate` uses the canonical Job contract in `knowledge/jobs/**`; it does not define a second Job model.
 
@@ -143,19 +143,21 @@ Implementation begins only after the planning approval gate.
 New Job:
 
 ```text
-appdata/workspace/job-draft/<library-id>/<job-name>/JOB.md
+<absolute appdata/workspace/job-draft>/<library-id>/<job-name>/JOB.md
 ```
 
-Create the new draft with generic workspace file tools only after J3 approval.
+Resolve the exact absolute path first, then create the new draft with generic workspace file tools only after J3 approval.
 
 Existing Job refinement:
 
 ```text
 job_get
-→ job_checkout
-→ appdata/workspace/job-draft/**
-→ edit the draft only
+→ resolve exact absolute draft_path
+→ job_checkout(registry_id, draft_path)
+→ edit that absolute draft only
 ```
+
+Relative/CWD-derived mutation paths are invalid. Re-checking out over an existing draft requires explicit overwrite plus its current SHA-256.
 
 Do not copy/edit the permanent managed Job directly. The managed reusable Job remains unchanged until `job_promote_draft` succeeds.
 
@@ -235,7 +237,7 @@ only when:
 5. final output/postcondition has been verified;
 6. the user explicitly accepts the tested Job for permanent use.
 
-Then call `job_promote_draft` with the tested draft, metadata, test evidence, final-validation evidence and `user_accepted=true`.
+Then call `job_promote_draft` with the absolute tested `draft_path`, the exact absolute managed `target_path`, metadata, test evidence, final-validation evidence and `user_accepted=true`. If replacing an existing managed Job, require its current target SHA-256; never silently overwrite a concurrent change.
 
 `job_promote_draft` is the only normal `jobcreate` path that mutates a permanent managed Job and synchronizes the User Registry entry.
 
