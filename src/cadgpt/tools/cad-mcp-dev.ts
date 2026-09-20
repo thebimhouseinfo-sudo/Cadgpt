@@ -35,6 +35,15 @@ function assertDevMode(): void {
   }
 }
 
+function assertNotGeneratedManifest(target: string): void {
+  const manifest = path.resolve(runtimeRoot(), "tool-manifest.json");
+  if (path.resolve(target) === manifest) {
+    throw new Error(
+      "GENERATED_ARTIFACT: tool-manifest.json must be regenerated through cad_mcp_dev_validate(action=manifest|all), not edited directly."
+    );
+  }
+}
+
 async function prepareDevMutation(): Promise<string> {
   assertDevMode();
   const lease = currentToolLease();
@@ -363,6 +372,10 @@ export function registerCadMcpDevTools(server: McpServer): void {
           forCreate: true,
           label: "CAD MCP developer",
         });
+        assertNotGeneratedManifest(target);
+        assertNotGeneratedManifest(target);
+        assertNotGeneratedManifest(target);
+        assertNotGeneratedManifest(target);
         try {
           await fs.lstat(target);
           throw new Error(`Target already exists: ${target}`);
@@ -402,6 +415,10 @@ export function registerCadMcpDevTools(server: McpServer): void {
           allowedRoots: [runtimeRoot()],
           label: "CAD MCP developer",
         });
+        assertNotGeneratedManifest(target);
+        assertNotGeneratedManifest(target);
+        assertNotGeneratedManifest(target);
+        assertNotGeneratedManifest(target);
         const original = await fs.readFile(target, "utf8");
         const currentHash = sha256(original);
         if (currentHash !== expected_sha256) {
@@ -489,6 +506,8 @@ export function registerCadMcpDevTools(server: McpServer): void {
           forCreate: true,
           label: "CAD MCP developer",
         });
+        assertNotGeneratedManifest(from);
+        assertNotGeneratedManifest(to);
         const data = await fs.readFile(from);
         if (sha256(data) !== expected_sha256) {
           throw new Error("RESOURCE_CONFLICT: source changed after it was read");
@@ -687,6 +706,12 @@ export function registerCadMcpDevTools(server: McpServer): void {
         if (candidateStatus()) {
           throw new Error(
             "CAD_CANDIDATE_ACTIVE: accept or rollback the live candidate instead of using local-only acceptance."
+          );
+        }
+
+        if (!snapshots.has(lease.workId)) {
+          throw new Error(
+            "CAD_MCP_DEV_SNAPSHOT_REQUIRED: create a source snapshot before editing so unaccepted work can roll back safely."
           );
         }
 
