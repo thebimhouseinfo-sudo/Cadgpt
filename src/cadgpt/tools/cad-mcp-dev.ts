@@ -12,7 +12,7 @@ import {
   isPathInside,
   resolveAbsoluteMutationPath,
 } from "../lib/path-security.js";
-import { currentToolLease, isDevelopmentBuild } from "../lib/work-registration.js";
+import { currentToolLease, executionSupportsCad, isDevelopmentBuild } from "../lib/work-registration.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 
 const execFileAsync = promisify(execFile);
@@ -23,6 +23,7 @@ const snapshots = new Map<
   string,
   { id: string; files: Map<string, Buffer>; createdAt: string }
 >();
+const validatedFingerprints = new Map<string, string>();
 
 function assertDevMode(): void {
   if (!isDevelopmentBuild()) {
@@ -119,6 +120,25 @@ async function runPython(args: string[], cwd = runtimeRoot()) {
     stdout: result.stdout?.toString() ?? "",
     stderr: result.stderr?.toString() ?? "",
   };
+}
+
+async function runtimeFingerprint(): Promise<string> {
+  const files: string[] = [];
+  await walk(runtimeRoot(), runtimeRoot(), files, MAX_SNAPSHOT_FILES + 1);
+  if (files.length > MAX_SNAPSHOT_FILES) {
+    throw new Error("Runtime fingerprint exceeds file-count safety limit");
+  }
+  files.sort((a, b) => a.localeCompare(b));
+  const hash = createHash("sha256");
+  for (const file of files) {
+    const relative = path.relative(runtimeRoot(), file).replaceAll("\\", "/");
+    const data = await fs.readFile(file);
+    hash.update(relative);
+    hash.update("\0");
+    hash.update(sha256(data));
+    hash.update("\n");
+  }
+  return hash.digest("hex");
 }
 
 async function refreshManifest(): Promise<Record<string, unknown>> {
@@ -519,6 +539,13 @@ export function registerCadMcpDevTools(server: McpServer): void {
           throw new Error("Snapshot not found for this work execution");
         }
 
+        const { abortCadCandidate } = await import("../runtime/cad-candidate.js");
+        await abortCadCandidate(lease.workId).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!message.includes("NO_CAD_CANDIDATE")) throw error;
+        });
+        validatedFingerprints.delete(lease.workId);
+
         const current: string[] = [];
         await walk(runtimeRoot(), runtimeRoot(), current, MAX_SNAPSHOT_FILES + 1);
         for (const file of current) {
@@ -570,13 +597,135 @@ export function registerCadMcpDevTools(server: McpServer): void {
         if (action === "manifest" || action === "all") {
           results.manifest = await refreshManifest();
         }
+
+        let validatedFingerprint: string | null = null;
+        if (action === "all") {
+          const lease = currentToolLease();
+          validatedFingerprint = await runtimeFingerprint();
+          validatedFingerprints.set(lease.workId, validatedFingerprint);
+        }
+
         return toolResult("cad_mcp_dev_validate", {
           action,
           results,
+          validated_fingerprint: validatedFingerprint,
+          live_candidate_ready: action === "all",
           git_used: false,
         });
       } catch (error) {
         return toolError("cad_mcp_dev_validate", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "cad_mcp_dev_candidate_status",
+    {
+      title: "CAD MCP Candidate Runtime Status",
+      description:
+        "Report the live candidate generation owned by this cad-mcp-dev execution, if any.",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        assertDevMode();
+        const lease = currentToolLease();
+        const { candidateStatus } = await import("../runtime/cad-candidate.js");
+        const state = candidateStatus();
+        return toolResult("cad_mcp_dev_candidate_status", {
+          active: Boolean(state),
+          owned_by_this_execution: Boolean(state && state.ownerExecutionId === lease.workId),
+          candidate: state,
+        });
+      } catch (error) {
+        return toolError("cad_mcp_dev_candidate_status", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "cad_mcp_dev_candidate_start",
+    {
+      title: "Start Exclusive CAD MCP Candidate Generation",
+      description:
+        "After snapshot + cad_mcp_dev_validate(action=all), reserve CAD MCP exclusively for this execution and restart it from the validated candidate source on the next CAD call. Requires HYBRID/CAD work and explicit confirmation.",
+      inputSchema: {
+        snapshot_id: z.string().min(1),
+        confirmed: z.literal(true),
+      },
+    },
+    async ({ snapshot_id, confirmed }) => {
+      try {
+        assertDevMode();
+        if (!confirmed) throw new Error("Explicit confirmation is required");
+        const lease = currentToolLease();
+        if (!executionSupportsCad(lease.workId)) {
+          throw new Error(
+            "CAD_CANDIDATE_REQUIRES_HYBRID_WORK: start cad-mcp-dev with execution_path=hybrid for live AutoCAD validation."
+          );
+        }
+
+        const snapshot = snapshots.get(lease.workId);
+        if (!snapshot || snapshot.id !== snapshot_id) {
+          throw new Error("Candidate start requires this execution's current source snapshot");
+        }
+
+        const validatedFingerprint = validatedFingerprints.get(lease.workId);
+        if (!validatedFingerprint) {
+          throw new Error(
+            "CAD_CANDIDATE_NOT_VALIDATED: run cad_mcp_dev_validate with action=all after the final source edit."
+          );
+        }
+        const currentFingerprint = await runtimeFingerprint();
+        if (currentFingerprint !== validatedFingerprint) {
+          throw new Error(
+            "CAD_CANDIDATE_SOURCE_CHANGED: runtime source changed after validation; validate action=all again."
+          );
+        }
+
+        const { beginCadCandidate } = await import("../runtime/cad-candidate.js");
+        const candidate = await beginCadCandidate({
+          ownerExecutionId: lease.workId,
+          snapshotId: snapshot.id,
+          sourceFingerprint: currentFingerprint,
+        });
+
+        return toolResult("cad_mcp_dev_candidate_start", {
+          candidate,
+          cad_backend_started: false,
+          next:
+            "Use the normal CAD path with an explicitly approved drawing. The first CAD call starts a fresh candidate CAD MCP process; other CAD executions are blocked until accept or rollback.",
+        });
+      } catch (error) {
+        return toolError("cad_mcp_dev_candidate_start", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "cad_mcp_dev_candidate_accept",
+    {
+      title: "Accept CAD MCP Candidate Generation",
+      description:
+        "End exclusive candidate mode after successful live validation. Source remains as the accepted local runtime; the candidate CAD MCP process is stopped so later work starts cleanly.",
+      inputSchema: { confirmed: z.literal(true) },
+    },
+    async ({ confirmed }) => {
+      try {
+        assertDevMode();
+        if (!confirmed) throw new Error("Explicit confirmation is required");
+        const lease = currentToolLease();
+        const { acceptCadCandidate } = await import("../runtime/cad-candidate.js");
+        const candidate = await acceptCadCandidate(lease.workId);
+        snapshots.delete(lease.workId);
+        validatedFingerprints.delete(lease.workId);
+        return toolResult("cad_mcp_dev_candidate_accept", {
+          accepted: true,
+          candidate,
+          git_used: false,
+        });
+      } catch (error) {
+        return toolError("cad_mcp_dev_candidate_accept", error);
       }
     }
   );
@@ -593,6 +742,8 @@ export function registerCadMcpDevTools(server: McpServer): void {
       try {
         assertDevMode();
         if (!confirmed) throw new Error("Explicit confirmation is required");
+        const lease = currentToolLease();
+        validatedFingerprints.delete(lease.workId);
         const requirements = path.join(runtimeRoot(), "requirements.lock.txt");
         const result = await runPython(["-m", "pip", "install", "-r", requirements], getRepoRoot());
         return toolResult("cad_mcp_dev_sync_env", {
@@ -609,4 +760,5 @@ export function registerCadMcpDevTools(server: McpServer): void {
 
 export function clearCadMcpDevStateForExecution(executionId: string): void {
   snapshots.delete(executionId);
+  validatedFingerprints.delete(executionId);
 }
