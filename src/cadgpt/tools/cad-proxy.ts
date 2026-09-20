@@ -311,6 +311,10 @@ function schemaToShape(
 
 export async function ensureCadRuntimeActive(): Promise<void> {
   const lease = currentToolLease();
+  const { assertCadDevSourceAccess } = await import(
+    "../runtime/cad-dev-source-transaction.js"
+  );
+  assertCadDevSourceAccess(lease.workId);
   assertCadCandidateAccess(lease.workId);
   const status = cadUpstream.status();
   if (status.enabled && status.connected) return;
