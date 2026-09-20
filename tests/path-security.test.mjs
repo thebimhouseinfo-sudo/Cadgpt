@@ -26,27 +26,28 @@ test("mutation resolver requires absolute paths and blocks root escape", async (
   const previous = process.env.CADGPT_APPDATA_ROOT;
   process.env.CADGPT_APPDATA_ROOT = appdata;
   try {
-    const { getWritableRoots, resolveAbsoluteMutationPath } = await import(
+    const { resolveAbsoluteMutationPath } = await import(
       "../dist/cadgpt/lib/path-security.js"
     );
+    const writableRoots = [workspace, data];
 
     await assert.rejects(
       resolveAbsoluteMutationPath("appdata/workspace/draft.txt", {
-        allowedRoots: getWritableRoots(),
+        allowedRoots: writableRoots,
       }),
       /ABSOLUTE_PATH_REQUIRED/
     );
 
     assert.equal(
       await resolveAbsoluteMutationPath(insideFile, {
-        allowedRoots: getWritableRoots(),
+        allowedRoots: writableRoots,
       }),
       await fs.realpath(insideFile)
     );
 
     await assert.rejects(
       resolveAbsoluteMutationPath(outsideFile, {
-        allowedRoots: getWritableRoots(),
+        allowedRoots: writableRoots,
       }),
       /outside CadGPT/
     );
@@ -54,7 +55,7 @@ test("mutation resolver requires absolute paths and blocks root escape", async (
     const createTarget = path.join(workspace, "new", "created.txt");
     assert.equal(
       await resolveAbsoluteMutationPath(createTarget, {
-        allowedRoots: getWritableRoots(),
+        allowedRoots: writableRoots,
         forCreate: true,
       }),
       path.resolve(createTarget)
@@ -65,7 +66,7 @@ test("mutation resolver requires absolute paths and blocks root escape", async (
       await fs.symlink(outside, junction, "junction");
       await assert.rejects(
         resolveAbsoluteMutationPath(path.join(junction, "new.txt"), {
-          allowedRoots: getWritableRoots(),
+          allowedRoots: writableRoots,
           forCreate: true,
         }),
         /outside CadGPT/
