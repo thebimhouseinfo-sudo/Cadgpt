@@ -13,10 +13,11 @@ export interface AdmissionDecision {
     | "stop_cadgpt_continue_normal_chat_or_requested_plugin";
 }
 
-interface AdmissionProof {
+export interface AdmissionProof {
   token: string;
   sessionKey: string;
   userTurn: string;
+  mode: "active" | "control";
   createdAt: number;
 }
 
@@ -39,7 +40,7 @@ function hasExplicitInvocation(userTurn: string): boolean {
 
 function isControlOnly(userTurn: string): boolean {
   const value = userTurn.trim();
-  return /^@cadgpt(?:\s+(?:help|status))?\s*$/i.test(value);
+  return /^@cadgpt(?:\s+(?:help|status|stop))?\s*$/i.test(value);
 }
 
 export function checkAdmission(sessionKey: string, userTurnRaw: string): AdmissionDecision {
@@ -61,10 +62,19 @@ export function checkAdmission(sessionKey: string, userTurnRaw: string): Admissi
   }
 
   if (isControlOnly(userTurn)) {
+    const token = randomUUID();
+    proofs.set(token, {
+      token,
+      sessionKey,
+      userTurn,
+      mode: "control",
+      createdAt: Date.now(),
+    });
     return {
       mode: "control",
       claimed: true,
       reason: "control_command",
+      admission_token: token,
       next: "run_control_command_only",
     };
   }
@@ -74,6 +84,7 @@ export function checkAdmission(sessionKey: string, userTurnRaw: string): Admissi
     token,
     sessionKey,
     userTurn,
+    mode: "active",
     createdAt: Date.now(),
   });
   return {
@@ -87,7 +98,8 @@ export function checkAdmission(sessionKey: string, userTurnRaw: string): Admissi
 
 export function validateAdmissionToken(
   token: string | undefined,
-  sessionKey: string
+  sessionKey: string,
+  required: "active" | "control_or_active" = "active"
 ): AdmissionProof {
   cleanup();
   if (!token) {
@@ -99,6 +111,11 @@ export function validateAdmissionToken(
   if (!proof || proof.sessionKey !== sessionKey) {
     throw new Error(
       "ADMISSION_REQUIRED: admission token is missing, stale, invalid, or belongs to another ChatGPT session."
+    );
+  }
+  if (required === "active" && proof.mode !== "active") {
+    throw new Error(
+      "ACTIVE_ADMISSION_REQUIRED: CONTROL authority cannot enter discovery, FILE, CAD, or work execution."
     );
   }
   return proof;
