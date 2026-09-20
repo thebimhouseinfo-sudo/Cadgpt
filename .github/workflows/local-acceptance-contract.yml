@@ -13,7 +13,7 @@ jobs:
       - name: Parse acceptance and launcher PowerShell
         shell: pwsh
         run: |
-          foreach ($script in @("acceptance.ps1", "doctor.ps1", "start.ps1", "openai-tunnel.ps1", "agent-task.ps1")) {
+          foreach ($script in @("acceptance.ps1", "doctor.ps1", "start.ps1", "openai-tunnel.ps1", "cadgpt-tray.ps1", "wait-tray-ready.ps1")) {
             $errors = $null
             $tokens = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
@@ -29,18 +29,18 @@ jobs:
       - name: Verify driver-style acceptance entrypoints
         shell: pwsh
         run: |
-          foreach ($file in @("setup.bat", "run.bat", "doctor.bat", "acceptance.bat", "agent-task.ps1")) {
+          foreach ($file in @("setup.bat", "run.bat", "doctor.bat", "acceptance.bat", "cadgpt-tray.ps1", "wait-tray-ready.ps1")) {
             if (-not (Test-Path $file)) { throw "Missing required entrypoint: $file" }
           }
           $run = Get-Content run.bat -Raw
           foreach ($action in @("install", "start", "stop", "restart", "status", "uninstall")) {
             if ($run -notmatch [regex]::Escape($action)) { throw "run.bat missing driver action: $action" }
           }
-          if ($run -notmatch "agent-task\.ps1") { throw "run.bat does not delegate to background-agent controller" }
+          if ($run -notmatch "cadgpt-tray\.ps1") { throw "run.bat does not delegate to CadGPT tray runtime" }
           $setup = Get-Content setup.bat -Raw
-          if ($setup -notmatch 'run\.bat" install') { throw "setup.bat does not install background autostart task" }
-          Write-Host "Driver-style BAT/background-agent contract OK"
-
+          if ($setup -notmatch 'run\.bat" install') { throw "setup.bat does not install CadGPT tray startup" }
+          if ($setup -notmatch "HKCU|tray") { throw "setup.bat does not express tray/startup migration" }
+          Write-Host "Tray-based BAT/startup contract OK"
       - name: Verify safe internal AutoLISP smoke fixture
         shell: pwsh
         run: |
