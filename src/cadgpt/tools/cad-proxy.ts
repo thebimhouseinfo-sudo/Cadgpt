@@ -401,15 +401,11 @@ export function registerCadProxyTools(server: McpServer): void {
     async ({ drawing_id }) => {
       try {
         await ensureCadRuntimeActive();
-        return await withCadHostLock("autocad", async () =>
-          (() => {
-            const statusPromise = drawingBindingStatus(drawing_id);
-            return statusPromise.then((status) => {
-              recordCadCandidateSuccess(currentToolLease().workId, "drawing_status");
-              return toolResult("drawing_status", status);
-            });
-          })()
-        );
+        return await withCadHostLock("autocad", async () => {
+          const status = await drawingBindingStatus(drawing_id);
+          recordCadCandidateSuccess(currentToolLease().workId, "drawing_status");
+          return toolResult("drawing_status", status);
+        });
       } catch (error) {
         return toolError("drawing_status", error);
       }
