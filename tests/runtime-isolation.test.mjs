@@ -333,3 +333,87 @@ test("cad-mcp-dev source tree admits only one active dev execution", async () =>
     else process.env.CADGPT_BUILD_PROFILE = previous;
   }
 });
+
+
+test("cad-mcp-dev is fail-closed unless build profile is explicitly development", async () => {
+  const previous = process.env.CADGPT_BUILD_PROFILE;
+  try {
+    delete process.env.CADGPT_BUILD_PROFILE;
+    const { isDevelopmentBuild } = await import(
+      "../dist/cadgpt/lib/work-registration.js"
+    );
+    assert.equal(isDevelopmentBuild(), false);
+
+    process.env.CADGPT_BUILD_PROFILE = "typo";
+    assert.equal(isDevelopmentBuild(), false);
+
+    process.env.CADGPT_BUILD_PROFILE = "development";
+    assert.equal(isDevelopmentBuild(), true);
+  } finally {
+    if (previous === undefined) delete process.env.CADGPT_BUILD_PROFILE;
+    else process.env.CADGPT_BUILD_PROFILE = previous;
+  }
+});
+
+test("candidate acceptance requires a successful tool from the same generation", async () => {
+  const {
+    beginCadCandidate,
+    recordCadCandidateSuccess,
+    acceptCadCandidate,
+    abortCadCandidate,
+  } = await import("../dist/cadgpt/runtime/cad-candidate.js");
+
+  const owner = "exec:test-candidate-evidence";
+  const candidate = await beginCadCandidate({
+    ownerExecutionId: owner,
+    snapshotId: "snapshot-evidence",
+    sourceFingerprint: "fingerprint-evidence",
+  });
+
+  await assert.rejects(
+    acceptCadCandidate(owner, "cad__cad_list_layers"),
+    /CAD_CANDIDATE_NOT_LIVE_VALIDATED/
+  );
+
+  recordCadCandidateSuccess(owner, "cad__cad_list_layers");
+  const accepted = await acceptCadCandidate(owner, "cad__cad_list_layers");
+  assert.equal(accepted.candidateId, candidate.candidateId);
+
+  // Clean state if an assertion above changes in the future.
+  await abortCadCandidate(owner).catch(() => undefined);
+});
+
+test("file mutation scheduler serializes same path and permits independent resources", async () => {
+  const { withFileMutationLocks } = await import(
+    "../dist/cadgpt/runtime/file-scheduler.js"
+  );
+  const same = [];
+  const a = withFileMutationLocks(["C:/tmp/cadgpt-same.txt"], async () => {
+    same.push("a:start");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    same.push("a:end");
+  });
+  const b = withFileMutationLocks(["C:/tmp/cadgpt-same.txt"], async () => {
+    same.push("b:start");
+    same.push("b:end");
+  });
+  await Promise.all([a, b]);
+  assert.deepEqual(same, ["a:start", "a:end", "b:start", "b:end"]);
+
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let secondStarted = false;
+  const first = withFileMutationLocks(["C:/tmp/cadgpt-a.txt"], async () => {
+    await gate;
+  });
+  const second = withFileMutationLocks(["C:/tmp/cadgpt-b.txt"], async () => {
+    secondStarted = true;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(secondStarted, true);
+  release();
+  await Promise.all([first, second]);
+});
