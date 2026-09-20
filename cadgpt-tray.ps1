@@ -13,6 +13,7 @@ Set-Location $ScriptDir
 
 $StartupKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $StartupName = "CadGPT"
+$script:IsTrayHost = $false
 $IndexPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "dist\index.js"))
 $TrayScriptPath = [System.IO.Path]::GetFullPath($PSCommandPath)
 $TunnelProfilePath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "profiles\cadgpt.yaml"))
@@ -198,7 +199,7 @@ function Stop-VerifiedRuntime {
 
     $script:CadGptPid = $null
     $script:TunnelPid = $null
-    if (Test-Path $TrayReadyPath) { Write-TrayState }
+    if ($script:IsTrayHost -and (Test-Path $TrayReadyPath)) { Write-TrayState }
 }
 
 function Stop-TrayHostFromMarker {
@@ -266,6 +267,7 @@ if (-not $createdNew) {
     exit 0
 }
 
+$script:IsTrayHost = $true
 $script:CadGptLauncher = $null
 $script:TunnelLauncher = $null
 $script:CadGptPid = $null
