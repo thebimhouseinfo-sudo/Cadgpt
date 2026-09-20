@@ -145,7 +145,9 @@ export function registerLispWorkspaceTools(server: McpServer): void {
         if (!entry) throw new Error(`Managed Lisp capability not found in User Registry: ${registry_id}`);
         const libraryId = String(entry.library_id || "");
         const relativePath = safeRelativeLisp(String(entry.relative_path || ""));
-        const sourcePath = managedLispPath(libraryId, relativePath);
+        const sourcePath = await resolveAllowedPath(
+          managedLispPath(libraryId, relativePath)
+        );
         const source = await fs.readFile(sourcePath, "utf8");
         const syntax = validateLispSource(source, asStringArray(entry.commands), { profile: "syntax", fileName: path.basename(sourcePath) });
 
