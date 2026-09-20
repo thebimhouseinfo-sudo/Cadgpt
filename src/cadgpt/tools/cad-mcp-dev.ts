@@ -35,6 +35,15 @@ function assertDevMode(): void {
   }
 }
 
+async function prepareDevMutation(): Promise<string> {
+  assertDevMode();
+  const lease = currentToolLease();
+  const { assertCadCandidateSourceMutationAllowed } = await import("../runtime/cad-candidate.js");
+  assertCadCandidateSourceMutationAllowed(lease.workId);
+  validatedFingerprints.delete(lease.workId);
+  return lease.workId;
+}
+
 function runtimeRoot(): string {
   return getCadMcpRuntimeRoot();
 }
@@ -325,7 +334,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ path: input, content }) => {
       try {
-        assertDevMode();
+        await prepareDevMutation();
         const target = await resolveAbsoluteMutationPath(input, {
           allowedRoots: [runtimeRoot()],
           forCreate: true,
@@ -365,7 +374,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ path: input, expected_sha256, old_text, new_text, replace_all }) => {
       try {
-        assertDevMode();
+        await prepareDevMutation();
         const target = await resolveAbsoluteMutationPath(input, {
           allowedRoots: [runtimeRoot()],
           label: "CAD MCP developer",
@@ -409,7 +418,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ path: input, expected_sha256 }) => {
       try {
-        assertDevMode();
+        await prepareDevMutation();
         const target = await resolveAbsoluteMutationPath(input, {
           allowedRoots: [runtimeRoot()],
           label: "CAD MCP developer",
@@ -447,7 +456,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ source, destination, expected_sha256 }) => {
       try {
-        assertDevMode();
+        await prepareDevMutation();
         const from = await resolveAbsoluteMutationPath(source, {
           allowedRoots: [runtimeRoot()],
           label: "CAD MCP developer",
@@ -490,8 +499,9 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async () => {
       try {
-        assertDevMode();
+        const workId = await prepareDevMutation();
         const lease = currentToolLease();
+        if (lease.workId !== workId) throw new Error("CAD_MCP_DEV_WORK_CHANGED");
         const files: string[] = [];
         await walk(runtimeRoot(), runtimeRoot(), files, MAX_SNAPSHOT_FILES + 1);
         if (files.length > MAX_SNAPSHOT_FILES) {
@@ -562,10 +572,17 @@ export function registerCadMcpDevTools(server: McpServer): void {
           }
           await atomicWrite(target, data);
         }
+
+        const { hasCadProxySurface, syncCadBusinessProxies } = await import("./cad-proxy.js");
+        const proxySurface = hasCadProxySurface(server)
+          ? { refreshed: true, tools: syncCadBusinessProxies(server) }
+          : { refreshed: false };
+
         return toolResult("cad_mcp_dev_rollback", {
           snapshot_id,
           restored: true,
           files: snapshot.files.size,
+          proxy_surface: proxySurface,
         });
       } catch (error) {
         return toolError("cad_mcp_dev_rollback", error);
@@ -586,6 +603,12 @@ export function registerCadMcpDevTools(server: McpServer): void {
     async ({ action }) => {
       try {
         assertDevMode();
+        const lease = currentToolLease();
+        if (action === "manifest" || action === "all") {
+          const { assertCadCandidateSourceMutationAllowed } = await import("../runtime/cad-candidate.js");
+          assertCadCandidateSourceMutationAllowed(lease.workId);
+          validatedFingerprints.delete(lease.workId);
+        }
         const results: Record<string, unknown> = {};
         if (action === "compile" || action === "all") {
           results.compile = await runPython(["-m", "compileall", "-q", runtimeRoot()]);
@@ -723,15 +746,18 @@ export function registerCadMcpDevTools(server: McpServer): void {
       title: "Accept CAD MCP Candidate Generation",
       description:
         "End exclusive candidate mode after successful live validation. Source remains as the accepted local runtime; the candidate CAD MCP process is stopped so later work starts cleanly.",
-      inputSchema: { confirmed: z.literal(true) },
+      inputSchema: {
+        validated_tool: z.string().min(1).describe("A CAD tool name that succeeded during this candidate generation, e.g. cad__cad_list_layers"),
+        confirmed: z.literal(true),
+      },
     },
-    async ({ confirmed }) => {
+    async ({ validated_tool, confirmed }) => {
       try {
         assertDevMode();
         if (!confirmed) throw new Error("Explicit confirmation is required");
         const lease = currentToolLease();
         const { acceptCadCandidate } = await import("../runtime/cad-candidate.js");
-        const candidate = await acceptCadCandidate(lease.workId);
+        const candidate = await acceptCadCandidate(lease.workId, validated_tool);
         snapshots.delete(lease.workId);
         validatedFingerprints.delete(lease.workId);
         return toolResult("cad_mcp_dev_candidate_accept", {
@@ -755,10 +781,10 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ confirmed }) => {
       try {
-        assertDevMode();
         if (!confirmed) throw new Error("Explicit confirmation is required");
+        const workId = await prepareDevMutation();
         const lease = currentToolLease();
-        validatedFingerprints.delete(lease.workId);
+        if (lease.workId !== workId) throw new Error("CAD_MCP_DEV_WORK_CHANGED");
         const requirements = path.join(runtimeRoot(), "requirements.lock.txt");
         const result = await runPython(["-m", "pip", "install", "-r", requirements], getRepoRoot());
         return toolResult("cad_mcp_dev_sync_env", {
