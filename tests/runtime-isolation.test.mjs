@@ -548,3 +548,45 @@ test("cad-mcp-dev permits only one active tool lease per source execution", asyn
     else process.env.CADGPT_BUILD_PROFILE = previous;
   }
 });
+
+
+test("dirty CAD MCP source blocks live CAD until candidate generation starts", async () => {
+  const {
+    beginCadDevSourceTransaction,
+    assertCadDevSourceAccess,
+    forceClearCadDevSourceTransaction,
+  } = await import("../dist/cadgpt/runtime/cad-dev-source-transaction.js");
+  const {
+    beginCadCandidate,
+    abortCadCandidate,
+    assertCadRuntimeGenerationAccess,
+  } = await import("../dist/cadgpt/runtime/cad-candidate.js");
+
+  const owner = "exec:dev-source-owner";
+  const other = "exec:unrelated-cad";
+
+  beginCadDevSourceTransaction({
+    ownerExecutionId: owner,
+    snapshotId: "snapshot-source-gate",
+  });
+
+  assert.throws(
+    () => assertCadDevSourceAccess(other),
+    /CAD_MCP_DEV_SOURCE_RESERVED/
+  );
+  assert.throws(
+    () => assertCadRuntimeGenerationAccess(owner),
+    /CAD_CANDIDATE_REQUIRED/
+  );
+
+  const candidate = await beginCadCandidate({
+    ownerExecutionId: owner,
+    snapshotId: "snapshot-source-gate",
+    sourceFingerprint: "candidate-source-fingerprint",
+  });
+  assert.equal(candidate.ownerExecutionId, owner);
+  assert.doesNotThrow(() => assertCadRuntimeGenerationAccess(owner));
+
+  await abortCadCandidate(owner);
+  forceClearCadDevSourceTransaction(owner);
+});
