@@ -22,6 +22,10 @@ const INTERNAL_CAD_TOOLS = new Set([
 ]);
 
 const CORE_TOOLS = [
+  { name: "cadgpt_admission", class: "control.admission", summary: "Verify literal @cadgpt invocation in the exact current user turn and mint scoped admission authority." },
+  { name: "cadgpt_work_start", class: "control.work", summary: "Create one execution-scoped WorkRegistration after ACTIVE admission." },
+  { name: "cadgpt_work_status", class: "control.work", summary: "Inspect the current session work state without exposing authority secrets." },
+  { name: "cadgpt_work_stop", class: "control.work", summary: "Release one execution-scoped work handle and its runtime state." },
   { name: "file_roots", class: "local.files", summary: "Show managed AppData roots readable/writable by generic file tools." },
   { name: "file_list", class: "local.files", summary: "List managed AppData library/workspace/data files." },
   { name: "file_read", class: "local.files", summary: "Read a managed AppData text file." },
@@ -47,8 +51,34 @@ const CORE_TOOLS = [
   { name: "cad_status", class: "cad.session", summary: "Report AutoCAD/CAD-MCP backend state without mutating a drawing." },
   { name: "drawing_list", class: "cad.session", summary: "List AutoCAD drawings available for explicit CadGPT binding." },
   { name: "drawing_create_test", class: "cad.session", summary: "Create a blank AutoCAD drawing for safe testing." },
-  { name: "drawing_bind", class: "cad.session", summary: "Bind the CadGPT session to one explicit drawing identity." },
-  { name: "drawing_status", class: "cad.session", summary: "Report the currently bound drawing and availability state." },
+  { name: "drawing_bind", class: "cad.session", summary: "Bind the current work execution to one explicit AutoCAD document lifetime and return an opaque drawing_id." },
+  { name: "drawing_status", class: "cad.session", summary: "Report execution-scoped drawing contexts and availability." },
+  { name: "cad_refresh_tools", class: "cad.host", summary: "Compare live CAD MCP tools with the generated CAD tool manifest." },
+  { name: "observator_capture_start", class: "cad.observator", summary: "Start an execution-owned ObjectAdded capture on an explicitly bound drawing." },
+  { name: "observator_capture_status", class: "cad.observator", summary: "Report Observation capture state owned by the current execution." },
+  { name: "observator_capture_finish", class: "cad.observator", summary: "Finish the current execution-owned Observation capture and resolve captured entities." },
+  { name: "observator_capture_cancel", class: "cad.observator", summary: "Cancel the current execution-owned Observation capture." },
+  { name: "observator_read_entities", class: "cad.observator", summary: "Read structured entity properties from an explicitly bound drawing." },
+  { name: "observator_log_append", class: "cad.observator", summary: "Append normalized Observation records to the drawing-scoped managed log." },
+];
+
+const DEV_ONLY_TOOLS = [
+  { name: "cad_mcp_dev_root", class: "dev.cad-mcp", summary: "Show the absolute CAD MCP runtime source root and development write boundary." },
+  { name: "cad_mcp_dev_list", class: "dev.cad-mcp", summary: "List CAD MCP runtime or approved read-only supporting files." },
+  { name: "cad_mcp_dev_read", class: "dev.cad-mcp", summary: "Read a CAD MCP runtime/supporting file and return its hash." },
+  { name: "cad_mcp_dev_search", class: "dev.cad-mcp", summary: "Search CAD MCP runtime/supporting source." },
+  { name: "cad_mcp_dev_create", class: "dev.cad-mcp", summary: "Create an absolute-path file under runtimes/cad-mcp/** after a baseline snapshot." },
+  { name: "cad_mcp_dev_edit", class: "dev.cad-mcp", summary: "Hash-guarded edit of an absolute CAD MCP runtime source file." },
+  { name: "cad_mcp_dev_delete", class: "dev.cad-mcp", summary: "Hash-guarded deletion inside the CAD MCP runtime root." },
+  { name: "cad_mcp_dev_move", class: "dev.cad-mcp", summary: "Move/rename a CAD MCP runtime file within the allowed root." },
+  { name: "cad_mcp_dev_snapshot", class: "dev.cad-mcp", summary: "Create the immutable rollback baseline for one CAD MCP development execution." },
+  { name: "cad_mcp_dev_rollback", class: "dev.cad-mcp", summary: "Restore the execution's CAD MCP source baseline without Git." },
+  { name: "cad_mcp_dev_validate", class: "dev.cad-mcp", summary: "Run named compile/import/manifest validation and refresh the generated CAD tool registry artifact." },
+  { name: "cad_mcp_dev_accept_local", class: "dev.cad-mcp", summary: "Accept validated local CAD MCP source when live AutoCAD testing is not required." },
+  { name: "cad_mcp_dev_candidate_status", class: "dev.cad-mcp", summary: "Inspect exclusive live CAD MCP candidate-generation state." },
+  { name: "cad_mcp_dev_candidate_start", class: "dev.cad-mcp", summary: "Reserve and start a validated exclusive CAD MCP candidate generation for live testing." },
+  { name: "cad_mcp_dev_candidate_accept", class: "dev.cad-mcp", summary: "Accept a live-tested CAD MCP candidate after successful tool evidence." },
+  { name: "cad_mcp_dev_sync_env", class: "dev.cad-mcp", summary: "Synchronize the CAD MCP Python environment from exact pinned dependencies only." },
 ];
 
 function toolClass(name: string): string {
@@ -64,7 +94,10 @@ function toolClass(name: string): string {
 }
 
 async function loadToolEntries(): Promise<Array<Record<string, unknown>>> {
-  const result: Array<Record<string, unknown>> = CORE_TOOLS.map((item) => ({
+  const core = isDevelopmentBuild()
+    ? [...CORE_TOOLS, ...DEV_ONLY_TOOLS]
+    : CORE_TOOLS;
+  const result: Array<Record<string, unknown>> = core.map((item) => ({
     id: item.name,
     name: item.name,
     kind: "tool",
