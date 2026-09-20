@@ -181,7 +181,8 @@ export function releaseSessionWork(sessionKey: string): string | null {
   const executionId = activeBySession.get(sessionKey) ?? null;
   if (executionId) registrations.delete(executionId);
   activeBySession.delete(sessionKey);
-  generationBySession.delete(sessionKey);
+  // Keep generationBySession for the lifetime of this driver epoch so a
+  // recovered/recreated MCP session cannot reuse an earlier execution ID.
   return executionId;
 }
 
