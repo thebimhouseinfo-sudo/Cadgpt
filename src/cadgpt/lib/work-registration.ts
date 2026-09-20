@@ -57,6 +57,48 @@ function sessionTag(sessionKey: string): string {
   return createHash("sha256").update(sessionKey).digest("hex").slice(0, 12);
 }
 
+const FILE_FAMILIES = new Set([
+  "filesystem",
+  "lisp-authoring",
+  "job-authoring",
+  "library",
+  "registry",
+  "skills",
+  "cad-mcp-dev",
+]);
+const CAD_FAMILIES = new Set(["cad", "observator"]);
+
+function assertFamilyAllowedForWork(
+  work: WorkRegistration,
+  family: string
+): void {
+  if (
+    FILE_FAMILIES.has(family) &&
+    work.executionPath !== "file" &&
+    work.executionPath !== "hybrid"
+  ) {
+    throw new Error(
+      `EXECUTION_PATH_MISMATCH: tool family '${family}' requires FILE or HYBRID work, but current work is '${work.executionPath}'.`
+    );
+  }
+
+  if (
+    CAD_FAMILIES.has(family) &&
+    work.executionPath !== "cad" &&
+    work.executionPath !== "hybrid"
+  ) {
+    throw new Error(
+      `EXECUTION_PATH_MISMATCH: tool family '${family}' requires CAD or HYBRID work, but current work is '${work.executionPath}'.`
+    );
+  }
+
+  if (family === "cad-mcp-dev" && work.ownerId !== "cad-mcp-dev") {
+    throw new Error(
+      "CAD_MCP_DEV_REQUIRED: cad-mcp-dev tools require owner_id=cad-mcp-dev."
+    );
+  }
+}
+
 function hasActiveLeaseForWork(executionId: string): boolean {
   return [...activeLeases.values()].some(
     (lease) => lease.workId === executionId
@@ -274,6 +316,7 @@ export function acquireToolLease(input: {
     input.authorityToken,
     input.sessionKey
   );
+  assertFamilyAllowedForWork(work, input.family);
 
   if (
     input.family === "cad-mcp-dev" &&
