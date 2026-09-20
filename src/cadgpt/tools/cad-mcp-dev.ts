@@ -1002,33 +1002,53 @@ export function registerCadMcpDevTools(server: McpServer): void {
             await cadUpstream.deactivate();
           }
 
+          const beforeCapture = await runtimeFingerprint();
           const files: string[] = [];
           await walk(runtimeRoot(), runtimeRoot(), files, MAX_SNAPSHOT_FILES + 1);
-        if (files.length > MAX_SNAPSHOT_FILES) {
-          throw new Error("Snapshot exceeds file-count safety limit");
-        }
-        const captured = new Map<string, Buffer>();
-        let bytes = 0;
-        for (const file of files) {
-          const data = await fs.readFile(file);
-          bytes += data.length;
-          if (bytes > MAX_SNAPSHOT_BYTES) {
-            throw new Error("Snapshot exceeds byte-size safety limit");
+          if (files.length > MAX_SNAPSHOT_FILES) {
+            throw new Error("Snapshot exceeds file-count safety limit");
           }
-          captured.set(path.relative(runtimeRoot(), file), data);
-        }
-          const snapshot = {
+
+          const captured = new Map<string, Buffer>();
+          let bytes = 0;
+          for (const file of files) {
+            const data = await fs.readFile(file);
+            bytes += data.length;
+            if (bytes > MAX_SNAPSHOT_BYTES) {
+              throw new Error("Snapshot exceeds byte-size safety limit");
+            }
+            captured.set(path.relative(runtimeRoot(), file), data);
+          }
+
+          const baselineFingerprint = fingerprintFileMap(captured);
+          const afterCapture = await runtimeFingerprint();
+          if (
+            beforeCapture !== baselineFingerprint ||
+            afterCapture !== baselineFingerprint
+          ) {
+            throw new Error(
+              "CAD_MCP_DEV_EXTERNAL_CHANGE: runtime source changed while the crash-safe baseline was being captured."
+            );
+          }
+
+          const snapshot: CadMcpDevSnapshot = {
             id: snapshotId,
             files: captured,
             createdAt: new Date().toISOString(),
+            baselineFingerprint,
           };
           await persistSnapshot(lease.workId, snapshot);
           snapshots.set(lease.workId, snapshot);
+          knownSourceFingerprints.set(
+            lease.workId,
+            snapshot.baselineFingerprint
+          );
           return toolResult("cad_mcp_dev_snapshot", {
             snapshot_id: snapshot.id,
             files: captured.size,
             bytes,
             created_at: snapshot.createdAt,
+            baseline_fingerprint: snapshot.baselineFingerprint,
             crash_safe: true,
             cad_runtime_reserved: true,
           });
@@ -1111,6 +1131,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
               "CAD_MCP_DEV_SNAPSHOT_REQUIRED: create cad_mcp_dev_snapshot before regenerating the CAD MCP manifest."
             );
           }
+          await assertKnownSourceState(lease.workId);
           const { assertCadCandidateSourceMutationAllowed } = await import("../runtime/cad-candidate.js");
           assertCadCandidateSourceMutationAllowed(lease.workId);
           validatedFingerprints.delete(lease.workId);
@@ -1132,6 +1153,9 @@ export function registerCadMcpDevTools(server: McpServer): void {
         }
         if (action === "manifest" || action === "all") {
           results.manifest = await refreshManifest();
+          results.source_fingerprint = await recordKnownSourceState(
+            lease.workId
+          );
           const { hasCadProxySurface, syncCadBusinessProxies } = await import("./cad-proxy.js");
           results.proxy_surface = hasCadProxySurface(server)
             ? {
@@ -1147,8 +1171,9 @@ export function registerCadMcpDevTools(server: McpServer): void {
 
         let validatedFingerprint: string | null = null;
         if (action === "all") {
-          const lease = currentToolLease();
-          validatedFingerprint = await runtimeFingerprint();
+          validatedFingerprint =
+            knownSourceFingerprints.get(lease.workId) ??
+            (await recordKnownSourceState(lease.workId));
           validatedFingerprints.set(lease.workId, validatedFingerprint);
         }
 
