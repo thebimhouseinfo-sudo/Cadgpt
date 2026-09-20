@@ -47,7 +47,9 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async () => toolResult("file_roots", {
       roots: getAllowedRoots().map(toCadgptPath),
+      absolute_roots: getAllowedRoots(),
       writable_roots: getWritableRoots().map(toCadgptPath),
+      absolute_writable_roots: getWritableRoots(),
       managed_libraries_write_policy: "read-only to generic file tools; mutate through library_import/lisp_promote_draft/job_promote_draft",
     })
   );
@@ -67,13 +69,14 @@ export function registerFilesystemTools(server: McpServer): void {
       try {
         const target = await resolveAllowedPath(input);
         const stat = await fs.stat(target);
-        if (stat.isFile()) return toolResult("file_list", { entries: [{ path: toCadgptPath(target), type: "file" }] });
+        if (stat.isFile()) return toolResult("file_list", { entries: [{ path: toCadgptPath(target), absolute_path: target, type: "file" }] });
 
         if (!recursive) {
           const entries = await fs.readdir(target, { withFileTypes: true });
           return toolResult("file_list", {
             entries: entries.slice(0, max_entries).map((entry) => ({
               path: toCadgptPath(path.join(target, entry.name)),
+              absolute_path: path.join(target, entry.name),
               type: entry.isDirectory() ? "directory" : "file",
             })),
             truncated: entries.length > max_entries,
@@ -84,7 +87,7 @@ export function registerFilesystemTools(server: McpServer): void {
         await walkFiles(target, files, max_entries + 1);
         const truncated = files.length > max_entries;
         return toolResult("file_list", {
-          entries: files.slice(0, max_entries).map((item) => ({ path: toCadgptPath(item), type: "file" })),
+          entries: files.slice(0, max_entries).map((item) => ({ path: toCadgptPath(item), absolute_path: item, type: "file" })),
           truncated,
         });
       } catch (error) {
@@ -116,6 +119,7 @@ export function registerFilesystemTools(server: McpServer): void {
         const selected = lines.slice(start, end);
         return toolResult("file_read", {
           path: toCadgptPath(target),
+          absolute_path: target,
           start_line: start + 1,
           end_line: start + selected.length,
           total_lines: lines.length,
@@ -167,7 +171,7 @@ export function registerFilesystemTools(server: McpServer): void {
             const line = lines[index];
             const hit = matcher ? matcher.test(line) : (case_sensitive ? line : line.toLowerCase()).includes(needle);
             if (matcher) matcher.lastIndex = 0;
-            if (hit) results.push({ path: toCadgptPath(file), line: index + 1, text: line.trim() });
+            if (hit) results.push({ path: toCadgptPath(file), absolute_path: file, line: index + 1, text: line.trim() } as any);
           }
         }
 
