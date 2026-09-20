@@ -921,6 +921,11 @@ export function registerCadMcpDevTools(server: McpServer): void {
             `CAD_MCP_DEV_RECOVERY_NOT_FOUND: ${snapshot_id}`
           );
         }
+        if (found.executionId === currentToolLease().workId) {
+          throw new Error(
+            "CAD_MCP_DEV_USE_ROLLBACK: this baseline belongs to the current active execution; use cad_mcp_dev_rollback instead of crash recovery."
+          );
+        }
 
         try {
           const { cadUpstream } = await import("../runtime/cad-upstream.js");
@@ -1306,6 +1311,19 @@ export function registerCadMcpDevTools(server: McpServer): void {
         const snapshot = snapshots.get(lease.workId);
         if (!snapshot || snapshot.id !== snapshot_id) {
           throw new Error("Candidate start requires this execution's current source snapshot");
+        }
+        const { cadDevSourceTransactionStatus } = await import(
+          "../runtime/cad-dev-source-transaction.js"
+        );
+        const sourceTransaction = cadDevSourceTransactionStatus();
+        if (
+          !sourceTransaction ||
+          sourceTransaction.ownerExecutionId !== lease.workId ||
+          sourceTransaction.snapshotId !== snapshot.id
+        ) {
+          throw new Error(
+            "CAD_MCP_DEV_SOURCE_TRANSACTION_REQUIRED: candidate must use the currently reserved source transaction and its exact baseline snapshot."
+          );
         }
 
         const validatedFingerprint = validatedFingerprints.get(lease.workId);
