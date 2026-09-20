@@ -6,6 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { getAllowedRoots, getWritableRoots, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
 const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv"]);
 
@@ -198,15 +199,23 @@ export function registerFilesystemTools(server: McpServer): void {
       try {
         const target = await resolveAbsoluteMutationPath(input, { forCreate: true, allowedRoots: getWritableRoots(), label: "generic writable AppData" });
         assertTextExtension(target);
-        try {
-          await fs.lstat(target);
-          throw new Error(`Target already exists: ${toCadgptPath(target)}`);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-        await atomicWrite(target, content);
-        console.log(`[AUDIT] file_create ${toCadgptPath(target)} bytes=${Buffer.byteLength(content)}`);
-        return toolResult("file_create", { path: toCadgptPath(target), absolute_path: target, bytes: Buffer.byteLength(content) });
+        return await withFileMutationLocks([target], async () => {
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          try {
+            await fs.writeFile(target, content, { encoding: "utf8", flag: "wx" });
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+              throw new Error(`Target already exists: ${toCadgptPath(target)}`);
+            }
+            throw error;
+          }
+          console.log(`[AUDIT] file_create ${toCadgptPath(target)} bytes=${Buffer.byteLength(content)}`);
+          return toolResult("file_create", {
+            path: toCadgptPath(target),
+            absolute_path: target,
+            bytes: Buffer.byteLength(content),
+          });
+        });
       } catch (error) {
         return toolError("file_create", error);
       }
@@ -230,23 +239,38 @@ export function registerFilesystemTools(server: McpServer): void {
       try {
         const target = await resolveAbsoluteMutationPath(input, { allowedRoots: getWritableRoots(), label: "generic writable AppData" });
         assertTextExtension(target);
-        const original = await fs.readFile(target, "utf8");
-        const currentHash = sha256(original);
-        if (currentHash !== expected_sha256) {
-          throw new Error(`RESOURCE_CONFLICT: expected sha256 ${expected_sha256}, current ${currentHash}`);
-        }
-        if (!original.includes(old_text)) throw new Error("old_text not found; read the file and use an exact match");
-        const updated = replace_all ? original.split(old_text).join(new_text) : original.replace(old_text, new_text);
-        await atomicWrite(target, updated);
-        console.log(`[AUDIT] file_edit ${toCadgptPath(target)} replace_all=${replace_all}`);
-        return toolResult("file_edit", {
-          path: toCadgptPath(target),
-          absolute_path: target,
-          changed: true,
-          sha256_before: currentHash,
-          sha256_after: sha256(updated),
-          bytes_before: Buffer.byteLength(original),
-          bytes_after: Buffer.byteLength(updated),
+        return await withFileMutationLocks([target], async () => {
+          const original = await fs.readFile(target, "utf8");
+          const currentHash = sha256(original);
+          if (currentHash !== expected_sha256) {
+            throw new Error(`RESOURCE_CONFLICT: expected sha256 ${expected_sha256}, current ${currentHash}`);
+          }
+          if (!original.includes(old_text)) {
+            throw new Error("old_text not found; read the file and use an exact match");
+          }
+          const updated = replace_all
+            ? original.split(old_text).join(new_text)
+            : original.replace(old_text, new_text);
+
+          // Re-check immediately before replace. This cannot force unrelated
+          // external writers to honor our lock, but it closes the ordinary
+          // stale-write window and prevents silent same-process overwrite.
+          const latest = await fs.readFile(target, "utf8");
+          if (sha256(latest) !== currentHash) {
+            throw new Error("RESOURCE_CONFLICT: file changed during edit preparation");
+          }
+
+          await atomicWrite(target, updated);
+          console.log(`[AUDIT] file_edit ${toCadgptPath(target)} replace_all=${replace_all}`);
+          return toolResult("file_edit", {
+            path: toCadgptPath(target),
+            absolute_path: target,
+            changed: true,
+            sha256_before: currentHash,
+            sha256_after: sha256(updated),
+            bytes_before: Buffer.byteLength(original),
+            bytes_after: Buffer.byteLength(updated),
+          });
         });
       } catch (error) {
         return toolError("file_edit", error);
