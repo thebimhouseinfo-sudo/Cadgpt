@@ -53,6 +53,16 @@ async function prepareDevMutation(): Promise<string> {
   return lease.workId;
 }
 
+async function prepareDevSourceMutation(): Promise<string> {
+  const workId = await prepareDevMutation();
+  if (!snapshots.has(workId)) {
+    throw new Error(
+      "CAD_MCP_DEV_SNAPSHOT_REQUIRED: create cad_mcp_dev_snapshot before the first source/environment mutation."
+    );
+  }
+  return workId;
+}
+
 function runtimeRoot(): string {
   return getCadMcpRuntimeRoot();
 }
@@ -389,7 +399,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ path: input, content }) => {
       try {
-        await prepareDevMutation();
+        await prepareDevSourceMutation();
         const target = await resolveAbsoluteMutationPath(input, {
           allowedRoots: [runtimeRoot()],
           forCreate: true,
@@ -430,7 +440,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ path: input, expected_sha256, old_text, new_text, replace_all }) => {
       try {
-        await prepareDevMutation();
+        await prepareDevSourceMutation();
         const target = await resolveAbsoluteMutationPath(input, {
           allowedRoots: [runtimeRoot()],
           label: "CAD MCP developer",
@@ -475,7 +485,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ path: input, expected_sha256 }) => {
       try {
-        await prepareDevMutation();
+        await prepareDevSourceMutation();
         const target = await resolveAbsoluteMutationPath(input, {
           allowedRoots: [runtimeRoot()],
           label: "CAD MCP developer",
@@ -514,7 +524,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     },
     async ({ source, destination, expected_sha256 }) => {
       try {
-        await prepareDevMutation();
+        await prepareDevSourceMutation();
         const from = await resolveAbsoluteMutationPath(source, {
           allowedRoots: [runtimeRoot()],
           label: "CAD MCP developer",
@@ -654,6 +664,11 @@ export function registerCadMcpDevTools(server: McpServer): void {
         assertDevMode();
         const lease = currentToolLease();
         if (action === "manifest" || action === "all") {
+          if (!snapshots.has(lease.workId)) {
+            throw new Error(
+              "CAD_MCP_DEV_SNAPSHOT_REQUIRED: create cad_mcp_dev_snapshot before regenerating the CAD MCP manifest."
+            );
+          }
           const { assertCadCandidateSourceMutationAllowed } = await import("../runtime/cad-candidate.js");
           assertCadCandidateSourceMutationAllowed(lease.workId);
           validatedFingerprints.delete(lease.workId);
@@ -891,7 +906,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     async ({ confirmed }) => {
       try {
         if (!confirmed) throw new Error("Explicit confirmation is required");
-        const workId = await prepareDevMutation();
+        const workId = await prepareDevSourceMutation();
         const lease = currentToolLease();
         if (lease.workId !== workId) throw new Error("CAD_MCP_DEV_WORK_CHANGED");
         const lock = await validateLockedRequirements();
@@ -913,12 +928,13 @@ export async function rollbackUnacceptedCadMcpDevStateForExecution(
   executionId: string
 ): Promise<{ restored: boolean }> {
   const snapshot = snapshots.get(executionId);
-  try {
-    if (!snapshot) return { restored: false };
-    await restoreSnapshotFiles(snapshot);
-    return { restored: true };
-  } finally {
-    snapshots.delete(executionId);
+  if (!snapshot) {
     validatedFingerprints.delete(executionId);
+    return { restored: false };
   }
+
+  await restoreSnapshotFiles(snapshot);
+  snapshots.delete(executionId);
+  validatedFingerprints.delete(executionId);
+  return { restored: true };
 }
