@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import { validateAdmissionToken } from "./admission.js";
 
@@ -51,7 +51,7 @@ function safeId(value: string): string {
 }
 
 function sessionTag(sessionKey: string): string {
-  return safeId(sessionKey).slice(0, 12);
+  return createHash("sha256").update(sessionKey).digest("hex").slice(0, 12);
 }
 
 function cleanup(): void {
