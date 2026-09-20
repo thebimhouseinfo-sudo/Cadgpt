@@ -140,18 +140,29 @@ export function createWorkRegistration(input: {
   cleanup();
   validateAdmissionToken(input.admissionToken, input.sessionKey);
 
-  if (input.ownerId === "cad-mcp-dev" && !isDevelopmentBuild()) {
+  const ownerId = safeId(input.ownerId);
+  if (ownerId === "cad-mcp-dev" && input.ownerId.trim() !== "cad-mcp-dev") {
+    throw new Error(
+      "RESERVED_OWNER_ID: cad-mcp-dev must be requested by its exact canonical owner_id."
+    );
+  }
+  if (ownerId === "cad-mcp-dev" && input.ownerType !== "skill") {
+    throw new Error(
+      "CAD_MCP_DEV_OWNER_TYPE: cad-mcp-dev requires owner_type=skill."
+    );
+  }
+  if (ownerId === "cad-mcp-dev" && !isDevelopmentBuild()) {
     throw new Error("DEVELOPMENT_ONLY: cad-mcp-dev is unavailable in production builds.");
   }
 
-  if (input.ownerId === "cad-mcp-dev" && input.executionPath === "cad") {
+  if (ownerId === "cad-mcp-dev" && input.executionPath === "cad") {
     throw new Error(
       "CAD_MCP_DEV_PATH: cad-mcp-dev source work requires execution_path=file or hybrid; use hybrid when live AutoCAD validation is expected."
     );
   }
 
   if (
-    input.ownerId === "cad-mcp-dev" &&
+    ownerId === "cad-mcp-dev" &&
     [...registrations.values()].some(
       (work) =>
         work.ownerId === "cad-mcp-dev" &&
@@ -173,7 +184,6 @@ export function createWorkRegistration(input: {
 
   const generation = (generationBySession.get(input.sessionKey) || 0) + 1;
   generationBySession.set(input.sessionKey, generation);
-  const ownerId = safeId(input.ownerId);
   const executionId =
     `exec:${ownerId}@${sessionTag(input.sessionKey)}:e${DRIVER_EPOCH}:g${generation}`;
   const now = new Date().toISOString();
