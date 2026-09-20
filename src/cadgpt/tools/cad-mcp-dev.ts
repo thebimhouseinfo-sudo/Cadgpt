@@ -596,11 +596,17 @@ export function registerCadMcpDevTools(server: McpServer): void {
         }
         if (action === "manifest" || action === "all") {
           results.manifest = await refreshManifest();
-          const { syncCadBusinessProxies } = await import("./cad-proxy.js");
-          results.proxy_surface = {
-            tools: syncCadBusinessProxies(server),
-            refreshed: true,
-          };
+          const { hasCadProxySurface, syncCadBusinessProxies } = await import("./cad-proxy.js");
+          results.proxy_surface = hasCadProxySurface(server)
+            ? {
+                tools: syncCadBusinessProxies(server),
+                refreshed: true,
+              }
+            : {
+                refreshed: false,
+                reason:
+                  "CAD family is not loaded in this MCP session; regenerated manifest will be used on first CAD family load.",
+              };
         }
 
         let validatedFingerprint: string | null = null;
