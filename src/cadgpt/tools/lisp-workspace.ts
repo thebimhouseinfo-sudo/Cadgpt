@@ -176,23 +176,24 @@ export function registerLispWorkspaceTools(server: McpServer): void {
           throw new Error("Lisp checkout draft_path must end in .lsp");
         }
 
-        let previousDraft: string | null = null;
-        try {
-          previousDraft = await fs.readFile(draft, "utf8");
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-        if (previousDraft !== null) {
-          if (!overwrite_existing) {
-            throw new Error(`Draft already exists; explicit overwrite_existing=true is required: ${draft}`);
+        return await withFileMutationLocks([draft], async () => {
+          let previousDraft: string | null = null;
+          try {
+            previousDraft = await fs.readFile(draft, "utf8");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
           }
-          if (!expected_sha256 || sha256(previousDraft) !== expected_sha256) {
-            throw new Error("RESOURCE_CONFLICT: existing Lisp draft changed or expected_sha256 was not supplied");
+          if (previousDraft !== null) {
+            if (!overwrite_existing) {
+              throw new Error(`Draft already exists; explicit overwrite_existing=true is required: ${draft}`);
+            }
+            if (!expected_sha256 || sha256(previousDraft) !== expected_sha256) {
+              throw new Error("RESOURCE_CONFLICT: existing Lisp draft changed or expected_sha256 was not supplied");
+            }
           }
-        }
 
-        await atomicWrite(draft, normalized);
-        return toolResult("lisp_checkout", {
+          await atomicWrite(draft, normalized);
+          return toolResult("lisp_checkout", {
           registry_id: entry.id,
           library_id: libraryId,
           source_path: toCadgptPath(sourcePath),
@@ -205,6 +206,7 @@ export function registerLispWorkspaceTools(server: McpServer): void {
           header_normalized_in_draft_only: true,
           managed_source_unchanged: true,
           note: "Repair/implement in the draft, run lisp_draft_validate, perform approved CAD testing, then lisp_promote_draft. Import source outside AppData remains untouched.",
+          });
         });
       } catch (error) {
         return toolError("lisp_checkout", error);
