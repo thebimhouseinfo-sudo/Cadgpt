@@ -340,8 +340,11 @@ export function registerJobTools(server: McpServer): void {
             `TARGET_PATH_MISMATCH: target_path must exactly match managed Job target ${expectedPermanent}`
           );
         }
-        let targetExists = false;
-        let previousPermanent: string | null = null;
+        return await withFileMutationLocks(
+          [permanent, getUserCapabilitiesPath()],
+          async () => {
+            let targetExists = false;
+            let previousPermanent: string | null = null;
         try {
           previousPermanent = await fs.readFile(permanent, "utf8");
           targetExists = true;
@@ -410,7 +413,9 @@ export function registerJobTools(server: McpServer): void {
           draft_retained: true,
           test_evidence_recorded: true,
           final_validation_evidence_recorded: true,
-        });
+            });
+          }
+        );
       } catch (error) {
         return toolError("job_promote_draft", error);
       }
