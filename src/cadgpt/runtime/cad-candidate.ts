@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import { runtimeStateSnapshot } from "../lib/runtime-state.js";
 import { hasOtherActiveCadWork } from "../lib/work-registration.js";
+import {
+  assertCadDevSourceAccess,
+  cadDevSourceTransactionStatus,
+} from "./cad-dev-source-transaction.js";
 
 export interface CadCandidateState {
   candidateId: string;
@@ -27,6 +31,29 @@ async function stopCadBackendIfLoaded(): Promise<void> {
 
 export function candidateStatus(): CadCandidateState | null {
   return activeCandidate ? { ...activeCandidate } : null;
+}
+
+export function assertCadRuntimeGenerationAccess(
+  executionId: string
+): void {
+  assertCadDevSourceAccess(executionId);
+  const sourceTransaction = cadDevSourceTransactionStatus();
+
+  if (
+    sourceTransaction &&
+    sourceTransaction.ownerExecutionId === executionId
+  ) {
+    if (
+      !activeCandidate ||
+      activeCandidate.ownerExecutionId !== executionId
+    ) {
+      throw new Error(
+        "CAD_CANDIDATE_REQUIRED: CAD MCP source is modified but not yet in an active candidate generation. Run cad_mcp_dev_validate(action=all) and cad_mcp_dev_candidate_start before live CAD calls."
+      );
+    }
+  }
+
+  assertCadCandidateAccess(executionId);
 }
 
 export function assertCadCandidateAccess(executionId: string): void {
