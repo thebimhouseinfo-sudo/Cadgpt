@@ -198,7 +198,12 @@ async function prepareFamilies(
 ): Promise<void> {
   if (executionPath === "file" || executionPath === "hybrid") await loadFileFamily(server);
   if (executionPath === "cad" || executionPath === "hybrid") {
-    const { assertCadCandidateAccess } = await import("./runtime/cad-candidate.js");
+    const [{ assertCadCandidateAccess }, { assertCadDevSourceAccess }] =
+      await Promise.all([
+        import("./runtime/cad-candidate.js"),
+        import("./runtime/cad-dev-source-transaction.js"),
+      ]);
+    assertCadDevSourceAccess(executionId);
     assertCadCandidateAccess(executionId);
     await loadCadFamily(server);
   }
