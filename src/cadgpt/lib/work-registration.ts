@@ -95,6 +95,19 @@ export function createWorkRegistration(input: {
     throw new Error("DEVELOPMENT_ONLY: cad-mcp-dev is unavailable in production builds.");
   }
 
+  if (
+    input.ownerId === "cad-mcp-dev" &&
+    [...registrations.values()].some(
+      (work) =>
+        work.ownerId === "cad-mcp-dev" &&
+        work.sessionKey !== input.sessionKey
+    )
+  ) {
+    throw new Error(
+      "CAD_MCP_DEV_BUSY: another CadGPT execution owns the mutable CAD MCP source tree."
+    );
+  }
+
   const priorId = activeBySession.get(input.sessionKey);
   if (priorId) registrations.delete(priorId);
 
