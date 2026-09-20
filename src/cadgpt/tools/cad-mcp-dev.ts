@@ -1320,7 +1320,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     {
       title: "Start Exclusive CAD MCP Candidate Generation",
       description:
-        "After snapshot + cad_mcp_dev_validate(action=all), reserve CAD MCP exclusively for this execution and restart it from the validated candidate source on the next CAD call. Requires HYBRID/CAD work and explicit confirmation.",
+        "After snapshot + cad_mcp_dev_validate(action=all), reserve CAD MCP exclusively for this execution and restart it from the validated candidate source on the next CAD call. Requires execution_path=hybrid and explicit confirmation.",
       inputSchema: {
         snapshot_id: z.string().min(1),
         confirmed: z.literal(true),
