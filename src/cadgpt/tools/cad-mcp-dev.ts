@@ -935,6 +935,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
         await removePersistedSnapshot(found.executionId);
         snapshots.delete(found.executionId);
         validatedFingerprints.delete(found.executionId);
+        knownSourceFingerprints.delete(found.executionId);
         const { forceClearCadDevSourceTransaction } = await import(
           "../runtime/cad-dev-source-transaction.js"
         );
@@ -1085,10 +1086,12 @@ export function registerCadMcpDevTools(server: McpServer): void {
           if (!message.includes("NO_CAD_CANDIDATE")) throw error;
         });
         validatedFingerprints.delete(lease.workId);
+        await assertKnownSourceState(lease.workId);
 
         await restoreSnapshotFiles(snapshot);
         await removePersistedSnapshot(lease.workId);
         snapshots.delete(lease.workId);
+        knownSourceFingerprints.delete(lease.workId);
         const { endCadDevSourceTransaction } = await import(
           "../runtime/cad-dev-source-transaction.js"
         );
@@ -1234,6 +1237,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
         await removePersistedSnapshot(lease.workId);
         snapshots.delete(lease.workId);
         validatedFingerprints.delete(lease.workId);
+        knownSourceFingerprints.delete(lease.workId);
         const { endCadDevSourceTransaction } = await import(
           "../runtime/cad-dev-source-transaction.js"
         );
@@ -1377,6 +1381,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
         }
         snapshots.delete(lease.workId);
         validatedFingerprints.delete(lease.workId);
+        knownSourceFingerprints.delete(lease.workId);
         const { endCadDevSourceTransaction } = await import(
           "../runtime/cad-dev-source-transaction.js"
         );
@@ -1429,13 +1434,25 @@ export async function rollbackUnacceptedCadMcpDevStateForExecution(
     (await loadPersistedSnapshot(executionId));
   if (!snapshot) {
     validatedFingerprints.delete(executionId);
+    knownSourceFingerprints.delete(executionId);
     return { restored: false };
+  }
+
+  const expected = knownSourceFingerprints.get(executionId);
+  if (expected) {
+    const current = await runtimeFingerprint();
+    if (current !== expected) {
+      throw new Error(
+        "CAD_MCP_DEV_EXTERNAL_CHANGE: automatic rollback refused because runtime source changed outside CadGPT; persistent baseline retained for confirmed recovery."
+      );
+    }
   }
 
   await restoreSnapshotFiles(snapshot);
   await removePersistedSnapshot(executionId);
   snapshots.delete(executionId);
   validatedFingerprints.delete(executionId);
+  knownSourceFingerprints.delete(executionId);
   const { forceClearCadDevSourceTransaction } = await import(
     "../runtime/cad-dev-source-transaction.js"
   );
