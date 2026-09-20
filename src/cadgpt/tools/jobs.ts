@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -10,7 +10,7 @@ import {
   getUserCapabilitiesPath,
   getUserLibrariesManifestPath,
 } from "../lib/appdata.js";
-import { isPathInside, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
+import { isPathInside, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 
 interface JobEntry {
@@ -27,6 +27,10 @@ interface JobEntry {
 interface UserRegistry {
   version: number;
   entries: Array<Record<string, unknown>>;
+}
+
+function sha256(content: string | Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
 }
 
 const jobMetadataSchema = z.object({
@@ -208,17 +212,45 @@ export function registerJobTools(server: McpServer): void {
     "job_checkout",
     {
       title: "Checkout Managed Job for jobcreate",
-      description: "Copy one registered managed Job into appdata/workspace/job-draft/** for controlled refinement. The permanent Job remains unchanged until promotion.",
-      inputSchema: { registry_id: z.string().min(1) },
+      description: "Copy one registered managed Job into an explicit absolute JOB.md draft path. Existing drafts require hash-confirmed overwrite.",
+      inputSchema: {
+        registry_id: z.string().min(1),
+        draft_path: z.string().min(1).describe("Absolute JOB.md path under the approved Job draft root"),
+        overwrite_existing: z.boolean().optional().default(false),
+        expected_sha256: z.string().length(64).optional(),
+      },
     },
-    async ({ registry_id }) => {
+    async ({ registry_id, draft_path, overwrite_existing, expected_sha256 }) => {
       try {
         const jobs = await loadJobs();
         const entry = jobs.find((job) => job.id.toLowerCase() === registry_id.trim().toLowerCase());
         if (!entry) throw new Error(`Managed Job not found in User Registry: ${registry_id}`);
         const source = resolveManagedJob(entry);
         const content = await fs.readFile(source, "utf8");
-        const draft = draftPathFor(entry.library_id, entry.relative_path);
+        const draft = await resolveAbsoluteMutationPath(draft_path, {
+          allowedRoots: [getJobDraftRoot()],
+          forCreate: true,
+          label: "Job draft",
+        });
+        if (path.basename(draft).toLowerCase() !== "job.md") {
+          throw new Error("Job checkout draft_path must end in JOB.md");
+        }
+
+        let previousDraft: string | null = null;
+        try {
+          previousDraft = await fs.readFile(draft, "utf8");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        if (previousDraft !== null) {
+          if (!overwrite_existing) {
+            throw new Error(`Draft already exists; explicit overwrite_existing=true is required: ${draft}`);
+          }
+          if (!expected_sha256 || sha256(previousDraft) !== expected_sha256) {
+            throw new Error("RESOURCE_CONFLICT: existing Job draft changed or expected_sha256 was not supplied");
+          }
+        }
+
         await atomicWrite(draft, content);
         const validation = validateJobSource(content);
         return toolResult("job_checkout", {
@@ -265,20 +297,25 @@ export function registerJobTools(server: McpServer): void {
     "job_promote_draft",
     {
       title: "Promote Tested Job Draft to Managed Library",
-      description: "Promote one validated and actually tested Job draft into a managed Job Library and synchronize User Registry with rollback-safe writes.",
+      description: "Promote one validated absolute-path Job draft into an explicit absolute managed Job target and synchronize User Registry rollback-safely.",
       inputSchema: {
         draft_path: z.string().min(1),
+        target_path: z.string().min(1).describe("Absolute target path that must exactly match library_id + relative_path"),
         library_id: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,79}$/i),
         relative_path: z.string().min(1),
         metadata: jobMetadataSchema,
         overwrite: z.boolean().optional().default(false),
+        expected_target_sha256: z.string().length(64).optional(),
         test_evidence: z.string().min(1).max(2000),
         final_validation_evidence: z.string().min(1).max(2000),
         user_accepted: z.literal(true),
       },
     },
-    async ({ draft_path, library_id, relative_path, metadata, overwrite, test_evidence, final_validation_evidence, user_accepted }) => {
+    async ({ draft_path, target_path, library_id, relative_path, metadata, overwrite, expected_target_sha256, test_evidence, final_validation_evidence, user_accepted }) => {
       try {
+        if (!path.isAbsolute(draft_path)) {
+          throw new Error("ABSOLUTE_PATH_REQUIRED: job_promote_draft draft_path must be absolute");
+        }
         assertDraftVirtualPath(draft_path);
         await assertManagedLibraryExists(library_id);
         if (!user_accepted) throw new Error("Job promotion requires explicit user acceptance");
@@ -289,7 +326,17 @@ export function registerJobTools(server: McpServer): void {
         if (!validation.valid) throw new Error(`Job draft contract failed: ${validation.diagnostics.join(" ")}`);
 
         const normalizedRelative = safeRelativeJob(relative_path);
-        const permanent = managedJobPath(library_id, normalizedRelative);
+        const expectedPermanent = managedJobPath(library_id, normalizedRelative);
+        const permanent = await resolveAbsoluteMutationPath(target_path, {
+          allowedRoots: [path.resolve(getJobLibrariesRoot(), library_id)],
+          forCreate: true,
+          label: "managed Job library",
+        });
+        if (path.relative(expectedPermanent, permanent) !== "") {
+          throw new Error(
+            `TARGET_PATH_MISMATCH: target_path must exactly match managed Job target ${expectedPermanent}`
+          );
+        }
         let targetExists = false;
         let previousPermanent: string | null = null;
         try {
@@ -299,6 +346,11 @@ export function registerJobTools(server: McpServer): void {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         }
         if (targetExists && !overwrite) throw new Error(`Managed Job already exists; set overwrite=true for intentional replacement: ${toCadgptPath(permanent)}`);
+        if (targetExists && overwrite) {
+          if (!expected_target_sha256 || previousPermanent === null || sha256(previousPermanent) !== expected_target_sha256) {
+            throw new Error("RESOURCE_CONFLICT: managed Job target changed or expected_target_sha256 was not supplied");
+          }
+        }
 
         const registry = await loadRegistry();
         for (const entry of registry.entries) {
@@ -346,6 +398,7 @@ export function registerJobTools(server: McpServer): void {
         return toolResult("job_promote_draft", {
           draft_path: toCadgptPath(draft),
           managed_path: toCadgptPath(permanent),
+          managed_absolute_path: permanent,
           library_id,
           registry_id: metadata.id,
           steps: validation.steps,
