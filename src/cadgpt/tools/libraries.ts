@@ -306,15 +306,6 @@ export function registerLibraryTools(server: McpServer): void {
         const temp = path.join(parent, `.${library_id}.import-${randomUUID()}`);
         const backup = path.join(parent, `.${library_id}.backup-${randomUUID()}`);
 
-        let existed = false;
-        try {
-          await fs.lstat(target);
-          existed = true;
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-        if (existed && !replace_existing) throw new Error(`Managed library already exists: ${library_id}`);
-
         await fs.cp(source, temp, {
           recursive: true,
           force: false,
@@ -327,12 +318,28 @@ export function registerLibraryTools(server: McpServer): void {
 
         const manifestPath = getUserLibrariesManifestPath();
         const registryPath = getUserCapabilitiesPath();
-        const previousManifest = await readOptionalText(manifestPath);
-        const previousRegistry = await readOptionalText(registryPath);
-        let swapped = false;
 
-        try {
-          if (existed) await fs.rename(target, backup);
+        return await withFileMutationLocks(
+          [target, manifestPath, registryPath],
+          async () => {
+            let existed = false;
+            try {
+              await fs.lstat(target);
+              existed = true;
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            }
+            if (existed && !replace_existing) {
+              await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined);
+              throw new Error(`Managed library already exists: ${library_id}`);
+            }
+
+            const previousManifest = await readOptionalText(manifestPath);
+            const previousRegistry = await readOptionalText(registryPath);
+            let swapped = false;
+
+            try {
+              if (existed) await fs.rename(target, backup);
           await fs.rename(temp, target);
           swapped = true;
 
@@ -373,9 +380,11 @@ export function registerLibraryTools(server: McpServer): void {
             if (existed) await fs.rename(backup, target).catch(() => undefined);
           }
           await restoreOptionalText(manifestPath, previousManifest).catch(() => undefined);
-          await restoreOptionalText(registryPath, previousRegistry).catch(() => undefined);
-          throw error;
-        }
+              await restoreOptionalText(registryPath, previousRegistry).catch(() => undefined);
+              throw error;
+            }
+          }
+        );
       } catch (error) {
         return toolError("library_import", error);
       }
