@@ -165,8 +165,23 @@ export async function writeObservationLog(
   return appendObservationRecords(binding.drawing_id, records, logName);
 }
 
-export function clearObservationOwnershipForExecution(executionId: string): void {
-  for (const [host, owner] of captureOwners) {
-    if (owner.workId === executionId) captureOwners.delete(host);
+export async function releaseObservationForExecution(executionId: string): Promise<void> {
+  const owned = [...captureOwners.entries()].filter(([, owner]) => owner.workId === executionId);
+  for (const [host] of owned) {
+    try {
+      if (cadUpstream.status().connected) {
+        await withCadHostLock(host, async () => {
+          await cadUpstream.callTool("cad_observation_capture_cancel", {});
+        });
+      }
+    } catch {
+      // Cleanup is best-effort. Ownership must still be released so future work is not blocked.
+    } finally {
+      captureOwners.delete(host);
+    }
   }
+}
+
+export function clearAllObservationOwnership(): void {
+  captureOwners.clear();
 }
