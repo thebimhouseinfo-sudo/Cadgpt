@@ -237,24 +237,25 @@ export function registerJobTools(server: McpServer): void {
           throw new Error("Job checkout draft_path must end in JOB.md");
         }
 
-        let previousDraft: string | null = null;
-        try {
-          previousDraft = await fs.readFile(draft, "utf8");
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-        if (previousDraft !== null) {
-          if (!overwrite_existing) {
-            throw new Error(`Draft already exists; explicit overwrite_existing=true is required: ${draft}`);
+        return await withFileMutationLocks([draft], async () => {
+          let previousDraft: string | null = null;
+          try {
+            previousDraft = await fs.readFile(draft, "utf8");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
           }
-          if (!expected_sha256 || sha256(previousDraft) !== expected_sha256) {
-            throw new Error("RESOURCE_CONFLICT: existing Job draft changed or expected_sha256 was not supplied");
+          if (previousDraft !== null) {
+            if (!overwrite_existing) {
+              throw new Error(`Draft already exists; explicit overwrite_existing=true is required: ${draft}`);
+            }
+            if (!expected_sha256 || sha256(previousDraft) !== expected_sha256) {
+              throw new Error("RESOURCE_CONFLICT: existing Job draft changed or expected_sha256 was not supplied");
+            }
           }
-        }
 
-        await atomicWrite(draft, content);
-        const validation = validateJobSource(content);
-        return toolResult("job_checkout", {
+          await atomicWrite(draft, content);
+          const validation = validateJobSource(content);
+          return toolResult("job_checkout", {
           registry_id: entry.id,
           library_id: entry.library_id,
           source_path: toCadgptPath(source),
@@ -263,6 +264,7 @@ export function registerJobTools(server: McpServer): void {
           source_contract_valid: validation.valid,
           diagnostics: validation.diagnostics,
           managed_source_unchanged: true,
+          });
         });
       } catch (error) {
         return toolError("job_checkout", error);
