@@ -95,6 +95,12 @@ export function createWorkRegistration(input: {
     throw new Error("DEVELOPMENT_ONLY: cad-mcp-dev is unavailable in production builds.");
   }
 
+  if (input.ownerId === "cad-mcp-dev" && input.executionPath === "cad") {
+    throw new Error(
+      "CAD_MCP_DEV_PATH: cad-mcp-dev source work requires execution_path=file or hybrid; use hybrid when live AutoCAD validation is expected."
+    );
+  }
+
   if (
     input.ownerId === "cad-mcp-dev" &&
     [...registrations.values()].some(
