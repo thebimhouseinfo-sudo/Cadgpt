@@ -240,9 +240,9 @@ export async function disposeMcpServerRuntime(server: McpServer): Promise<void> 
   if (!sessionKey) return;
 
   const executionId = activeExecutionForSession(sessionKey);
+  releaseSessionWork(sessionKey);
   if (executionId) await cleanupExecutionState(executionId);
 
-  releaseSessionWork(sessionKey);
   revokeSessionAdmissions(sessionKey);
   loadedByServer.delete(server);
   sessionKeyByServer.delete(server);
