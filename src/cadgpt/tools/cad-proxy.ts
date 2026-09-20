@@ -9,7 +9,8 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { cadUpstream } from "../runtime/cad-upstream.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
-import { getRepoRoot } from "../lib/path-security.js";
+import { getRepoRoot, isPathInside } from "../lib/path-security.js";
+import { getAppDataRoot } from "../lib/appdata.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { currentToolLease } from "../lib/work-registration.js";
 import { assertCadCandidateAccess, recordCadCandidateSuccess } from "../runtime/cad-candidate.js";
@@ -39,6 +40,10 @@ const INTERNAL_UPSTREAM_TOOLS = new Set([
   // Outer CadGPT owns destructive preview token execution scope.
   "cad_preview_delete_entities",
   "cad_execute_delete_preview",
+
+  // Outer CadGPT owns verified Lisp load/command execution state.
+  "cad_load_lisp_file",
+  "cad_run_lisp_command",
 ]);
 
 interface ToolManifest {
@@ -55,6 +60,81 @@ interface DeletePreviewOwner {
 }
 
 const deletePreviewOwners = new Map<string, DeletePreviewOwner>();
+const loadedLispCommands = new Map<
+  string,
+  Map<string, Set<string>>
+>();
+
+function lispCommandSet(workId: string, drawingId: string): Set<string> {
+  let byDrawing = loadedLispCommands.get(workId);
+  if (!byDrawing) {
+    byDrawing = new Map<string, Set<string>>();
+    loadedLispCommands.set(workId, byDrawing);
+  }
+  let commands = byDrawing.get(drawingId);
+  if (!commands) {
+    commands = new Set<string>();
+    byDrawing.set(drawingId, commands);
+  }
+  return commands;
+}
+
+async function resolveLispSourceForCommandDiscovery(
+  virtualPath: string
+): Promise<string> {
+  const normalized = virtualPath.trim().replaceAll("\\", "/");
+  if (!normalized || path.isAbsolute(normalized)) {
+    throw new Error(
+      "LISP_COMMAND_SCOPE: load path must be a CadGPT virtual Lisp path."
+    );
+  }
+
+  let root: string;
+  let suffix: string;
+  const lower = normalized.toLowerCase();
+
+  if (lower.startsWith("resources/cad/")) {
+    root = path.resolve(getRepoRoot(), "resources", "cad");
+    suffix = normalized.slice("resources/cad/".length);
+  } else if (lower.startsWith("appdata/libraries/lisp/")) {
+    root = path.resolve(getAppDataRoot(), "libraries", "lisp");
+    suffix = normalized.slice("appdata/libraries/lisp/".length);
+  } else if (lower.startsWith("appdata/workspace/lisp-draft/")) {
+    root = path.resolve(getAppDataRoot(), "workspace", "lisp-draft");
+    suffix = normalized.slice("appdata/workspace/lisp-draft/".length);
+  } else if (lower.startsWith("appdata/runtime/dynamic-lisp/")) {
+    root = path.resolve(getAppDataRoot(), "runtime", "dynamic-lisp");
+    suffix = normalized.slice("appdata/runtime/dynamic-lisp/".length);
+  } else {
+    throw new Error(
+      "LISP_COMMAND_SCOPE: unsupported Lisp virtual namespace."
+    );
+  }
+
+  const candidate = path.resolve(root, suffix);
+  if (!isPathInside(candidate, root)) {
+    throw new Error("LISP_COMMAND_SCOPE: Lisp path escapes its approved root.");
+  }
+  const real = await fs.promises.realpath(candidate);
+  if (!isPathInside(real, root)) {
+    throw new Error("LISP_COMMAND_SCOPE: Lisp real path escapes its approved root.");
+  }
+  if (path.extname(real).toLowerCase() !== ".lsp") {
+    throw new Error("LISP_COMMAND_SCOPE: only .lsp files are supported.");
+  }
+  return real;
+}
+
+async function discoverLispCommands(virtualPath: string): Promise<string[]> {
+  const sourcePath = await resolveLispSourceForCommandDiscovery(virtualPath);
+  const source = await fs.promises.readFile(sourcePath, "utf8");
+  const commands = new Set<string>();
+  const regex = /\(\s*defun\s+c:([A-Za-z0-9_+\-.$:]+)/gi;
+  for (const match of source.matchAll(regex)) {
+    if (match[1]) commands.add(match[1].toUpperCase());
+  }
+  return [...commands].sort();
+}
 
 function purgeExpiredDeletePreviewOwners(): void {
   const now = Date.now();
@@ -247,17 +327,19 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
   const desiredTools = manifestTools.filter(
     (tool) => !INTERNAL_UPSTREAM_TOOLS.has(tool.name)
   );
-  const destructiveAvailable = new Set(
+  const specialAvailable = new Set(
     manifestTools
       .map((tool) => tool.name)
       .filter(
         (name) =>
           name === "cad_preview_delete_entities" ||
-          name === "cad_execute_delete_preview"
+          name === "cad_execute_delete_preview" ||
+          name === "cad_load_lisp_file" ||
+          name === "cad_run_lisp_command"
       )
   );
   const desiredNames = new Set(desiredTools.map((tool) => `cad__${tool.name}`));
-  for (const name of destructiveAvailable) desiredNames.add(`cad__${name}`);
+  for (const name of specialAvailable) desiredNames.add(`cad__${name}`);
 
   for (const [name, registered] of registry) {
     if (desiredNames.has(name)) continue;
@@ -320,7 +402,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
   }
 
   const previewPublicName = "cad__cad_preview_delete_entities";
-  if (destructiveAvailable.has("cad_preview_delete_entities")) {
+  if (specialAvailable.has("cad_preview_delete_entities")) {
     const prior = registry.get(previewPublicName);
     if (prior) {
       prior.remove();
@@ -391,7 +473,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
   }
 
   const executePublicName = "cad__cad_execute_delete_preview";
-  if (destructiveAvailable.has("cad_execute_delete_preview")) {
+  if (specialAvailable.has("cad_execute_delete_preview")) {
     const prior = registry.get(executePublicName);
     if (prior) {
       prior.remove();
@@ -453,7 +535,130 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
     publicNames.push(executePublicName);
   }
 
+  const loadLispPublicName = "cad__cad_load_lisp_file";
+  if (specialAvailable.has("cad_load_lisp_file")) {
+    const prior = registry.get(loadLispPublicName);
+    if (prior) {
+      prior.remove();
+      registry.delete(loadLispPublicName);
+    }
+    const registered = server.registerTool(
+      loadLispPublicName,
+      {
+        title: "Load Verified Lisp File",
+        description:
+          "[CAD MCP / execution-owned Lisp state] Load and verify one sandboxed Lisp file on a bound drawing. Commands discovered from the successfully loaded source become runnable only by this work execution on this drawing.",
+        inputSchema: {
+          path: z.string().min(1),
+          drawing_id: z.string().optional(),
+        },
+      },
+      async ({ path: lispPath, drawing_id }) => {
+        try {
+          await ensureCadRuntimeActive();
+          const binding = resolveDrawingContext(drawing_id);
+          const commands = await discoverLispCommands(lispPath);
+
+          return await withCadHostLock(binding.host, async () => {
+            await activateDrawingContext(binding);
+            const result = await cadUpstream.callTool(
+              "cad_load_lisp_file",
+              { path: lispPath }
+            );
+
+            const loaded = findPayloadField(
+              extractUpstreamPayload(result),
+              "loaded"
+            );
+            if (!isToolErrorResult(result) && loaded === true) {
+              const owned = lispCommandSet(
+                currentToolLease().workId,
+                binding.drawing_id
+              );
+              for (const command of commands) owned.add(command);
+              recordCadCandidateSuccess(
+                currentToolLease().workId,
+                loadLispPublicName
+              );
+            }
+            return result as any;
+          });
+        } catch (error) {
+          return toolError(loadLispPublicName, error);
+        }
+      }
+    );
+    registry.set(loadLispPublicName, registered);
+    publicNames.push(loadLispPublicName);
+  }
+
+  const runLispPublicName = "cad__cad_run_lisp_command";
+  if (specialAvailable.has("cad_run_lisp_command")) {
+    const prior = registry.get(runLispPublicName);
+    if (prior) {
+      prior.remove();
+      registry.delete(runLispPublicName);
+    }
+    const registered = server.registerTool(
+      runLispPublicName,
+      {
+        title: "Run Owned Lisp Command",
+        description:
+          "[CAD MCP / execution-owned Lisp state] Run only a command that this exact work execution successfully loaded from Lisp source on this exact bound drawing.",
+        inputSchema: {
+          name: z.string().min(1),
+          args: z
+            .array(z.union([z.string(), z.number()]))
+            .optional()
+            .default([]),
+          drawing_id: z.string().optional(),
+        },
+      },
+      async ({ name, args, drawing_id }) => {
+        try {
+          await ensureCadRuntimeActive();
+          const binding = resolveDrawingContext(drawing_id);
+          const normalizedName = name.trim().toUpperCase();
+          const owned =
+            loadedLispCommands
+              .get(currentToolLease().workId)
+              ?.get(binding.drawing_id) ?? new Set<string>();
+
+          if (!owned.has(normalizedName)) {
+            throw new Error(
+              `LISP_COMMAND_NOT_OWNED: '${name}' was not discovered in a Lisp file successfully loaded by this execution on drawing ${binding.drawing_id}.`
+            );
+          }
+
+          return await withCadHostLock(binding.host, async () => {
+            await activateDrawingContext(binding);
+            const result = await cadUpstream.callTool(
+              "cad_run_lisp_command",
+              { name, args }
+            );
+            if (!isToolErrorResult(result)) {
+              recordCadCandidateSuccess(
+                currentToolLease().workId,
+                runLispPublicName
+              );
+            }
+            return result as any;
+          });
+        } catch (error) {
+          return toolError(runLispPublicName, error);
+        }
+      }
+    );
+    registry.set(runLispPublicName, registered);
+    publicNames.push(runLispPublicName);
+  }
+
   return publicNames;
+}
+
+export function clearExecutionCadProxyState(executionId: string): void {
+  clearDestructivePreviewOwnershipForExecution(executionId);
+  loadedLispCommands.delete(executionId);
 }
 
 export function clearDestructivePreviewOwnershipForExecution(
