@@ -78,7 +78,7 @@ export function setWorkExpirationHandler(
 }
 
 export function isDevelopmentBuild(): boolean {
-  return (process.env.CADGPT_BUILD_PROFILE || "development").trim().toLowerCase() !== "production";
+  return (process.env.CADGPT_BUILD_PROFILE || "production").trim().toLowerCase() === "development";
 }
 
 export function createWorkRegistration(input: {
