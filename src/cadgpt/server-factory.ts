@@ -27,7 +27,9 @@ import { cleanupExecutionState } from "./runtime/execution-cleanup.js";
 const loadedByServer = new WeakMap<McpServer, Set<string>>();
 const sessionKeyByServer = new WeakMap<McpServer, string>();
 
-setWorkExpirationHandler(cleanupExecutionState);
+setWorkExpirationHandler(async (executionId) => {
+  await cleanupExecutionState(executionId);
+});
 
 function serverFamilies(server: McpServer): Set<string> {
   let loaded = loadedByServer.get(server);
