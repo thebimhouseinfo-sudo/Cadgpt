@@ -138,6 +138,11 @@ export async function acceptCadCandidate(
   validatedTool: string
 ): Promise<CadCandidateState> {
   const candidate = requireOwner(executionId);
+  if (!candidate.successfulTools.includes("cad_refresh_tools")) {
+    throw new Error(
+      "CAD_CANDIDATE_MANIFEST_NOT_VERIFIED: run cad_refresh_tools successfully in this candidate generation before acceptance."
+    );
+  }
   if (!candidate.successfulTools.includes(validatedTool)) {
     throw new Error(
       `CAD_CANDIDATE_NOT_LIVE_VALIDATED: '${validatedTool}' has no successful live CAD call in this candidate generation.`
