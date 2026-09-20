@@ -606,3 +606,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     }
   );
 }
+
+export function clearCadMcpDevStateForExecution(executionId: string): void {
+  snapshots.delete(executionId);
+}
