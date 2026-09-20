@@ -14,7 +14,7 @@ import {
   toRepoRelative,
 } from "./cadgpt/lib/path-security.js";
 import { runtimeStateSnapshot } from "./cadgpt/lib/runtime-state.js";
-import { activeWorkCount } from "./cadgpt/lib/work-registration.js";
+import { activeWorkCount, sweepExpiredWork } from "./cadgpt/lib/work-registration.js";
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
@@ -22,6 +22,7 @@ const MCP_TOKEN = (process.env.MCP_TOKEN || "").trim();
 const SESSION_RECOVERY =
   (process.env.MCP_SESSION_RECOVERY || "true").toLowerCase() !== "false";
 const STARTED_AT = Date.now();
+const WORK_SWEEP_MS = Math.max(10_000, Number(process.env.CADGPT_WORK_SWEEP_MS || 30_000));
 
 let activeMcpRequests = 0;
 let lastMcpActivityAt = Date.now();
@@ -186,6 +187,11 @@ app.use((req, res, next) => {
   res.status(404).json({ ok: false, error: "Not found" });
 });
 
+const workSweepTimer = setInterval(() => {
+  sweepExpiredWork();
+}, WORK_SWEEP_MS);
+workSweepTimer.unref?.();
+
 const server = app.listen(PORT, HOST, () => {
   console.log("");
   console.log("=== CadGPT Slim Control Plane ===");
@@ -204,6 +210,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   console.log(`[CadGPT] ${signal}: shutting down slim control plane`);
   sessions.stopCleanup();
+  clearInterval(workSweepTimer);
 
   if (runtimeStateSnapshot().loaded_families.includes("cad")) {
     try {
