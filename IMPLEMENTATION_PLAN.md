@@ -978,7 +978,49 @@ If dependency installation/rebuild is required, use a separate named privileged 
 
 Environment mutation is operational state, not an excuse to widen the source-write root.
 
-### 16.10 Local-source only; no Git workflow
+### 16.10 CAD MCP Internal Registry update exception
+
+When `cad-mcp-dev` adds, removes, renames, or changes the schema/description of a CAD MCP tool, it is allowed to update the **CAD MCP-owned Internal Registry representation** required for that tool to become discoverable by CadGPT.
+
+Current source of truth:
+
+```text
+runtimes/cad-mcp/tools/**/*_tools.py
+        ↓
+scripts/generate-cad-tool-manifest.py   # executable helper, read-only to cad-mcp-dev
+        ↓
+runtimes/cad-mcp/tool-manifest.json
+        ↓
+CadGPT Internal Registry tool entries
+```
+
+Therefore `cad-mcp-dev` may:
+
+- create/edit/remove CAD MCP tool source under `runtimes/cad-mcp/**`;
+- invoke the existing manifest generator as a named/scoped action;
+- write/regenerate `runtimes/cad-mcp/tool-manifest.json`;
+- validate that the effective Internal Registry reflects the new/updated tool;
+- update future CAD-MCP-owned registry metadata files only when those files also live under `runtimes/cad-mcp/**`.
+
+It must **not**:
+
+- edit `src/cadgpt/tools/registry.ts`;
+- edit CadGPT core registry code;
+- write `appdata/registry/user/**`;
+- create/modify User Registry Lisp or Job entries;
+- use this exception to widen its source-write root.
+
+The generated manifest is not hand-authored registry truth. Tool source remains authoritative; the manifest/registry artifact must be regenerated from source and validated after tool changes.
+
+If a new tool requires a CadGPT-core registry/schema change that cannot be represented by the existing CAD MCP manifest contract, return:
+
+```text
+OUT_OF_SCOPE_CORE_CHANGE
+```
+
+rather than modifying CadGPT core.
+
+### 16.11 Local-source only; no Git workflow
 
 `cad-mcp-dev` is a local development capability only.
 
@@ -1320,6 +1362,8 @@ Replace one-binding-per-McpServer model with explicit execution-scoped drawing c
 - add candidate runtime generation handling;
 - add runtime-local test harness;
 - add manifest/schema compatibility validation;
+- allow scoped regeneration/update of the CAD MCP Internal Registry artifact under `runtimes/cad-mcp/**`;
+- verify new/changed CAD MCP tools appear correctly in the effective Internal Registry;
 - add controlled AutoCAD integration-test path;
 - add out-of-scope core-change reporting;
 - provide no Git workflow at all; changes remain local under `runtimes/cad-mcp/**`;
@@ -1485,6 +1529,8 @@ Verify:
 - live integration test requires an explicitly approved drawing;
 - dependency environment rebuild requires its separate privileged action;
 - no Git command, commit, push, branch, or PR capability is available;
+- adding/updating a CAD MCP tool regenerates `runtimes/cad-mcp/tool-manifest.json` and the effective Internal Registry reflects it;
+- User Registry remains unchanged by `cad-mcp-dev`;
 - production build/profile does not register or expose `cad-mcp-dev` at all.
 
 ### 24.8 Tray
@@ -1587,7 +1633,7 @@ Stage 2 begins only after:
 - multi-chat/multi-drawing targeting is safe;
 - CAD scheduler prevents ActiveDocument races;
 - FILE and CAD execution paths are lazy and independent;
-- development build: `cad-mcp-dev` can complete a scoped edit/test/rollback cycle without writing outside `runtimes/cad-mcp/**`;
+- development build: `cad-mcp-dev` can complete a scoped edit/test/rollback cycle without writing outside `runtimes/cad-mcp/**`, including regeneration of the CAD MCP tool manifest/Internal Registry artifact;
 - production/package build: `cad-mcp-dev`, runtime coding tools, and source-mutation authority are absent;
 - candidate CAD MCP validation cannot hijack unrelated drawing/work contexts;
 - Windows tray/startup migration is stable;
