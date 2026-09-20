@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { getAllowedRoots, getWritableRoots, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
+import { getAllowedRoots, getWritableRoots, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 
 const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv"]);
@@ -182,12 +182,12 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_create",
     {
       title: "Create CadGPT Managed Text File",
-      description: "Create a new text asset inside generic writable AppData roots (workspace/data). Permanent managed libraries are not writable through this tool.",
+      description: "Create a new text asset inside generic writable AppData roots (workspace/data). path MUST be an absolute filesystem path. Permanent managed libraries are not writable through this tool.",
       inputSchema: { path: z.string(), content: z.string() },
     },
     async ({ path: input, content }) => {
       try {
-        const target = await resolveAllowedPath(input, { forCreate: true, forWrite: true });
+        const target = await resolveAbsoluteMutationPath(input, { forCreate: true, allowedRoots: getWritableRoots(), label: "generic writable AppData" });
         assertTextExtension(target);
         try {
           await fs.lstat(target);
@@ -197,7 +197,7 @@ export function registerFilesystemTools(server: McpServer): void {
         }
         await atomicWrite(target, content);
         console.log(`[AUDIT] file_create ${toCadgptPath(target)} bytes=${Buffer.byteLength(content)}`);
-        return toolResult("file_create", { path: toCadgptPath(target), bytes: Buffer.byteLength(content) });
+        return toolResult("file_create", { path: toCadgptPath(target), absolute_path: target, bytes: Buffer.byteLength(content) });
       } catch (error) {
         return toolError("file_create", error);
       }
@@ -208,7 +208,7 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_edit",
     {
       title: "Edit CadGPT Managed Text File",
-      description: "Apply an exact text replacement inside generic writable AppData roots (workspace/data). Permanent managed libraries must use controlled promotion/import tools.",
+      description: "Apply an exact text replacement inside generic writable AppData roots (workspace/data). path MUST be an absolute filesystem path. Permanent managed libraries must use controlled promotion/import tools.",
       inputSchema: {
         path: z.string(),
         old_text: z.string(),
@@ -218,7 +218,7 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ path: input, old_text, new_text, replace_all }) => {
       try {
-        const target = await resolveAllowedPath(input, { forWrite: true });
+        const target = await resolveAbsoluteMutationPath(input, { allowedRoots: getWritableRoots(), label: "generic writable AppData" });
         assertTextExtension(target);
         const original = await fs.readFile(target, "utf8");
         if (!original.includes(old_text)) throw new Error("old_text not found; read the file and use an exact match");
@@ -227,6 +227,7 @@ export function registerFilesystemTools(server: McpServer): void {
         console.log(`[AUDIT] file_edit ${toCadgptPath(target)} replace_all=${replace_all}`);
         return toolResult("file_edit", {
           path: toCadgptPath(target),
+          absolute_path: target,
           changed: true,
           bytes_before: Buffer.byteLength(original),
           bytes_after: Buffer.byteLength(updated),
