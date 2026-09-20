@@ -35,7 +35,7 @@ function cleanup(): void {
 }
 
 function hasExplicitInvocation(userTurn: string): boolean {
-  return /@cadgpt\b/i.test(userTurn);
+  return /(?:^|[^A-Za-z0-9._-])@cadgpt\b/i.test(userTurn);
 }
 
 function isControlOnly(userTurn: string): boolean {
