@@ -19,7 +19,23 @@ const INTERNAL_CAD_TOOLS = new Set([
   "acad_list_open_documents",
   "acad_set_active_document",
   "acad_create_blank_test_document",
+  "cad_observation_capture_start",
+  "cad_observation_capture_status",
+  "cad_observation_capture_finish",
+  "cad_observation_capture_cancel",
+  "cad_read_entity_properties",
 ]);
+
+const WRAPPED_CAD_SUMMARIES: Record<string, string> = {
+  cad_preview_delete_entities:
+    "Preview guarded deletion on an execution-scoped drawing and mint a one-shot token owned by the same execution/drawing.",
+  cad_execute_delete_preview:
+    "Execute only a destructive preview token owned by the same execution and drawing context.",
+  cad_load_lisp_file:
+    "Load and verify sandboxed Lisp; public commands discovered by the canonical parser become owned by this execution/drawing.",
+  cad_run_lisp_command:
+    "Run only a Lisp command previously verified and owned by the same execution/drawing.",
+};
 
 const CORE_TOOLS = [
   { name: "cadgpt_admission", class: "control.admission", summary: "Verify literal @cadgpt invocation in the exact current user turn and mint scoped admission authority." },
@@ -111,16 +127,40 @@ async function loadToolEntries(): Promise<Array<Record<string, unknown>>> {
     const parsed = JSON.parse(await fs.readFile(manifestPath, "utf8")) as { tools?: ToolManifestEntry[] };
     for (const tool of parsed.tools ?? []) {
       if (INTERNAL_CAD_TOOLS.has(tool.name)) continue;
+      const upstreamSchema =
+        tool.inputSchema && typeof tool.inputSchema === "object"
+          ? (tool.inputSchema as Record<string, unknown>)
+          : {};
+      const properties =
+        upstreamSchema.properties && typeof upstreamSchema.properties === "object"
+          ? (upstreamSchema.properties as Record<string, unknown>)
+          : {};
+      const effectiveInputSchema = {
+        ...upstreamSchema,
+        type: "object",
+        properties: {
+          ...properties,
+          drawing_id: {
+            type: "string",
+            description:
+              "Execution-scoped drawing_id returned by drawing_bind; required when multiple drawings are bound.",
+          },
+        },
+      };
+
       result.push({
         id: `cad__${tool.name}`,
         name: `cad__${tool.name}`,
         upstream_name: tool.name,
         kind: "tool",
         registry: "internal",
-        source: "cad-mcp",
+        source: "cad-mcp-public-proxy",
         class: toolClass(tool.name),
-        summary: tool.description || tool.name,
-        input_schema: tool.inputSchema ?? {},
+        summary:
+          WRAPPED_CAD_SUMMARIES[tool.name] ||
+          tool.description ||
+          tool.name,
+        input_schema: effectiveInputSchema,
       });
     }
   } catch {
