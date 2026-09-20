@@ -96,9 +96,83 @@ $trayMarker = Join-Path $appDataRoot "state\tray-ready.json"
 if (Test-Path $trayMarker) {
     try {
         $trayState = Get-Content $trayMarker -Raw | ConvertFrom-Json
-        if ([int]$trayState.pid -gt 0 -and (Get-Process -Id ([int]$trayState.pid) -ErrorAction SilentlyContinue)) {
-            Ok "CadGPT tray host is running (PID $($trayState.pid))"
-        } else { Warn "CadGPT tray marker exists but PID is not running." }
+        $trayPid = [int]$trayState.pid
+        $trayProc = if ($trayPid -gt 0) { Get-Process -Id $trayPid -ErrorAction SilentlyContinue } else { $null }
+        $trayInfo = if ($trayProc) { Get-CimInstance Win32_Process -Filter "ProcessId = $trayPid" -ErrorAction SilentlyContinue } else { $null }
+        $expectedTrayScript = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "cadgpt-tray.ps1"))
+        $ownedTray = $trayProc -and
+            $trayProc.ProcessName -match '^(powershell|pwsh)(?:\.exe)?
+    } catch { Warn "CadGPT tray marker is unreadable." }
+} else { Warn "CadGPT tray is not currently running." }
+
+$portValue = Get-DotEnvValue "PORT"
+$port = if ($portValue) { [int]$portValue } else { 3000 }
+$healthPortValue = Get-DotEnvValue "OPENAI_TUNNEL_HEALTH_PORT"
+$healthPort = if ($healthPortValue) { [int]$healthPortValue } else { 8080 }
+
+$mcpToken = Get-DotEnvValue "MCP_TOKEN"
+if ($mcpToken) { Ok "Private MCP path token configured" } else { Warn "MCP_TOKEN is empty; re-run openai-tunnel init." }
+
+$tunnelId = Get-DotEnvValue "OPENAI_TUNNEL_ID"
+$tunnelKey = Get-DotEnvValue "OPENAI_TUNNEL_API_KEY"
+if ($tunnelId -and $tunnelKey) { Ok "Secure MCP Tunnel credentials configured" } else { Fail "Secure MCP Tunnel is not configured." }
+
+$cadPython = ".venv-cad\Scripts\python.exe"
+if (Test-Path $cadPython) {
+    Ok "CAD MCP virtual environment exists"
+    & $cadPython -m pip check *> $null
+    if ($LASTEXITCODE -eq 0) { Ok "CAD MCP Python dependency graph passes pip check" } else { Fail "CAD MCP Python dependency graph failed pip check; rerun setup.bat." }
+
+    & $cadPython -m compileall -q "runtimes\cad-mcp" *> $null
+    if ($LASTEXITCODE -eq 0) { Ok "CAD MCP Python source compiles" } else { Fail "CAD MCP source compile failed." }
+
+    & $cadPython -c "import sys; sys.path.insert(0, r'runtimes\cad-mcp'); import main; print('cad-mcp import ok')" *> $null
+    if ($LASTEXITCODE -eq 0) { Ok "CAD MCP entrypoint imports cleanly" } else { Fail "CAD MCP entrypoint import failed." }
+} else { Fail "CAD MCP virtual environment missing; run setup.bat." }
+
+try {
+    $health = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -Method Get -TimeoutSec 2
+    if ($health.status -eq "ok" -and $health.name -eq "cadgpt") {
+        Ok "CadGPT slim MCP healthy on port $port"
+        if ($health.mode -eq "slim-control-plane") { Ok "Slim control plane mode confirmed" }
+        else { Warn "Unexpected CadGPT mode: $($health.mode)" }
+        $families = @($health.loaded_families)
+        if ($families.Count -eq 0) { Ok "Heavy capability families remain unloaded at idle" }
+        else { Ok "Loaded capability families: $($families -join ', ')" }
+        if ($health.cad_mcp.connected) { Ok "CAD MCP currently connected ($($health.cad_mcp.tool_count) tools)" }
+        else { Ok "CAD MCP is sleeping/not connected (expected at idle)" }
+    } else { Fail "Unexpected service responded on CadGPT port $port." }
+} catch { Warn "CadGPT slim MCP is not currently running on port $port." }
+
+try {
+    $ready = Invoke-WebRequest -Uri "http://127.0.0.1:$healthPort/readyz" -UseBasicParsing -TimeoutSec 2
+    if ($ready.StatusCode -eq 200 -and $ready.Content -match "ready") { Ok "OpenAI Secure MCP Tunnel ready on health port $healthPort" }
+    else { Warn "Tunnel health endpoint responded but is not ready." }
+} catch { Warn "OpenAI Secure MCP Tunnel is not currently ready on health port $healthPort." }
+
+if ($tunnelId -and $tunnelKey -and (Test-Path "openai-tunnel.ps1")) {
+    Write-Host ""
+    Write-Host "Running tunnel-client doctor..." -ForegroundColor Cyan
+    & powershell -NoProfile -ExecutionPolicy Bypass -File "$ScriptDir\openai-tunnel.ps1" -Doctor -Port $port -HealthPort $healthPort
+    if ($LASTEXITCODE -eq 0) { Ok "tunnel-client doctor passed" } else { Fail "tunnel-client doctor failed" }
+}
+
+Write-Host ""
+Write-Host "=== Doctor result ===" -ForegroundColor Cyan
+Write-Host "Failures: $failures"
+Write-Host "Warnings: $warnings"
+if ($failures -gt 0) {
+    Write-Host "CadGPT needs attention before reliable use." -ForegroundColor Red
+    exit 1
+}
+Write-Host "CadGPT environment is healthy. Idle CAD MCP is expected." -ForegroundColor Green
+exit 0
+ -and
+            $trayInfo -and $trayInfo.CommandLine -and
+            $trayInfo.CommandLine.IndexOf($expectedTrayScript, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+        if ($ownedTray) {
+            Ok "CadGPT tray host is running (PID $trayPid)"
+        } else { Warn "CadGPT tray marker exists but does not identify the owned tray process." }
     } catch { Warn "CadGPT tray marker is unreadable." }
 } else { Warn "CadGPT tray is not currently running." }
 
