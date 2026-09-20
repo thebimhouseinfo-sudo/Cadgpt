@@ -18,8 +18,23 @@ do {
     if (Test-Path $marker) {
         try {
             $state = Get-Content $marker -Raw | ConvertFrom-Json
-            if ($state.ready -eq $true -and [int]$state.pid -gt 0 -and (Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue)) {
-                Write-Host "[OK] CadGPT tray ready (PID $($state.pid))." -ForegroundColor Green
+            $trayPid = [int]$state.pid
+            $proc = if ($trayPid -gt 0) { Get-Process -Id $trayPid -ErrorAction SilentlyContinue } else { $null }
+            $info = if ($proc) { Get-CimInstance Win32_Process -Filter "ProcessId = $trayPid" -ErrorAction SilentlyContinue } else { $null }
+            $expectedScript = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "cadgpt-tray.ps1"))
+            $owned = $proc -and
+                $proc.ProcessName -match '^(powershell|pwsh)(?:\.exe)?
+        } catch {}
+    }
+    Start-Sleep -Milliseconds 250
+} while ((Get-Date) -lt $deadline)
+Write-Host "[ERROR] CadGPT tray did not become ready." -ForegroundColor Red
+exit 1
+ -and
+                $info -and $info.CommandLine -and
+                $info.CommandLine.IndexOf($expectedScript, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            if ($state.ready -eq $true -and $owned) {
+                Write-Host "[OK] CadGPT tray ready (PID $trayPid)." -ForegroundColor Green
                 exit 0
             }
         } catch {}
