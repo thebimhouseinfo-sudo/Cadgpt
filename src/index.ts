@@ -14,7 +14,7 @@ import {
   toRepoRelative,
 } from "./cadgpt/lib/path-security.js";
 import { runtimeStateSnapshot } from "./cadgpt/lib/runtime-state.js";
-import { activeWorkCount, sweepExpiredWork } from "./cadgpt/lib/work-registration.js";
+import { activeToolLeaseCount, activeWorkCount, sweepExpiredWork } from "./cadgpt/lib/work-registration.js";
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
@@ -89,6 +89,12 @@ app.get("/health", async (_req, res) => {
     active_mcp_sessions: sessions.count(),
     active_mcp_requests: activeMcpRequests,
     active_work_registrations: activeWorkCount(),
+    active_tool_leases: activeToolLeaseCount(),
+    memory: {
+      rss_bytes: process.memoryUsage().rss,
+      heap_used_bytes: process.memoryUsage().heapUsed,
+      heap_total_bytes: process.memoryUsage().heapTotal,
+    },
     last_mcp_activity_at: new Date(lastMcpActivityAt).toISOString(),
     session_recovery: SESSION_RECOVERY,
     mcp_path_protected: Boolean(MCP_TOKEN),
