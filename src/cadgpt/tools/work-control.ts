@@ -11,6 +11,7 @@ import {
 } from "../lib/work-registration.js";
 import { validateAdmissionToken } from "../lib/admission.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { cleanupExecutionState } from "../runtime/execution-cleanup.js";
 
 export function registerWorkControlTools(
   server: McpServer,
@@ -37,16 +38,7 @@ export function registerWorkControlTools(
         validateAdmissionToken(admission_token, options.sessionKey);
         const previousExecution = activeExecutionForSession(options.sessionKey);
         if (previousExecution) {
-          try {
-            const [{ clearExecutionDrawingContexts }, { releaseObservationForExecution }] = await Promise.all([
-              import("../session/drawing-binding.js"),
-              import("../observator/engine.js"),
-            ]);
-            await releaseObservationForExecution(previousExecution);
-            clearExecutionDrawingContexts(previousExecution);
-          } catch {
-            // CAD/Observator family may not have loaded for the prior work.
-          }
+          await cleanupExecutionState(previousExecution);
         }
 
         const work = createWorkRegistration({
@@ -119,16 +111,7 @@ export function registerWorkControlTools(
           authority_token,
           options.sessionKey
         );
-        try {
-          const [{ clearExecutionDrawingContexts }, { releaseObservationForExecution }] = await Promise.all([
-            import("../session/drawing-binding.js"),
-            import("../observator/engine.js"),
-          ]);
-          await releaseObservationForExecution(released.executionId);
-          clearExecutionDrawingContexts(released.executionId);
-        } catch {
-          // CAD/Observator family may not have loaded.
-        }
+        await cleanupExecutionState(released.executionId);
         return toolResult("cadgpt_work_stop", {
           released: true,
           execution_id: released.executionId,
