@@ -10,7 +10,7 @@ import {
   getUserCapabilitiesPath,
   getUserLibrariesManifestPath,
 } from "../lib/appdata.js";
-import { resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
+import { isPathInside, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 
 interface JobEntry {
@@ -101,6 +101,13 @@ function draftPathFor(libraryId: string, relativePath: string): string {
 }
 
 function assertDraftVirtualPath(value: string): void {
+  if (path.isAbsolute(value)) {
+    const target = path.resolve(value);
+    if (!isPathInside(target, getJobDraftRoot()) || path.basename(target).toLowerCase() !== "job.md") {
+      throw new Error("Draft path must be an absolute JOB.md path under the approved Job draft root");
+    }
+    return;
+  }
   const normalized = value.replaceAll("\\", "/").toLowerCase();
   if (!normalized.startsWith("appdata/workspace/job-draft/") || path.basename(normalized) !== "job.md") {
     throw new Error("Draft path must point to JOB.md under appdata/workspace/job-draft/**");
