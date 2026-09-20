@@ -297,10 +297,12 @@ export function registerCadProxyTools(server: McpServer): void {
     async () => {
       try {
         await ensureCadRuntimeActive();
-        const drawings = await listOpenDrawings();
-        return toolResult("drawing_list", {
-          drawings,
-          count: drawings.length,
+        return await withCadHostLock("autocad", async () => {
+          const drawings = await listOpenDrawings();
+          return toolResult("drawing_list", {
+            drawings,
+            count: drawings.length,
+          });
         });
       } catch (error) {
         return toolError("drawing_list", error);
@@ -319,40 +321,42 @@ export function registerCadProxyTools(server: McpServer): void {
     async () => {
       try {
         await ensureCadRuntimeActive();
-        const created = await cadUpstream.callTool(
-          "acad_create_blank_test_document",
-          {}
-        );
-        if (
-          created &&
-          typeof created === "object" &&
-          (created as { isError?: boolean }).isError
-        ) {
-          throw new Error("CAD MCP could not create a blank test drawing");
-        }
-        const drawings = await listOpenDrawings();
-        const active = drawings.filter((item) => item.active === true);
-        if (active.length !== 1) {
-          throw new Error(
-            "Could not resolve the newly-created active test drawing uniquely"
+        return await withCadHostLock("autocad", async () => {
+          const created = await cadUpstream.callTool(
+            "acad_create_blank_test_document",
+            {}
           );
-        }
-        const selected = active[0];
-        const identity = String(
-          selected.full_name || selected.name || ""
-        );
-        if (!identity) {
-          throw new Error("New test drawing has no usable identity");
-        }
-        const drawing = await bindDrawing(identity);
-        return toolResult("drawing_create_test", {
-          created: true,
-          bound: true,
-          test_drawing: true,
-          unsaved: !drawing.full_name,
-          drawing,
-          note:
-            "Use this isolated drawing for mutation/Lisp tests. Do not save it over a project drawing.",
+          if (
+            created &&
+            typeof created === "object" &&
+            (created as { isError?: boolean }).isError
+          ) {
+            throw new Error("CAD MCP could not create a blank test drawing");
+          }
+          const drawings = await listOpenDrawings();
+          const active = drawings.filter((item) => item.active === true);
+          if (active.length !== 1) {
+            throw new Error(
+              "Could not resolve the newly-created active test drawing uniquely"
+            );
+          }
+          const selected = active[0];
+          const identity = String(
+            selected.full_name || selected.name || ""
+          );
+          if (!identity) {
+            throw new Error("New test drawing has no usable identity");
+          }
+          const drawing = await bindDrawing(identity);
+          return toolResult("drawing_create_test", {
+            created: true,
+            bound: true,
+            test_drawing: true,
+            unsaved: !drawing.full_name,
+            drawing,
+            note:
+              "Use this isolated drawing for mutation/Lisp tests. Do not save it over a project drawing.",
+          });
         });
       } catch (error) {
         return toolError("drawing_create_test", error);
@@ -371,8 +375,10 @@ export function registerCadProxyTools(server: McpServer): void {
     async ({ document }) => {
       try {
         await ensureCadRuntimeActive();
-        const drawing = await bindDrawing(document);
-        return toolResult("drawing_bind", { bound: true, drawing });
+        return await withCadHostLock("autocad", async () => {
+          const drawing = await bindDrawing(document);
+          return toolResult("drawing_bind", { bound: true, drawing });
+        });
       } catch (error) {
         return toolError("drawing_bind", error);
       }
@@ -390,9 +396,11 @@ export function registerCadProxyTools(server: McpServer): void {
     async ({ drawing_id }) => {
       try {
         await ensureCadRuntimeActive();
-        return toolResult(
-          "drawing_status",
-          await drawingBindingStatus(drawing_id)
+        return await withCadHostLock("autocad", async () =>
+          toolResult(
+            "drawing_status",
+            await drawingBindingStatus(drawing_id)
+          )
         );
       } catch (error) {
         return toolError("drawing_status", error);
