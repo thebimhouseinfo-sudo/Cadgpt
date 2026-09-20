@@ -22,11 +22,19 @@ import {
 } from "../session/drawing-binding.js";
 
 const proxyRegistry = new WeakMap<McpServer, Map<string, RegisteredTool>>();
-const INTERNAL_DOCUMENT_TOOLS = new Set([
+const INTERNAL_UPSTREAM_TOOLS = new Set([
+  // Outer CadGPT owns document discovery/binding/lifetime identity.
   "acad_get_active_document",
   "acad_list_open_documents",
   "acad_set_active_document",
   "acad_create_blank_test_document",
+
+  // Outer Observator owns capture lifecycle, execution ownership and cleanup.
+  "cad_observation_capture_start",
+  "cad_observation_capture_status",
+  "cad_observation_capture_finish",
+  "cad_observation_capture_cancel",
+  "cad_read_entity_properties",
 ]);
 
 interface ToolManifest {
@@ -178,7 +186,7 @@ export async function ensureCadRuntimeActive(): Promise<void> {
 export function syncCadBusinessProxies(server: McpServer): string[] {
   const registry = registryFor(server);
   const desiredTools = loadManifest().tools.filter(
-    (tool) => !INTERNAL_DOCUMENT_TOOLS.has(tool.name)
+    (tool) => !INTERNAL_UPSTREAM_TOOLS.has(tool.name)
   );
   const desiredNames = new Set(desiredTools.map((tool) => `cad__${tool.name}`));
 
