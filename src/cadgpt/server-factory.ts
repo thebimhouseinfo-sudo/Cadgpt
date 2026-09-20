@@ -127,16 +127,20 @@ async function loadDiscoveryFamily(server: McpServer): Promise<void> {
   const loaded = serverFamilies(server);
   if (loaded.has("discovery")) return;
 
-  const [{ registerLibraryTools }, { registerJobTools }, { registerSkillTools }, { registerCapabilityRegistryTools }] =
-    await Promise.all([
-      import("./tools/libraries.js"),
-      import("./tools/jobs.js"),
-      import("./tools/skills.js"),
-      import("./tools/registry.js"),
-    ]);
+  const [
+    { registerLibraryDiscoveryTools },
+    { registerJobDiscoveryTools },
+    { registerSkillTools },
+    { registerCapabilityRegistryTools },
+  ] = await Promise.all([
+    import("./tools/libraries.js"),
+    import("./tools/jobs.js"),
+    import("./tools/skills.js"),
+    import("./tools/registry.js"),
+  ]);
 
-  registerLibraryTools(server);
-  registerJobTools(server);
+  registerLibraryDiscoveryTools(server);
+  registerJobDiscoveryTools(server);
   registerSkillTools(server);
   registerCapabilityRegistryTools(server);
 
@@ -149,16 +153,25 @@ async function loadFileFamily(server: McpServer): Promise<void> {
   if (loaded.has("file")) return;
 
   await loadDiscoveryFamily(server);
-  const [{ registerFilesystemTools }, { registerLispHarnessTools }, { registerLispWorkspaceTools }] =
-    await Promise.all([
-      import("./tools/filesystem.js"),
-      import("./tools/lisp-harness.js"),
-      import("./tools/lisp-workspace.js"),
-    ]);
+  const [
+    { registerFilesystemTools },
+    { registerLispHarnessTools },
+    { registerLispWorkspaceTools },
+    { registerLibraryMutationTools },
+    { registerJobAuthoringTools },
+  ] = await Promise.all([
+    import("./tools/filesystem.js"),
+    import("./tools/lisp-harness.js"),
+    import("./tools/lisp-workspace.js"),
+    import("./tools/libraries.js"),
+    import("./tools/jobs.js"),
+  ]);
 
   registerFilesystemTools(server);
   registerLispHarnessTools(server);
   registerLispWorkspaceTools(server);
+  registerLibraryMutationTools(server);
+  registerJobAuthoringTools(server);
 
   loaded.add("file");
   markFamilyLoaded("file");
