@@ -32,7 +32,7 @@ That directory is **not** a coding-agent write scope. It exists only for crash-s
 
 Only one active `cad-mcp-dev` source execution may exist at a time.
 
-Within that execution, only one `cad-mcp-dev` ToolLease may be active at a time. Do not parallelize source mutations, validation, candidate lifecycle or dependency sync.
+Within that execution, only one `cad-mcp-dev` ToolLease may be active at a time. Do not parallelize source mutations, validation, recovery, or candidate lifecycle.
 
 Use:
 
