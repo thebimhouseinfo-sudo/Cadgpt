@@ -347,7 +347,7 @@ export function registerLibraryTools(server: McpServer): void {
             }
 
             const previousManifest = await readOptionalText(manifestPath);
-            const previousRegistry = await readOptionalText(registryPath);
+            let manifestWritten: string | null = null;
             let backedUp = false;
             let swapped = false;
 
@@ -383,10 +383,15 @@ export function registerLibraryTools(server: McpServer): void {
           if (manifestCurrent !== manifestBaseline) {
             throw new Error("RESOURCE_CONFLICT: User Library manifest changed during import");
           }
-          await atomicJson(manifestPath, { version: manifest.version || 1, libraries });
+          manifestWritten = `${JSON.stringify({ version: manifest.version || 1, libraries }, null, 2)}\n`;
+          await atomicText(manifestPath, manifestWritten);
 
           const capabilityCount = await reindexLibrary(kind, library_id, target);
-          if (existed) await fs.rm(backup, { recursive: true, force: true });
+          if (existed) {
+            await fs.rm(backup, { recursive: true, force: true }).catch((error) => {
+              console.warn("[library_import] Could not remove post-success backup", error);
+            });
+          }
           return toolResult("library_import", {
             library: record,
             source_was_read_only: true,
@@ -404,8 +409,18 @@ export function registerLibraryTools(server: McpServer): void {
           if (backedUp) {
             await fs.rename(backup, target).catch(() => undefined);
           }
-          await restoreOptionalText(manifestPath, previousManifest).catch(() => undefined);
-          await restoreOptionalText(registryPath, previousRegistry).catch(() => undefined);
+          if (manifestWritten !== null) {
+            const currentManifest = await readOptionalText(manifestPath).catch(() => null);
+            if (currentManifest === manifestWritten) {
+              await restoreOptionalText(manifestPath, previousManifest).catch((restoreError) => {
+                console.error("[library_import] Manifest rollback failed", restoreError);
+              });
+            } else if (currentManifest !== previousManifest) {
+              console.error(
+                "[library_import] Manifest changed outside this transaction; refusing to overwrite it during rollback."
+              );
+            }
+          }
           throw error;
             }
           }
