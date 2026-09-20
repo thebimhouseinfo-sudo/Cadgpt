@@ -1,4 +1,4 @@
-import fs from "node:fs";
+import fs, { type Dirent } from "node:fs";
 import path from "node:path";
 
 import { getAppDataPath } from "../lib/appdata.js";
@@ -17,7 +17,7 @@ function recoveryRoot(): string {
 
 function pendingRecoveryDirectories(): string[] {
   const root = recoveryRoot();
-  let entries: fs.Dirent[];
+  let entries: Dirent[];
   try {
     entries = fs.readdirSync(root, { withFileTypes: true });
   } catch (error) {
