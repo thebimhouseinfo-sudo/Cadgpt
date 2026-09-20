@@ -1,17 +1,22 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type {
+  McpServer,
+  RegisteredTool,
+} from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { cadUpstream } from "../runtime/cad-upstream.js";
+import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import { getRepoRoot } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import {
+  activateDrawingContext,
   bindDrawing,
   drawingBindingStatus,
-  ensureBoundDrawingActive,
   listOpenDrawings,
+  resolveDrawingContext,
 } from "../session/drawing-binding.js";
 
 const proxyRegistry = new WeakMap<McpServer, Map<string, RegisteredTool>>();
@@ -28,12 +33,21 @@ interface ToolManifest {
 }
 
 function loadManifest(): ToolManifest {
-  const manifestPath = path.join(getRepoRoot(), "runtimes", "cad-mcp", "tool-manifest.json");
+  const manifestPath = path.join(
+    getRepoRoot(),
+    "runtimes",
+    "cad-mcp",
+    "tool-manifest.json"
+  );
   if (!fs.existsSync(manifestPath)) {
-    throw new Error("CAD tool manifest is missing. Run setup.bat or: python scripts/generate-cad-tool-manifest.py");
+    throw new Error(
+      "CAD tool manifest is missing. Run setup.bat or the scoped CAD MCP manifest generation action."
+    );
   }
   const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as ToolManifest;
-  if (!Array.isArray(parsed.tools)) throw new Error("CAD tool manifest is invalid: tools[] missing");
+  if (!Array.isArray(parsed.tools)) {
+    throw new Error("CAD tool manifest is invalid: tools[] missing");
+  }
   return parsed;
 }
 
@@ -64,32 +78,46 @@ function schemaNodeToZod(schema: unknown): z.ZodTypeAny {
 
   let field: z.ZodTypeAny;
   const literalValues = Array.isArray(node.enum)
-    ? node.enum.filter((value): value is string | number | boolean | null =>
-        value === null || ["string", "number", "boolean"].includes(typeof value)
+    ? node.enum.filter(
+        (value): value is string | number | boolean | null =>
+          value === null || ["string", "number", "boolean"].includes(typeof value)
       )
     : [];
 
-  if (node.const === null || ["string", "number", "boolean"].includes(typeof node.const)) {
+  if (
+    node.const === null ||
+    ["string", "number", "boolean"].includes(typeof node.const)
+  ) {
     field = z.literal(node.const as string | number | boolean | null);
   } else if (literalValues.length === 1) {
     field = z.literal(literalValues[0]);
   } else if (literalValues.length > 1) {
     const literals = literalValues.map((value) => z.literal(value));
-    field = z.union(literals as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
+    field = z.union(
+      literals as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]
+    );
   } else if ((node.oneOf ?? node.anyOf)?.length) {
     const options = (node.oneOf ?? node.anyOf)!.map(schemaNodeToZod);
-    field = options.length === 1
-      ? options[0]
-      : z.union(options as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
+    field =
+      options.length === 1
+        ? options[0]
+        : z.union(
+            options as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]
+          );
   } else {
-    const types = Array.isArray(node.type) ? node.type : node.type ? [node.type] : [];
+    const types = Array.isArray(node.type)
+      ? node.type
+      : node.type
+        ? [node.type]
+        : [];
     const primary = types.find((item) => item !== "null");
     if (primary === "string") field = z.string();
     else if (primary === "number") field = z.number();
     else if (primary === "integer") field = z.number().int();
     else if (primary === "boolean") field = z.boolean();
-    else if (primary === "array") field = z.array(schemaNodeToZod(node.items));
-    else if (primary === "object" || node.properties) {
+    else if (primary === "array") {
+      field = z.array(schemaNodeToZod(node.items));
+    } else if (primary === "object" || node.properties) {
       const required = new Set(node.required ?? []);
       const shape: Record<string, z.ZodTypeAny> = {};
       for (const [key, child] of Object.entries(node.properties ?? {})) {
@@ -102,13 +130,20 @@ function schemaNodeToZod(schema: unknown): z.ZodTypeAny {
     if (types.includes("null") || node.nullable) field = field.nullable();
   }
 
-  if (node.default !== undefined && node.default !== null) field = field.default(node.default as never);
+  if (node.default !== undefined && node.default !== null) {
+    field = field.default(node.default as never);
+  }
   return node.description ? field.describe(node.description) : field;
 }
 
-function schemaToShape(schema: Tool["inputSchema"]): Record<string, z.ZodTypeAny> {
+function schemaToShape(
+  schema: Tool["inputSchema"]
+): Record<string, z.ZodTypeAny> {
   if (!schema || typeof schema !== "object") return {};
-  const root = schema as { properties?: Record<string, unknown>; required?: string[] };
+  const root = schema as {
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
   const required = new Set(root.required ?? []);
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const [key, node] of Object.entries(root.properties ?? {})) {
@@ -118,9 +153,16 @@ function schemaToShape(schema: Tool["inputSchema"]): Record<string, z.ZodTypeAny
   return shape;
 }
 
+export async function ensureCadRuntimeActive(): Promise<void> {
+  const status = cadUpstream.status();
+  if (status.enabled && status.connected) return;
+  await activateCadRuntime();
+}
+
 function registerStableBusinessProxies(server: McpServer): string[] {
   const registry = registryFor(server);
   const publicNames: string[] = [];
+
   for (const tool of loadManifest().tools) {
     if (INTERNAL_DOCUMENT_TOOLS.has(tool.name)) continue;
     const publicName = `cad__${tool.name}`;
@@ -131,20 +173,40 @@ function registerStableBusinessProxies(server: McpServer): string[] {
       publicName,
       {
         title: tool.title ?? tool.name,
-        description: `[CAD MCP / stable descriptor / bound drawing required] ${tool.description ?? tool.name}`,
-        inputSchema: schemaToShape(tool.inputSchema),
+        description:
+          `[CAD MCP / execution-scoped drawing context] ${tool.description ?? tool.name}`,
+        inputSchema: {
+          ...schemaToShape(tool.inputSchema),
+          drawing_id: z
+            .string()
+            .optional()
+            .describe(
+              "Execution-scoped drawing_id returned by drawing_bind. Required when more than one drawing is bound."
+            ),
+        },
         annotations: tool.annotations,
       },
       async (args: Record<string, unknown>) => {
-        if (!cadUpstream.status().enabled) {
-          return toolError(publicName, new Error("CAD backend is sleeping. CadGPT only enables CAD MCP after ChatGPT has activated CadGPT and AutoCAD is running."));
+        try {
+          await ensureCadRuntimeActive();
+          const drawingId =
+            typeof args.drawing_id === "string" ? args.drawing_id : undefined;
+          const binding = resolveDrawingContext(drawingId);
+          const upstreamArgs = { ...args };
+          delete upstreamArgs.drawing_id;
+
+          return await withCadHostLock(binding.host, async () => {
+            await activateDrawingContext(binding);
+            return (await cadUpstream.callTool(tool.name, upstreamArgs)) as any;
+          });
+        } catch (error) {
+          return toolError(publicName, error);
         }
-        await ensureBoundDrawingActive(server);
-        return (await cadUpstream.callTool(tool.name, args ?? {})) as any;
       }
     );
     registry.set(publicName, registered);
   }
+
   return publicNames;
 }
 
@@ -152,7 +214,10 @@ function manifestToolNames(): Set<string> {
   return new Set(loadManifest().tools.map((tool) => tool.name));
 }
 
-function diffRuntimeAgainstManifest(runtimeTools: Tool[]): { missing: string[]; unexpected: string[] } {
+function diffRuntimeAgainstManifest(runtimeTools: Tool[]): {
+  missing: string[];
+  unexpected: string[];
+} {
   const manifest = manifestToolNames();
   const runtime = new Set(runtimeTools.map((tool) => tool.name));
   const missing = [...manifest].filter((name) => !runtime.has(name)).sort();
@@ -160,12 +225,18 @@ function diffRuntimeAgainstManifest(runtimeTools: Tool[]): { missing: string[]; 
   return { missing, unexpected };
 }
 
-export async function activateCadRuntime(): Promise<{ count: number; manifest_match: boolean; missing: string[]; unexpected: string[] }> {
+export async function activateCadRuntime(): Promise<{
+  count: number;
+  manifest_match: boolean;
+  missing: string[];
+  unexpected: string[];
+}> {
   const runtimeTools = await cadUpstream.activate();
   const diff = diffRuntimeAgainstManifest(runtimeTools);
   return {
     count: runtimeTools.length,
-    manifest_match: diff.missing.length === 0 && diff.unexpected.length === 0,
+    manifest_match:
+      diff.missing.length === 0 && diff.unexpected.length === 0,
     ...diff,
   };
 }
@@ -181,24 +252,33 @@ export function registerCadProxyTools(server: McpServer): void {
     "cad_status",
     {
       title: "CAD MCP Status",
-      description: "Report stable CAD capability/runtime state. Tool descriptors remain available even while CAD MCP sleeps.",
+      description:
+        "Report CAD MCP runtime state without waking it. CAD MCP activates only on actual CAD demand.",
       inputSchema: {},
     },
-    async () => toolResult("cad_status", cadUpstream.status() as unknown as Record<string, unknown>)
+    async () =>
+      toolResult(
+        "cad_status",
+        cadUpstream.status() as unknown as Record<string, unknown>
+      )
   );
 
   server.registerTool(
     "drawing_list",
     {
       title: "List Open Drawings",
-      description: "List open AutoCAD drawings. ChatGPT must have activated CadGPT and AutoCAD must be running.",
+      description:
+        "Activate CAD MCP on demand and list open AutoCAD drawings available to this admitted work execution.",
       inputSchema: {},
     },
     async () => {
       try {
-        if (!cadUpstream.status().enabled) throw new Error("CAD backend is sleeping; AutoCAD is not currently available to this CadGPT session.");
+        await ensureCadRuntimeActive();
         const drawings = await listOpenDrawings();
-        return toolResult("drawing_list", { drawings, count: drawings.length });
+        return toolResult("drawing_list", {
+          drawings,
+          count: drawings.length,
+        });
       } catch (error) {
         return toolError("drawing_list", error);
       }
@@ -209,30 +289,47 @@ export function registerCadProxyTools(server: McpServer): void {
     "drawing_create_test",
     {
       title: "Create and Bind Blank Test Drawing",
-      description: "Create a new unsaved blank AutoCAD drawing and bind this CadGPT session to it. AutoCAD must already be running.",
+      description:
+        "Create a new unsaved blank AutoCAD drawing and bind it as an execution-scoped drawing context. AutoCAD must already be running.",
       inputSchema: {},
     },
     async () => {
       try {
-        if (!cadUpstream.status().enabled) throw new Error("CAD backend is sleeping; AutoCAD is not currently available.");
-        const created = await cadUpstream.callTool("acad_create_blank_test_document", {});
-        if (created && typeof created === "object" && (created as { isError?: boolean }).isError) {
+        await ensureCadRuntimeActive();
+        const created = await cadUpstream.callTool(
+          "acad_create_blank_test_document",
+          {}
+        );
+        if (
+          created &&
+          typeof created === "object" &&
+          (created as { isError?: boolean }).isError
+        ) {
           throw new Error("CAD MCP could not create a blank test drawing");
         }
         const drawings = await listOpenDrawings();
         const active = drawings.filter((item) => item.active === true);
-        if (active.length !== 1) throw new Error("Could not resolve the newly-created active test drawing uniquely");
+        if (active.length !== 1) {
+          throw new Error(
+            "Could not resolve the newly-created active test drawing uniquely"
+          );
+        }
         const selected = active[0];
-        const identity = String(selected.full_name || selected.name || "");
-        if (!identity) throw new Error("New test drawing has no usable identity");
-        const drawing = await bindDrawing(server, identity);
+        const identity = String(
+          selected.full_name || selected.name || ""
+        );
+        if (!identity) {
+          throw new Error("New test drawing has no usable identity");
+        }
+        const drawing = await bindDrawing(identity);
         return toolResult("drawing_create_test", {
           created: true,
           bound: true,
           test_drawing: true,
           unsaved: !drawing.full_name,
           drawing,
-          note: "Use this isolated drawing for Lisp load/run tests. Do not save it over a project drawing.",
+          note:
+            "Use this isolated drawing for mutation/Lisp tests. Do not save it over a project drawing.",
         });
       } catch (error) {
         return toolError("drawing_create_test", error);
@@ -243,14 +340,15 @@ export function registerCadProxyTools(server: McpServer): void {
   server.registerTool(
     "drawing_bind",
     {
-      title: "Bind CadGPT Drawing",
-      description: "Bind this CadGPT MCP session to one explicitly open AutoCAD drawing by exact file name or full path.",
+      title: "Bind CadGPT Drawing Context",
+      description:
+        "Bind this work execution to one explicitly open AutoCAD drawing by exact file name or full path. Returns an opaque drawing_id.",
       inputSchema: { document: z.string().min(1) },
     },
     async ({ document }) => {
       try {
-        if (!cadUpstream.status().enabled) throw new Error("CAD backend is sleeping; AutoCAD is not currently available.");
-        const drawing = await bindDrawing(server, document);
+        await ensureCadRuntimeActive();
+        const drawing = await bindDrawing(document);
         return toolResult("drawing_bind", { bound: true, drawing });
       } catch (error) {
         return toolError("drawing_bind", error);
@@ -261,30 +359,42 @@ export function registerCadProxyTools(server: McpServer): void {
   server.registerTool(
     "drawing_status",
     {
-      title: "CadGPT Drawing Binding Status",
-      description: "Show the drawing explicitly bound to this CadGPT MCP session and whether it is still open.",
-      inputSchema: {},
+      title: "CadGPT Drawing Context Status",
+      description:
+        "Show drawing contexts owned by this work execution. Supply drawing_id to inspect one exact context.",
+      inputSchema: { drawing_id: z.string().optional() },
     },
-    async () => toolResult("drawing_status", await drawingBindingStatus(server))
+    async ({ drawing_id }) => {
+      try {
+        await ensureCadRuntimeActive();
+        return toolResult(
+          "drawing_status",
+          await drawingBindingStatus(drawing_id)
+        );
+      } catch (error) {
+        return toolError("drawing_status", error);
+      }
+    }
   );
 
   server.registerTool(
     "cad_refresh_tools",
     {
       title: "Verify CAD Runtime Tool Manifest",
-      description: "Compare the active CAD MCP runtime tools against CadGPT's stable descriptor manifest. Descriptor changes require app refresh/reconnect rather than dynamic add/remove.",
+      description:
+        "Activate CAD MCP on demand and compare runtime tools against the generated CAD MCP manifest.",
       inputSchema: {},
     },
     async () => {
       try {
-        if (!cadUpstream.status().enabled) throw new Error("CAD backend is sleeping because AutoCAD is not active for this CadGPT session.");
+        await ensureCadRuntimeActive();
         const runtimeTools = await cadUpstream.listTools(true);
         const diff = diffRuntimeAgainstManifest(runtimeTools);
         return toolResult("cad_refresh_tools", {
           runtime_count: runtimeTools.length,
-          manifest_match: diff.missing.length === 0 && diff.unexpected.length === 0,
+          manifest_match:
+            diff.missing.length === 0 && diff.unexpected.length === 0,
           ...diff,
-          note: "If descriptors changed, regenerate the manifest and refresh/reconnect the ChatGPT app.",
         });
       } catch (error) {
         return toolError("cad_refresh_tools", error);
