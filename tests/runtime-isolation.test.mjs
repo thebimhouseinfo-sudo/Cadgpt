@@ -376,6 +376,12 @@ test("candidate acceptance requires a successful tool from the same generation",
   );
 
   recordCadCandidateSuccess(owner, "cad__cad_list_layers");
+  await assert.rejects(
+    acceptCadCandidate(owner, "cad__cad_list_layers"),
+    /CAD_CANDIDATE_MANIFEST_NOT_VERIFIED/
+  );
+
+  recordCadCandidateSuccess(owner, "cad_refresh_tools");
   const accepted = await acceptCadCandidate(owner, "cad__cad_list_layers");
   assert.equal(accepted.candidateId, candidate.candidateId);
 
