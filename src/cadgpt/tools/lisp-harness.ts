@@ -351,7 +351,7 @@ export function registerLispHarnessTools(server: McpServer): void {
           command: command.toUpperCase(),
           authoring_profile: profile,
           content,
-          next: "Create the working file under appdata/workspace/lisp-draft/**, implement it, then run lisp_draft_validate before CAD load/testing.",
+          next: "Create the working file with file_create using an absolute path under the approved Lisp draft root, implement it with absolute-path mutations, then run lisp_draft_validate before CAD load/testing.",
         });
       } catch (error) {
         return toolError("lisp_scaffold", error);
