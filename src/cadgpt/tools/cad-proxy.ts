@@ -66,6 +66,14 @@ function registryFor(server: McpServer): Map<string, RegisteredTool> {
   return registry;
 }
 
+function isToolErrorResult(value: unknown): boolean {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as { isError?: boolean }).isError === true
+  );
+}
+
 function schemaNodeToZod(schema: unknown): z.ZodTypeAny {
   if (!schema || typeof schema !== "object") return z.any();
   const node = schema as {
@@ -221,7 +229,9 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
           return await withCadHostLock(binding.host, async () => {
             await activateDrawingContext(binding);
             const result = (await cadUpstream.callTool(tool.name, upstreamArgs)) as any;
-            recordCadCandidateSuccess(currentToolLease().workId, publicName);
+            if (!isToolErrorResult(result)) {
+              recordCadCandidateSuccess(currentToolLease().workId, publicName);
+            }
             return result;
           });
         } catch (error) {
@@ -425,11 +435,14 @@ export function registerCadProxyTools(server: McpServer): void {
         await ensureCadRuntimeActive();
         const runtimeTools = await cadUpstream.listTools(true);
         const diff = diffRuntimeAgainstManifest(runtimeTools);
-        recordCadCandidateSuccess(currentToolLease().workId, "cad_refresh_tools");
+        const manifestMatch =
+          diff.missing.length === 0 && diff.unexpected.length === 0;
+        if (manifestMatch) {
+          recordCadCandidateSuccess(currentToolLease().workId, "cad_refresh_tools");
+        }
         return toolResult("cad_refresh_tools", {
           runtime_count: runtimeTools.length,
-          manifest_match:
-            diff.missing.length === 0 && diff.unexpected.length === 0,
+          manifest_match: manifestMatch,
           ...diff,
         });
       } catch (error) {
