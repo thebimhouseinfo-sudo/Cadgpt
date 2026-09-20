@@ -14,18 +14,92 @@ import {
 } from "../lib/path-security.js";
 import { currentToolLease, executionSupportsCad, isDevelopmentBuild } from "../lib/work-registration.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { getAppDataPath } from "../lib/appdata.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_READ_BYTES = 512 * 1024;
 const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
 const MAX_SNAPSHOT_FILES = 3000;
-const snapshots = new Map<
-  string,
-  { id: string; files: Map<string, Buffer>; createdAt: string }
->();
+interface CadMcpDevSnapshot {
+  id: string;
+  files: Map<string, Buffer>;
+  createdAt: string;
+}
+
+interface CadMcpDevRecoveryMetadata {
+  snapshot_id: string;
+  execution_id: string;
+  created_at: string;
+}
+
+const snapshots = new Map<string, CadMcpDevSnapshot>();
 const validatedFingerprints = new Map<string, string>();
 
-function assertDevMode(): void {
+function recoveryRoot(): string {
+  return getAppDataPath("state", "cad-mcp-dev-recovery");
+}
+
+function recoveryKey(executionId: string): string {
+  return createHash("sha256").update(executionId).digest("hex").slice(0, 24);
+}
+
+function recoveryDir(executionId: string): string {
+  return path.join(recoveryRoot(), recoveryKey(executionId));
+}
+
+function recoveryFilesDir(executionId: string): string {
+  return path.join(recoveryDir(executionId), "files");
+}
+
+function recoveryMetadataPath(executionId: string): string {
+  return path.join(recoveryDir(executionId), "metadata.json");
+}
+
+async function listRecoveryMetadata(): Promise<CadMcpDevRecoveryMetadata[]> {
+  let entries: Array<import("node:fs").Dirent>;
+  try {
+    entries = await fs.readdir(recoveryRoot(), { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+
+  const result: CadMcpDevRecoveryMetadata[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    try {
+      const parsed = JSON.parse(
+        await fs.readFile(
+          path.join(recoveryRoot(), entry.name, "metadata.json"),
+          "utf8"
+        )
+      ) as CadMcpDevRecoveryMetadata;
+      if (
+        typeof parsed.snapshot_id === "string" &&
+        typeof parsed.execution_id === "string" &&
+        typeof parsed.created_at === "string"
+      ) {
+        result.push(parsed);
+      }
+    } catch {
+      // A malformed recovery directory is intentionally ignored here; doctor/
+      // manual inspection can handle it without granting mutation authority.
+    }
+  }
+  return result.sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+async function assertNoForeignRecovery(executionId: string): Promise<void> {
+  const pending = await listRecoveryMetadata();
+  const foreign = pending.find((item) => item.execution_id !== executionId);
+  if (foreign) {
+    throw new Error(
+      `CAD_MCP_DEV_RECOVERY_REQUIRED: pending baseline ${foreign.snapshot_id} from ${foreign.execution_id} must be recovered before new CAD MCP mutations.`
+    );
+  }
+}
+
+async async function assertDevMode(): Promise<void> {
   if (!isDevelopmentBuild()) {
     throw new Error("DEVELOPMENT_ONLY: cad-mcp-dev is unavailable in production builds.");
   }
@@ -33,6 +107,7 @@ function assertDevMode(): void {
   if (lease.ownerId !== "cad-mcp-dev") {
     throw new Error("CAD_MCP_DEV_REQUIRED: current work owner must be cad-mcp-dev.");
   }
+  await assertNoForeignRecovery(lease.workId);
 }
 
 function assertNotGeneratedManifest(target: string): void {
@@ -45,7 +120,7 @@ function assertNotGeneratedManifest(target: string): void {
 }
 
 async function prepareDevMutation(): Promise<string> {
-  assertDevMode();
+  await assertDevMode();
   const lease = currentToolLease();
   const { assertCadCandidateSourceMutationAllowed } = await import("../runtime/cad-candidate.js");
   assertCadCandidateSourceMutationAllowed(lease.workId);
