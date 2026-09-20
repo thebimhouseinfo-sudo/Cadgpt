@@ -47,11 +47,17 @@ def get_active_document_info() -> dict:
         raise DocumentServiceError(str(exc)) from exc
 
 
-def set_active_document(document_name: str) -> dict:
-    if not document_name:
-        raise DocumentServiceError("document_name is required")
+def set_active_document(
+    document_name: str = "",
+    runtime_document_id: str = "",
+) -> dict:
+    if not document_name and not runtime_document_id:
+        raise DocumentServiceError("document_name or runtime_document_id is required")
     try:
-        doc = activate_document(document_name)
+        doc = activate_document(
+            document_name or None,
+            runtime_document_id or None,
+        )
         identity = document_identity(doc)
         return {**identity, "active": True, "host": "autocad"}
     except (AutoCADNotRunningError, ValueError) as exc:
