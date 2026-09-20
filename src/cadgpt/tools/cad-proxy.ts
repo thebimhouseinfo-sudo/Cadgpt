@@ -53,6 +53,10 @@ function loadManifest(): ToolManifest {
   return parsed;
 }
 
+export function hasCadProxySurface(server: McpServer): boolean {
+  return proxyRegistry.has(server);
+}
+
 function registryFor(server: McpServer): Map<string, RegisteredTool> {
   let registry = proxyRegistry.get(server);
   if (!registry) {
