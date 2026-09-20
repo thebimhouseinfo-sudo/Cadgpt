@@ -158,7 +158,8 @@ export function registerLispWorkspaceTools(server: McpServer): void {
           registry_id: entry.id,
           library_id: libraryId,
           source_path: toCadgptPath(sourcePath),
-          draft_path: toCadgptPath(draft),
+          draft_path: draft,
+          draft_display_path: toCadgptPath(draft),
           authoring_profile: profile,
           source_valid: syntax.valid,
           source_diagnostics: syntax.diagnostics,
@@ -177,7 +178,7 @@ export function registerLispWorkspaceTools(server: McpServer): void {
     "lisp_draft_validate",
     {
       title: "Validate AutoLISP Workspace Draft",
-      description: "Run AutoLISP correctness/safety plus an optional CadGPT/TBH authoring profile against a draft under appdata/workspace/lisp-draft/**.",
+      description: "Run AutoLISP correctness/safety plus an optional CadGPT/TBH authoring profile against a draft. Absolute draft paths returned by lisp_checkout are accepted.",
       inputSchema: {
         path: z.string().min(1),
         expected_commands: z.array(z.string().min(1)).max(50).optional().default([]),
