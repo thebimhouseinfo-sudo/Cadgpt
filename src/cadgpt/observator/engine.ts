@@ -1,7 +1,7 @@
 import { cadUpstream } from "../runtime/cad-upstream.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import { currentToolLease } from "../lib/work-registration.js";
-import { assertCadCandidateAccess } from "../runtime/cad-candidate.js";
+import { assertCadCandidateAccess, recordCadCandidateSuccess } from "../runtime/cad-candidate.js";
 import {
   activateDrawingContext,
   resolveDrawingContext,
@@ -69,6 +69,7 @@ export async function startObservationCapture(
 
     await activateDrawingContext(binding);
     const result = await cadUpstream.callTool("cad_observation_capture_start", {});
+    recordCadCandidateSuccess(lease.workId, "observator_capture_start");
     captureOwners.set(binding.host, {
       workId: lease.workId,
       drawingId: binding.drawing_id,
@@ -118,9 +119,11 @@ export async function finishObservationCapture(
   return withCadHostLock(owner.host, async () => {
     await activateDrawingContext(binding);
     try {
-      return await cadUpstream.callTool("cad_observation_capture_finish", {
+      const result = await cadUpstream.callTool("cad_observation_capture_finish", {
         include_paper_space: includePaperSpace,
       });
+      recordCadCandidateSuccess(currentToolLease().workId, "observator_capture_finish");
+      return result;
     } finally {
       captureOwners.delete(owner.host);
     }
@@ -133,7 +136,9 @@ export async function cancelObservationCapture(): Promise<unknown> {
 
   return withCadHostLock(owner.host, async () => {
     try {
-      return await cadUpstream.callTool("cad_observation_capture_cancel", {});
+      const result = await cadUpstream.callTool("cad_observation_capture_cancel", {});
+      recordCadCandidateSuccess(currentToolLease().workId, "observator_capture_cancel");
+      return result;
     } finally {
       captureOwners.delete(owner.host);
     }
@@ -152,10 +157,12 @@ export async function readEntityProperties(
   const binding = resolveDrawingContext(drawingId);
   return withCadHostLock(binding.host, async () => {
     await activateDrawingContext(binding);
-    return cadUpstream.callTool("cad_read_entity_properties", {
+    const result = await cadUpstream.callTool("cad_read_entity_properties", {
       handles,
       include_paper_space: includePaperSpace,
     });
+    recordCadCandidateSuccess(currentToolLease().workId, "observator_read_entities");
+    return result;
   });
 }
 
