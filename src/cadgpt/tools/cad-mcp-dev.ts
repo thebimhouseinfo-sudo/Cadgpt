@@ -81,9 +81,10 @@ async function listRecoveryMetadata(): Promise<CadMcpDevRecoveryMetadata[]> {
       ) {
         result.push(parsed);
       }
-    } catch {
-      // A malformed recovery directory is intentionally ignored here; doctor/
-      // manual inspection can handle it without granting mutation authority.
+    } catch (error) {
+      throw new Error(
+        `CAD_MCP_DEV_RECOVERY_CORRUPT: cannot read recovery metadata under ${path.join(recoveryRoot(), entry.name)}: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
   return result.sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -99,7 +100,9 @@ async function assertNoForeignRecovery(executionId: string): Promise<void> {
   }
 }
 
-async function assertDevMode(): Promise<void> {
+async function assertDevMode(
+  options: { allowRecovery?: boolean } = {}
+): Promise<void> {
   if (!isDevelopmentBuild()) {
     throw new Error("DEVELOPMENT_ONLY: cad-mcp-dev is unavailable in production builds.");
   }
@@ -107,7 +110,9 @@ async function assertDevMode(): Promise<void> {
   if (lease.ownerId !== "cad-mcp-dev") {
     throw new Error("CAD_MCP_DEV_REQUIRED: current work owner must be cad-mcp-dev.");
   }
-  await assertNoForeignRecovery(lease.workId);
+  if (!options.allowRecovery) {
+    await assertNoForeignRecovery(lease.workId);
+  }
 }
 
 function assertNotGeneratedManifest(target: string): void {
@@ -230,6 +235,121 @@ async function restoreSnapshotFiles(
     }
     await atomicWrite(target, data);
   }
+}
+
+async function persistSnapshot(
+  executionId: string,
+  snapshot: CadMcpDevSnapshot
+): Promise<void> {
+  const root = recoveryRoot();
+  const targetDir = recoveryDir(executionId);
+  const tempDir = path.join(
+    root,
+    `.${recoveryKey(executionId)}.${randomUUID()}.tmp`
+  );
+  const tempFiles = path.join(tempDir, "files");
+
+  await fs.mkdir(root, { recursive: true });
+  try {
+    await fs.lstat(targetDir);
+    throw new Error(
+      `CAD_MCP_DEV_RECOVERY_EXISTS: persistent baseline already exists for ${executionId}`
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  await fs.mkdir(tempFiles, { recursive: true });
+  try {
+    for (const [rel, data] of snapshot.files) {
+      const target = path.resolve(tempFiles, rel);
+      if (!isPathInside(target, tempFiles)) {
+        throw new Error("Snapshot contains an invalid recovery relative path");
+      }
+      await atomicWrite(target, data);
+    }
+
+    const metadata: CadMcpDevRecoveryMetadata = {
+      snapshot_id: snapshot.id,
+      execution_id: executionId,
+      created_at: snapshot.createdAt,
+    };
+    await atomicWrite(
+      path.join(tempDir, "metadata.json"),
+      `${JSON.stringify(metadata, null, 2)}\n`
+    );
+    await fs.rename(tempDir, targetDir);
+  } catch (error) {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function removePersistedSnapshot(executionId: string): Promise<void> {
+  await fs.rm(recoveryDir(executionId), {
+    recursive: true,
+    force: true,
+  });
+}
+
+async function loadPersistedSnapshot(
+  executionId: string
+): Promise<CadMcpDevSnapshot | null> {
+  let metadata: CadMcpDevRecoveryMetadata;
+  try {
+    metadata = JSON.parse(
+      await fs.readFile(recoveryMetadataPath(executionId), "utf8")
+    ) as CadMcpDevRecoveryMetadata;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+
+  if (
+    !metadata.snapshot_id ||
+    metadata.execution_id !== executionId ||
+    !metadata.created_at
+  ) {
+    throw new Error(
+      `CAD_MCP_DEV_RECOVERY_CORRUPT: invalid metadata for ${executionId}`
+    );
+  }
+
+  const filesRoot = recoveryFilesDir(executionId);
+  const files: string[] = [];
+  await walk(filesRoot, filesRoot, files, MAX_SNAPSHOT_FILES + 1);
+  if (files.length > MAX_SNAPSHOT_FILES) {
+    throw new Error("Persistent recovery snapshot exceeds file-count safety limit");
+  }
+
+  const captured = new Map<string, Buffer>();
+  let bytes = 0;
+  for (const file of files) {
+    const rel = path.relative(filesRoot, file);
+    const data = await fs.readFile(file);
+    bytes += data.length;
+    if (bytes > MAX_SNAPSHOT_BYTES) {
+      throw new Error("Persistent recovery snapshot exceeds byte-size safety limit");
+    }
+    captured.set(rel, data);
+  }
+
+  return {
+    id: metadata.snapshot_id,
+    files: captured,
+    createdAt: metadata.created_at,
+  };
+}
+
+async function findPersistedSnapshotById(
+  snapshotId: string
+): Promise<{ executionId: string; snapshot: CadMcpDevSnapshot } | null> {
+  const pending = await listRecoveryMetadata();
+  const metadata = pending.find((item) => item.snapshot_id === snapshotId);
+  if (!metadata) return null;
+  const snapshot = await loadPersistedSnapshot(metadata.execution_id);
+  if (!snapshot) return null;
+  return { executionId: metadata.execution_id, snapshot };
 }
 
 async function runPython(args: string[], cwd = runtimeRoot()) {
