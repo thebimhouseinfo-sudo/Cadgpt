@@ -684,3 +684,47 @@ test("admission does not mistake email/identifier text for @cadgpt invocation", 
     "active"
   );
 });
+
+
+test("cad-mcp-dev reserved owner id cannot be reached through sanitized aliases", async () => {
+  const previous = process.env.CADGPT_BUILD_PROFILE;
+  process.env.CADGPT_BUILD_PROFILE = "development";
+  try {
+    const { checkAdmission } = await import("../dist/cadgpt/lib/admission.js");
+    const { createWorkRegistration } = await import(
+      "../dist/cadgpt/lib/work-registration.js"
+    );
+    const admission = checkAdmission(
+      "reserved-dev-alias",
+      "@cadgpt improve CAD MCP"
+    );
+    assert.ok(admission.admission_token);
+
+    assert.throws(
+      () =>
+        createWorkRegistration({
+          sessionKey: "reserved-dev-alias",
+          admissionToken: admission.admission_token,
+          ownerType: "skill",
+          ownerId: "cad mcp dev",
+          executionPath: "file",
+        }),
+      /RESERVED_OWNER_ID/
+    );
+
+    assert.throws(
+      () =>
+        createWorkRegistration({
+          sessionKey: "reserved-dev-alias",
+          admissionToken: admission.admission_token,
+          ownerType: "file",
+          ownerId: "cad-mcp-dev",
+          executionPath: "file",
+        }),
+      /CAD_MCP_DEV_OWNER_TYPE/
+    );
+  } finally {
+    if (previous === undefined) delete process.env.CADGPT_BUILD_PROFILE;
+    else process.env.CADGPT_BUILD_PROFILE = previous;
+  }
+});
