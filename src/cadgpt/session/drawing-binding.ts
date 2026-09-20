@@ -10,6 +10,7 @@ export interface BoundDrawing {
   full_name: string;
   host: string;
   runtime_document_identity: string;
+  document_selector: string;
   bound_at: string;
 }
 
@@ -53,7 +54,19 @@ function normalizeDocuments(raw: unknown): Array<Record<string, unknown>> {
   throw new Error("CAD MCP returned an unexpected document-list payload");
 }
 
+function itemRuntimeId(item: Record<string, unknown>): string {
+  return String(item.runtime_document_id ?? "").trim();
+}
+
 function matchesBinding(
+  item: Record<string, unknown>,
+  binding: Pick<BoundDrawing, "runtime_document_identity">
+): boolean {
+  const runtimeId = itemRuntimeId(item);
+  return Boolean(runtimeId && runtimeId === binding.runtime_document_identity);
+}
+
+function sameSelector(
   item: Record<string, unknown>,
   binding: Pick<BoundDrawing, "name" | "full_name">
 ): boolean {
@@ -95,12 +108,26 @@ export async function bindDrawing(document: string): Promise<BoundDrawing> {
   const selected = matches[0];
   const name = String(selected.name ?? "");
   const fullName = String(selected.full_name ?? "");
-  const identity = fullName || name;
-  if (!identity) throw new Error("Selected drawing has no usable identity");
+  const selector = fullName || name;
+  const runtimeIdentity = itemRuntimeId(selected);
+  if (!selector) throw new Error("Selected drawing has no usable name/path selector");
+  if (!runtimeIdentity) {
+    throw new Error(
+      "CAD MCP document contract is missing runtime_document_id; regenerate/update the CAD MCP runtime before binding drawings."
+    );
+  }
 
   const map = executionContexts(executionId);
   for (const existing of map.values()) {
     if (matchesBinding(selected, existing)) return existing;
+  }
+
+  // Same name/path after a close+reopen is a new document lifetime. Retire the
+  // stale context rather than allowing the old drawing_id to retarget.
+  for (const [drawingId, existing] of map) {
+    if (sameSelector(selected, existing) && existing.runtime_document_identity !== runtimeIdentity) {
+      map.delete(drawingId);
+    }
   }
 
   const binding: BoundDrawing = {
@@ -109,7 +136,8 @@ export async function bindDrawing(document: string): Promise<BoundDrawing> {
     name,
     full_name: fullName,
     host: String(selected.host ?? "autocad") || "autocad",
-    runtime_document_identity: identity,
+    runtime_document_identity: runtimeIdentity,
+    document_selector: selector,
     bound_at: new Date().toISOString(),
   };
   map.set(binding.drawing_id, binding);
@@ -157,16 +185,30 @@ export async function activateDrawingContext(
     const map = executionContexts(binding.execution_id);
     map.delete(binding.drawing_id);
     throw new Error(
-      `Bound drawing is no longer open: ${binding.runtime_document_identity}`
+      `BOUND_DRAWING_STALE: drawing ${binding.name} is no longer the same open AutoCAD document lifetime. Re-bind the drawing explicitly.`
     );
   }
 
   const raw = await cadUpstream.callTool("acad_set_active_document", {
-    document_name: binding.runtime_document_identity,
+    document_name: binding.document_selector,
+    runtime_document_id: binding.runtime_document_identity,
   });
   if (raw && typeof raw === "object" && (raw as { isError?: boolean }).isError) {
     throw new Error(
-      `Unable to activate bound drawing: ${binding.runtime_document_identity}`
+      `Unable to activate bound drawing: ${binding.document_selector}`
+    );
+  }
+
+  const activated = extractPayload(raw);
+  if (
+    activated &&
+    typeof activated === "object" &&
+    "runtime_document_id" in activated &&
+    String((activated as Record<string, unknown>).runtime_document_id ?? "") !==
+      binding.runtime_document_identity
+  ) {
+    throw new Error(
+      "BOUND_DRAWING_STALE: AutoCAD activated a different document lifetime than the bound drawing."
     );
   }
   return binding;
@@ -183,15 +225,19 @@ export async function drawingBindingStatus(
   }
 
   const docs = await listOpenDrawings();
-  const drawings = selected.map((binding) => ({
-    ...binding,
-    available: docs.some((item) => matchesBinding(item, binding)),
-  }));
+  const drawings = selected.map((binding) => {
+    const available = docs.some((item) => matchesBinding(item, binding));
+    if (!available) map.delete(binding.drawing_id);
+    return { ...binding, available };
+  });
+
   return {
-    bound: true,
+    bound: drawings.some((item) => item.available),
     count: drawings.length,
     drawings,
-    ...(drawings.length === 1 ? { drawing: drawings[0], available: drawings[0].available } : {}),
+    ...(drawings.length === 1
+      ? { drawing: drawings[0], available: drawings[0].available }
+      : {}),
   };
 }
 
