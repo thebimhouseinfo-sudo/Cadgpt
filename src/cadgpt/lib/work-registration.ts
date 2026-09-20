@@ -290,6 +290,13 @@ export function hasOtherActiveCadWork(executionId: string): boolean {
   );
 }
 
+export function executionSupportsCad(executionId: string): boolean {
+  const work = registrations.get(executionId);
+  return Boolean(
+    work && (work.executionPath === "cad" || work.executionPath === "hybrid")
+  );
+}
+
 export function sweepExpiredWork(): void {
   cleanup();
 }
