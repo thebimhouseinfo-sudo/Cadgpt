@@ -358,6 +358,11 @@ export function registerJobTools(server: McpServer): void {
           }
         }
 
+        const registryPath = getUserCapabilitiesPath();
+        const registryBaseline = await fs.readFile(registryPath, "utf8").catch((error) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+          throw error;
+        });
         const registry = await loadRegistry();
         for (const entry of registry.entries) {
           const id = String(entry.id || "");
@@ -390,7 +395,14 @@ export function registerJobTools(server: McpServer): void {
         await fs.mkdir(path.dirname(permanent), { recursive: true });
         await atomicWrite(permanent, content);
         try {
-          await atomicWrite(getUserCapabilitiesPath(), `${JSON.stringify({ version: registry.version, entries: nextEntries }, null, 2)}\n`);
+          const registryCurrent = await fs.readFile(registryPath, "utf8").catch((error) => {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+            throw error;
+          });
+          if (registryCurrent !== registryBaseline) {
+            throw new Error("RESOURCE_CONFLICT: User Registry changed during Job promotion");
+          }
+          await atomicWrite(registryPath, `${JSON.stringify({ version: registry.version, entries: nextEntries }, null, 2)}\n`);
         } catch (registryError) {
           try {
             if (targetExists && previousPermanent !== null) await atomicWrite(permanent, previousPermanent);
