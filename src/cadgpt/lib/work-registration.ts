@@ -282,6 +282,14 @@ export function hasActiveCadWork(): boolean {
   );
 }
 
+export function hasOtherActiveCadWork(executionId: string): boolean {
+  return [...registrations.values()].some(
+    (work) =>
+      work.executionId !== executionId &&
+      (work.executionPath === "cad" || work.executionPath === "hybrid")
+  );
+}
+
 export function sweepExpiredWork(): void {
   cleanup();
 }
