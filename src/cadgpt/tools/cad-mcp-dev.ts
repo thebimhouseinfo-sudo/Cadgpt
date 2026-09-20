@@ -113,7 +113,7 @@ async function walk(
   const entries = await fs.readdir(current, { withFileTypes: true });
   for (const entry of entries) {
     if (out.length >= limit) break;
-    if (entry.name === "__pycache__" || entry.name.startsWith(".")) continue;
+    if (entry.name === "__pycache__") continue;
     const full = path.join(current, entry.name);
     if (entry.isDirectory()) await walk(root, full, out, limit);
     else if (entry.isFile() && !entry.name.endsWith(".pyc")) out.push(full);
