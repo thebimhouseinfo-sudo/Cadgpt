@@ -265,7 +265,7 @@ async function reindexLibrary(kind: LibraryKind, libraryId: string, root: string
   return discovered.length;
 }
 
-export function registerLibraryTools(server: McpServer): void {
+export function registerLibraryDiscoveryTools(server: McpServer): void {
   server.registerTool(
     "library_list",
     {
@@ -283,7 +283,9 @@ export function registerLibraryTools(server: McpServer): void {
       }
     }
   );
+}
 
+export function registerLibraryMutationTools(server: McpServer): void {
   server.registerTool(
     "library_import",
     {
