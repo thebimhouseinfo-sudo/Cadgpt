@@ -50,9 +50,9 @@ export function registerWorkControlTools(
           executionPath: execution_path as ExecutionPath,
         });
 
-        if (previousExecution) {
-          await cleanupExecutionState(previousExecution);
-        }
+        const previousCleanup = previousExecution
+          ? await cleanupExecutionState(previousExecution)
+          : null;
         try {
           await options.prepareFamilies(work.executionPath, work.ownerId, work.executionId);
         } catch (error) {
@@ -71,6 +71,9 @@ export function registerWorkControlTools(
             driver_epoch: work.driverEpoch,
             generation: work.generation,
           },
+          ...(previousCleanup
+            ? { previous_cleanup: previousCleanup }
+            : {}),
         });
       } catch (error) {
         return toolError("cadgpt_work_start", error);
@@ -121,11 +124,15 @@ export function registerWorkControlTools(
           authority_token,
           options.sessionKey
         );
-        await cleanupExecutionState(released.executionId);
+        const cleanup = await cleanupExecutionState(
+          released.executionId
+        );
         return toolResult("cadgpt_work_stop", {
           released: true,
           execution_id: released.executionId,
           owner_id: released.ownerId,
+          cleanup,
+          recovery_required: cleanup.recovery_required,
         });
       } catch (error) {
         return toolError("cadgpt_work_stop", error);
