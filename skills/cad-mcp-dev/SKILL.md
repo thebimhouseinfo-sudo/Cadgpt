@@ -93,6 +93,7 @@ Do not edit CadGPT core registry code or User Registry from this Skill.
 ## Prohibited
 
 - no unrestricted cmd/PowerShell/bash;
+- no dependency installation or writes to .venv-cad/**; dependency environment changes remain setup/maintainer authority outside this Skill;
 - no Git branch/add/commit/push/PR;
 - no generic writes under `src/**`, `skills/**`, `knowledge/**`, `scripts/**`, `appdata/**`, repo-root config, or `.git/**`;
 - no direct edit of generated `tool-manifest.json`;
