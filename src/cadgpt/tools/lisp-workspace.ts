@@ -10,7 +10,7 @@ import {
   getUserCapabilitiesPath,
   getUserLibrariesManifestPath,
 } from "../lib/appdata.js";
-import { resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
+import { isPathInside, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import {
   applyAuthoringHeader,
@@ -87,6 +87,13 @@ function safeRelativeLisp(value: string): string {
 }
 
 function assertDraftVirtualPath(value: string): void {
+  if (path.isAbsolute(value)) {
+    const target = path.resolve(value);
+    if (!isPathInside(target, getLispDraftRoot()) || path.extname(target).toLowerCase() !== ".lsp") {
+      throw new Error("Draft path must be an absolute .lsp path under the approved Lisp draft root");
+    }
+    return;
+  }
   const normalized = value.replaceAll("\\", "/").toLowerCase();
   if (!normalized.startsWith("appdata/workspace/lisp-draft/") || !normalized.endsWith(".lsp")) {
     throw new Error("Draft path must be an .lsp file under appdata/workspace/lisp-draft/**");
