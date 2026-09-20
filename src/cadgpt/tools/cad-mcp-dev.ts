@@ -12,7 +12,12 @@ import {
   isPathInside,
   resolveAbsoluteMutationPath,
 } from "../lib/path-security.js";
-import { currentToolLease, executionSupportsCad, isDevelopmentBuild } from "../lib/work-registration.js";
+import {
+  currentToolLease,
+  executionSupportsCad,
+  hasOtherActiveCadWork,
+  isDevelopmentBuild,
+} from "../lib/work-registration.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { getAppDataPath } from "../lib/appdata.js";
 
@@ -142,6 +147,10 @@ async function prepareDevMutation(): Promise<string> {
 
 async function prepareDevSourceMutation(): Promise<string> {
   const workId = await prepareDevMutation();
+  const { assertCadDevSourceAccess } = await import(
+    "../runtime/cad-dev-source-transaction.js"
+  );
+  assertCadDevSourceAccess(workId);
   if (!snapshots.has(workId)) {
     throw new Error(
       "CAD_MCP_DEV_SNAPSHOT_REQUIRED: create cad_mcp_dev_snapshot before the first source/environment mutation."
