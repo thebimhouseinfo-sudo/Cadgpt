@@ -351,6 +351,12 @@ export function activeToolLeaseCount(): number {
   return activeLeases.size;
 }
 
+export function hasActiveCadCapabilityLease(): boolean {
+  return [...activeLeases.values()].some(
+    (lease) => lease.family === "cad" || lease.family === "observator"
+  );
+}
+
 export function hasActiveCadWork(): boolean {
   return [...registrations.values()].some(
     (work) => work.executionPath === "cad" || work.executionPath === "hybrid"
