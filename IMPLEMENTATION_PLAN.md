@@ -499,7 +499,7 @@ jobcreate
 cad-mcp-dev
 ```
 
-`cad-mcp-dev` is the privileged system Skill for controlled self-improvement of the CAD MCP runtime. Its source-write authority is narrower than generic FILE work and is defined in the dedicated self-improve section below.
+`cad-mcp-dev` is a **development-only** privileged system Skill for controlled self-improvement of the CAD MCP runtime. Its source-write authority is narrower than generic FILE work and is defined in the dedicated self-improve section below. It exists only while CadGPT is being developed and must not be included in the final production EXE/runtime once CAD MCP is considered stable.
 
 ---
 
@@ -760,6 +760,8 @@ First preserve compatibility where practical; isolate and lazy-load implementati
 
 CAD MCP is still an actively developed runtime. CadGPT therefore needs one controlled system Skill that can improve the CAD MCP implementation itself without turning CadGPT into a general-purpose coding worker.
 
+This Skill is **development-only**. It is part of the source/developer workflow while CAD MCP is still evolving, not a permanent end-user feature.
+
 Canonical owner:
 
 ```text
@@ -769,7 +771,25 @@ owner_id   = cad-mcp-dev
 
 User-facing intent may be described as `self-improve CAD MCP`, but the internal Skill identity stays stable.
 
-### 16.1 Activation rule
+### 16.1 Development-build availability
+
+`cad-mcp-dev` must be registered/exposed only when CadGPT is running in an explicit development/source-build mode.
+
+Production/release builds must not merely hide it in the UI; they must omit or disable the capability at registration/build time so no admission/work path can reach it.
+
+Required production invariant:
+
+```text
+production EXE / packaged release
+→ cad-mcp-dev absent
+→ runtime source mutation capability absent
+→ scoped coding runner absent
+→ candidate self-modification path absent
+```
+
+The normal production capabilities remain FILE authoring features such as managed Lisp/Job workflows and CAD execution features required by users.
+
+### 16.2 Activation rule
 
 This Skill is reachable only after the normal CadGPT admission chain:
 
@@ -787,7 +807,7 @@ A CAD tool failure may be reported as a candidate reason to improve CAD MCP, but
 
 No failure, missing capability, or runtime exception automatically grants `cad-mcp-dev` authority.
 
-### 16.2 Hard source-mutation boundary
+### 16.3 Hard source-mutation boundary
 
 The only source tree this Skill may modify is:
 
@@ -830,7 +850,7 @@ OUT_OF_SCOPE_CORE_CHANGE
 
 with the required change explained. Do not expand the write boundary automatically.
 
-### 16.3 Full coding workflow, not unrestricted machine shell
+### 16.4 Full coding workflow, not unrestricted machine shell
 
 `cad-mcp-dev` must be capable of a complete coding cycle:
 
@@ -859,7 +879,7 @@ Use a scoped coding runner with:
 
 ChatGPT remains the reasoning/coding agent. CadGPT supplies the tightly scoped coding capability.
 
-### 16.4 Work and lease identity
+### 16.5 Work and lease identity
 
 The Skill uses the same WorkRegistration/ToolLease model as all other CadGPT work.
 
@@ -877,7 +897,7 @@ A separate ChatGPT session running a normal CAD Job or GPTWorker coding session 
 
 No global developer workspace is allowed.
 
-### 16.5 Development lifecycle
+### 16.6 Development lifecycle
 
 The default self-improve lifecycle is:
 
@@ -910,7 +930,7 @@ candidate failed
 
 The control/admission plane must remain alive during candidate failure.
 
-### 16.6 Live-runtime safety
+### 16.7 Live-runtime safety
 
 Do not hot-reload arbitrary source into an in-flight CAD MCP call.
 
@@ -924,7 +944,7 @@ When code changes need runtime validation:
 
 A candidate runtime must not silently take over an unrelated Job's drawing context.
 
-### 16.7 AutoCAD test safety
+### 16.8 AutoCAD test safety
 
 Static/unit tests do not require CAD MCP activation.
 
@@ -948,7 +968,7 @@ CAD path
 
 without merging the two execution subsystems.
 
-### 16.8 Dependency changes
+### 16.9 Dependency changes
 
 The Skill may edit dependency declaration/lock files under `runtimes/cad-mcp/**`.
 
@@ -958,7 +978,7 @@ If dependency installation/rebuild is required, use a separate named privileged 
 
 Environment mutation is operational state, not an excuse to widen the source-write root.
 
-### 16.9 Local-source only; no Git workflow
+### 16.10 Local-source only; no Git workflow
 
 `cad-mcp-dev` is a local development capability only.
 
@@ -1187,6 +1207,17 @@ Internally these now control the tray/slim runtime rather than a Scheduled Task.
 
 Do not package into an installer/EXE until this source/BAT/tray architecture passes real Windows + AutoCAD validation.
 
+Before production packaging, perform a **developer-capability strip**:
+
+```text
+remove/disable cad-mcp-dev registration
+remove scoped coding runner from production surface
+remove runtime source-mutation authority
+verify production build cannot write runtimes/cad-mcp/**
+```
+
+The production EXE may contain the CAD MCP runtime binaries/resources needed for normal operation, but it must not contain the self-improvement workflow as an invokable capability.
+
 ---
 
 ## 23. Implementation phases
@@ -1281,7 +1312,7 @@ Replace one-binding-per-McpServer model with explicit execution-scoped drawing c
 
 ### P8 — CAD MCP self-improve Skill
 
-- add internal system Skill `cad-mcp-dev`;
+- add development-only internal system Skill `cad-mcp-dev`;
 - hard-code canonical source-write root to `runtimes/cad-mcp/**`;
 - allow read-only supporting repository context without write escalation;
 - add scoped runtime coding tools/runner instead of unrestricted shell;
@@ -1291,7 +1322,8 @@ Replace one-binding-per-McpServer model with explicit execution-scoped drawing c
 - add manifest/schema compatibility validation;
 - add controlled AutoCAD integration-test path;
 - add out-of-scope core-change reporting;
-- provide no Git workflow at all; changes remain local under `runtimes/cad-mcp/**`.
+- provide no Git workflow at all; changes remain local under `runtimes/cad-mcp/**`;
+- add a production-build exclusion gate so `cad-mcp-dev` and its coding runner are absent from packaged releases.
 
 ### P9 — Tray/startup migration
 
@@ -1452,7 +1484,8 @@ Verify:
 - no unrelated active Job/drawing context is inherited;
 - live integration test requires an explicitly approved drawing;
 - dependency environment rebuild requires its separate privileged action;
-- no Git command, commit, push, branch, or PR capability is available.
+- no Git command, commit, push, branch, or PR capability is available;
+- production build/profile does not register or expose `cad-mcp-dev` at all.
 
 ### 24.8 Tray
 
@@ -1554,7 +1587,8 @@ Stage 2 begins only after:
 - multi-chat/multi-drawing targeting is safe;
 - CAD scheduler prevents ActiveDocument races;
 - FILE and CAD execution paths are lazy and independent;
-- `cad-mcp-dev` can complete a scoped edit/test/rollback cycle without writing outside `runtimes/cad-mcp/**`;
+- development build: `cad-mcp-dev` can complete a scoped edit/test/rollback cycle without writing outside `runtimes/cad-mcp/**`;
+- production/package build: `cad-mcp-dev`, runtime coding tools, and source-mutation authority are absent;
 - candidate CAD MCP validation cannot hijack unrelated drawing/work contexts;
 - Windows tray/startup migration is stable;
 - managed library authoring integrity remains intact;
