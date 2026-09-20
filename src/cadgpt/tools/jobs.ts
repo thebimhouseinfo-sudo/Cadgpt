@@ -218,7 +218,8 @@ export function registerJobTools(server: McpServer): void {
           registry_id: entry.id,
           library_id: entry.library_id,
           source_path: toCadgptPath(source),
-          draft_path: toCadgptPath(draft),
+          draft_path: draft,
+          draft_display_path: toCadgptPath(draft),
           source_contract_valid: validation.valid,
           diagnostics: validation.diagnostics,
           managed_source_unchanged: true,
@@ -233,7 +234,7 @@ export function registerJobTools(server: McpServer): void {
     "job_draft_validate",
     {
       title: "Validate Job Workspace Draft",
-      description: "Validate the canonical structural Job contract for a JOB.md draft under appdata/workspace/job-draft/**.",
+      description: "Validate the canonical structural Job contract for a JOB.md draft. Absolute draft paths returned by job_checkout are accepted.",
       inputSchema: { path: z.string().min(1) },
     },
     async ({ path: input }) => {
