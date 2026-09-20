@@ -8,9 +8,12 @@ import {
 import { validateAdmissionToken } from "./lib/admission.js";
 import {
   acquireToolLease,
+  activeExecutionForSession,
+  releaseSessionWork,
   runWithToolLease,
   type ExecutionPath,
 } from "./lib/work-registration.js";
+import { revokeSessionAdmissions } from "./lib/admission.js";
 import {
   toolAuthority,
   toolFamily,
@@ -21,6 +24,7 @@ import { registerAdmissionTool } from "./tools/admission.js";
 import { registerWorkControlTools } from "./tools/work-control.js";
 
 const loadedByServer = new WeakMap<McpServer, Set<string>>();
+const sessionKeyByServer = new WeakMap<McpServer, string>();
 
 function serverFamilies(server: McpServer): Set<string> {
   let loaded = loadedByServer.get(server);
@@ -210,6 +214,7 @@ export function createMcpServer(): McpServer {
     }
   );
 
+  sessionKeyByServer.set(server, sessionKey);
   configureToolRegistration(server, sessionKey);
 
   registerAdmissionTool(server, {
@@ -223,4 +228,25 @@ export function createMcpServer(): McpServer {
   });
 
   return server;
+}
+
+
+export async function disposeMcpServerRuntime(server: McpServer): Promise<void> {
+  const sessionKey = sessionKeyByServer.get(server);
+  if (!sessionKey) return;
+
+  const executionId = activeExecutionForSession(sessionKey);
+  if (executionId) {
+    try {
+      const { clearExecutionDrawingContexts } = await import("./session/drawing-binding.js");
+      clearExecutionDrawingContexts(executionId);
+    } catch {
+      // Drawing family may never have loaded.
+    }
+  }
+
+  releaseSessionWork(sessionKey);
+  revokeSessionAdmissions(sessionKey);
+  loadedByServer.delete(server);
+  sessionKeyByServer.delete(server);
 }
