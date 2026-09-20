@@ -183,7 +183,7 @@ $runResult = Invoke-WorkTool "cad__cad_run_lisp_command" @{ drawing_id=$drawingI
 if ($runResult.isError -eq $true) { Fail "Safe no-op AutoLISP command dispatch failed." }
 Pass "Safe AutoLISP command dispatch accepted"
 
-$stop = Invoke-Tool "cadgpt_work_stop" @{ execution_id=$executionId; authority_token=$authorityToken }
+$stop = Invoke-Tool "cadgpt_work_stop" @{ admission_token=$admissionToken; execution_id=$executionId; authority_token=$authorityToken }
 if ($stop.isError -eq $true) { Warn "Work stop returned an error; runtime idle cleanup remains fallback." }
 
 Write-Host ""
