@@ -30,16 +30,21 @@ interface CadMcpDevSnapshot {
   id: string;
   files: Map<string, Buffer>;
   createdAt: string;
+  baselineFingerprint: string;
 }
 
 interface CadMcpDevRecoveryMetadata {
   snapshot_id: string;
   execution_id: string;
   created_at: string;
+  baseline_fingerprint: string;
+  file_count: number;
+  bytes: number;
 }
 
 const snapshots = new Map<string, CadMcpDevSnapshot>();
 const validatedFingerprints = new Map<string, string>();
+const knownSourceFingerprints = new Map<string, string>();
 
 function recoveryRoot(): string {
   return getAppDataPath("state", "cad-mcp-dev-recovery");
@@ -88,12 +93,22 @@ async function listRecoveryMetadata(): Promise<CadMcpDevRecoveryMetadata[]> {
         )
       ) as CadMcpDevRecoveryMetadata;
       if (
-        typeof parsed.snapshot_id === "string" &&
-        typeof parsed.execution_id === "string" &&
-        typeof parsed.created_at === "string"
+        typeof parsed.snapshot_id !== "string" ||
+        !parsed.snapshot_id ||
+        typeof parsed.execution_id !== "string" ||
+        !parsed.execution_id ||
+        typeof parsed.created_at !== "string" ||
+        !parsed.created_at ||
+        typeof parsed.baseline_fingerprint !== "string" ||
+        !/^[a-f0-9]{64}$/i.test(parsed.baseline_fingerprint) ||
+        !Number.isInteger(parsed.file_count) ||
+        parsed.file_count < 0 ||
+        !Number.isInteger(parsed.bytes) ||
+        parsed.bytes < 0
       ) {
-        result.push(parsed);
+        throw new Error("invalid recovery metadata schema");
       }
+      result.push(parsed);
     } catch (error) {
       throw new Error(
         `CAD_MCP_DEV_RECOVERY_CORRUPT: cannot read recovery metadata under ${path.join(recoveryRoot(), entry.name)}: ${error instanceof Error ? error.message : String(error)}`
@@ -157,6 +172,7 @@ async function prepareDevSourceMutation(): Promise<string> {
       "CAD_MCP_DEV_SNAPSHOT_REQUIRED: create cad_mcp_dev_snapshot before the first source/environment mutation."
     );
   }
+  await assertKnownSourceState(workId);
   return workId;
 }
 
@@ -231,8 +247,23 @@ async function atomicWrite(target: string, content: string | Buffer): Promise<vo
   }
 }
 
+function fingerprintFileMap(files: Map<string, Buffer>): string {
+  const hash = createHash("sha256");
+  const entries = [...files.entries()].sort(([a], [b]) =>
+    a.localeCompare(b)
+  );
+  for (const [relativeRaw, data] of entries) {
+    const relative = relativeRaw.replaceAll("\\", "/");
+    hash.update(relative);
+    hash.update("\0");
+    hash.update(sha256(data));
+    hash.update("\n");
+  }
+  return hash.digest("hex");
+}
+
 async function restoreSnapshotFiles(
-  snapshot: { id: string; files: Map<string, Buffer>; createdAt: string }
+  snapshot: CadMcpDevSnapshot
 ): Promise<void> {
   const current: string[] = [];
   await walk(runtimeRoot(), runtimeRoot(), current, MAX_SNAPSHOT_FILES + 1);
@@ -290,6 +321,12 @@ async function persistSnapshot(
       snapshot_id: snapshot.id,
       execution_id: executionId,
       created_at: snapshot.createdAt,
+      baseline_fingerprint: snapshot.baselineFingerprint,
+      file_count: snapshot.files.size,
+      bytes: [...snapshot.files.values()].reduce(
+        (total, data) => total + data.length,
+        0
+      ),
     };
     await atomicWrite(
       path.join(tempDir, "metadata.json"),
@@ -351,10 +388,23 @@ async function loadPersistedSnapshot(
     captured.set(rel, data);
   }
 
+  if (captured.size !== metadata.file_count || bytes !== metadata.bytes) {
+    throw new Error(
+      `CAD_MCP_DEV_RECOVERY_CORRUPT: snapshot size/count mismatch for ${executionId}`
+    );
+  }
+  const fingerprint = fingerprintFileMap(captured);
+  if (fingerprint !== metadata.baseline_fingerprint) {
+    throw new Error(
+      `CAD_MCP_DEV_RECOVERY_CORRUPT: baseline fingerprint mismatch for ${executionId}`
+    );
+  }
+
   return {
     id: metadata.snapshot_id,
     files: captured,
     createdAt: metadata.created_at,
+    baselineFingerprint: fingerprint,
   };
 }
 
@@ -417,17 +467,28 @@ async function runtimeFingerprint(): Promise<string> {
   if (files.length > MAX_SNAPSHOT_FILES) {
     throw new Error("Runtime fingerprint exceeds file-count safety limit");
   }
-  files.sort((a, b) => a.localeCompare(b));
-  const hash = createHash("sha256");
+  const captured = new Map<string, Buffer>();
   for (const file of files) {
-    const relative = path.relative(runtimeRoot(), file).replaceAll("\\", "/");
-    const data = await fs.readFile(file);
-    hash.update(relative);
-    hash.update("\0");
-    hash.update(sha256(data));
-    hash.update("\n");
+    captured.set(path.relative(runtimeRoot(), file), await fs.readFile(file));
   }
-  return hash.digest("hex");
+  return fingerprintFileMap(captured);
+}
+
+async function assertKnownSourceState(workId: string): Promise<void> {
+  const expected = knownSourceFingerprints.get(workId);
+  if (!expected) return;
+  const current = await runtimeFingerprint();
+  if (current !== expected) {
+    throw new Error(
+      "CAD_MCP_DEV_EXTERNAL_CHANGE: runtime source changed outside the active CadGPT source transaction. Automatic mutation/rollback is blocked; inspect and use confirmed recovery if baseline restoration is intended."
+    );
+  }
+}
+
+async function recordKnownSourceState(workId: string): Promise<string> {
+  const current = await runtimeFingerprint();
+  knownSourceFingerprints.set(workId, current);
+  return current;
 }
 
 async function refreshManifest(): Promise<Record<string, unknown>> {
