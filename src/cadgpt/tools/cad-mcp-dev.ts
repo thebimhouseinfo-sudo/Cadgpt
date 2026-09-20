@@ -886,12 +886,16 @@ export function registerCadMcpDevTools(server: McpServer): void {
       try {
         await assertDevMode({ allowRecovery: true });
         const pending = await listRecoveryMetadata();
+        const currentSourceFingerprint = await runtimeFingerprint();
         return toolResult("cad_mcp_dev_recovery_status", {
           blocked: pending.some(
             (item) => item.execution_id !== currentToolLease().workId
           ),
           pending,
           count: pending.length,
+          current_source_fingerprint: currentSourceFingerprint,
+          note:
+            "Pass this exact current_source_fingerprint back to cad_mcp_dev_recover. Recovery refuses to overwrite source that changed after status was reviewed.",
         });
       } catch (error) {
         return toolError("cad_mcp_dev_recovery_status", error);
@@ -907,10 +911,16 @@ export function registerCadMcpDevTools(server: McpServer): void {
         "Restore one persistent unaccepted CAD MCP baseline after a crash/failed cleanup. This is the only mutation allowed while a foreign recovery baseline is pending.",
       inputSchema: {
         snapshot_id: z.string().min(1),
+        expected_current_fingerprint: z
+          .string()
+          .length(64)
+          .describe(
+            "Exact current_source_fingerprint returned by cad_mcp_dev_recovery_status immediately before confirmed recovery."
+          ),
         confirmed: z.literal(true),
       },
     },
-    async ({ snapshot_id, confirmed }) => {
+    async ({ snapshot_id, expected_current_fingerprint, confirmed }) => {
       try {
         await assertDevMode({ allowRecovery: true });
         if (!confirmed) throw new Error("Explicit confirmation is required");
@@ -924,6 +934,13 @@ export function registerCadMcpDevTools(server: McpServer): void {
         if (found.executionId === currentToolLease().workId) {
           throw new Error(
             "CAD_MCP_DEV_USE_ROLLBACK: this baseline belongs to the current active execution; use cad_mcp_dev_rollback instead of crash recovery."
+          );
+        }
+
+        const currentFingerprint = await runtimeFingerprint();
+        if (currentFingerprint !== expected_current_fingerprint) {
+          throw new Error(
+            `RESOURCE_CONFLICT: CAD MCP source changed after recovery status was reviewed; expected ${expected_current_fingerprint}, current ${currentFingerprint}`
           );
         }
 
