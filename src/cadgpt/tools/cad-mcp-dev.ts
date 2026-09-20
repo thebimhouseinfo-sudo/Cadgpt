@@ -1432,33 +1432,7 @@ export function registerCadMcpDevTools(server: McpServer): void {
     }
   );
 
-  server.registerTool(
-    "cad_mcp_dev_sync_env",
-    {
-      title: "Sync CAD MCP Python Environment",
-      description:
-        "Named privileged development action. Reinstall the CAD MCP venv from the runtime lock file. Requires explicit confirmation; no arbitrary command is accepted.",
-      inputSchema: { confirmed: z.literal(true) },
-    },
-    async ({ confirmed }) => {
-      try {
-        if (!confirmed) throw new Error("Explicit confirmation is required");
-        const workId = await prepareDevSourceMutation();
-        const lease = currentToolLease();
-        if (lease.workId !== workId) throw new Error("CAD_MCP_DEV_WORK_CHANGED");
-        const lock = await validateLockedRequirements();
-        const result = await runPython(["-m", "pip", "install", "-r", lock.path], getRepoRoot());
-        return toolResult("cad_mcp_dev_sync_env", {
-          synced: true,
-          requirements: lock.path,
-          packages: lock.packages,
-          ...result,
-        });
-      } catch (error) {
-        return toolError("cad_mcp_dev_sync_env", error);
-      }
-    }
-  );
+
 }
 
 export async function rollbackUnacceptedCadMcpDevStateForExecution(
