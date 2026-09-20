@@ -67,6 +67,13 @@ async function listRecoveryMetadata(): Promise<CadMcpDevRecoveryMetadata[]> {
   const result: CadMcpDevRecoveryMetadata[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith(".") && entry.name.endsWith(".tmp")) {
+      await fs.rm(path.join(recoveryRoot(), entry.name), {
+        recursive: true,
+        force: true,
+      }).catch(() => undefined);
+      continue;
+    }
     try {
       const parsed = JSON.parse(
         await fs.readFile(
