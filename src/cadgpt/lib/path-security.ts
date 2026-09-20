@@ -12,14 +12,21 @@ function normalizeForCompare(value: string): string {
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
-function isInside(candidate: string, root: string): boolean {
+export function isPathInside(candidate: string, root: string): boolean {
   const normalizedCandidate = normalizeForCompare(candidate);
   const normalizedRoot = normalizeForCompare(root);
-  return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(normalizedRoot + path.sep);
+  return (
+    normalizedCandidate === normalizedRoot ||
+    normalizedCandidate.startsWith(normalizedRoot + path.sep)
+  );
 }
 
 export function getRepoRoot(): string {
   return REPO_ROOT;
+}
+
+export function getCadMcpRuntimeRoot(): string {
+  return path.resolve(REPO_ROOT, "runtimes", "cad-mcp");
 }
 
 export function getAllowedRoots(): string[] {
@@ -33,8 +40,10 @@ export function getWritableRoots(): string[] {
 }
 
 function assertInsideRoots(candidate: string, roots: string[], label: string): void {
-  if (!roots.some((root) => isInside(candidate, root))) {
-    throw new Error(`Path is outside CadGPT ${label} roots (${roots.map(toCadgptPath).join(", ")}): ${candidate}`);
+  if (!roots.some((root) => isPathInside(candidate, root))) {
+    throw new Error(
+      `Path is outside CadGPT ${label} roots (${roots.map(toCadgptPath).join(", ")}): ${candidate}`
+    );
   }
 }
 
@@ -46,7 +55,9 @@ async function nearestExistingParent(target: string): Promise<string> {
       return current;
     } catch {
       const parent = path.dirname(current);
-      if (parent === current) throw new Error(`Unable to resolve an existing parent for: ${target}`);
+      if (parent === current) {
+        throw new Error(`Unable to resolve an existing parent for: ${target}`);
+      }
       current = parent;
     }
   }
@@ -55,19 +66,21 @@ async function nearestExistingParent(target: string): Promise<string> {
 function resolveVirtualPath(inputPath: string): string {
   const normalized = inputPath.replaceAll("\\", "/");
   if (normalized === "appdata" || normalized.startsWith("appdata/")) {
-    const suffix = normalized === "appdata" ? "" : normalized.slice("appdata/".length);
+    const suffix =
+      normalized === "appdata" ? "" : normalized.slice("appdata/".length);
     return path.resolve(getAppDataRoot(), suffix);
   }
-  throw new Error("CadGPT file paths must use the appdata/... virtual namespace");
+  throw new Error(
+    "CadGPT read paths must use appdata/... virtual namespace or an approved absolute managed path"
+  );
 }
 
 /**
- * Resolve a tool-supplied path inside managed AppData.
+ * Read/validation resolver.
  *
- * Generic reads may access data/libraries/workspace. Generic writes are
- * deliberately restricted to data/workspace: managed permanent libraries are
- * mutated only through controlled import/promotion tools so registry metadata
- * cannot drift from implementation.
+ * Reads may use stable appdata/... virtual paths or absolute paths, but absolute
+ * paths are accepted only when they canonicalize inside the managed readable
+ * roots. This function is not mutation authority.
  */
 export async function resolveAllowedPath(
   inputPath: string,
@@ -75,16 +88,22 @@ export async function resolveAllowedPath(
 ): Promise<string> {
   const trimmed = inputPath.trim();
   if (!trimmed) throw new Error("Path is empty");
-  if (path.isAbsolute(trimmed)) throw new Error("Absolute paths are not accessible through CadGPT file tools");
 
-  const candidate = resolveVirtualPath(trimmed);
+  const candidate = path.isAbsolute(trimmed)
+    ? path.resolve(trimmed)
+    : resolveVirtualPath(trimmed);
+
   assertInsideRoots(candidate, getAllowedRoots(), "readable AppData");
-  if (options.forWrite || options.forCreate) assertInsideRoots(candidate, getWritableRoots(), "generic writable AppData");
+  if (options.forWrite || options.forCreate) {
+    assertInsideRoots(candidate, getWritableRoots(), "generic writable AppData");
+  }
 
   if (!options.forCreate) {
     const real = await fs.realpath(candidate);
     assertInsideRoots(real, getAllowedRoots(), "readable AppData");
-    if (options.forWrite) assertInsideRoots(real, getWritableRoots(), "generic writable AppData");
+    if (options.forWrite) {
+      assertInsideRoots(real, getWritableRoots(), "generic writable AppData");
+    }
     return real;
   }
 
@@ -95,11 +114,55 @@ export async function resolveAllowedPath(
   return candidate;
 }
 
-/** Stable display/tool path independent of where packaged AppData lives. */
+/**
+ * Mutation resolver.
+ *
+ * Mutation tools MUST receive an explicit absolute path. CWD-relative or
+ * virtual paths are rejected. The canonical existing target, or canonical
+ * nearest existing parent for a create, must remain inside one of allowedRoots.
+ */
+export async function resolveAbsoluteMutationPath(
+  inputPath: string,
+  options: {
+    allowedRoots?: string[];
+    forCreate?: boolean;
+    label?: string;
+  } = {}
+): Promise<string> {
+  const trimmed = inputPath.trim();
+  if (!trimmed) throw new Error("Mutation path is empty");
+  if (!path.isAbsolute(trimmed)) {
+    throw new Error(
+      "ABSOLUTE_PATH_REQUIRED: every CadGPT file mutation requires an explicit absolute path"
+    );
+  }
+
+  const roots = (options.allowedRoots ?? getWritableRoots()).map((root) =>
+    path.resolve(root)
+  );
+  const candidate = path.resolve(trimmed);
+  assertInsideRoots(candidate, roots, options.label || "mutation");
+
+  if (!options.forCreate) {
+    const real = await fs.realpath(candidate);
+    assertInsideRoots(real, roots, options.label || "mutation");
+    return real;
+  }
+
+  const parent = await nearestExistingParent(path.dirname(candidate));
+  const realParent = await fs.realpath(parent);
+  assertInsideRoots(realParent, roots, options.label || "mutation");
+
+  const relativeTail = path.relative(parent, candidate);
+  const resolvedCandidate = path.resolve(realParent, relativeTail);
+  assertInsideRoots(resolvedCandidate, roots, options.label || "mutation");
+  return resolvedCandidate;
+}
+
 export function toCadgptPath(absolutePath: string): string {
   const absolute = path.resolve(absolutePath);
   const appDataRoot = getAppDataRoot();
-  if (isInside(absolute, appDataRoot)) {
+  if (isPathInside(absolute, appDataRoot)) {
     const rel = path.relative(appDataRoot, absolute).replaceAll("\\", "/");
     return rel ? `appdata/${rel}` : "appdata";
   }
