@@ -28,6 +28,7 @@ test("work registrations and tool leases remain isolated across sessions", async
   const {
     createWorkRegistration,
     acquireToolLease,
+    runWithToolLease,
     releaseWorkRegistration,
   } = await import("../dist/cadgpt/lib/work-registration.js");
 
@@ -89,6 +90,9 @@ test("work registrations and tool leases remain isolated across sessions", async
       }),
     /another ChatGPT session|NO_ACTIVE_WORK/
   );
+
+  await runWithToolLease(leaseA, async () => undefined);
+  await runWithToolLease(leaseB, async () => undefined);
 
   releaseWorkRegistration(
     workA.executionId,
@@ -239,6 +243,9 @@ test("a new current-turn admission rotates old authority and CONTROL cannot exec
 });
 
 test("CAD candidate reservation is exclusive to its execution without starting CAD", async () => {
+  const previous = process.env.CADGPT_BUILD_PROFILE;
+  process.env.CADGPT_BUILD_PROFILE = "development";
+
   const { checkAdmission } = await import("../dist/cadgpt/lib/admission.js");
   const {
     createWorkRegistration,
@@ -250,41 +257,51 @@ test("CAD candidate reservation is exclusive to its execution without starting C
     abortCadCandidate,
   } = await import("../dist/cadgpt/runtime/cad-candidate.js");
 
-  const admissionA = checkAdmission("candidate-a", "@cadgpt improve CAD MCP");
-  assert.ok(admissionA.admission_token);
-  const workA = createWorkRegistration({
-    sessionKey: "candidate-a",
-    admissionToken: admissionA.admission_token,
-    ownerType: "skill",
-    ownerId: "cad-mcp-dev",
-    executionPath: "hybrid",
-  });
+  let workA;
+  let workB;
+  try {
+    const admissionA = checkAdmission("candidate-a", "@cadgpt improve CAD MCP");
+    assert.ok(admissionA.admission_token);
+    workA = createWorkRegistration({
+      sessionKey: "candidate-a",
+      admissionToken: admissionA.admission_token,
+      ownerType: "skill",
+      ownerId: "cad-mcp-dev",
+      executionPath: "hybrid",
+    });
 
-  const candidate = await beginCadCandidate({
-    ownerExecutionId: workA.executionId,
-    snapshotId: "snapshot-test",
-    sourceFingerprint: "fingerprint-test",
-  });
-  assert.equal(candidate.ownerExecutionId, workA.executionId);
-  assert.doesNotThrow(() => assertCadCandidateAccess(workA.executionId));
+    const candidate = await beginCadCandidate({
+      ownerExecutionId: workA.executionId,
+      snapshotId: "snapshot-test",
+      sourceFingerprint: "fingerprint-test",
+    });
+    assert.equal(candidate.ownerExecutionId, workA.executionId);
+    assert.doesNotThrow(() => assertCadCandidateAccess(workA.executionId));
 
-  const admissionB = checkAdmission("candidate-b", "@cadgpt run another CAD job");
-  assert.ok(admissionB.admission_token);
-  const workB = createWorkRegistration({
-    sessionKey: "candidate-b",
-    admissionToken: admissionB.admission_token,
-    ownerType: "job",
-    ownerId: "job-b",
-    executionPath: "cad",
-  });
-  assert.throws(
-    () => assertCadCandidateAccess(workB.executionId),
-    /CAD_CANDIDATE_RESERVED/
-  );
-
-  await abortCadCandidate(workA.executionId);
-  releaseWorkRegistration(workA.executionId, workA.authorityToken, "candidate-a");
-  releaseWorkRegistration(workB.executionId, workB.authorityToken, "candidate-b");
+    const admissionB = checkAdmission("candidate-b", "@cadgpt run another CAD job");
+    assert.ok(admissionB.admission_token);
+    workB = createWorkRegistration({
+      sessionKey: "candidate-b",
+      admissionToken: admissionB.admission_token,
+      ownerType: "job",
+      ownerId: "job-b",
+      executionPath: "cad",
+    });
+    assert.throws(
+      () => assertCadCandidateAccess(workB.executionId),
+      /CAD_CANDIDATE_RESERVED/
+    );
+  } finally {
+    if (workA) await abortCadCandidate(workA.executionId).catch(() => undefined);
+    if (workA) {
+      releaseWorkRegistration(workA.executionId, workA.authorityToken, "candidate-a");
+    }
+    if (workB) {
+      releaseWorkRegistration(workB.executionId, workB.authorityToken, "candidate-b");
+    }
+    if (previous === undefined) delete process.env.CADGPT_BUILD_PROFILE;
+    else process.env.CADGPT_BUILD_PROFILE = previous;
+  }
 });
 
 
