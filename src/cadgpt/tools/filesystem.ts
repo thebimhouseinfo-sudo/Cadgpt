@@ -1,13 +1,18 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { getAllowedRoots, getWritableRoots, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
+import { getAllowedRoots, getWritableRoots, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
 const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv"]);
+
+function sha256(content: string | Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
+}
 
 function assertTextExtension(target: string): void {
   const ext = path.extname(target).toLowerCase();
@@ -47,7 +52,9 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async () => toolResult("file_roots", {
       roots: getAllowedRoots().map(toCadgptPath),
+      absolute_roots: getAllowedRoots(),
       writable_roots: getWritableRoots().map(toCadgptPath),
+      absolute_writable_roots: getWritableRoots(),
       managed_libraries_write_policy: "read-only to generic file tools; mutate through library_import/lisp_promote_draft/job_promote_draft",
     })
   );
@@ -67,13 +74,14 @@ export function registerFilesystemTools(server: McpServer): void {
       try {
         const target = await resolveAllowedPath(input);
         const stat = await fs.stat(target);
-        if (stat.isFile()) return toolResult("file_list", { entries: [{ path: toCadgptPath(target), type: "file" }] });
+        if (stat.isFile()) return toolResult("file_list", { entries: [{ path: toCadgptPath(target), absolute_path: target, type: "file" }] });
 
         if (!recursive) {
           const entries = await fs.readdir(target, { withFileTypes: true });
           return toolResult("file_list", {
             entries: entries.slice(0, max_entries).map((entry) => ({
               path: toCadgptPath(path.join(target, entry.name)),
+              absolute_path: path.join(target, entry.name),
               type: entry.isDirectory() ? "directory" : "file",
             })),
             truncated: entries.length > max_entries,
@@ -84,7 +92,7 @@ export function registerFilesystemTools(server: McpServer): void {
         await walkFiles(target, files, max_entries + 1);
         const truncated = files.length > max_entries;
         return toolResult("file_list", {
-          entries: files.slice(0, max_entries).map((item) => ({ path: toCadgptPath(item), type: "file" })),
+          entries: files.slice(0, max_entries).map((item) => ({ path: toCadgptPath(item), absolute_path: item, type: "file" })),
           truncated,
         });
       } catch (error) {
@@ -116,10 +124,12 @@ export function registerFilesystemTools(server: McpServer): void {
         const selected = lines.slice(start, end);
         return toolResult("file_read", {
           path: toCadgptPath(target),
+          absolute_path: target,
           start_line: start + 1,
           end_line: start + selected.length,
           total_lines: lines.length,
           content: selected.join("\n"),
+          sha256: sha256(content),
         });
       } catch (error) {
         return toolError("file_read", error);
@@ -167,7 +177,7 @@ export function registerFilesystemTools(server: McpServer): void {
             const line = lines[index];
             const hit = matcher ? matcher.test(line) : (case_sensitive ? line : line.toLowerCase()).includes(needle);
             if (matcher) matcher.lastIndex = 0;
-            if (hit) results.push({ path: toCadgptPath(file), line: index + 1, text: line.trim() });
+            if (hit) results.push({ path: toCadgptPath(file), absolute_path: file, line: index + 1, text: line.trim() } as any);
           }
         }
 
@@ -182,22 +192,30 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_create",
     {
       title: "Create CadGPT Managed Text File",
-      description: "Create a new text asset inside generic writable AppData roots (workspace/data). Permanent managed libraries are not writable through this tool.",
+      description: "Create a new text asset inside generic writable AppData roots (workspace/data). path MUST be an absolute filesystem path. Permanent managed libraries are not writable through this tool.",
       inputSchema: { path: z.string(), content: z.string() },
     },
     async ({ path: input, content }) => {
       try {
-        const target = await resolveAllowedPath(input, { forCreate: true, forWrite: true });
+        const target = await resolveAbsoluteMutationPath(input, { forCreate: true, allowedRoots: getWritableRoots(), label: "generic writable AppData" });
         assertTextExtension(target);
-        try {
-          await fs.lstat(target);
-          throw new Error(`Target already exists: ${toCadgptPath(target)}`);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-        await atomicWrite(target, content);
-        console.log(`[AUDIT] file_create ${toCadgptPath(target)} bytes=${Buffer.byteLength(content)}`);
-        return toolResult("file_create", { path: toCadgptPath(target), bytes: Buffer.byteLength(content) });
+        return await withFileMutationLocks([target], async () => {
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          try {
+            await fs.writeFile(target, content, { encoding: "utf8", flag: "wx" });
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+              throw new Error(`Target already exists: ${toCadgptPath(target)}`);
+            }
+            throw error;
+          }
+          console.log(`[AUDIT] file_create ${toCadgptPath(target)} bytes=${Buffer.byteLength(content)}`);
+          return toolResult("file_create", {
+            path: toCadgptPath(target),
+            absolute_path: target,
+            bytes: Buffer.byteLength(content),
+          });
+        });
       } catch (error) {
         return toolError("file_create", error);
       }
@@ -208,28 +226,51 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_edit",
     {
       title: "Edit CadGPT Managed Text File",
-      description: "Apply an exact text replacement inside generic writable AppData roots (workspace/data). Permanent managed libraries must use controlled promotion/import tools.",
+      description: "Apply an exact text replacement inside generic writable AppData roots (workspace/data). path MUST be an absolute filesystem path. Permanent managed libraries must use controlled promotion/import tools.",
       inputSchema: {
         path: z.string(),
+        expected_sha256: z.string().length(64).describe("sha256 returned by file_read; prevents silent overwrite if another execution changed the file"),
         old_text: z.string(),
         new_text: z.string(),
         replace_all: z.boolean().optional().default(false),
       },
     },
-    async ({ path: input, old_text, new_text, replace_all }) => {
+    async ({ path: input, expected_sha256, old_text, new_text, replace_all }) => {
       try {
-        const target = await resolveAllowedPath(input, { forWrite: true });
+        const target = await resolveAbsoluteMutationPath(input, { allowedRoots: getWritableRoots(), label: "generic writable AppData" });
         assertTextExtension(target);
-        const original = await fs.readFile(target, "utf8");
-        if (!original.includes(old_text)) throw new Error("old_text not found; read the file and use an exact match");
-        const updated = replace_all ? original.split(old_text).join(new_text) : original.replace(old_text, new_text);
-        await atomicWrite(target, updated);
-        console.log(`[AUDIT] file_edit ${toCadgptPath(target)} replace_all=${replace_all}`);
-        return toolResult("file_edit", {
-          path: toCadgptPath(target),
-          changed: true,
-          bytes_before: Buffer.byteLength(original),
-          bytes_after: Buffer.byteLength(updated),
+        return await withFileMutationLocks([target], async () => {
+          const original = await fs.readFile(target, "utf8");
+          const currentHash = sha256(original);
+          if (currentHash !== expected_sha256) {
+            throw new Error(`RESOURCE_CONFLICT: expected sha256 ${expected_sha256}, current ${currentHash}`);
+          }
+          if (!original.includes(old_text)) {
+            throw new Error("old_text not found; read the file and use an exact match");
+          }
+          const updated = replace_all
+            ? original.split(old_text).join(new_text)
+            : original.replace(old_text, new_text);
+
+          // Re-check immediately before replace. This cannot force unrelated
+          // external writers to honor our lock, but it closes the ordinary
+          // stale-write window and prevents silent same-process overwrite.
+          const latest = await fs.readFile(target, "utf8");
+          if (sha256(latest) !== currentHash) {
+            throw new Error("RESOURCE_CONFLICT: file changed during edit preparation");
+          }
+
+          await atomicWrite(target, updated);
+          console.log(`[AUDIT] file_edit ${toCadgptPath(target)} replace_all=${replace_all}`);
+          return toolResult("file_edit", {
+            path: toCadgptPath(target),
+            absolute_path: target,
+            changed: true,
+            sha256_before: currentHash,
+            sha256_after: sha256(updated),
+            bytes_before: Buffer.byteLength(original),
+            bytes_after: Buffer.byteLength(updated),
+          });
         });
       } catch (error) {
         return toolError("file_edit", error);

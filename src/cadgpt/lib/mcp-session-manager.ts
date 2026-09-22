@@ -7,7 +7,7 @@ import {
   SUPPORTED_PROTOCOL_VERSIONS,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { createMcpServer } from "../server-factory.js";
+import { createMcpServer, disposeMcpServerRuntime } from "../server-factory.js";
 
 const SESSION_TTL_MS = Number(process.env.MCP_SESSION_TTL_MS || 86_400_000);
 const CLEANUP_MS = Number(process.env.MCP_SESSION_CLEANUP_MS || 300_000);
@@ -30,6 +30,7 @@ export interface SessionManager {
   sendBadRequest(res: Response, message: string, requestId?: string | number | null): void;
   startCleanup(): void;
   stopCleanup(): void;
+  closeAll(reason?: string): Promise<void>;
 }
 
 export function extractRequestId(body: unknown): string | number | null {
@@ -113,7 +114,10 @@ export function createSessionManager(port: number): SessionManager {
     sessions.delete(id);
     pending.delete(id);
     opChains.delete(id);
-    if (current) void current.transport.close().catch(() => undefined);
+    if (current) {
+      void disposeMcpServerRuntime(current.server).catch(() => undefined);
+      void current.transport.close().catch(() => undefined);
+    }
     console.log(`[MCP] Session removed (${reason}): ${id}`);
   }
 
@@ -145,6 +149,7 @@ export function createSessionManager(port: number): SessionManager {
         pending.delete(id);
         clearGrace(id);
         if (previous && previous.transport !== transport) {
+          void disposeMcpServerRuntime(previous.server).catch(() => undefined);
           void previous.transport.close().catch(() => undefined);
         }
         console.log(`[MCP] Session initialized: ${id}`);
@@ -235,6 +240,7 @@ export function createSessionManager(port: number): SessionManager {
         if (!recovered || recovered.transport !== replacement.transport) {
           // Do not delete a different session that may have won a race.
           pending.delete(id);
+          void disposeMcpServerRuntime(replacement.server).catch(() => undefined);
           void replacement.transport.close().catch(() => undefined);
           return sessions.get(id);
         }
@@ -325,6 +331,31 @@ export function createSessionManager(port: number): SessionManager {
       if (cleanupTimer) clearInterval(cleanupTimer);
       cleanupTimer = null;
       for (const id of [...graceTimers.keys()]) clearGrace(id);
+    },
+
+    async closeAll(reason = "shutdown") {
+      if (cleanupTimer) clearInterval(cleanupTimer);
+      cleanupTimer = null;
+      for (const id of [...graceTimers.keys()]) clearGrace(id);
+
+      const all = new Map<string, McpSession>();
+      for (const [id, session] of sessions) all.set(`session:${id}`, session);
+      for (const [id, session] of pending) all.set(`pending:${id}`, session);
+
+      sessions.clear();
+      pending.clear();
+      opChains.clear();
+      recoveryFlights.clear();
+
+      await Promise.all(
+        [...all.values()].map(async (session) => {
+          await disposeMcpServerRuntime(session.server).catch((error) => {
+            console.error("[MCP] Session runtime cleanup failed during shutdown", error);
+          });
+          await session.transport.close().catch(() => undefined);
+        })
+      );
+      console.log(`[MCP] Closed all sessions (${reason}): ${all.size}`);
     },
   };
 }

@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const REPO_ROOT = path.resolve(process.cwd());
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(MODULE_DIR, "..", "..", "..");
 
 export type AppDataArea =
   | "data"
@@ -83,6 +85,7 @@ export async function ensureAppDataLayout(): Promise<void> {
     getLispDraftRoot(),
     getJobDraftRoot(),
     getDynamicLispRoot(),
+    path.join(getAppDataRoot(), "drawings"),
     getAppDataPath("state"),
     getAppDataPath("logs"),
   ];

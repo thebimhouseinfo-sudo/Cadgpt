@@ -5,6 +5,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { getRepoRoot } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { isDevelopmentBuild } from "../lib/work-registration.js";
 
 const SKILLS_ROOT = path.resolve(getRepoRoot(), "skills");
 const SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -66,6 +67,7 @@ export function registerSkillTools(server: McpServer): void {
         const skills: Array<{ name: string; title: string; status?: string }> = [];
         for (const entry of entries) {
           if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+          if (entry.name === "cad-mcp-dev" && !isDevelopmentBuild()) continue;
           try {
             const skillFile = await resolveSkillResource(entry.name);
             const content = await fs.readFile(skillFile, "utf8");
@@ -96,6 +98,7 @@ export function registerSkillTools(server: McpServer): void {
     },
     async ({ name, resource }) => {
       try {
+        if (name === "cad-mcp-dev" && !isDevelopmentBuild()) throw new Error("Skill not available in production build");
         const target = await resolveSkillResource(name, resource);
         const content = await fs.readFile(target, "utf8");
         const skillDir = path.resolve(SKILLS_ROOT, name);

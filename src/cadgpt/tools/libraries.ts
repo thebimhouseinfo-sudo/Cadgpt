@@ -5,14 +5,16 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import {
+  getAppDataRoot,
   getJobLibrariesRoot,
   getLispLibrariesRoot,
   getUserCapabilitiesPath,
   getUserLibrariesManifestPath,
   getUserRegistryRoot,
 } from "../lib/appdata.js";
-import { toCadgptPath } from "../lib/path-security.js";
+import { isPathInside, resolveAbsoluteMutationPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
 const LIBRARY_ID = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const MAX_IMPORT_FILES = 10000;
@@ -247,17 +249,24 @@ async function discoverJobEntries(libraryId: string, root: string, existing: Arr
 
 async function reindexLibrary(kind: LibraryKind, libraryId: string, root: string): Promise<number> {
   const registryPath = getUserCapabilitiesPath();
-  const registry = await readJson<{ version: number; entries: Array<Record<string, unknown>> }>(registryPath, { version: 1, entries: [] });
+  const baseline = await readOptionalText(registryPath);
+  const registry = baseline
+    ? (JSON.parse(baseline) as { version: number; entries: Array<Record<string, unknown>> })
+    : { version: 1, entries: [] as Array<Record<string, unknown>> };
   const others = registry.entries.filter((entry) => !(entry.kind === kind && entry.library_id === libraryId));
   const discovered = kind === "lisp"
     ? await discoverLispEntries(libraryId, root, registry.entries)
     : await discoverJobEntries(libraryId, root, registry.entries);
   const entries = [...others, ...discovered].sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
+  const current = await readOptionalText(registryPath);
+  if (current !== baseline) {
+    throw new Error("RESOURCE_CONFLICT: User Registry changed during library reindex");
+  }
   await atomicJson(registryPath, { version: registry.version || 1, entries });
   return discovered.length;
 }
 
-export function registerLibraryTools(server: McpServer): void {
+export function registerLibraryDiscoveryTools(server: McpServer): void {
   server.registerTool(
     "library_list",
     {
@@ -275,7 +284,9 @@ export function registerLibraryTools(server: McpServer): void {
       }
     }
   );
+}
 
+export function registerLibraryMutationTools(server: McpServer): void {
   server.registerTool(
     "library_import",
     {
@@ -286,57 +297,101 @@ export function registerLibraryTools(server: McpServer): void {
         library_id: z.string().regex(LIBRARY_ID),
         name: z.string().min(1).max(160),
         source_path: z.string().min(1).describe("Absolute user-selected source directory. It is read only during import."),
+        target_path: z.string().min(1).describe("Absolute managed AppData library directory. Must exactly match kind + library_id."),
         user_approved_source: z.literal(true).describe("Must be true only after the user explicitly selected/approved this source folder."),
         replace_existing: z.boolean().optional().default(false),
       },
     },
-    async ({ kind, library_id, name, source_path, user_approved_source, replace_existing }) => {
+    async ({ kind, library_id, name, source_path, target_path, user_approved_source, replace_existing }) => {
       try {
         if (!user_approved_source) throw new Error("Library import requires explicit user approval of source_path");
         if (!path.isAbsolute(source_path)) throw new Error("source_path must be an absolute directory selected by the user");
         const source = await fs.realpath(source_path);
         const stat = await fs.stat(source);
         if (!stat.isDirectory()) throw new Error("source_path must be a directory");
+
+        const appDataRoot = path.resolve(getAppDataRoot());
+        if (
+          isPathInside(source, appDataRoot) ||
+          isPathInside(appDataRoot, source)
+        ) {
+          throw new Error(
+            "LIBRARY_IMPORT_SOURCE_SCOPE: source_path must be an external folder that does not overlap CadGPT AppData."
+          );
+        }
+
         const sourceStats = await assertSafeSourceTree(source);
 
         const parent = kind === "lisp" ? getLispLibrariesRoot() : getJobLibrariesRoot();
         await fs.mkdir(parent, { recursive: true });
-        const target = path.join(parent, library_id);
+        if (!path.isAbsolute(target_path)) {
+          throw new Error("ABSOLUTE_PATH_REQUIRED: library_import target_path must be absolute");
+        }
+        const expectedTarget = path.resolve(parent, library_id);
+        const target = await resolveAbsoluteMutationPath(target_path, {
+          allowedRoots: [parent],
+          forCreate: true,
+          label: "managed library import",
+        });
+        if (path.relative(expectedTarget, target) !== "") {
+          throw new Error(
+            `TARGET_PATH_MISMATCH: target_path must exactly match managed library target ${expectedTarget}`
+          );
+        }
         const temp = path.join(parent, `.${library_id}.import-${randomUUID()}`);
         const backup = path.join(parent, `.${library_id}.backup-${randomUUID()}`);
 
-        let existed = false;
         try {
-          await fs.lstat(target);
-          existed = true;
+          await fs.cp(source, temp, {
+            recursive: true,
+            force: false,
+            errorOnExist: true,
+            filter: (sourceItem) => {
+              const parts = path.resolve(sourceItem).split(path.sep);
+              return !parts.includes(".git") && !parts.includes(".svn");
+            },
+          });
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined);
+          throw error;
         }
-        if (existed && !replace_existing) throw new Error(`Managed library already exists: ${library_id}`);
-
-        await fs.cp(source, temp, {
-          recursive: true,
-          force: false,
-          errorOnExist: true,
-          filter: (sourceItem) => {
-            const parts = path.resolve(sourceItem).split(path.sep);
-            return !parts.includes(".git") && !parts.includes(".svn");
-          },
-        });
 
         const manifestPath = getUserLibrariesManifestPath();
         const registryPath = getUserCapabilitiesPath();
-        const previousManifest = await readOptionalText(manifestPath);
-        const previousRegistry = await readOptionalText(registryPath);
-        let swapped = false;
 
-        try {
-          if (existed) await fs.rename(target, backup);
-          await fs.rename(temp, target);
-          swapped = true;
+        return await withFileMutationLocks(
+          [target, manifestPath, registryPath],
+          async () => {
+            let existed = false;
+            try {
+              await fs.lstat(target);
+              existed = true;
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            }
+            if (existed && !replace_existing) {
+              await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined);
+              throw new Error(`Managed library already exists: ${library_id}`);
+            }
+
+            const previousManifest = await readOptionalText(manifestPath);
+            let manifestWritten: string | null = null;
+            let backedUp = false;
+            let swapped = false;
+
+            try {
+              if (existed) {
+                await fs.rename(target, backup);
+                backedUp = true;
+              }
+              await fs.rename(temp, target);
+              swapped = true;
 
           await fs.mkdir(getUserRegistryRoot(), { recursive: true });
-          const manifest = await readJson<{ version: number; libraries: LibraryRecord[] }>(manifestPath, { version: 1, libraries: [] });
+          const manifestBaseline = await readOptionalText(manifestPath);
+          const manifest = manifestBaseline
+            ? (JSON.parse(manifestBaseline) as { version: number; libraries: LibraryRecord[] })
+            : { version: 1, libraries: [] as LibraryRecord[] };
           const record: LibraryRecord = {
             id: library_id,
             kind,
@@ -352,10 +407,19 @@ export function registerLibraryTools(server: McpServer): void {
           const libraries = manifest.libraries.filter((item) => !(item.id === library_id && item.kind === kind));
           libraries.push(record);
           libraries.sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`));
-          await atomicJson(manifestPath, { version: manifest.version || 1, libraries });
+          const manifestCurrent = await readOptionalText(manifestPath);
+          if (manifestCurrent !== manifestBaseline) {
+            throw new Error("RESOURCE_CONFLICT: User Library manifest changed during import");
+          }
+          manifestWritten = `${JSON.stringify({ version: manifest.version || 1, libraries }, null, 2)}\n`;
+          await atomicText(manifestPath, manifestWritten);
 
           const capabilityCount = await reindexLibrary(kind, library_id, target);
-          if (existed) await fs.rm(backup, { recursive: true, force: true });
+          if (existed) {
+            await fs.rm(backup, { recursive: true, force: true }).catch((error) => {
+              console.warn("[library_import] Could not remove post-success backup", error);
+            });
+          }
           return toolResult("library_import", {
             library: record,
             source_was_read_only: true,
@@ -369,12 +433,26 @@ export function registerLibraryTools(server: McpServer): void {
           await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined);
           if (swapped) {
             await fs.rm(target, { recursive: true, force: true }).catch(() => undefined);
-            if (existed) await fs.rename(backup, target).catch(() => undefined);
           }
-          await restoreOptionalText(manifestPath, previousManifest).catch(() => undefined);
-          await restoreOptionalText(registryPath, previousRegistry).catch(() => undefined);
+          if (backedUp) {
+            await fs.rename(backup, target).catch(() => undefined);
+          }
+          if (manifestWritten !== null) {
+            const currentManifest = await readOptionalText(manifestPath).catch(() => null);
+            if (currentManifest === manifestWritten) {
+              await restoreOptionalText(manifestPath, previousManifest).catch((restoreError) => {
+                console.error("[library_import] Manifest rollback failed", restoreError);
+              });
+            } else if (currentManifest !== previousManifest) {
+              console.error(
+                "[library_import] Manifest changed outside this transaction; refusing to overwrite it during rollback."
+              );
+            }
+          }
           throw error;
-        }
+            }
+          }
+        );
       } catch (error) {
         return toolError("library_import", error);
       }

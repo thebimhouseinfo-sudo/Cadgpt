@@ -7,13 +7,15 @@ ChatGPT
    ⇅
 OpenAI Secure MCP Tunnel
    ⇅
-CadGPT
-   ↓
-Jobs + Skills
-   ↓
-CAD MCP
-   ↓
-AutoCAD
+CadGPT slim control/admission plane
+   ↓  literal @cadgpt required in the current user turn
+WorkRegistration + ToolLease
+   ├── FILE capability path
+   └── CAD capability path
+          ↓
+        CAD MCP
+          ↓
+       AutoCAD
 ```
 
 ## Product model
@@ -25,9 +27,31 @@ AutoCAD
 - Revit MCP is preserved only for possible future RevitGPT work.
 - Job rules/specification are CadGPT internal knowledge; concrete Jobs are user assets.
 
-## Background-agent lifecycle
+## Admission and Windows lifecycle
 
-CadGPT behaves like a lightweight per-user driver. After one-time setup, a tiny hidden wake-agent + Secure MCP Tunnel start at Windows logon. Full CadGPT wakes on the first ChatGPT call. CAD MCP runs only while CadGPT is active and AutoCAD is running. AutoCAD alone never wakes CadGPT.
+CadGPT is explicit-invocation only. ChatGPT may route a request to CadGPT, but CadGPT admits work only when the **exact current user turn** literally contains `@cadgpt`.
+
+```text
+ChatGPT considers CadGPT
+→ cadgpt_admission(exact current user turn)
+   ├── no @cadgpt → INACTIVE → stop CadGPT flow
+   ├── control-only @cadgpt → CONTROL
+   └── explicit work request with @cadgpt → ACTIVE + short-lived admission token
+```
+
+There is no contextual exception for an AutoCAD-looking task, an `.lsp` file, an absolute path, AutoCAD already running, memory, or prior CadGPT use.
+
+After one-time setup, Windows starts a **CadGPT tray host** through the current user's HKCU Run key. Idle state keeps only:
+
+```text
+CadGPT tray
+slim admission/control MCP
+OpenAI Secure MCP Tunnel
+```
+
+FILE capability families load only after admitted FILE work. CAD capability families load only after admitted CAD work. The Python CAD MCP backend starts only on actual CAD demand and returns to sleep after CAD work ends. AutoCAD is never launched implicitly.
+
+The former Scheduled Task / polling wake-agent lifecycle is retired. `agent-task.ps1`, `start.ps1`, and `dist/wake-agent.js` remain compatibility shims only and delegate to the tray/slim runtime.
 
 `run.bat` is a control utility (`install`, `start`, `stop`, `restart`, `status`, `uninstall`), not a daily launcher.
 
@@ -49,6 +73,7 @@ appdata/
 │   └── dynamic-lisp/
 ├── data/
 │   └── runs/
+├── drawings/
 ├── state/
 └── logs/
 ```
@@ -152,7 +177,7 @@ One-time setup:
 setup.bat
 ```
 
-Setup installs locked dependencies, generates the stable CAD tool manifest, initializes managed AppData, configures the Secure MCP Tunnel, installs the hidden background task and runs diagnostics.
+Setup installs locked dependencies, generates the stable CAD tool manifest, initializes managed AppData, configures the Secure MCP Tunnel, removes the legacy Scheduled Task if present, registers the CadGPT tray under HKCU Run, starts the tray/slim runtime, and runs diagnostics.
 
 Daily use normally requires no command.
 
@@ -162,7 +187,17 @@ run.bat restart
 doctor.bat
 ```
 
+## Execution isolation
+
+Every admitted work flow receives an execution-scoped WorkRegistration and opaque authority token. Every actual capability call receives a per-call ToolLease. Different chats, Jobs, Skills and providers therefore share implementations without sharing execution context.
+
+CadGPT does not use global `currentJob`, `currentWorkspace`, or `currentDrawing` authority.
+
+FILE and CAD work are separate execution paths. A workflow may use both through `execution_path=hybrid`, but FILE mutation scope and drawing scope remain explicit.
+
 ## File safety
+
+All CadGPT file **mutations** require an explicit absolute filesystem path. Relative paths and ambient process CWD are never write authority. Mutation targets are canonicalized and verified inside the exact workflow-owned allowed root, including symlink/junction escape checks.
 
 Generic file tools have **read** access to:
 
@@ -183,10 +218,41 @@ appdata/data/**
 
 External user folders are not generic file-tool roots. `library_import` is the controlled read/copy boundary. Registry/runtime/state/log areas remain internal.
 
-## Drawing binding
+## Drawing binding and concurrency
 
-Before CAD business operations, CadGPT binds explicitly to one drawing identity. AutoCAD tab switching does not silently retarget a session. Proxied CAD tools re-establish the bound drawing before execution.
+Before CAD business operations, each work execution binds explicitly to one or more open drawings and receives opaque `drawing_id` values.
+
+A binding stores a CAD-MCP runtime document-lifetime identity in addition to file name/path. Closing and reopening the same file does not silently revive an old `drawing_id`; stale bindings must be explicitly rebound.
+
+When one execution has multiple drawings, mutation calls require an explicit `drawing_id`. AutoCAD `ActiveDocument` is never treated as ambient authority.
+
+CAD tool implementations are shared across chats, while each invocation has its own ToolLease and drawing context. Mutation-sensitive operations are serialized per AutoCAD host so concurrent chats cannot race `ActiveDocument` switching.
+
+## Development-only CAD MCP self-improvement
+
+Source/development builds expose the internal `cad-mcp-dev` Skill when `CADGPT_BUILD_PROFILE=development`.
+
+It is intentionally narrow:
+
+```text
+writable source root:
+<repo>\runtimes\cad-mcp\**
+
+read-only supporting context:
+src/cadgpt/**
+knowledge/**
+registry/**
+selected contract/docs/generator files
+```
+
+The Skill has no unrestricted shell and no Git branch/add/commit/push/PR authority. It uses absolute-path source tools, immutable baseline snapshots, compile/import/manifest validation, controlled dependency sync, optional exclusive live candidate validation, and rollback of unaccepted source.
+
+Adding/removing/changing a CAD MCP tool regenerates `runtimes/cad-mcp/tool-manifest.json`, which feeds CadGPT's Internal Registry/tool surface.
+
+`cad-mcp-dev` is development-only. Production/package builds must not register or expose the Skill or its source-mutation tools.
 
 ## Development status
 
-Stage 1 — Beta Build / Code Complete is complete. Current work remains Beta Scope Review before Stage 2 real-AutoCAD validation. Beta Scope Review includes closing authoring-integrity gaps so permanent libraries, User Registry metadata and tested drafts cannot drift from one another.
+Stage 1 is complete. The current branch is tightening admission, execution isolation, multi-drawing safety, lazy runtime lifecycle, controlled CAD MCP self-improvement, and Windows tray startup before Stage 2 real-AutoCAD validation.
+
+Static/CI checks do not substitute for real AutoCAD validation.

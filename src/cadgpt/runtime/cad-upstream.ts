@@ -24,11 +24,21 @@ class CadUpstream {
   private connecting: Promise<void> | null = null;
 
   private get python(): string {
-    return process.env.CAD_MCP_PYTHON || path.join(".venv-cad", "Scripts", "python.exe");
+    const configured =
+      process.env.CAD_MCP_PYTHON ||
+      path.join(".venv-cad", "Scripts", "python.exe");
+    return path.isAbsolute(configured)
+      ? configured
+      : path.resolve(getRepoRoot(), configured);
   }
 
   private get entry(): string {
-    return process.env.CAD_MCP_ENTRY || path.join("runtimes", "cad-mcp", "main.py");
+    const configured =
+      process.env.CAD_MCP_ENTRY ||
+      path.join("runtimes", "cad-mcp", "main.py");
+    return path.isAbsolute(configured)
+      ? configured
+      : path.resolve(getRepoRoot(), configured);
   }
 
   private rememberError(error: unknown): string {
@@ -65,7 +75,7 @@ class CadUpstream {
 
   async connect(force = false): Promise<void> {
     if (!this.enabled) {
-      throw new Error("CAD MCP is sleeping because AutoCAD is not currently detected. Start AutoCAD and open a drawing first.");
+      throw new Error("CAD MCP is sleeping. It may be activated only by admitted CAD work; AutoCAD must already be running with an open drawing.");
     }
     if (this.client && this.transport && !force) return;
     if (this.connecting && !force) return this.connecting;

@@ -27,12 +27,12 @@ jobs:
           $manifest = Get-Content "runtimes/cad-mcp/tool-manifest.json" -Raw | ConvertFrom-Json
           if (@($manifest.tools).Count -lt 1) { throw "Generated CAD tool manifest is empty" }
           if (@($manifest.tools.name) -notcontains "cad_list_layers") { throw "CAD manifest missing cad_list_layers" }
-      - name: Build connector
-        run: npm run build
+      - name: Build and unit tests
+        run: npm test
       - name: Validate PowerShell launcher scripts
         shell: pwsh
         run: |
-          foreach ($script in @("agent-task.ps1", "start.ps1", "openai-tunnel.ps1", "doctor.ps1", "acceptance.ps1")) {
+          foreach ($script in @("cadgpt-tray.ps1", "wait-tray-ready.ps1", "start.ps1", "agent-task.ps1", "openai-tunnel.ps1", "doctor.ps1", "acceptance.ps1")) {
             $errors = $null
             $tokens = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script), [ref]$tokens, [ref]$errors) | Out-Null
@@ -41,22 +41,23 @@ jobs:
               throw "PowerShell parse failed: $script"
             }
           }
-      - name: Smoke protected MCP, managed sandbox, registry, stable CAD descriptors
+      - name: Smoke admission, lazy families, managed sandbox and registry
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path @(
             "appdata/libraries/lisp", "appdata/libraries/jobs", "appdata/registry/user",
             "appdata/workspace/lisp-draft", "appdata/workspace/job-draft", "appdata/data/runs",
-            "appdata/runtime/dynamic-lisp", "appdata/state", "appdata/logs"
+            "appdata/runtime/dynamic-lisp", "appdata/drawings", "appdata/state", "appdata/logs"
           ) | Out-Null
+
           $env:CAD_MCP_PYTHON = "python"
           $env:CAD_MCP_ENTRY = "runtimes\cad-mcp\main.py"
           $env:MCP_TOKEN = "ci-secret-token"
-          $env:CADGPT_CONTROL_TOKEN = "ci-internal-control"
-          $env:CADGPT_SESSION_IDLE_MS = "600000"
-          $env:CADGPT_APPDATA_ROOT = "appdata"
+          $env:CADGPT_APPDATA_ROOT = (Resolve-Path "appdata").Path
+          $env:CADGPT_BUILD_PROFILE = "development"
           $mcpUrl = "http://127.0.0.1:3000/mcp/ci-secret-token"
           $proc = Start-Process -FilePath "node" -ArgumentList "dist/index.js" -PassThru -NoNewWindow
+
           try {
             $ready = $false
             foreach ($i in 1..40) {
@@ -67,74 +68,101 @@ jobs:
               Start-Sleep -Milliseconds 250
             }
             if (-not $ready) { throw "CadGPT /health did not become ready" }
-            if ($health.mcp_path_protected -ne $true) { throw "MCP path protection inactive" }
-            if ($health.cad_mcp.connected -eq $true) { throw "CAD MCP unexpectedly started without AutoCAD" }
-
-            $rawStatus = (Invoke-WebRequest -Uri "http://127.0.0.1:3000/mcp" -Method Get -SkipHttpErrorCheck).StatusCode
-            if ($rawStatus -ne 404) { throw "Unprotected /mcp route returned HTTP $rawStatus" }
-            $controlStatus = (Invoke-WebRequest -Uri "http://127.0.0.1:3000/internal/cad/deactivate" -Method Post -ContentType "application/json" -Body "{}" -SkipHttpErrorCheck).StatusCode
-            if ($controlStatus -ne 404) { throw "Internal CAD lifecycle endpoint accepted missing control token" }
+            if ($health.mode -ne "slim-control-plane") { throw "CadGPT did not start in slim control mode" }
+            if (@($health.loaded_families).Count -ne 0) { throw "Heavy families loaded before admission" }
+            if ($health.cad_mcp.connected -eq $true) { throw "CAD MCP unexpectedly started at idle" }
 
             $headers = @{ Accept = "application/json, text/event-stream" }
             $initBody = @{
               jsonrpc="2.0"; id=1; method="initialize";
-              params=@{ protocolVersion="2025-06-18"; capabilities=@{}; clientInfo=@{ name="cadgpt-ci"; version="0.1.0" } }
+              params=@{ protocolVersion="2025-06-18"; capabilities=@{}; clientInfo=@{ name="cadgpt-ci"; version="0.2.0" } }
             } | ConvertTo-Json -Depth 10
             $initResp = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $headers -ContentType "application/json" -Body $initBody
-            $sessionId = $initResp.Headers["Mcp-Session-Id"]
+            $sessionId = @($initResp.Headers["Mcp-Session-Id"])[0]
             if (-not $sessionId) { throw "MCP initialize returned no session id" }
             $mcpHeaders = @{ Accept="application/json, text/event-stream"; "Mcp-Session-Id"=$sessionId; "Mcp-Protocol-Version"="2025-06-18" }
             $null = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body (@{ jsonrpc="2.0"; method="notifications/initialized" } | ConvertTo-Json)
 
-            function Invoke-Mcp([int]$Id, [string]$Method, $Params) {
-              $body = @{ jsonrpc="2.0"; id=$Id; method=$Method; params=$Params } | ConvertTo-Json -Depth 20
+            $script:RpcId = 10
+            function Invoke-Mcp([string]$Method, $Params) {
+              $script:RpcId += 1
+              $body = @{ jsonrpc="2.0"; id=$script:RpcId; method=$Method; params=$Params } | ConvertTo-Json -Depth 30
               $resp = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body $body
               return ($resp.Content | ConvertFrom-Json)
             }
-
-            $toolsJson = Invoke-Mcp 2 "tools/list" @{}
-            $names = @($toolsJson.result.tools | ForEach-Object { $_.name })
-            foreach ($required in @(
-              "file_roots", "file_read", "file_search", "library_list", "library_import",
-              "registry_list", "registry_get", "job_list", "job_get", "skill_list", "skill_get",
-              "lisp_scaffold", "lisp_checkout", "lisp_validate", "lisp_draft_validate", "lisp_promote_draft",
-              "cad_status", "drawing_list", "drawing_create_test", "drawing_bind", "drawing_status",
-              "cad__cad_list_layers"
-            )) {
-              if ($names -notcontains $required) { throw "Missing MCP tool: $required" }
+            function Invoke-Tool([string]$Name, $Arguments=@{}) {
+              return Invoke-Mcp "tools/call" @{ name=$Name; arguments=$Arguments }
             }
 
-            $roots = Invoke-Mcp 3 "tools/call" @{ name="file_roots"; arguments=@{} }
+            $initial = Invoke-Mcp "tools/list" @{}
+            $initialNames = @($initial.result.tools | ForEach-Object { $_.name })
+            foreach ($required in @("cadgpt_admission","cadgpt_work_start","cadgpt_work_status","cadgpt_work_stop")) {
+              if ($initialNames -notcontains $required) { throw "Missing slim control tool: $required" }
+            }
+            if ($initialNames -contains "file_roots" -or $initialNames -contains "drawing_list") { throw "Execution tools leaked into pre-admission surface" }
+
+            $inactive = Invoke-Tool "cadgpt_admission" @{ user_turn="inspect this drawing" }
+            if ($inactive.result.structuredContent.data.mode -ne "inactive") { throw "CadGPT admitted a request without literal @cadgpt" }
+
+            $admit = Invoke-Tool "cadgpt_admission" @{ user_turn="@cadgpt run CI file smoke" }
+            $admissionToken = [string]$admit.result.structuredContent.data.admission_token
+            if (-not $admissionToken) { throw "ACTIVE admission returned no token" }
+
+            $afterAdmission = Invoke-Mcp "tools/list" @{}
+            $afterAdmissionNames = @($afterAdmission.result.tools | ForEach-Object { $_.name })
+            foreach ($required in @("library_list","registry_list","job_list","job_get","skill_list","skill_get")) {
+              if ($afterAdmissionNames -notcontains $required) { throw "Discovery family missing after admission: $required" }
+            }
+            foreach ($forbidden in @("file_roots","file_create","file_edit","library_import","job_checkout","job_draft_validate","job_promote_draft","lisp_checkout","drawing_list")) {
+              if ($afterAdmissionNames -contains $forbidden) { throw "Execution/mutation tool leaked into admission-only discovery surface: $forbidden" }
+            }
+
+            $work = Invoke-Tool "cadgpt_work_start" @{ admission_token=$admissionToken; owner_type="skill"; owner_id="write-lisp"; execution_path="file" }
+            $handle = $work.result.structuredContent.data.work_handle
+            if (-not $handle.execution_id -or -not $handle.authority_token) { throw "Work handle missing" }
+            $workAuth = @{ admission_token=$admissionToken; execution_id=[string]$handle.execution_id; authority_token=[string]$handle.authority_token }
+
+            function Invoke-Work([string]$Name, $Arguments=@{}) {
+              $merged=@{}
+              foreach($k in $workAuth.Keys){$merged[$k]=$workAuth[$k]}
+              foreach($k in $Arguments.Keys){$merged[$k]=$Arguments[$k]}
+              return Invoke-Tool $Name $merged
+            }
+            function Invoke-Discovery([string]$Name, $Arguments=@{}) {
+              $merged=@{ admission_token=$admissionToken }
+              foreach($k in $Arguments.Keys){$merged[$k]=$Arguments[$k]}
+              return Invoke-Tool $Name $merged
+            }
+
+            $afterWork = Invoke-Mcp "tools/list" @{}
+            $names = @($afterWork.result.tools | ForEach-Object { $_.name })
+            foreach ($required in @("file_roots","file_read","file_search","library_import","lisp_scaffold","lisp_checkout","lisp_validate")) {
+              if ($names -notcontains $required) { throw "FILE work tool missing after work start: $required" }
+            }
+            if ($names -contains "drawing_list") { throw "CAD family loaded during FILE-only work" }
+
+            $roots = Invoke-Work "file_roots"
             $rootNames = @($roots.result.structuredContent.data.roots)
             foreach ($required in @("appdata/data", "appdata/libraries", "appdata/workspace")) {
               if ($rootNames -notcontains $required) { throw "Managed root missing: $required" }
             }
-            foreach ($legacy in @("lisp", "jobs")) {
-              if ($rootNames -contains $legacy) { throw "Legacy repo root remains editable: $legacy" }
-            }
 
-            $allowedRead = Invoke-Mcp 4 "tools/call" @{ name="file_read"; arguments=@{ path="appdata/libraries/jobs/tbh-toolkit/JOB.md"; start_line=1; end_line=2 } }
-            if ($allowedRead.result.isError -eq $true -or $allowedRead.result.structuredContent.ok -ne $true) { throw "Managed AppData read rejected" }
-
-            $blockedRead = Invoke-Mcp 5 "tools/call" @{ name="file_read"; arguments=@{ path="package.json" } }
+            $allowedRead = Invoke-Work "file_read" @{ path="appdata/libraries/jobs/tbh-toolkit/JOB.md"; start_line=1; end_line=2 }
+            if ($allowedRead.result.isError -eq $true) { throw "Managed AppData read rejected" }
+            $blockedRead = Invoke-Work "file_read" @{ path="package.json" }
             if ($blockedRead.result.isError -ne $true) { throw "Sandbox allowed package.json" }
-            $legacyRead = Invoke-Mcp 6 "tools/call" @{ name="file_read"; arguments=@{ path="jobs/JOB_RULES.md" } }
-            if ($legacyRead.result.isError -ne $true) { throw "Sandbox still allows legacy jobs source root" }
 
-            $registry = Invoke-Mcp 7 "tools/call" @{ name="registry_list"; arguments=@{ limit=500 } }
+            $registry = Invoke-Discovery "registry_list" @{ limit=500 }
             $entries = @($registry.result.structuredContent.data.entries)
             if (@($entries | Where-Object { $_.registry -eq "internal" -and $_.kind -eq "tool" }).Count -lt 1) { throw "Internal tool registry empty" }
             if (@($entries | Where-Object { $_.registry -eq "internal" -and $_.kind -eq "skill" }).Count -lt 1) { throw "Internal skill registry empty" }
             if (@($entries | Where-Object { $_.registry -eq "user" -and $_.kind -eq "lisp" }).Count -lt 1) { throw "User Lisp registry empty" }
             if (@($entries | Where-Object { $_.registry -eq "user" -and $_.kind -eq "job" }).Count -lt 1) { throw "User Job registry empty" }
 
-            $recoveryHeaders = @{ Accept="application/json, text/event-stream"; "Mcp-Session-Id"="ci-stale-session"; "Mcp-Protocol-Version"="2025-06-18" }
-            $recoveryBody = @{ jsonrpc="2.0"; id=8; method="tools/list"; params=@{} } | ConvertTo-Json -Depth 5
-            $recoveryResp = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $recoveryHeaders -ContentType "application/json" -Body $recoveryBody
-            $recoveryJson = $recoveryResp.Content | ConvertFrom-Json
-            if (@($recoveryJson.result.tools | ForEach-Object { $_.name }) -notcontains "cad__cad_list_layers") { throw "Stable CAD descriptors disappeared during recovery" }
+            $relativeCreate = Invoke-Work "file_create" @{ path="appdata/workspace/reject.txt"; content="reject" }
+            if ($relativeCreate.result.isError -ne $true -or $relativeCreate.result.structuredContent.data.error -notmatch "ABSOLUTE_PATH_REQUIRED") { throw "Relative file mutation was not rejected" }
 
-            Write-Host "Protected MCP + managed sandbox + split registry + stable descriptor smoke passed"
+            Write-Host "Admission + lazy family + managed sandbox smoke passed"
           }
           finally {
             if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }

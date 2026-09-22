@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { getAppDataRoot } from "../lib/appdata.js";
+import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
 export interface ObservationLogRecord {
   [key: string]: unknown;
@@ -52,11 +53,13 @@ export async function appendObservationRecords(
     return JSON.stringify({ recorded_at: now, drawing_id: safeDrawingId, ...record });
   });
 
-  await fs.appendFile(logPath, `${lines.join("\n")}\n`, "utf8");
-  return {
-    drawing_id: safeDrawingId,
-    log_name: safeLogName,
-    path: logPath,
-    appended: lines.length,
-  };
+  return withFileMutationLocks([logPath], async () => {
+    await fs.appendFile(logPath, `${lines.join("\n")}\n`, "utf8");
+    return {
+      drawing_id: safeDrawingId,
+      log_name: safeLogName,
+      path: logPath,
+      appended: lines.length,
+    };
+  });
 }

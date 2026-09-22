@@ -6,6 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getUserCapabilitiesPath } from "../lib/appdata.js";
 import { getRepoRoot } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { isDevelopmentBuild } from "../lib/work-registration.js";
 
 interface ToolManifestEntry {
   name: string;
@@ -18,9 +19,29 @@ const INTERNAL_CAD_TOOLS = new Set([
   "acad_list_open_documents",
   "acad_set_active_document",
   "acad_create_blank_test_document",
+  "cad_observation_capture_start",
+  "cad_observation_capture_status",
+  "cad_observation_capture_finish",
+  "cad_observation_capture_cancel",
+  "cad_read_entity_properties",
 ]);
 
+const WRAPPED_CAD_SUMMARIES: Record<string, string> = {
+  cad_preview_delete_entities:
+    "Preview guarded deletion on an execution-scoped drawing and mint a one-shot token owned by the same execution/drawing.",
+  cad_execute_delete_preview:
+    "Execute only a destructive preview token owned by the same execution and drawing context.",
+  cad_load_lisp_file:
+    "Load and verify sandboxed Lisp; public commands discovered by the canonical parser become owned by this execution/drawing.",
+  cad_run_lisp_command:
+    "Run only a Lisp command previously verified and owned by the same execution/drawing.",
+};
+
 const CORE_TOOLS = [
+  { name: "cadgpt_admission", class: "control.admission", summary: "Verify literal @cadgpt invocation in the exact current user turn and mint scoped admission authority." },
+  { name: "cadgpt_work_start", class: "control.work", summary: "Create one execution-scoped WorkRegistration after ACTIVE admission." },
+  { name: "cadgpt_work_status", class: "control.work", summary: "Inspect the current session work state without exposing authority secrets." },
+  { name: "cadgpt_work_stop", class: "control.work", summary: "Release one execution-scoped work handle and its runtime state." },
   { name: "file_roots", class: "local.files", summary: "Show managed AppData roots readable/writable by generic file tools." },
   { name: "file_list", class: "local.files", summary: "List managed AppData library/workspace/data files." },
   { name: "file_read", class: "local.files", summary: "Read a managed AppData text file." },
@@ -28,7 +49,7 @@ const CORE_TOOLS = [
   { name: "file_create", class: "local.files", summary: "Create a managed workspace/data text file." },
   { name: "file_edit", class: "local.files", summary: "Edit a managed workspace/data text file." },
   { name: "library_list", class: "libraries", summary: "List user Lisp/Job libraries imported into managed AppData." },
-  { name: "library_import", class: "libraries", summary: "Read a user-selected source folder, copy it into AppData, and index User Registry without writing back to source." },
+  { name: "library_import", class: "libraries", summary: "Read an approved absolute source folder, copy it only to an explicit absolute managed AppData target, and index User Registry without writing back to source." },
   { name: "job_list", class: "workflow.jobs", summary: "List concrete Jobs registered from managed user Job Libraries." },
   { name: "job_get", class: "workflow.jobs", summary: "Load one concrete registered Job from its managed AppData library." },
   { name: "job_checkout", class: "workflow.authoring", summary: "Copy a registered Job into the Job workspace for controlled refinement." },
@@ -46,8 +67,35 @@ const CORE_TOOLS = [
   { name: "cad_status", class: "cad.session", summary: "Report AutoCAD/CAD-MCP backend state without mutating a drawing." },
   { name: "drawing_list", class: "cad.session", summary: "List AutoCAD drawings available for explicit CadGPT binding." },
   { name: "drawing_create_test", class: "cad.session", summary: "Create a blank AutoCAD drawing for safe testing." },
-  { name: "drawing_bind", class: "cad.session", summary: "Bind the CadGPT session to one explicit drawing identity." },
-  { name: "drawing_status", class: "cad.session", summary: "Report the currently bound drawing and availability state." },
+  { name: "drawing_bind", class: "cad.session", summary: "Bind the current work execution to one explicit AutoCAD document lifetime and return an opaque drawing_id." },
+  { name: "drawing_status", class: "cad.session", summary: "Report execution-scoped drawing contexts and availability." },
+  { name: "cad_refresh_tools", class: "cad.host", summary: "Compare live CAD MCP tools with the generated CAD tool manifest." },
+  { name: "observator_capture_start", class: "cad.observator", summary: "Start an execution-owned ObjectAdded capture on an explicitly bound drawing." },
+  { name: "observator_capture_status", class: "cad.observator", summary: "Report Observation capture state owned by the current execution." },
+  { name: "observator_capture_finish", class: "cad.observator", summary: "Finish the current execution-owned Observation capture and resolve captured entities." },
+  { name: "observator_capture_cancel", class: "cad.observator", summary: "Cancel the current execution-owned Observation capture." },
+  { name: "observator_read_entities", class: "cad.observator", summary: "Read structured entity properties from an explicitly bound drawing." },
+  { name: "observator_log_append", class: "cad.observator", summary: "Append normalized Observation records to the drawing-scoped managed log." },
+];
+
+const DEV_ONLY_TOOLS = [
+  { name: "cad_mcp_dev_root", class: "dev.cad-mcp", summary: "Show the absolute CAD MCP runtime source root and development write boundary." },
+  { name: "cad_mcp_dev_list", class: "dev.cad-mcp", summary: "List CAD MCP runtime or approved read-only supporting files." },
+  { name: "cad_mcp_dev_read", class: "dev.cad-mcp", summary: "Read a CAD MCP runtime/supporting file and return its hash." },
+  { name: "cad_mcp_dev_search", class: "dev.cad-mcp", summary: "Search CAD MCP runtime/supporting source." },
+  { name: "cad_mcp_dev_create", class: "dev.cad-mcp", summary: "Create an absolute-path file under runtimes/cad-mcp/** after a baseline snapshot." },
+  { name: "cad_mcp_dev_edit", class: "dev.cad-mcp", summary: "Hash-guarded edit of an absolute CAD MCP runtime source file." },
+  { name: "cad_mcp_dev_delete", class: "dev.cad-mcp", summary: "Hash-guarded deletion inside the CAD MCP runtime root." },
+  { name: "cad_mcp_dev_move", class: "dev.cad-mcp", summary: "Move/rename a CAD MCP runtime file within the allowed root." },
+  { name: "cad_mcp_dev_recovery_status", class: "dev.cad-mcp", summary: "Show crash-safe pending CAD MCP recovery baselines that block new mutation." },
+  { name: "cad_mcp_dev_recover", class: "dev.cad-mcp", summary: "Restore a persisted unaccepted CAD MCP source baseline after crash/failed cleanup." },
+  { name: "cad_mcp_dev_snapshot", class: "dev.cad-mcp", summary: "Create the immutable crash-safe rollback baseline for one CAD MCP development execution." },
+  { name: "cad_mcp_dev_rollback", class: "dev.cad-mcp", summary: "Restore the execution's CAD MCP source baseline without Git." },
+  { name: "cad_mcp_dev_validate", class: "dev.cad-mcp", summary: "Run named compile/import/manifest validation and refresh the generated CAD tool registry artifact." },
+  { name: "cad_mcp_dev_accept_local", class: "dev.cad-mcp", summary: "Accept validated local CAD MCP source when live AutoCAD testing is not required." },
+  { name: "cad_mcp_dev_candidate_status", class: "dev.cad-mcp", summary: "Inspect exclusive live CAD MCP candidate-generation state." },
+  { name: "cad_mcp_dev_candidate_start", class: "dev.cad-mcp", summary: "Reserve and start a validated exclusive CAD MCP candidate generation for live testing." },
+  { name: "cad_mcp_dev_candidate_accept", class: "dev.cad-mcp", summary: "Accept a live-tested CAD MCP candidate after successful tool evidence." },
 ];
 
 function toolClass(name: string): string {
@@ -63,7 +111,10 @@ function toolClass(name: string): string {
 }
 
 async function loadToolEntries(): Promise<Array<Record<string, unknown>>> {
-  const result: Array<Record<string, unknown>> = CORE_TOOLS.map((item) => ({
+  const core = isDevelopmentBuild()
+    ? [...CORE_TOOLS, ...DEV_ONLY_TOOLS]
+    : CORE_TOOLS;
+  const result: Array<Record<string, unknown>> = core.map((item) => ({
     id: item.name,
     name: item.name,
     kind: "tool",
@@ -77,16 +128,40 @@ async function loadToolEntries(): Promise<Array<Record<string, unknown>>> {
     const parsed = JSON.parse(await fs.readFile(manifestPath, "utf8")) as { tools?: ToolManifestEntry[] };
     for (const tool of parsed.tools ?? []) {
       if (INTERNAL_CAD_TOOLS.has(tool.name)) continue;
+      const upstreamSchema =
+        tool.inputSchema && typeof tool.inputSchema === "object"
+          ? (tool.inputSchema as Record<string, unknown>)
+          : {};
+      const properties =
+        upstreamSchema.properties && typeof upstreamSchema.properties === "object"
+          ? (upstreamSchema.properties as Record<string, unknown>)
+          : {};
+      const effectiveInputSchema = {
+        ...upstreamSchema,
+        type: "object",
+        properties: {
+          ...properties,
+          drawing_id: {
+            type: "string",
+            description:
+              "Execution-scoped drawing_id returned by drawing_bind; required when multiple drawings are bound.",
+          },
+        },
+      };
+
       result.push({
         id: `cad__${tool.name}`,
         name: `cad__${tool.name}`,
         upstream_name: tool.name,
         kind: "tool",
         registry: "internal",
-        source: "cad-mcp",
+        source: "cad-mcp-public-proxy",
         class: toolClass(tool.name),
-        summary: tool.description || tool.name,
-        input_schema: tool.inputSchema ?? {},
+        summary:
+          WRAPPED_CAD_SUMMARIES[tool.name] ||
+          tool.description ||
+          tool.name,
+        input_schema: effectiveInputSchema,
       });
     }
   } catch {
@@ -106,6 +181,7 @@ async function loadSkillEntries(): Promise<Array<Record<string, unknown>>> {
   }
   for (const dir of dirs) {
     if (!dir.isDirectory() || dir.name.startsWith(".")) continue;
+    if (dir.name === "cad-mcp-dev" && !isDevelopmentBuild()) continue;
     try {
       const content = await fs.readFile(path.join(root, dir.name, "SKILL.md"), "utf8");
       const title = content.match(/^#\s+(?:Skill:\s*)?(.+)$/mi)?.[1]?.trim() || dir.name;

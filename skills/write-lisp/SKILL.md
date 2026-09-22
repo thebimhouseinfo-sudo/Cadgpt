@@ -6,7 +6,7 @@ Status: **active**
 
 ## Core rules
 
-> AutoLISP is not Common Lisp. Registry first. Patch before rewrite. External user folders are import sources only. Imported source is never modified during registration. Editing starts from a managed AppData copy and must pass static validation + verified AutoCAD load before promotion.
+> AutoLISP is not Common Lisp. Registry first. Patch before rewrite. External user folders are import sources only. Imported source is never modified during registration. Every source mutation uses an explicit absolute canonical path inside its approved root. Editing starts from a managed AppData copy and must pass static validation + verified AutoCAD load before promotion.
 
 CadGPT owns the authoring workflow, not the user's original library folder.
 
@@ -91,13 +91,18 @@ Order of preference:
 
 ### 3. Existing Lisp: checkout before editing
 
-For a registered capability that must change:
+For a registered capability that must change, first resolve the absolute workspace root with `file_roots`, choose the exact absolute draft target under `appdata/workspace/lisp-draft/**`, then call:
 
 ```text
-lisp_checkout(registry_id=...)
+lisp_checkout(
+  registry_id=...,
+  draft_path=<absolute .lsp path>
+)
 ```
 
-This copies the managed library source to `appdata/workspace/lisp-draft/<library-id>/**` and applies the appropriate CadGPT/TBH authoring header in the working draft. The managed library source is unchanged until explicit promotion.
+A relative/CWD-derived draft path is invalid. If that draft already exists, checkout requires `overwrite_existing=true` plus the current `expected_sha256`; never silently reset another execution's draft.
+
+Checkout copies the managed library source to the explicit absolute draft and applies the appropriate CadGPT/TBH authoring header in the working draft. The managed library source is unchanged until explicit promotion.
 
 Preserve public commands and working behavior unless the requested contract changes them. Do not rewrite whole files for cosmetic consistency.
 
@@ -105,7 +110,7 @@ Preserve public commands and working behavior unless the requested contract chan
 
 Call `lisp_scaffold`. It uses CadGPT header by default; pass `target_library_id="tbh-toolkit"` only when the intended target is TBH Toolkit.
 
-Create/edit the result under `appdata/workspace/lisp-draft/**`.
+Create/edit the result using absolute paths under `appdata/workspace/lisp-draft/**`. Use `file_create` / `file_edit` only with the absolute path returned/resolved for that draft; `file_edit` also requires the latest SHA-256 from `file_read`.
 
 ### 5. Static validation — mandatory
 
@@ -159,10 +164,14 @@ For deterministic non-interactive commands, run them and verify structured CAD p
 Use `lisp_promote_draft` with:
 
 ```text
+draft_path      = absolute tested workspace draft
+target_path     = absolute managed-library target
 library_id
 relative_path
 curated semantic metadata
 ```
+
+`target_path` must exactly equal the managed target implied by `library_id + relative_path`. If replacing an existing managed target, supply `overwrite=true` and its current `expected_target_sha256`.
 
 Promotion re-validates with the target library's authoring profile, writes the managed AppData library copy, derives commands and synchronizes User Registry rollback-safely.
 

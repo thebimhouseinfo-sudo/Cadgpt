@@ -23,7 +23,7 @@ jobs:
         run: |
           npm ci
           python scripts/generate-cad-tool-manifest.py
-          npm run build
+          npm test
 
       - name: Smoke controlled Lisp and Job authoring lifecycle
         shell: pwsh
@@ -31,15 +31,14 @@ jobs:
           New-Item -ItemType Directory -Force -Path @(
             "appdata/libraries/lisp", "appdata/libraries/jobs", "appdata/registry/user",
             "appdata/workspace/lisp-draft", "appdata/workspace/job-draft", "appdata/data/runs",
-            "appdata/runtime/dynamic-lisp", "appdata/state", "appdata/logs"
+            "appdata/runtime/dynamic-lisp", "appdata/drawings", "appdata/state", "appdata/logs"
           ) | Out-Null
 
           $env:CAD_MCP_PYTHON = "python"
           $env:CAD_MCP_ENTRY = "runtimes\cad-mcp\main.py"
           $env:MCP_TOKEN = "ci-authoring-token"
-          $env:CADGPT_CONTROL_TOKEN = "ci-authoring-control"
-          $env:CADGPT_SESSION_IDLE_MS = "600000"
-          $env:CADGPT_APPDATA_ROOT = "appdata"
+          $env:CADGPT_APPDATA_ROOT = (Resolve-Path "appdata").Path
+          $env:CADGPT_BUILD_PROFILE = "development"
           $mcpUrl = "http://127.0.0.1:3000/mcp/ci-authoring-token"
           $proc = Start-Process -FilePath "node" -ArgumentList "dist/index.js" -PassThru -NoNewWindow
 
@@ -60,7 +59,7 @@ jobs:
               params=@{ protocolVersion="2025-06-18"; capabilities=@{}; clientInfo=@{ name="cadgpt-authoring-ci"; version="0.1.0" } }
             } | ConvertTo-Json -Depth 10
             $initResp = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $headers -ContentType "application/json" -Body $initBody
-            $sessionId = $initResp.Headers["Mcp-Session-Id"]
+            $sessionId = @($initResp.Headers["Mcp-Session-Id"])[0]
             if (-not $sessionId) { throw "MCP initialize returned no session id" }
             $mcpHeaders = @{ Accept="application/json, text/event-stream"; "Mcp-Session-Id"=$sessionId; "Mcp-Protocol-Version"="2025-06-18" }
             $null = Invoke-WebRequest -Uri $mcpUrl -Method Post -Headers $mcpHeaders -ContentType "application/json" -Body (@{ jsonrpc="2.0"; method="notifications/initialized" } | ConvertTo-Json)
@@ -71,13 +70,47 @@ jobs:
               return ($resp.Content | ConvertFrom-Json)
             }
 
-            $toolsJson = Invoke-Mcp 2 "tools/list" @{}
+            function Invoke-Tool([int]$Id, [string]$Name, $Arguments=@{}) {
+              return Invoke-Mcp $Id "tools/call" @{ name=$Name; arguments=$Arguments }
+            }
+
+            $initial = Invoke-Mcp 2 "tools/list" @{}
+            $initialNames = @($initial.result.tools | ForEach-Object { $_.name })
+            if ($initialNames -contains "file_roots") { throw "FILE family loaded before admission/work" }
+
+            $admit = Invoke-Tool 3 "cadgpt_admission" @{ user_turn="@cadgpt run authoring integrity smoke" }
+            $admissionToken = [string]$admit.result.structuredContent.data.admission_token
+            if (-not $admissionToken) { throw "ACTIVE admission returned no token" }
+
+            $work = Invoke-Tool 4 "cadgpt_work_start" @{
+              admission_token=$admissionToken; owner_type="skill"; owner_id="write-lisp"; execution_path="file"
+            }
+            $handle = $work.result.structuredContent.data.work_handle
+            if (-not $handle.execution_id -or -not $handle.authority_token) { throw "FILE work handle missing" }
+            $workAuth = @{
+              admission_token=$admissionToken;
+              execution_id=[string]$handle.execution_id;
+              authority_token=[string]$handle.authority_token
+            }
+            function Invoke-Work([int]$Id, [string]$Name, $Arguments=@{}) {
+              $merged=@{}
+              foreach($k in $workAuth.Keys){$merged[$k]=$workAuth[$k]}
+              foreach($k in $Arguments.Keys){$merged[$k]=$Arguments[$k]}
+              return Invoke-Tool $Id $Name $merged
+            }
+            function Invoke-Discovery([int]$Id, [string]$Name, $Arguments=@{}) {
+              $merged=@{ admission_token=$admissionToken }
+              foreach($k in $Arguments.Keys){$merged[$k]=$Arguments[$k]}
+              return Invoke-Tool $Id $Name $merged
+            }
+
+            $toolsJson = Invoke-Mcp 5 "tools/list" @{}
             $names = @($toolsJson.result.tools | ForEach-Object { $_.name })
-            foreach ($required in @("job_checkout", "job_draft_validate", "job_promote_draft", "lisp_checkout", "lisp_draft_validate", "lisp_promote_draft")) {
+            foreach ($required in @("job_checkout", "job_draft_validate", "job_promote_draft", "lisp_checkout", "lisp_draft_validate", "lisp_promote_draft", "file_roots", "file_create", "file_edit")) {
               if ($names -notcontains $required) { throw "Missing controlled authoring tool: $required" }
             }
 
-            $roots = Invoke-Mcp 3 "tools/call" @{ name="file_roots"; arguments=@{} }
+            $roots = Invoke-Work 6 "file_roots" @{}
             $readRoots = @($roots.result.structuredContent.data.roots)
             $writeRoots = @($roots.result.structuredContent.data.writable_roots)
             if ($readRoots -notcontains "appdata/libraries") { throw "Managed libraries must remain generically readable" }
@@ -86,17 +119,24 @@ jobs:
               if ($writeRoots -notcontains $required) { throw "Generic writable root missing: $required" }
             }
 
-            $blockedEdit = Invoke-Mcp 4 "tools/call" @{ name="file_edit"; arguments=@{
-              path="appdata/libraries/jobs/tbh-toolkit/JOB.md";
+            $blockedLibrary = (Resolve-Path "appdata/libraries/jobs/tbh-toolkit/JOB.md").Path
+            $blockedEdit = Invoke-Work 7 "file_edit" @{
+              path=$blockedLibrary;
+              expected_sha256=("0" * 64);
               old_text="# Job: TBH Toolkit Command";
               new_text="# Job: SHOULD-NOT-WRITE"
-            } }
+            }
             if ($blockedEdit.result.isError -ne $true) { throw "Generic file_edit mutated permanent Job library" }
 
-            $checkout = Invoke-Mcp 5 "tools/call" @{ name="job_checkout"; arguments=@{ registry_id="tbh.job.toolkit-command" } }
+            $jobDraftRoot = (Resolve-Path "appdata/workspace/job-draft").Path
+            $checkoutDraftPath = Join-Path $jobDraftRoot "tbh-toolkit\checkout-smoke\JOB.md"
+            $checkout = Invoke-Work 8 "job_checkout" @{
+              registry_id="tbh.job.toolkit-command";
+              draft_path=$checkoutDraftPath
+            }
             if ($checkout.result.isError -eq $true) { throw "job_checkout failed" }
             $checkoutPath = $checkout.result.structuredContent.data.draft_path
-            if ($checkoutPath -notlike "appdata/workspace/job-draft/*") { throw "job_checkout escaped Job workspace" }
+            if (-not [System.IO.Path]::IsPathRooted($checkoutPath) -or -not $checkoutPath.StartsWith($jobDraftRoot, [System.StringComparison]::OrdinalIgnoreCase)) { throw "job_checkout escaped absolute Job workspace" }
 
             $jobDraft = @'
           # Job: CI Authoring Integrity
@@ -135,19 +175,23 @@ jobs:
           - Job promotion returns a registered managed Job.
           '@
             $jobDraft = ($jobDraft -split "`n" | ForEach-Object { $_ -replace '^          ', '' }) -join "`n"
-            $createdJob = Invoke-Mcp 6 "tools/call" @{ name="file_create"; arguments=@{
-              path="appdata/workspace/job-draft/tbh-toolkit/ci-authoring/JOB.md";
+            $jobDraftPath = Join-Path $jobDraftRoot "tbh-toolkit\ci-authoring\JOB.md"
+            $createdJob = Invoke-Work 9 "file_create" @{
+              path=$jobDraftPath;
               content=$jobDraft
-            } }
+            }
             if ($createdJob.result.isError -eq $true) { throw "Could not create Job draft" }
 
-            $jobValidation = Invoke-Mcp 7 "tools/call" @{ name="job_draft_validate"; arguments=@{ path="appdata/workspace/job-draft/tbh-toolkit/ci-authoring/JOB.md" } }
+            $jobValidation = Invoke-Work 10 "job_draft_validate" @{ path=$jobDraftPath }
             if ($jobValidation.result.isError -eq $true -or $jobValidation.result.structuredContent.data.valid -ne $true) {
               throw "Valid Job draft failed job_draft_validate"
             }
 
-            $jobPromotion = Invoke-Mcp 8 "tools/call" @{ name="job_promote_draft"; arguments=@{
-              draft_path="appdata/workspace/job-draft/tbh-toolkit/ci-authoring/JOB.md";
+            $jobTargetRoot = (Resolve-Path "appdata/libraries/jobs/tbh-toolkit").Path
+            $jobTargetPath = Join-Path $jobTargetRoot "ci-authoring\JOB.md"
+            $jobPromotion = Invoke-Work 11 "job_promote_draft" @{
+              draft_path=$jobDraftPath;
+              target_path=$jobTargetPath;
               library_id="tbh-toolkit";
               relative_path="ci-authoring/JOB.md";
               overwrite=$false;
@@ -164,10 +208,10 @@ jobs:
               test_evidence="CI executed the deterministic Job authoring smoke path.";
               final_validation_evidence="job_draft_validate passed and promotion result is checked in User Registry.";
               user_accepted=$true
-            } }
+            }
             if ($jobPromotion.result.isError -eq $true) { throw "job_promote_draft failed" }
 
-            $registeredJob = Invoke-Mcp 9 "tools/call" @{ name="registry_get"; arguments=@{ id="ci.job.authoring-integrity"; kind="job" } }
+            $registeredJob = Invoke-Discovery 12 "registry_get" @{ id="ci.job.authoring-integrity"; kind="job" }
             if ($registeredJob.result.isError -eq $true) { throw "Promoted Job missing from User Registry" }
 
             $helperDraft = @'
@@ -193,23 +237,28 @@ jobs:
           (princ)
           '@
             $helperDraft = ($helperDraft -split "`n" | ForEach-Object { $_ -replace '^          ', '' }) -join "`n"
-            $createdHelper = Invoke-Mcp 10 "tools/call" @{ name="file_create"; arguments=@{
-              path="appdata/workspace/lisp-draft/tbh-toolkit/ci-helper.lsp";
+            $lispDraftRoot = (Resolve-Path "appdata/workspace/lisp-draft").Path
+            $helperDraftPath = Join-Path $lispDraftRoot "tbh-toolkit\ci-helper.lsp"
+            $createdHelper = Invoke-Work 13 "file_create" @{
+              path=$helperDraftPath;
               content=$helperDraft
-            } }
+            }
             if ($createdHelper.result.isError -eq $true) { throw "Could not create helper Lisp draft" }
 
-            $helperValidation = Invoke-Mcp 11 "tools/call" @{ name="lisp_draft_validate"; arguments=@{
-              path="appdata/workspace/lisp-draft/tbh-toolkit/ci-helper.lsp";
+            $helperValidation = Invoke-Work 14 "lisp_draft_validate" @{
+              path=$helperDraftPath;
               expected_commands=@();
               profile="tbh"
-            } }
+            }
             if ($helperValidation.result.isError -eq $true -or $helperValidation.result.structuredContent.data.valid -ne $true) {
               throw "Helper-only Lisp failed validation"
             }
 
-            $helperPromotion = Invoke-Mcp 12 "tools/call" @{ name="lisp_promote_draft"; arguments=@{
-              draft_path="appdata/workspace/lisp-draft/tbh-toolkit/ci-helper.lsp";
+            $helperTargetRoot = (Resolve-Path "appdata/libraries/lisp/tbh-toolkit").Path
+            $helperTargetPath = Join-Path $helperTargetRoot "CI\ci-helper.lsp"
+            $helperPromotion = Invoke-Work 15 "lisp_promote_draft" @{
+              draft_path=$helperDraftPath;
+              target_path=$helperTargetPath;
               library_id="tbh-toolkit";
               relative_path="CI/ci-helper.lsp";
               overwrite=$false;
@@ -234,7 +283,7 @@ jobs:
                 dynamic_parameters=@();
                 implementation_notes=@("CI authoring integrity fixture")
               }
-            } }
+            }
             if ($helperPromotion.result.isError -eq $true) { throw "Helper-only lisp_promote_draft failed" }
             if ($helperPromotion.result.structuredContent.data.helper_only -ne $true) { throw "Helper promotion did not report helper_only=true" }
 

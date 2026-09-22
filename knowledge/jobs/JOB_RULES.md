@@ -2,9 +2,9 @@
 
 ## Purpose
 
-A **Job** in CadGPT is a small, repeatable CAD workflow. It is the replacement for the old CAD workflow/skill concept: a known sequence of steps that should be executed repeatedly on drawings to produce a concrete result.
+A **Job** in CadGPT is a small, repeatable CAD workflow: a known sequence of steps executed under one explicit CadGPT WorkRegistration to produce a concrete result.
 
-A Job is not an AI agent and does not own a chat session. The CadGPT session remains bound to one drawing while multiple Jobs may run in sequence.
+A Job is not an AI agent and does not own a chat session. One Job execution may own one or several opaque drawing contexts. If more than one drawing is bound, CAD operations must identify the intended `drawing_id`; no Job may inherit or guess another chat/execution's drawing target.
 
 ## Core Principle
 
@@ -80,6 +80,8 @@ Working authoring/refinement copies live under:
 ```text
 appdata/workspace/job-draft/**
 ```
+
+Every Job source mutation uses an explicit absolute canonical filesystem path under that approved draft root. Relative paths and ambient process CWD never authorize a write.
 
 In packaged builds the same virtual AppData paths map to the user's CadGPT AppData directory.
 

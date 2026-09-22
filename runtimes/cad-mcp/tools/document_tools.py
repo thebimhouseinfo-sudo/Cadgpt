@@ -35,9 +35,16 @@ def register(mcp):
         return _safe(list_open_documents)
 
     @mcp.tool()
-    def acad_set_active_document(document_name: str) -> dict:
-        """Explicitly activate an already-open drawing by file name or full path."""
-        return _safe(set_active_document, document_name)
+    def acad_set_active_document(
+        document_name: str = "",
+        runtime_document_id: str = "",
+    ) -> dict:
+        """Activate an open drawing and optionally require its lifetime runtime ID."""
+        return _safe(
+            set_active_document,
+            document_name,
+            runtime_document_id,
+        )
 
     @mcp.tool()
     def acad_create_blank_test_document() -> dict:
