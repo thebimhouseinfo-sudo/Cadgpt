@@ -58,7 +58,7 @@ test("mutation resolver requires absolute paths and blocks root escape", async (
         allowedRoots: writableRoots,
         forCreate: true,
       }),
-      path.resolve(createTarget)
+      path.join(await fs.realpath(workspace), "new", "created.txt")
     );
 
     const junction = path.join(workspace, "escape-junction");
