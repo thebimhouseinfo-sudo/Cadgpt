@@ -35,15 +35,22 @@ jobs:
           foreach ($marker in @(
             "npm ci",
             "requirements.lock.txt",
-            "appdata\libraries\lisp",
-            "appdata\libraries\jobs",
-            "appdata\registry\user",
-            "appdata\workspace\lisp-draft",
-            "appdata\data\runs"
+            "CADGPT_APPDATA_ROOT",
+            "libraries\lisp",
+            "libraries\jobs",
+            "registry\user",
+            "workspace\lisp-draft",
+            "workspace\job-draft",
+            "data\runs",
+            "runtime\dynamic-lisp",
+            "drawings",
+            "state",
+            "logs"
           )) {
             if ($setup -notmatch [regex]::Escape($marker)) { throw "setup.bat missing managed-AppData marker: $marker" }
           }
-          Write-Host "Beta managed AppData contract OK"
+          if ($setup -match "appdata\\libraries\\lisp") { throw "setup.bat must not hard-code the default AppData root as write authority" }
+          Write-Host "Beta configurable managed-AppData contract OK"
 
       - name: Install locked Node dependencies
         run: npm ci
