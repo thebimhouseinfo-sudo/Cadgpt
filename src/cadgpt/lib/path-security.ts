@@ -65,6 +65,20 @@ async function nearestExistingParent(target: string): Promise<string> {
   }
 }
 
+async function canonicalizeAllowedRoot(root: string): Promise<string> {
+  const resolved = path.resolve(root);
+  try {
+    return await fs.realpath(resolved);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  const parent = await nearestExistingParent(path.dirname(resolved));
+  const realParent = await fs.realpath(parent);
+  const relativeTail = path.relative(parent, resolved);
+  return path.resolve(realParent, relativeTail);
+}
+
 function resolveVirtualPath(inputPath: string): string {
   const normalized = inputPath.replaceAll("\\", "/");
   if (normalized === "appdata" || normalized.startsWith("appdata/")) {
@@ -139,15 +153,22 @@ export async function resolveAbsoluteMutationPath(
     );
   }
 
-  const roots = (options.allowedRoots ?? getWritableRoots()).map((root) =>
-    path.resolve(root)
+  const requestedRoots = (options.allowedRoots ?? getWritableRoots()).map(
+    (root) => path.resolve(root)
   );
   const candidate = path.resolve(trimmed);
-  assertInsideRoots(candidate, roots, options.label || "mutation");
+
+  // First prove the requested lexical path is scoped to the caller's explicit
+  // roots. Then compare canonical filesystem identities so Windows DOS aliases,
+  // casing, symlinks and junctions cannot cause false matches or false rejects.
+  assertInsideRoots(candidate, requestedRoots, options.label || "mutation");
+  const canonicalRoots = await Promise.all(
+    requestedRoots.map((root) => canonicalizeAllowedRoot(root))
+  );
 
   if (!options.forCreate) {
     const real = await fs.realpath(candidate);
-    assertInsideRoots(real, roots, options.label || "mutation");
+    assertInsideRoots(real, canonicalRoots, options.label || "mutation");
     return real;
   }
 
@@ -157,7 +178,7 @@ export async function resolveAbsoluteMutationPath(
   try {
     await fs.lstat(candidate);
     const realExisting = await fs.realpath(candidate);
-    assertInsideRoots(realExisting, roots, options.label || "mutation");
+    assertInsideRoots(realExisting, canonicalRoots, options.label || "mutation");
     return realExisting;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -165,11 +186,11 @@ export async function resolveAbsoluteMutationPath(
 
   const parent = await nearestExistingParent(path.dirname(candidate));
   const realParent = await fs.realpath(parent);
-  assertInsideRoots(realParent, roots, options.label || "mutation");
+  assertInsideRoots(realParent, canonicalRoots, options.label || "mutation");
 
   const relativeTail = path.relative(parent, candidate);
   const resolvedCandidate = path.resolve(realParent, relativeTail);
-  assertInsideRoots(resolvedCandidate, roots, options.label || "mutation");
+  assertInsideRoots(resolvedCandidate, canonicalRoots, options.label || "mutation");
   return resolvedCandidate;
 }
 
