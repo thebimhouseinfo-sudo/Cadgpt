@@ -83,43 +83,60 @@ function lispCommandSet(workId: string, drawingId: string): Set<string> {
 }
 
 async function resolveLispSourceForCommandDiscovery(
-  virtualPath: string
+  requestedPath: string
 ): Promise<string> {
-  const normalized = virtualPath.trim().replaceAll("\\", "/");
-  if (!normalized || path.isAbsolute(normalized)) {
-    throw new Error(
-      "LISP_COMMAND_SCOPE: load path must be a CadGPT virtual Lisp path."
-    );
+  const raw = requestedPath.trim();
+  if (!raw) {
+    throw new Error("LISP_COMMAND_SCOPE: Lisp path is required.");
   }
 
-  let root: string;
-  let suffix: string;
-  const lower = normalized.toLowerCase();
+  const approvedRoots = [
+    path.resolve(getRepoRoot(), "resources", "cad"),
+    path.resolve(getAppDataRoot(), "libraries", "lisp"),
+    path.resolve(getAppDataRoot(), "workspace", "lisp-draft"),
+    path.resolve(getAppDataRoot(), "runtime", "dynamic-lisp"),
+  ];
 
-  if (lower.startsWith("resources/cad/")) {
-    root = path.resolve(getRepoRoot(), "resources", "cad");
-    suffix = normalized.slice("resources/cad/".length);
-  } else if (lower.startsWith("appdata/libraries/lisp/")) {
-    root = path.resolve(getAppDataRoot(), "libraries", "lisp");
-    suffix = normalized.slice("appdata/libraries/lisp/".length);
-  } else if (lower.startsWith("appdata/workspace/lisp-draft/")) {
-    root = path.resolve(getAppDataRoot(), "workspace", "lisp-draft");
-    suffix = normalized.slice("appdata/workspace/lisp-draft/".length);
-  } else if (lower.startsWith("appdata/runtime/dynamic-lisp/")) {
-    root = path.resolve(getAppDataRoot(), "runtime", "dynamic-lisp");
-    suffix = normalized.slice("appdata/runtime/dynamic-lisp/".length);
+  let candidate: string;
+  if (path.isAbsolute(raw)) {
+    candidate = path.resolve(raw);
+    if (!approvedRoots.some((root) => isPathInside(candidate, root))) {
+      throw new Error(
+        "LISP_COMMAND_SCOPE: absolute Lisp path is outside approved Lisp roots."
+      );
+    }
   } else {
-    throw new Error(
-      "LISP_COMMAND_SCOPE: unsupported Lisp virtual namespace."
-    );
+    const normalized = raw.replaceAll("\\", "/");
+    const lower = normalized.toLowerCase();
+    let root: string;
+    let suffix: string;
+
+    if (lower.startsWith("resources/cad/")) {
+      root = approvedRoots[0];
+      suffix = normalized.slice("resources/cad/".length);
+    } else if (lower.startsWith("appdata/libraries/lisp/")) {
+      root = approvedRoots[1];
+      suffix = normalized.slice("appdata/libraries/lisp/".length);
+    } else if (lower.startsWith("appdata/workspace/lisp-draft/")) {
+      root = approvedRoots[2];
+      suffix = normalized.slice("appdata/workspace/lisp-draft/".length);
+    } else if (lower.startsWith("appdata/runtime/dynamic-lisp/")) {
+      root = approvedRoots[3];
+      suffix = normalized.slice("appdata/runtime/dynamic-lisp/".length);
+    } else {
+      throw new Error(
+        "LISP_COMMAND_SCOPE: unsupported Lisp path. Use an approved CadGPT Lisp namespace or an absolute path inside an approved Lisp root."
+      );
+    }
+
+    candidate = path.resolve(root, suffix);
+    if (!isPathInside(candidate, root)) {
+      throw new Error("LISP_COMMAND_SCOPE: Lisp path escapes its approved root.");
+    }
   }
 
-  const candidate = path.resolve(root, suffix);
-  if (!isPathInside(candidate, root)) {
-    throw new Error("LISP_COMMAND_SCOPE: Lisp path escapes its approved root.");
-  }
   const real = await fs.promises.realpath(candidate);
-  if (!isPathInside(real, root)) {
+  if (!approvedRoots.some((root) => isPathInside(real, root))) {
     throw new Error("LISP_COMMAND_SCOPE: Lisp real path escapes its approved root.");
   }
   if (path.extname(real).toLowerCase() !== ".lsp") {
