@@ -69,17 +69,17 @@ if errorlevel 1 (
 )
 
 echo.
-echo [1/10] Initializing configured CadGPT AppData...
+echo [1/9] Initializing configured CadGPT AppData...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$repo=[System.IO.Path]::GetFullPath('%ROOT%\'); $line=Get-Content '.env' -ErrorAction SilentlyContinue | Where-Object { $_ -match '^\s*CADGPT_APPDATA_ROOT\s*=' -and -not $_.TrimStart().StartsWith('#') } | Select-Object -First 1; $configured=if($line){(($line -split '=',2)[1].Trim()).Trim([char]39).Trim([char]34)}else{'appdata'}; $root=if([System.IO.Path]::IsPathRooted($configured)){[System.IO.Path]::GetFullPath($configured)}else{[System.IO.Path]::GetFullPath((Join-Path $repo $configured))}; $dirs=@('libraries\lisp','libraries\jobs','registry\user','workspace\lisp-draft','workspace\job-draft','data\runs','runtime\dynamic-lisp','drawings','state','logs'); New-Item -ItemType Directory -Force -Path $root | Out-Null; foreach($rel in $dirs){$target=Join-Path $root $rel; New-Item -ItemType Directory -Force -Path $target | Out-Null; if(-not (Test-Path $target)){Write-Error ('Could not create AppData directory: '+$target); exit 1}}; Write-Host ('[OK] CadGPT AppData root: '+$root)"
 if errorlevel 1 goto :failed
 
 echo.
-echo [2/10] Installing locked Node dependencies...
+echo [2/9] Installing locked Node dependencies...
 call npm ci
 if errorlevel 1 goto :failed
 
 echo.
-echo [3/10] Generating CAD MCP tool manifest...
+echo [3/9] Generating CAD MCP tool manifest...
 python "%ROOT%\scripts\generate-cad-tool-manifest.py"
 if errorlevel 1 goto :failed
 if not exist "runtimes\cad-mcp\tool-manifest.json" (
@@ -88,17 +88,17 @@ if not exist "runtimes\cad-mcp\tool-manifest.json" (
 )
 
 echo.
-echo [4/10] Building CadGPT...
+echo [4/9] Building CadGPT...
 call npm run build
 if errorlevel 1 goto :failed
 
 echo.
-echo [5/10] Running static regression tests...
+echo [5/9] Running static regression tests...
 call npm run test:unit
 if errorlevel 1 goto :failed
 
 echo.
-echo [6/10] Rebuilding isolated CAD MCP Python environment...
+echo [6/9] Rebuilding isolated CAD MCP Python environment...
 if exist ".venv-cad" (
   rmdir /s /q ".venv-cad"
   if exist ".venv-cad" (
@@ -116,27 +116,12 @@ if errorlevel 1 goto :failed
 if errorlevel 1 goto :failed
 
 echo.
-echo [7/10] Configuring OpenAI Secure MCP Tunnel...
+echo [7/9] Configuring OpenAI Secure MCP Tunnel...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\openai-tunnel.ps1" -Init
 if errorlevel 1 goto :failed
 
 echo.
-echo [8/10] Removing legacy Scheduled Task startup if present...
-schtasks /Query /TN "CadGPT Background Agent" >nul 2>nul
-if errorlevel 1 (
-  echo [OK] Legacy CadGPT Scheduled Task is absent.
-) else (
-  schtasks /End /TN "CadGPT Background Agent" >nul 2>nul
-  schtasks /Delete /TN "CadGPT Background Agent" /F >nul 2>nul
-  if errorlevel 1 (
-    echo [ERROR] Could not remove legacy CadGPT Scheduled Task.
-    goto :failed
-  )
-  echo [OK] Removed legacy CadGPT Scheduled Task.
-)
-
-echo.
-echo [9/10] Installing and starting CadGPT tray runtime...
+echo [8/9] Installing and starting CadGPT tray runtime...
 call "%ROOT%\run.bat" install
 if errorlevel 1 goto :failed
 
@@ -156,7 +141,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [10/10] Running installation doctor...
+echo [9/9] Running installation doctor...
 call "%ROOT%\doctor.bat"
 if errorlevel 1 goto :failed
 
@@ -166,7 +151,7 @@ echo   Setup complete
 echo ========================================
 echo CadGPT now starts as a Windows tray app for this user.
 echo Idle runtime: tray + slim admission MCP + Secure Tunnel.
-echo Heavy FILE/CAD capabilities load only after valid @cadgpt admission and work registration.
+echo Heavy FILE/CAD capabilities load only after explicit current-turn CadGPT invocation (@cadgpt or CadGPT plugin/icon) and work registration.
 echo CAD MCP starts only on actual CAD demand; AutoCAD is never launched by CadGPT.
 echo cad-mcp-dev is development-only and is excluded from production packaging.
 echo.
