@@ -16,6 +16,7 @@ $StartupName = "CadGPT"
 $script:IsTrayHost = $false
 $IndexPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "dist\index.js"))
 $TrayScriptPath = [System.IO.Path]::GetFullPath($PSCommandPath)
+$TrayLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "cadgpt-tray.vbs"))
 $TunnelProfilePath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "profiles\cadgpt.yaml"))
 
 function Get-DotEnvValue([string]$Name) {
@@ -47,7 +48,10 @@ function Write-TrayLog([string]$Message) {
 }
 
 function Get-StartupCommand {
-    return 'powershell.exe -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $TrayScriptPath + '"'
+    if (-not (Test-Path $TrayLauncherPath)) {
+        throw "cadgpt-tray.vbs is missing. Re-run setup from the current source tree."
+    }
+    return 'wscript.exe "' + $TrayLauncherPath + '"'
 }
 
 function Install-StartupRegistration {
