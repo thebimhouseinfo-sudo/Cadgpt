@@ -25,6 +25,3 @@ export async function withCadHostLock<T>(
   }
 }
 
-export function activeCadHostQueues(): number {
-  return hostChains.size;
-}
