@@ -113,9 +113,9 @@ function Test-OwnedTrayProcess([int]$ProcessId) {
 }
 
 $CadGptPortValue = Get-DotEnvValue "PORT"
-$CadGptPort = if ($CadGptPortValue) { [int]$CadGptPortValue } else { 3000 }
+$CadGptPort = if ($CadGptPortValue) { [int]$CadGptPortValue } else { 3100 }
 $TunnelHealthValue = Get-DotEnvValue "OPENAI_TUNNEL_HEALTH_PORT"
-$TunnelHealthPort = if ($TunnelHealthValue) { [int]$TunnelHealthValue } else { 8080 }
+$TunnelHealthPort = if ($TunnelHealthValue) { [int]$TunnelHealthValue } else { 8180 }
 
 function Get-CadGptHealth {
     try {
