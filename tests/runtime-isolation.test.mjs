@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-test("admission requires literal @cadgpt in the exact current turn", async () => {
+test("admission accepts current-turn @cadgpt mention or explicit plugin invocation", async () => {
   const { checkAdmission, validateAdmissionToken } = await import(
     "../dist/cadgpt/lib/admission.js"
   );
@@ -11,14 +11,40 @@ test("admission requires literal @cadgpt in the exact current turn", async () =>
   assert.equal(inactive.claimed, false);
   assert.equal(inactive.admission_token, undefined);
 
-  const active = checkAdmission("session-a", "@cadgpt edit this AutoCAD drawing");
-  assert.equal(active.mode, "active");
-  assert.ok(active.admission_token);
-  assert.doesNotThrow(() =>
-    validateAdmissionToken(active.admission_token, "session-a")
+  const mention = checkAdmission(
+    "session-a",
+    "@cadgpt edit this AutoCAD drawing",
+    "mention"
   );
+  assert.equal(mention.mode, "active");
+  assert.equal(mention.reason, "explicit_cadgpt");
+  assert.ok(mention.admission_token);
+
+  const plugin = checkAdmission(
+    "session-plugin",
+    "Please edit this AutoCAD drawing",
+    "plugin"
+  );
+  assert.equal(plugin.mode, "active");
+  assert.equal(plugin.reason, "explicit_cadgpt_plugin");
+  assert.ok(plugin.admission_token);
+  assert.doesNotThrow(() =>
+    validateAdmissionToken(plugin.admission_token, "session-plugin")
+  );
+
+  const nextTurnWithoutInvocation = checkAdmission(
+    "session-plugin",
+    "continue",
+    "mention"
+  );
+  assert.equal(nextTurnWithoutInvocation.mode, "inactive");
   assert.throws(
-    () => validateAdmissionToken(active.admission_token, "session-b"),
+    () => validateAdmissionToken(plugin.admission_token, "session-plugin"),
+    /ADMISSION_REQUIRED/
+  );
+
+  assert.throws(
+    () => validateAdmissionToken(mention.admission_token, "session-b"),
     /another ChatGPT session/
   );
 });
