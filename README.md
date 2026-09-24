@@ -51,7 +51,7 @@ OpenAI Secure MCP Tunnel
 
 FILE capability families load only after admitted FILE work. CAD capability families load only after admitted CAD work. The Python CAD MCP backend starts only on actual CAD demand and returns to sleep after CAD work ends. AutoCAD is never launched implicitly.
 
-The former Scheduled Task / polling wake-agent lifecycle is retired. `agent-task.ps1`, `start.ps1`, and `dist/wake-agent.js` remain compatibility shims only and delegate to the tray/slim runtime.
+The former Scheduled Task / polling wake-agent lifecycle is retired. The supported source entrypoints are now `setup.bat`, `run.bat`, the silent `cadgpt-tray.vbs` launcher, and `cadgpt-tray.ps1`; retired compatibility shims are no longer part of the active tree.
 
 `run.bat` is a control utility (`install`, `start`, `stop`, `restart`, `status`, `uninstall`), not a daily launcher.
 
@@ -177,7 +177,7 @@ One-time setup:
 setup.bat
 ```
 
-Setup installs locked dependencies, generates the stable CAD tool manifest, initializes managed AppData, configures the Secure MCP Tunnel, removes the legacy Scheduled Task if present, registers the CadGPT tray under HKCU Run, starts the tray/slim runtime, and runs diagnostics.
+Setup installs locked dependencies, generates the stable CAD tool manifest, initializes managed AppData, configures the Secure MCP Tunnel, removes the legacy Scheduled Task if present, registers the silent CadGPT tray launcher under HKCU Run, starts the tray/slim runtime, and runs diagnostics.
 
 Daily use normally requires no command.
 
