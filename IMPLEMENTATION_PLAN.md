@@ -1,1724 +1,1067 @@
-# CadGPT — Current Implementation Plan
+# CadGPT — Ship Implementation Plan
 
-Status: **Stage 1 complete; Runtime Isolation / Admission Refactor planned before Stage 2**  
+Status: **Ship-focused implementation plan**  
 Repository: `thebimhouseinfo-sudo/Cadgpt`  
-Real-AutoCAD validation: **Stage 2, not yet claimed**  
-Revision focus: **explicit @cadgpt admission, execution/tool leases, FILE vs CAD isolation, multi-drawing concurrency, lazy runtime, CAD MCP self-improve, Windows tray startup**
+Current architecture: **admission + WorkRegistration + ToolLease + lazy FILE/CAD runtime + development-only CAD MCP self-improve already implemented at source level**  
+Remaining objective: **close real-AutoCAD gaps, add deterministic Lisp load-check loop, harden release/runtime packaging, then ship a production build with development-only self-improve removed**
 
-This file is the current implementation authority. Historical migration details belong in `MIGRATION_PLAN.md` / `MIGRATION_MATRIX.md`; old CAD-Agent layout assumptions are not architectural requirements.
-
----
-
-## 0. Refactor objective
-
-CadGPT must remain a thin ChatGPT-controlled local execution layer, but the current Beta runtime needs one architectural tightening before Stage 2:
-
-1. ChatGPT may decide to call CadGPT even when the user did not intend to use it. CadGPT must therefore enforce its own **server-side admission gate**.
-2. CadGPT and GPTWorker may be loaded at the same time and may use the same underlying Windows/file capabilities. Execution context must never drift between providers, chats, Jobs, Skills, files, or drawings.
-3. Multiple ChatGPT sessions must be able to work on different AutoCAD drawings without sharing a global drawing target.
-4. File work and CAD work are different execution paths and must stay separated.
-5. Windows idle state must stay lightweight: tray + slim control plane + Secure MCP Tunnel only.
-
-The refactor deliberately learns from GPTWorker's current architecture:
-
-- lightweight admission handshake;
-- `ACTIVE / CONTROL / INACTIVE` control signal;
-- admission token before discovery/nomination;
-- WorkRegistration;
-- opaque authority token;
-- generation/epoch protection;
-- per-call ToolLease IDs;
-- lazy family loading;
-- low-frequency tray health checks.
-
-CadGPT does **not** copy GPTWorker's Job+Workspace model as a universal CAD model.
+This file is the current implementation authority for taking CadGPT from the current development state to a shippable product. Historical migration/refactor details belong in `MIGRATION_PLAN.md` / `MIGRATION_MATRIX.md`.
 
 ---
 
-## 1. Product boundary
+## 0. Product definition
 
-CadGPT is a **thin local execution/orchestration layer that lets ChatGPT work with AutoCAD and CadGPT-managed files**.
-
-CadGPT does not provide:
-
-- a separate chat UI;
-- a local AI/model runtime;
-- model-provider abstraction;
-- a second autonomous reasoning agent;
-- a general-purpose coding shell competing with GPTWorker.
-
-ChatGPT remains the reasoning/chat surface.
-
-CadGPT has exactly two work execution paths:
-
-```text
-CadGPT
-├── FILE work
-│   └── managed file/Lisp/Job authoring capabilities
-└── CAD work
-    └── CAD MCP capabilities against explicit drawing contexts
-```
-
-Control/admission is not a third work path; it is the lightweight gate before work.
-
----
-
-## 2. Hard ChatGPT admission gate
-
-### 2.1 Why the gate exists
-
-CadGPT cannot change ChatGPT's plugin/router behavior. ChatGPT may call CadGPT because the request looks CAD-related even when the user did not invoke CadGPT.
-
-Therefore CadGPT must reject its own use unless the **current user turn** explicitly invokes it.
-
-### 2.2 Admission contract
-
-Reference pattern from GPTWorker:
-
-```text
-ChatGPT considers provider
-→ admission_check(current user turn)
-→ ACTIVE / CONTROL / INACTIVE
-```
-
-CadGPT adopts the same lightweight control-plane handshake as:
-
-```text
-cadgpt_admission(current_user_turn)
-→ ACTIVE / CONTROL / INACTIVE
-```
-
-The result is an **internal control signal**, not user-facing content.
-
-### 2.3 CadGPT is stricter than GPTWorker
-
-The only valid invocation evidence is:
-
-```text
-literal "@cadgpt" in the exact current user turn
-```
-
-There is no exception for:
-
-- a CAD-looking task;
-- an AutoLISP file;
-- an absolute local path;
-- AutoCAD already running;
-- an open drawing;
-- previous CadGPT use in this conversation;
-- another chat;
-- saved state;
-- memory;
-- project familiarity;
-- ChatGPT deciding CadGPT is probably appropriate.
-
-Invariant:
-
-> **CadGPT is explicit-invocation only. No literal `@cadgpt` in the current user turn means the user did not invoke CadGPT.**
-
-### 2.4 Admission modes
-
-`INACTIVE`
-
-- current user turn does not contain literal `@cadgpt`;
-- return internal signal telling ChatGPT to stop all CadGPT flow;
-- do not load Jobs, Skills, registry, files, drawings, CAD manifest, or CAD MCP;
-- do not ask the user to activate CadGPT;
-- ChatGPT continues normally or uses the provider the user actually requested.
-
-`CONTROL`
-
-- current turn contains `@cadgpt`;
-- request is explicitly a lightweight CadGPT control/status/help action;
-- only control-plane allowlisted operations may run;
-- no FILE/CAD execution authority is created.
-
-`ACTIVE`
-
-- current turn contains literal `@cadgpt`;
-- CadGPT work may proceed;
-- mint a short-lived opaque `admission_token`.
-
-### 2.5 Admission token
-
-An ACTIVE token must be:
-
-- opaque;
-- scoped to the current MCP/chat session;
-- short-lived;
-- non-transferable to another chat;
-- invalid after expiry/restart/session teardown.
-
-Every CadGPT discovery/work entry point after admission must require the token.
-
-No direct-entry bypass is permitted.
-
-Conceptual flow:
-
-```text
-ChatGPT calls cadgpt_admission
-        ↓
-exact current turn contains @cadgpt?
-   ├─ no  → INACTIVE → STOP CadGPT
-   └─ yes → ACTIVE/CONTROL
-                    ↓
-             admission_token
-```
-
----
-
-## 3. Slim control plane and Windows idle state
-
-The current wake-agent behavior:
-
-```text
-first MCP request
-→ wake full CadGPT core
-```
-
-must be retired.
-
-A generic ChatGPT initialize/tool probe must not wake the heavy CadGPT runtime.
-
-Target idle state:
-
-```text
-Windows sign-in
-├── CadGPT tray host
-├── slim CadGPT MCP control/admission plane
-└── OpenAI Secure MCP Tunnel
-
-Full FILE execution modules = unloaded
-CAD manifest/business modules = unloaded
-CAD MCP = off
-AutoCAD polling = off
-```
-
-The externally connected MCP endpoint must be able to perform admission without activating heavy execution code.
-
-Implementation direction:
-
-- move admission/control handling into the always-on slim MCP process;
-- do not hand the external MCP session to a separate heavy server merely to perform admission;
-- heavy CadGPT capability families are dynamic/lazy modules behind the same admitted control plane, or are delegated to internal executors that do not own external admission authority.
-
-This avoids the MCP-session handoff problem and keeps invalid/guessed CadGPT calls cheap.
-
----
-
-## 4. Absolute-path mutation invariant
-
-Every file mutation performed by CadGPT authoring/development workflows must use an **explicit absolute target path**.
-
-This applies to all current and future source-authoring workflows, including:
-
-```text
-write-lisp
-write-skill
-cad-mcp-dev
-jobcreate/file-authoring helpers
-```
-
-Required mutation sequence:
-
-```text
-caller supplies absolute path
-→ reject if path is relative
-→ canonicalize/resolve real path
-→ verify path is inside the exact workflow-owned allowed root
-→ reject symlink/junction/root escape
-→ acquire ToolLease/resource protection
-→ mutate file
-```
-
-Forbidden:
-
-```text
-relative path
-path resolved from process CWD
-"current folder" assumptions
-implicit workspace-relative write
-../ traversal
-symlink/junction escape outside the allowed root
-fallback to a similarly named file elsewhere
-```
-
-A mutation tool must fail closed when the canonical target cannot be proven to be inside its allowed root.
-
-Examples of workflow-owned roots:
-
-```text
-write-lisp
-→ absolute path under the approved Lisp draft root
-
-write-skill
-→ absolute path under the approved Skill authoring root
-
-cad-mcp-dev
-→ absolute path under <repo-absolute-path>\runtimes\cad-mcp\**
-```
-
-The workflow may still expose friendly virtual paths for display/discovery, but before mutation it must resolve them to an absolute canonical filesystem path and pass that absolute path into the actual write/edit/delete/move operation.
-
-Invariant:
-
-> **No CadGPT source mutation is authorized by a relative path or ambient working directory. Absolute canonical path + allowed-root proof are mandatory.**
-
----
-
-## 5. Execution authority model
-
-Admission means “the user invoked CadGPT.” It does **not** itself authorize arbitrary mutation.
-
-After ACTIVE admission, actual work gets a separate WorkRegistration.
-
-CadGPT work owners may be:
-
-```text
-skill:write-lisp
-skill:jobcreate
-job:<concrete-job-id>
-direct-cad
-other future CadGPT-owned workflow
-```
-
-CadGPT must not force every CAD action into a concrete Job.
-
-### 5.1 WorkRegistration
-
-Target structure:
-
-```text
-WorkRegistration
-├── execution_id
-├── authority_token
-├── admission_id / admission_token reference
-├── mcp_session_id
-├── owner_type
-├── owner_id
-├── job_id?              # only when owner is a concrete Job
-├── driver_epoch
-├── generation
-├── call_sequence
-├── created_at
-└── last_activity_at
-```
-
-Conceptual execution ID:
-
-```text
-exec:{ownerId}@{sessionKey}:e{driverEpoch}:g{generation}
-```
-
-The `authority_token` is opaque and must be validated before execution.
-
-### 5.2 Epoch and generation
-
-Learn directly from GPTWorker:
-
-- `driver_epoch` prevents stale authority surviving runtime restart;
-- `generation` prevents stale authority surviving work/context replacement;
-- switching owner/context invalidates the old generation.
-
-No tool invocation may trust “last active Job”, “last drawing”, or “last workspace” global state.
-
----
-
-## 6. Tool capability lease model
-
-The important identity is not a globally unique display name for a tool. The important identity is a **runtime lease for each actual invocation**.
-
-Shared implementation:
-
-```text
-write_file
-set_layer
-read_entity
-...
-```
-
-Each call receives a lease owned by one exact execution.
-
-### 6.1 ToolLease
-
-```text
-ToolLease
-├── lease_id
-├── provider_id = cadgpt
-├── execution_id
-├── owner_id
-├── family
-├── actual_tool
-├── target_id
-├── driver_epoch
-├── generation
-├── call_sequence
-└── acquired_at
-```
-
-CadGPT lease ID follows the GPTWorker pattern but is provider-namespaced:
-
-```text
-tool:cadgpt:{family}@{ownerId}@{targetKey}:e{epoch}:g{generation}:c{sequence}
-```
-
-Examples:
-
-```text
-tool:cadgpt:filesystem@write-lisp@lisp-draft#82ac31:e7:g2:c11
-
-tool:cadgpt:cad-layer@RVT2CAD@dwg_01:e7:g1:c18
-```
-
-GPTWorker may simultaneously have its own independent lease:
-
-```text
-tool:gptworker:filesystem@coding@repo#1a44ff:e9:g1:c37
-```
-
-The underlying Windows/filesystem capability is shared, but execution authority and scope are not.
-
-### 6.2 Central wrapper
-
-Do not implement lease checks separately in every tool.
-
-Pattern:
-
-```text
-tool request
-→ validate admission/work authority
-→ acquireToolLease()
-→ resolve target scope
-→ execute handler
-→ releaseToolLease()
-```
-
-The tool handler performs business work only.
-
-### 6.3 What ToolLease solves
-
-ToolLease prevents:
-
-- Job A call being treated as Job B;
-- one chat inheriting another chat's work context;
-- CadGPT file work inheriting GPTWorker workspace state;
-- CAD call inheriting a different drawing context;
-- stale generation calls continuing after context replacement.
-
-ToolLease does **not** by itself solve two processes modifying the exact same physical resource. Resource locking/version checks handle that separately.
-
----
-
-## 7. FILE execution path
-
-FILE work includes:
-
-- generic managed reads/writes;
-- `write-lisp`;
-- `jobcreate`;
-- Lisp/Job draft operations;
-- validation;
-- controlled promotion/import flows.
-
-FILE work never needs CAD MCP unless a later workflow step explicitly enters CAD testing.
-
-### 7.1 Lazy FILE capability families
-
-Current static registration/import of all file/Lisp/Job modules must be replaced by lazy capability loading.
-
-Internal families may include:
-
-```text
-filesystem
-library
-lisp-authoring
-job-authoring
-registry
-```
-
-They remain one conceptual FILE execution path.
-
-On first use:
-
-```text
-ACTIVE admission
-→ work registration
-→ first FILE operation
-→ dynamic import required family
-→ cache family for current core lifetime
-```
-
-Unexpected families remain lazy fallback.
-
-### 7.2 File scope
-
-Do not rely on global process CWD as authority.
-
-Every mutating FILE operation must receive an absolute path. Relative paths are rejected before execution.
-
-The target is canonicalized/realpathed and must be proven to remain inside the current workflow-owned allowed root and execution scope. Symlink/junction traversal outside that root is rejected.
-
-Read/discovery APIs may use virtual/display paths when useful, but mutation handlers must operate on the resolved absolute canonical target only.
-
-### 7.3 Cross-provider concurrency
-
-Acceptance scenario:
-
-```text
-Chat A → @cadgpt → write-lisp → file write
-Chat B → @gptworker → coding → file write
-```
-
-Both may run at the same time because they have separate provider/work leases and scopes.
-
-### 7.4 Same-file conflict
-
-If two executions intentionally or accidentally target the same physical file, lease identity is not enough.
-
-Mutation must use optimistic/resource conflict protection:
-
-```text
-read version/hash/mtime
-→ prepare mutation
-→ verify current version still matches
-→ atomic write/replace
-```
-
-If it changed:
-
-```text
-FILE_CHANGED / RESOURCE_CONFLICT
-```
-
-Do not silently overwrite.
-
-Existing rollback-safe permanent-library promotion behavior must remain intact.
-
----
-
-## 8. File safety and managed AppData invariants
-
-Generic readable roots remain:
-
-```text
-appdata/libraries/**
-appdata/workspace/**
-appdata/data/**
-```
-
-Generic writable roots remain:
-
-```text
-appdata/workspace/**
-appdata/data/**
-```
-
-Permanent managed content:
-
-```text
-appdata/libraries/**
-```
-
-is still generic read-only.
-
-Permanent changes are allowed only through controlled operations such as:
-
-```text
-library_import
-lisp_promote_draft
-job_promote_draft
-```
-
-A valid FILE ToolLease never bypasses these rules.
-
-Runtime lease authority and managed-content governance are separate layers.
-
----
-
-## 9. Capability Registry and system Skills
-
-The existing ownership model stays:
-
-```text
-Internal Registry
-├── MCP capabilities
-└── system Skills
-
-User Registry
-├── managed Lisp capabilities
-└── concrete Jobs
-```
-
-Primary user capability discovery remains registry-driven.
-
-Do **not** add another persistent registry merely to store ToolLease IDs or execution IDs.
-
-Lease/work registration is runtime state only.
-
-Current critical system Skills are:
-
-```text
-write-lisp
-jobcreate
-cad-mcp-dev
-```
-
-`cad-mcp-dev` is a **development-only** privileged system Skill for controlled self-improvement of the CAD MCP runtime. Its source-write authority is narrower than generic FILE work and is defined in the dedicated self-improve section below. It exists only while CadGPT is being developed and must not be included in the final production EXE/runtime once CAD MCP is considered stable.
-
----
-
-## 10. AutoLISP lifecycle
-
-The current controlled lifecycle remains authoritative.
-
-Existing Lisp:
-
-```text
-registry discovery
-→ lisp_checkout
-→ appdata/workspace/lisp-draft/**
-→ edit/repair
-→ lisp_draft_validate
-→ explicitly approved CAD test
-→ verified runtime result
-→ user acceptance
-→ lisp_promote_draft
-```
-
-New Lisp:
-
-```text
-lisp_scaffold
-→ workspace draft
-→ implement
-→ validate
-→ approved CAD test
-→ runtime verification
-→ promote
-```
-
-Source syntax errors may be checked out for repair.
-
-Helper-only Lisp without public `c:` commands remains valid when intentional.
-
-TBH Toolkit remains the explicit authoring-profile exception.
-
----
-
-## 11. Job model
-
-A Job remains a repeatable CAD workflow, not an autonomous local agent.
-
-CadGPT does not adopt GPTWorker's compulsory Job+Workspace contract.
-
-A user may perform direct CAD work after valid admission without selecting a concrete Job.
-
-Concrete Jobs still define:
-
-- goal;
-- preconditions;
-- ordered steps;
-- explicit capability/executor scope;
-- success criteria;
-- failure handling;
-- validation/evidence.
-
-When a concrete Job is the work owner, `job_id` is recorded in the WorkRegistration and ToolLease.
-
-When `write-lisp` or `jobcreate` is the owner, no fake Job ID is invented.
-
----
-
-## 12. CAD execution path
-
-CAD work includes:
-
-- drawing discovery/binding;
-- structured entity/layer/block/xref/property reads;
-- mutation;
-- command dispatch;
-- AutoLISP load/run/test;
-- Observator CAD capture/read operations.
-
-CAD execution uses CAD MCP as the only AutoCAD backend.
-
-No CAD MCP process starts merely because CadGPT was initialized or because FILE work is active.
-
-```text
-ACTIVE admission
-→ CAD operation actually requested
-→ detect supported AutoCAD host
-→ lazy-load CAD family/manifest
-→ activate/connect CAD MCP
-→ acquire CAD ToolLease
-→ execute against explicit drawing context
-```
-
-AutoCAD is never launched implicitly.
-
----
-
-## 13. Multi-chat and multi-drawing model
-
-The current implementation uses one `BoundDrawing` per `McpServer` through a WeakMap. This must be replaced.
-
-Target model:
-
-```text
-CadGPT execution
-├── drawing context A
-├── drawing context B
-└── drawing context C
-```
-
-### 13.1 DrawingContext
-
-```text
-DrawingContext
-├── drawing_id
-├── execution_id
-├── name
-├── full_name
-├── host_id
-├── runtime_document_identity
-├── bound_at
-└── availability state
-```
-
-`drawing_id` is an opaque CadGPT-generated ID. It is not just the filename.
-
-Same filenames in different folders/hosts must remain distinct.
-
-### 13.2 One execution may own multiple drawings
-
-Example:
-
-```text
-Job RVT2CAD
-├── dwg_01
-├── dwg_02
-└── dwg_03
-```
-
-Do not create one Job per drawing.
-
-If an execution has exactly one drawing, it may use that as its default target.
-
-If it has multiple drawing contexts, CAD business mutations must require explicit `drawing_id`.
-
-Never guess.
-
-### 13.3 Two chats, two Jobs, one CAD MCP tool
-
-Required acceptance scenario:
-
-```text
-Chat 1
-@cadgpt
-Job A
-Drawing 1
-→ set_layer
-
-Chat 2
-@cadgpt
-Job B
-Drawing 2
-→ set_layer
-```
-
-Both calls may use the same CAD MCP implementation but must have independent leases:
-
-```text
-tool:cadgpt:cad-layer@JobA@dwg_01:e5:g1:c12
-
-tool:cadgpt:cad-layer@JobB@dwg_02:e5:g1:c4
-```
-
-No binding or Job state from one request may affect the other.
-
----
-
-## 14. Eliminate ActiveDocument race
-
-The target drawing cannot be authorized by ambient AutoCAD `ActiveDocument`.
-
-Current pattern:
-
-```text
-set active document
-→ execute business tool
-```
-
-is vulnerable if two requests interleave.
-
-Required pattern:
-
-```text
-validated CAD ToolLease
-→ resolve drawing_id
-→ resolve host_id/runtime document
-→ acquire host execution lock
-→ activate/verify exact document
-→ execute CAD MCP call
-→ verify/result
-→ release host lock
-→ release ToolLease
-```
-
-ToolLease provides identity isolation.
-
-The CAD scheduler/lock provides AutoCAD execution safety.
-
-These are separate responsibilities.
-
----
-
-## 15. CAD scheduler
-
-Assume conservative safety until real AutoCAD validation proves more concurrency is safe.
-
-Initial rule:
-
-```text
-one AutoCAD host
-→ one serialized CAD execution queue for mutation-sensitive operations
-```
-
-Two drawings in the same AutoCAD host may have separate leases but physical operations serialize.
-
-Architecture should retain `host_id` so future multiple AutoCAD hosts can have independent queues if Stage 2 proves that safe.
-
-Multi-host parallelism is not required for the first refactor milestone.
-
----
-
-## 16. CAD manifest and tool loading
-
-Current `registerCadProxyTools()` eagerly reads the generated CAD tool manifest and registers all stable business descriptors whenever a CadGPT MCP server is created.
-
-This is too eager for the new idle model.
-
-Required change:
-
-```text
-idle/control plane
-→ do not load CAD manifest/business modules
-
-ACTIVE FILE work
-→ do not load CAD manifest
-→ CAD MCP stays off
-
-first actual CAD capability need
-→ load/cache CAD manifest
-→ load CAD proxy/business family
-→ connect CAD MCP only if execution needs it
-```
-
-Do not combine this phase with an unnecessary public API redesign unless measurements show the MCP descriptor surface itself is still a dominant cost.
-
-First preserve compatibility where practical; isolate and lazy-load implementation before considering a generic `cad_execute` gateway.
-
----
-
-## 17. CAD MCP self-improve developer Skill
-
-CAD MCP is still an actively developed runtime. CadGPT therefore needs one controlled system Skill that can improve the CAD MCP implementation itself without turning CadGPT into a general-purpose coding worker.
-
-This Skill is **development-only**. It is part of the source/developer workflow while CAD MCP is still evolving, not a permanent end-user feature.
-
-Canonical owner:
-
-```text
-owner_type = skill
-owner_id   = cad-mcp-dev
-```
-
-User-facing intent may be described as `self-improve CAD MCP`, but the internal Skill identity stays stable.
-
-### 17.1 Development-build availability
-
-`cad-mcp-dev` must be registered/exposed only when CadGPT is running in an explicit development/source-build mode.
-
-Production/release builds must not merely hide it in the UI; they must omit or disable the capability at registration/build time so no admission/work path can reach it.
-
-Required production invariant:
-
-```text
-production EXE / packaged release
-→ cad-mcp-dev absent
-→ runtime source mutation capability absent
-→ scoped coding runner absent
-→ candidate self-modification path absent
-```
-
-The normal production capabilities remain FILE authoring features such as managed Lisp/Job workflows and CAD execution features required by users.
-
-### 17.2 Activation rule
-
-This Skill is reachable only after the normal CadGPT admission chain:
-
-```text
-literal @cadgpt in current user turn
-→ cadgpt_admission = ACTIVE
-→ explicit CAD MCP development/improvement request
-→ cad-mcp-dev planning gate
-→ user confirms implementation
-→ WorkRegistration
-→ coding ToolLeases
-```
-
-A CAD tool failure may be reported as a candidate reason to improve CAD MCP, but CadGPT must never silently enter self-modification mode.
-
-No failure, missing capability, or runtime exception automatically grants `cad-mcp-dev` authority.
-
-### 17.3 Hard source-mutation boundary
-
-The only source tree this Skill may modify is:
-
-```text
-<absolute-repo-root>\runtimes\cad-mcp\**
-```
-
-Every mutation request must carry the absolute target path. `cad-mcp-dev` must reject relative paths even when its runner CWD is already inside `runtimes/cad-mcp`.
-
-This includes the runtime's Python source, runtime-local tests, documentation, and dependency declaration/lock files that live under that root.
-
-The coding agent may read supporting CadGPT repository files when needed to understand interfaces/contracts, for example:
-
-```text
-src/cadgpt/**                    read only
-scripts/generate-cad-tool-manifest.py   read only
-IMPLEMENTATION_PLAN.md           read only
-README/knowledge contract docs   read only
-```
-
-but source mutation outside `runtimes/cad-mcp/**` is forbidden.
-
-Explicitly forbidden write targets include:
-
-```text
-src/**
-skills/**
-knowledge/**
-scripts/**
-setup/run/doctor files
-appdata/**
-.env*
-.git/**
-repository root files outside runtimes/cad-mcp/**
-```
-
-If a correct fix requires changing CadGPT core/orchestration outside the runtime root, return a bounded result such as:
-
-```text
-OUT_OF_SCOPE_CORE_CHANGE
-```
-
-with the required change explained. Do not expand the write boundary automatically.
-
-### 17.4 Full coding workflow, not unrestricted machine shell
-
-`cad-mcp-dev` must be capable of a complete coding cycle:
-
-- inspect/list/search/read files;
-- understand existing runtime architecture;
-- create/edit/delete/move runtime files;
-- review local diff;
-- run Python syntax/compile validation;
-- run runtime-local unit/regression tests;
-- regenerate/validate CAD MCP tool manifest artifacts when the output is under the allowed runtime root;
-- start a controlled candidate CAD MCP process for validation;
-- run approved integration tests against AutoCAD;
-- collect diagnostics/evidence;
-- rollback failed candidate changes.
-
-However, do not expose an unrestricted raw shell merely to call this a “full coding agent”. A raw Windows shell can escape any path policy.
-
-Use a scoped coding runner with:
-
-- canonical cwd anchored to `runtimes/cad-mcp` for tool execution convenience only, never as write authority;
-- every source mutation requires an absolute canonical target path;
-- explicit executable/subcommand policy;
-- no shell chaining/metacharacter escape;
-- path arguments canonicalized and checked;
-- source-write effects verified to remain inside the runtime root;
-- named privileged actions for exceptional operations such as environment rebuild.
-
-ChatGPT remains the reasoning/coding agent. CadGPT supplies the tightly scoped coding capability.
-
-### 17.5 Work and lease identity
-
-The Skill uses the same WorkRegistration/ToolLease model as all other CadGPT work.
-
-Example:
-
-```text
-exec:cad-mcp-dev@session#42:e7:g1
-
-tool:cadgpt:runtime-read@cad-mcp-dev@cad-mcp-runtime:e7:g1:c1
-tool:cadgpt:runtime-edit@cad-mcp-dev@cad-mcp-runtime:e7:g1:c2
-tool:cadgpt:runtime-test@cad-mcp-dev@cad-mcp-runtime:e7:g1:c3
-```
-
-A separate ChatGPT session running a normal CAD Job or GPTWorker coding session receives unrelated execution/lease identities.
-
-No global developer workspace is allowed.
-
-### 17.6 Development lifecycle
-
-The default self-improve lifecycle is:
-
-```text
-1. reproduce/understand gap
-2. inspect CAD MCP runtime + read-only supporting contracts
-3. propose implementation plan
-4. explicit user confirmation
-5. create WorkRegistration + source snapshot/hash baseline
-6. edit only runtimes/cad-mcp/**
-7. static/compile checks
-8. runtime-local tests
-9. manifest/schema compatibility validation
-10. controlled candidate CAD MCP validation
-11. approved AutoCAD integration test when required
-12. report diff + evidence
-13. user accepts candidate
-14. keep candidate as current runtime / restart cleanly
-```
-
-On failed validation:
-
-```text
-candidate failed
-→ stop candidate runtime
-→ restore pre-change source snapshot
-→ restore previous known-good CAD MCP runtime
-→ report failure evidence
-```
-
-The control/admission plane must remain alive during candidate failure.
-
-### 17.7 Live-runtime safety
-
-Do not hot-reload arbitrary source into an in-flight CAD MCP call.
-
-When code changes need runtime validation:
-
-- finish/cancel active CAD ToolLeases safely;
-- preserve the currently known-good runtime generation;
-- start a candidate runtime generation under controlled ownership;
-- test candidate generation;
-- only switch the normal CAD execution path after validation/acceptance.
-
-A candidate runtime must not silently take over an unrelated Job's drawing context.
-
-### 17.8 AutoCAD test safety
-
-Static/unit tests do not require CAD MCP activation.
-
-For live AutoCAD tests:
-
-- require an explicitly approved drawing context;
-- prefer a blank/isolated test drawing for mutating tests;
-- acquire normal CAD ToolLease + host scheduler lock;
-- never test destructive behavior on a production drawing by inference;
-- capture actual runtime/tool results as evidence.
-
-Thus one `cad-mcp-dev` work execution can use both CadGPT paths:
-
-```text
-FILE path
-→ edit/test runtime source
-
-CAD path
-→ controlled integration validation
-```
-
-without merging the two execution subsystems.
-
-### 17.9 Dependency changes
-
-The Skill may edit dependency declaration/lock files under `runtimes/cad-mcp/**`.
-
-It must not mutate `.venv-cad` or any dependency environment, whether through generic filesystem, shell, or a special dev action.
-
-If dependency installation/rebuild is required, `cad-mcp-dev` stops after updating and validating the runtime lock/source files. Environment installation is handed back to setup/maintainer authority outside the Skill.
-
-This keeps the development mutation boundary literal: every `cad-mcp-dev` write remains inside `runtimes/cad-mcp/**`, except the Skill's own crash-recovery baseline under managed AppData state, which is runtime recovery metadata rather than CAD MCP source.
-
-### 17.10 CAD MCP Internal Registry update exception
-
-When `cad-mcp-dev` adds, removes, renames, or changes the schema/description of a CAD MCP tool, it is allowed to update the **CAD MCP-owned Internal Registry representation** required for that tool to become discoverable by CadGPT.
-
-Current source of truth:
-
-```text
-runtimes/cad-mcp/tools/**/*_tools.py
-        ↓
-scripts/generate-cad-tool-manifest.py   # executable helper, read-only to cad-mcp-dev
-        ↓
-runtimes/cad-mcp/tool-manifest.json
-        ↓
-CadGPT Internal Registry tool entries
-```
-
-Therefore `cad-mcp-dev` may:
-
-- create/edit/remove CAD MCP tool source under `runtimes/cad-mcp/**`;
-- invoke the existing manifest generator as a named/scoped action;
-- write/regenerate `runtimes/cad-mcp/tool-manifest.json`;
-- validate that the effective Internal Registry reflects the new/updated tool;
-- update future CAD-MCP-owned registry metadata files only when those files also live under `runtimes/cad-mcp/**`.
-
-It must **not**:
-
-- edit `src/cadgpt/tools/registry.ts`;
-- edit CadGPT core registry code;
-- write `appdata/registry/user/**`;
-- create/modify User Registry Lisp or Job entries;
-- use this exception to widen its source-write root.
-
-The generated manifest is not hand-authored registry truth. Tool source remains authoritative; the manifest/registry artifact must be regenerated from source and validated after tool changes.
-
-If a new tool requires a CadGPT-core registry/schema change that cannot be represented by the existing CAD MCP manifest contract, return:
-
-```text
-OUT_OF_SCOPE_CORE_CHANGE
-```
-
-rather than modifying CadGPT core.
-
-### 17.11 Local-source only; no Git workflow
-
-`cad-mcp-dev` is a local development capability only.
-
-It may modify the tracked source files under:
-
-```text
-runtimes/cad-mcp/**
-```
-
-but it must not perform any Git operation:
-
-```text
-no git status requirement
-no branch creation
-no git add
-no commit
-no push
-no pull request
-no repository publish step
-```
-
-The repository may remain dirty after a successful self-improve session. That is expected.
-
-`cad-mcp-dev` must never write under `.git/**` and must not use Git as an execution or rollback mechanism. Rollback is handled by the Skill's own source snapshot/baseline mechanism inside its controlled runtime workflow.
-
-The self-improve task ends when the local CAD MCP runtime source has been validated and accepted; publishing/version-control decisions remain outside this Skill.
-
----
-
-## 18. Observator boundary
-
-Observator remains an evidence/discovery subsystem, not a separate agent.
-
-Existing capture design remains:
-
-```text
-capture start
-→ collect ObjectAdded identities
-→ finish resolves only those identities
-→ remove erased/undone/nested results
-→ return top-level type headers
-```
-
-Observator CAD activity must use the same admission, WorkRegistration, ToolLease, drawing context, and CAD scheduler rules as other CAD operations.
-
-No special bypass.
-
----
-
-## 19. Windows tray and startup
-
-CadGPT should adopt GPTWorker's proven Windows desktop pattern.
-
-### 19.1 Replace Scheduled Task startup
-
-Current:
-
-```text
-Windows Scheduled Task
-→ hidden wake-agent
-```
-
-Target:
-
-```text
-HKCU\Software\Microsoft\Windows\CurrentVersion\Run
-→ cadgpt-tray.ps1
-```
-
-No admin elevation is required.
-
-Setup must remove the old CadGPT Scheduled Task during migration so both mechanisms cannot run simultaneously.
-
-### 19.2 Tray host
-
-Use PowerShell STA + Windows Forms `NotifyIcon`, matching GPTWorker's source tray design.
-
-Required behaviors:
-
-- single-instance mutex, e.g. `Local\CadGPTTray`;
-- custom CadGPT icon with Windows fallback;
-- hidden launch;
-- logs under CadGPT AppData/logs;
-- ready marker for setup/doctor;
-- low-frequency health update (target ~60 s);
-- immediate refresh when tray menu opens;
-- never kill an unknown process just because a configured port is occupied.
-
-Minimal menu:
-
-```text
-Status: Ready | Working | CAD Connected | Degraded
-
-Open diagnostics/logs
-Restart CadGPT
-----------------
-Exit CadGPT
-```
-
-Do not put Job management in the tray. ChatGPT remains the main UI.
-
-### 19.3 Tray-owned idle components
-
-The tray owns/ensures only:
-
-```text
-slim CadGPT control/admission MCP
-Secure MCP Tunnel
-```
-
-It must not bootstrap:
-
-```text
-heavy FILE families
-CAD manifest/business modules
-CAD MCP
-```
-
----
-
-## 20. Remove idle AutoCAD polling
-
-Current wake-agent polls AutoCAD using `tasklist` at a short interval.
-
-That is unnecessary while CadGPT is uninvoked.
-
-Target idle behavior:
-
-```text
-no AutoCAD tasklist polling
-no CAD MCP probing
-no CAD manifest loading
-```
-
-When an admitted request actually enters CAD work:
-
-```text
-detect AutoCAD immediately
-→ activate CAD runtime if available
-```
-
-While CAD work is active, use only the minimum monitoring needed for host-close/disconnect detection.
-
-Tray health checks remain low-frequency and are not CAD polling.
-
----
-
-## 21. Preload policy
-
-CadGPT may use GPTWorker's “warm while waiting” idea only where CadGPT already has a real confirmation gate.
-
-Examples:
-
-- `write-lisp` after the user has selected/approved an authoring flow;
-- `jobcreate` after its planning confirmation;
-- a concrete Job with known executor families.
-
-Rules:
-
-- preload means module/code warmup only;
-- preload never grants mutation authority;
-- preload never auto-connects CAD MCP;
-- changed owner/context invalidates stale preload generation;
-- undeclared/unexpected family still lazy-loads on first real use.
-
-Do not build a new universal Job nomination system for CadGPT.
-
----
-
-## 22. Connection architecture
-
-CadGPT continues to expose one ChatGPT plugin/MCP connection:
+CadGPT is a thin local execution/orchestration layer that lets ChatGPT work with AutoCAD and CadGPT-managed files.
 
 ```text
 ChatGPT
    ⇅
 OpenAI Secure MCP Tunnel
    ⇅
-CadGPT slim control/admission MCP
-   ├── lazy FILE capability families
-   └── lazy CAD capability family
-          ↓
-        CAD MCP
-          ↓
-       AutoCAD
+CadGPT slim control/admission plane
+   ↓
+WorkRegistration + ToolLease
+   ├── FILE path
+   │    ├── managed file work
+   │    ├── write-lisp
+   │    └── Job authoring
+   └── CAD path
+        └── CAD MCP
+             ↓
+          AutoCAD
 ```
 
-Do not require separate ChatGPT connectors for file work, Jobs, or CAD MCP.
+CadGPT does not provide:
+
+- another chat UI;
+- a local AI model;
+- a general-purpose autonomous coding agent;
+- a replacement for GPTWorker;
+- implicit AutoCAD startup.
+
+ChatGPT remains the reasoning surface. CadGPT provides controlled local execution.
 
 ---
 
-## 23. Installation contract
+## 1. Ship invariants
 
-### setup.bat
+These rules are release blockers. A production build must not violate them.
 
-One-time setup must eventually:
+### 1.1 Explicit invocation
 
-1. verify Windows + Node/Python requirements;
-2. install locked dependencies;
-3. initialize managed AppData;
-4. generate/validate CAD manifest artifacts without forcing them into idle memory;
-5. build CadGPT;
-6. build isolated CAD MCP Python environment;
+CadGPT is explicit-invocation only.
+
+```text
+literal @cadgpt in the exact current user turn
+→ admission may become ACTIVE/CONTROL
+
+no literal @cadgpt
+→ INACTIVE
+→ no CadGPT work
+```
+
+Memory, prior turns, CAD-looking tasks, open drawings, file extensions, local paths, or ChatGPT routing decisions are not invocation authority.
+
+### 1.2 Authority is runtime-scoped
+
+Persistent state never grants execution authority.
+
+```text
+admission token
+→ WorkRegistration
+→ opaque authority token
+→ per-call ToolLease
+```
+
+Runtime restart, work replacement, expiry, explicit stop, or session teardown invalidates stale authority.
+
+### 1.3 Absolute-path mutation
+
+Every source/file mutation must use an explicit absolute path.
+
+Required sequence:
+
+```text
+absolute target
+→ canonicalize
+→ real-path/nearest-existing-ancestor resolution
+→ allowed-root proof
+→ reject symlink/junction escape
+→ acquire resource/tool protection
+→ mutate
+```
+
+Relative paths, ambient CWD, fallback path guessing, `..` escape, and similarly named external files are forbidden.
+
+### 1.4 FILE and CAD authority remain separate
+
+A FILE-capable execution does not automatically receive CAD authority.
+
+A CAD-capable execution does not automatically receive generic FILE mutation authority.
+
+Hybrid workflows may use both paths, but each tool call still validates its own family/scope.
+
+### 1.5 No ambient ActiveDocument authority
+
+The currently visible/active AutoCAD document is never treated as the target merely because it is active.
+
+Every CAD mutation must resolve an explicit execution-owned drawing context.
+
+### 1.6 Production cannot self-modify
+
+Production/package builds must not expose CAD MCP source mutation.
+
+The development-only `cad-mcp-dev` Skill and its write/rollback/candidate tools must be absent from the production capability surface.
+
+---
+
+## 2. Idle/runtime lifecycle
+
+Windows idle state should remain small:
+
+```text
+Windows sign-in
+├── CadGPT tray
+├── slim CadGPT MCP admission/control plane
+└── OpenAI Secure MCP Tunnel
+
+heavy FILE families = unloaded
+CAD family = unloaded
+CAD MCP = off
+AutoCAD polling = off
+```
+
+Generic MCP initialize/tool discovery must not wake CAD MCP.
+
+Runtime activation:
+
+```text
+@cadgpt
+→ admission
+→ WorkRegistration
+→ first required capability
+→ lazy-load only that capability family
+```
+
+CAD MCP starts only when an admitted CAD operation actually requires it.
+
+When CAD work ends and no valid execution still needs CAD, the CAD MCP child may shut down while tray/control plane/tunnel remain alive.
+
+---
+
+## 3. Admission / WorkRegistration / ToolLease
+
+The implemented authority model remains the product core.
+
+### 3.1 Admission
+
+`cadgpt_admission(current_user_turn)` returns:
+
+- `INACTIVE`
+- `CONTROL`
+- `ACTIVE + admission_token`
+
+Downstream work must not bypass admission.
+
+### 3.2 WorkRegistration
+
+Each work execution records at least:
+
+```text
+execution_id
+authority_token
+admission/session identity
+owner_type
+owner_id
+execution_path
+driver_epoch
+generation
+created_at
+last_activity_at
+```
+
+Valid owners include:
+
+```text
+skill:write-lisp
+skill:jobcreate
+skill:cad-mcp-dev        # development only
+job:<job-id>
+direct-cad
+```
+
+Do not invent fake Job IDs for Skill/direct work.
+
+### 3.3 ToolLease
+
+Every actual capability invocation gets a per-call lease.
+
+ToolLease must bind:
+
+```text
+provider
+execution
+family
+actual tool
+target/resource
+epoch
+generation
+call sequence
+```
+
+A ToolLease does not bypass resource conflict checks.
+
+---
+
+## 4. Managed AppData and registry ownership
+
+Managed roots remain:
+
+```text
+<appdata>/
+├── libraries/
+│   ├── lisp/
+│   └── jobs/
+├── registry/
+│   └── user/
+├── workspace/
+│   ├── lisp-draft/
+│   └── job-draft/
+├── runtime/
+│   └── dynamic-lisp/
+├── drawings/
+├── data/
+├── state/
+└── logs/
+```
+
+External Lisp/Job folders are import sources only.
+
+```text
+external user folder (read-only import source)
+→ controlled import
+→ managed AppData copy
+→ User Registry
+```
+
+CadGPT must not write back to the external original.
+
+Registry ownership remains:
+
+```text
+Internal Registry
+├── MCP tools
+└── system Skills
+
+User Registry
+├── Lisp capabilities
+└── concrete Jobs
+```
+
+User content cannot overwrite internal tools/Skills.
+
+---
+
+## 5. AutoLISP / Visual LISP coder — ship workflow
+
+The LISP coder must remain specialized and lightweight.
+
+Its primary reliability problem is not a full software-engineering lifecycle; it is that AutoLISP/Visual LISP files frequently look valid but fail when AutoCAD actually loads them.
+
+Therefore the mandatory ship workflow is:
+
+```text
+WRITE / PATCH
+→ STATIC CHECK
+→ LOAD INTO THE SAME AUTOCAD WINDOW
+→ PASS ?
+   ├── no → return exact AutoCAD load error → patch → reload
+   └── yes → continue / complete
+```
+
+### 5.1 Scope
+
+`write-lisp` is only for AutoLISP/Visual LISP used by AutoCAD.
+
+It is not a generic Lisp/Common Lisp coding agent.
+
+### 5.2 Static validation
+
+Keep the existing static harness for:
+
+- balanced parentheses/strings;
+- obvious AutoLISP/Visual LISP syntax errors;
+- Common-Lisp-only constructs;
+- public `c:` command discovery;
+- required authoring metadata/profile rules;
+- obvious COM initialization/safety warnings.
+
+Static PASS is necessary but not sufficient.
+
+### 5.3 Deterministic AutoCAD load-check
+
+Add a small fixed internal load-check mechanism.
+
+The agent must not invent a new test script for each Lisp file.
+
+Required internal operation:
+
+```text
+lisp_load_check(
+  execution authority,
+  drawing_id,
+  absolute_file_path
+)
+```
+
+Behavior:
+
+1. require an already bound/approved AutoCAD drawing/window;
+2. require an absolute canonical Lisp path in an allowed Lisp root;
+3. use the existing CAD MCP/AutoLISP loading mechanism;
+4. load the file into the exact AutoCAD host/window that owns the bound drawing;
+5. synchronously determine success/failure;
+6. return the exact load result/error to `write-lisp`.
+
+Typical failures to surface include:
+
+```text
+malformed list on input
+extra right paren on input
+bad argument type
+no function definition
+quit / exit abort
+missing dependency during load
+Visual LISP/COM initialization failure
+```
+
+A queued `SendCommand` without verified completion is not PASS.
+
+### 5.4 Same-window rule
+
+Do not open a second AutoCAD instance just to test Lisp syntax/load.
+
+The load check must use the exact AutoCAD host/drawing context already selected for the work.
+
+This guarantees that the test uses the same environment, loaded dependencies, support paths, and application state that the user will actually use.
+
+### 5.5 Minimal fix loop
+
+If load fails:
+
+```text
+exact load error
+→ narrow patch
+→ static check
+→ load same file again into same AutoCAD host
+→ repeat until PASS or a non-source/environment dependency blocks progress
+```
+
+Do not automatically expand this into a large functional QA loop.
+
+### 5.6 Completion levels
+
+For normal Lisp authoring:
+
+```text
+STATIC PASS
++
+LOAD PASS
+= source/load reliability gate passed
+```
+
+A functional command test is required only when:
+
+- the requested task explicitly requires behavioral verification;
+- a concrete Job requires postconditions;
+- the change affects runtime behavior that cannot be validated from load alone.
+
+For interactive commands, after static + load PASS CadGPT may hand the command to the user for manual interaction instead of inventing selections/points/dialog input.
+
+### 5.7 Promotion
+
+Reusable Lisp may be promoted only after the required gates for that task pass.
+
+For the normal lightweight case:
+
+```text
+draft
+→ static PASS
+→ same-window load PASS
+→ user acceptance / task-specific functional test when required
+→ promote managed copy
+→ sync User Registry
+```
+
+---
+
+## 6. Drawing context and CAD scheduler
+
+Each CAD-capable execution owns explicit drawing contexts.
+
+```text
+DrawingContext
+├── drawing_id
+├── execution_id
+├── host_id
+├── name/full_name
+├── runtime document identity
+├── bound_at
+└── availability
+```
+
+`drawing_id` must survive filename ambiguity and distinguish reopened documents.
+
+If one execution owns multiple drawings, mutating operations must require explicit `drawing_id`.
+
+Required CAD call sequence:
+
+```text
+validate work authority
+→ acquire CAD ToolLease
+→ resolve drawing_id
+→ resolve exact host/document
+→ acquire host scheduler lock
+→ activate/verify exact document if needed
+→ execute
+→ capture result
+→ release host lock
+→ release ToolLease
+```
+
+Initial safe scheduler policy:
+
+```text
+one AutoCAD host
+→ one serialized mutation-sensitive queue
+```
+
+Concurrency can be relaxed only after real AutoCAD evidence proves it safe.
+
+---
+
+## 7. Development-only CAD MCP self-improve module
+
+CadGPT includes a development-only self-improve capability:
+
+```text
+skill:cad-mcp-dev
+```
+
+This module must be treated as a complete but tightly sandboxed coding workflow, not as generic repository authority.
+
+### 7.1 Purpose
+
+`cad-mcp-dev` may:
+
+- inspect CAD MCP runtime code;
+- repair an existing CAD MCP tool;
+- add a new CAD MCP tool;
+- update tool schema/description;
+- run runtime-local validation;
+- regenerate the CAD MCP tool manifest;
+- validate the changed tool against live AutoCAD when necessary;
+- rollback an unaccepted/broken candidate.
+
+### 7.2 Hard write boundary
+
+The only writable source tree is:
+
+```text
+<repo>\runtimes\cad-mcp\**
+```
+
+Every mutation requires an absolute canonical path inside that root.
+
+Read-only supporting context may include CadGPT core contracts, docs, Skill rules, and manifest generator inputs needed to understand the runtime boundary.
+
+If the correct implementation requires changing CadGPT core outside the runtime root, return:
+
+```text
+OUT_OF_SCOPE_CORE_CHANGE
+```
+
+Do not widen the source write boundary.
+
+### 7.3 No Git workflow
+
+Self-improve is local development only.
+
+It performs:
+
+```text
+no branch
+no git add
+no commit
+no push
+no PR
+no Git rollback
+```
+
+Rollback uses its own baseline/snapshot mechanism.
+
+### 7.4 No unrestricted shell
+
+Do not expose generic PowerShell/cmd/bash authority.
+
+Use scoped named operations for:
+
+- read/search;
+- create/edit/delete/move inside runtime root;
+- Python compile/import validation;
+- runtime tests;
+- dependency-lock validation;
+- manifest generation;
+- candidate runtime lifecycle.
+
+### 7.5 Crash-safe baseline
+
+Before the first source mutation:
+
+```text
+recovery status
+→ resolve any pending foreign/old recovery
+→ create immutable baseline snapshot
+→ begin source mutation
+```
+
+If CadGPT/Windows exits before acceptance, the next `cad-mcp-dev` session must recover or explicitly resolve the pending baseline before new mutation.
+
+Only one active CAD MCP source-development execution is allowed.
+
+Within it, only one self-improve mutation/validation ToolLease runs at a time.
+
+### 7.6 Self-improve loop
+
+Required loop:
+
+```text
+DISCOVER / REPRODUCE
+→ PLAN
+→ USER CONFIRMS IMPLEMENTATION
+→ SNAPSHOT
+→ EDIT RUNTIME SOURCE
+→ VALIDATE
+→ if failure: FIX → VALIDATE again
+→ if schema/tool changed: REGENERATE MANIFEST
+→ VERIFY EFFECTIVE CADGPT TOOL SURFACE
+→ live CAD candidate only when needed
+→ ACCEPT or ROLLBACK
+```
+
+### 7.7 Validation gate
+
+Source validation must include the applicable parts of:
+
+- Python syntax/compile;
+- import validation;
+- runtime-local tests;
+- exact dependency-lock validation;
+- tool-manifest generation/consistency;
+- public CadGPT tool-surface validation.
+
+Passing only one compile command is not enough.
+
+### 7.8 Internal Registry update exception
+
+CAD MCP tool source remains authoritative.
+
+For tool additions/removals/schema changes:
+
+```text
+runtimes/cad-mcp/tools/**/*_tools.py
+        ↓
+manifest generator
+        ↓
+runtimes/cad-mcp/tool-manifest.json
+        ↓
+effective CadGPT Internal Registry/tool surface
+```
+
+`cad-mcp-dev` may regenerate/write the CAD-MCP-owned generated manifest artifact.
+
+It may not edit:
+
+- CadGPT core registry implementation;
+- User Registry;
+- unrelated Skills;
+- repository-root application code.
+
+### 7.9 Live candidate validation
+
+Use live AutoCAD only when static/runtime validation cannot prove the change.
+
+Live candidate flow:
+
+```text
+validated source
+→ candidate generation
+→ explicitly approved drawing context
+→ normal CadGPT CAD tool path
+→ same drawing/host authority rules
+→ at least one successful changed-behavior tool call
+→ candidate accept
+```
+
+A tool merely appearing in the manifest is not proof that it works.
+
+Required proof chain for changed/new tools:
+
+```text
+source
+→ manifest
+→ CadGPT public surface
+→ callable tool
+→ CAD MCP execution
+→ AutoCAD result
+```
+
+Candidate failure:
+
+```text
+candidate FAIL
+→ rollback source to baseline
+→ preserve slim CadGPT control plane
+→ do not corrupt unrelated Job/drawing state
+```
+
+### 7.10 Dependency changes
+
+The Skill may edit exact dependency declaration/lock files only when they live under `runtimes/cad-mcp/**`.
+
+It must not install packages or mutate `.venv-cad/**`.
+
+Environment installation/rebuild belongs to setup/maintainer authority outside self-improve.
+
+### 7.11 Production exclusion
+
+Production builds must fail closed if any of the following is still exposed:
+
+```text
+cad-mcp-dev Skill
+cad_mcp_dev_* tools
+runtime source-write authority
+candidate source mutation tools
+recovery/snapshot authoring surface
+development coding runner
+```
+
+Runtime binaries/resources needed for normal CAD operation may remain.
+
+Source self-improvement capability must not.
+
+---
+
+## 8. Tray, startup and diagnostics
+
+Use the current tray architecture as the shipping desktop lifecycle.
+
+Startup:
+
+```text
+HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+→ CadGPT tray
+→ slim MCP
+→ Secure MCP Tunnel
+```
+
+Requirements:
+
+- current-user installation; no admin requirement for normal startup;
+- single-instance mutex;
+- verified ownership before stopping/restarting child processes;
+- tray-ready marker;
+- low-frequency health check;
+- immediate health refresh when tray menu opens;
+- logs under managed AppData;
+- no busy AutoCAD polling;
+- never kill an unrelated process merely because it occupies a configured port.
+
+Minimal tray surface:
+
+```text
+Status
+Open diagnostics/logs
+Restart CadGPT
+Exit CadGPT
+```
+
+ChatGPT remains the normal UI.
+
+---
+
+## 9. Setup and release layout
+
+### 9.1 Development/source setup
+
+Source setup must:
+
+1. validate supported Windows environment;
+2. install locked Node dependencies;
+3. build CadGPT TypeScript;
+4. create/validate isolated CAD MCP Python environment;
+5. generate/validate CAD tool manifest;
+6. initialize managed AppData;
 7. configure Secure MCP Tunnel;
-8. remove legacy CadGPT Scheduled Task if present;
-9. register CadGPT tray in HKCU Run;
-10. start tray immediately;
-11. wait for tray-ready + slim MCP + tunnel readiness;
-12. run doctor/acceptance diagnostics.
+8. register tray auto-start;
+9. start tray/slim MCP/tunnel;
+10. run doctor;
+11. leave CAD MCP off until demanded.
 
-### run.bat
+### 9.2 Production runtime rule
 
-Keep familiar control verbs:
+A packaged production installation ships prebuilt application/runtime artifacts.
 
-```text
-run.bat start
-run.bat stop
-run.bat restart
-run.bat status
-run.bat uninstall
-```
+It must not automatically rebuild CadGPT source on the user's machine.
 
-Internally these now control the tray/slim runtime rather than a Scheduled Task.
-
-### EXE-last rule
-
-Do not package into an installer/EXE until this source/BAT/tray architecture passes real Windows + AutoCAD validation.
-
-Before production packaging, perform a **developer-capability strip**:
+Production should behave as:
 
 ```text
-remove/disable cad-mcp-dev registration
-remove scoped coding runner from production surface
-remove runtime source-mutation authority
-verify production build cannot write runtimes/cad-mcp/**
+installed build
+→ validate runtime files/config
+→ run
 ```
 
-The production EXE may contain the CAD MCP runtime binaries/resources needed for normal operation, but it must not contain the self-improvement workflow as an invokable capability.
+not:
+
+```text
+installed build
+→ detect source
+→ npm/tsc rebuild on user machine
+```
+
+### 9.3 Release integrity
+
+External downloaded runtime dependencies/install artifacts should be verified before execution where practical:
+
+```text
+download
+→ existence/size sanity
+→ format/signature sanity
+→ hash/version verification
+→ install/extract
+```
+
+### 9.4 AppData move
+
+Before shipping, default managed data should resolve to a per-user location such as:
+
+```text
+%LOCALAPPDATA%\CadGPT
+```
+
+The repo-local `appdata` layout remains a development convenience, not the final product data location.
 
 ---
 
-## 24. Implementation phases
+## 10. Implementation phases to ship
 
-### P0 — Baseline and invariants
+### S0 — Current-state verification
 
-- capture current startup memory and latency;
-- capture current initialize/tools-list timing;
-- record current CAD manifest tool count;
-- add regression scaffolding before major refactor;
-- freeze the explicit invariants in this plan.
+Do not re-implement already completed architecture.
 
-### P1 — Admission handshake
+Verify current main contains and tests:
 
-Implement `cadgpt_admission` in the slim control plane.
+- server-side explicit `@cadgpt` admission;
+- admission token enforcement;
+- WorkRegistration;
+- ToolLease;
+- absolute canonical mutation boundary;
+- FILE/CAD execution-path isolation;
+- drawing-context model;
+- host scheduler;
+- lazy CAD MCP;
+- tray startup;
+- development-only `cad-mcp-dev`;
+- self-improve baseline/candidate/rollback;
+- manifest regeneration.
 
-Required result:
+Fix regressions first.
 
-```text
-current user turn has @cadgpt
-→ ACTIVE/CONTROL
+### S1 — Deterministic Lisp load-check
 
-no @cadgpt
-→ INACTIVE
-→ stop CadGPT flow
-```
+Implement the missing lightweight reliability gate:
 
-Mint session-scoped admission token.
+- add a fixed internal `lisp_load_check` path or formalize the existing verified load tool as that contract;
+- bind it to explicit `drawing_id` / host;
+- accept only absolute canonical Lisp files from approved Lisp roots;
+- return synchronous verified success/failure;
+- preserve exact AutoCAD load error;
+- integrate into `write-lisp`:
+  `static → load same window → fix/reload loop`;
+- do not require full functional execution for every Lisp file.
 
-No contextual exception.
-
-### P2 — Admission token enforcement
-
-Require admission authority before:
-
-- registry/Job/Skill discovery used for work;
-- FILE discovery/work;
-- drawing discovery/binding;
-- CAD work;
-- work registration.
-
-CONTROL token may call only control allowlist.
-
-Direct entry without admission is rejected.
-
-### P3 — WorkRegistration and ToolLease
-
-Port GPTWorker's proven runtime concepts:
-
-- execution ID;
-- opaque authority token;
-- driver epoch;
-- generation;
-- call sequence;
-- acquire/release ToolLease;
-- stale handle rejection;
-- idle cleanup.
-
-Use general `owner_type/owner_id`, not a fake Job ID for every workflow.
-
-### P4 — FILE path isolation
-
-- lazy-load FILE families;
-- bind each operation to its WorkRegistration;
-- ensure paths come from execution scope, not global CWD authority;
-- add file version/hash conflict detection;
-- preserve controlled library promotion rules.
-
-### P5 — DrawingContext registry
-
-Replace one-binding-per-McpServer model with explicit execution-scoped drawing contexts.
-
-- generate opaque `drawing_id`;
-- support several drawings per execution;
-- support separate chats/executions concurrently;
-- invalidate only the closed/stale drawing context.
-
-### P6 — CAD lease and scheduler
-
-- acquire CAD ToolLease per invocation;
-- resolve exact drawing + host from lease target;
-- serialize mutation-sensitive calls per host;
-- remove ambient ActiveDocument authority;
-- preserve explicit drawing verification.
-
-### P7 — Lazy CAD path
-
-- remove eager CAD manifest/business registration from idle startup;
-- load CAD family on actual CAD demand;
-- connect CAD MCP only when CAD execution requires it;
-- FILE work never wakes CAD MCP.
-
-### P8 — CAD MCP self-improve Skill
-
-- add development-only internal system Skill `cad-mcp-dev`;
-- hard-code canonical source-write root to `runtimes/cad-mcp/**`;
-- allow read-only supporting repository context without write escalation;
-- add scoped runtime coding tools/runner instead of unrestricted shell;
-- add source snapshot/rollback;
-- add candidate runtime generation handling;
-- add runtime-local test harness;
-- add manifest/schema compatibility validation;
-- allow scoped regeneration/update of the CAD MCP Internal Registry artifact under `runtimes/cad-mcp/**`;
-- verify new/changed CAD MCP tools appear correctly in the effective Internal Registry;
-- add controlled AutoCAD integration-test path;
-- add out-of-scope core-change reporting;
-- provide no Git workflow at all; changes remain local under `runtimes/cad-mcp/**`;
-- add a production-build exclusion gate so `cad-mcp-dev` and its coding runner are absent from packaged releases.
-
-### P9 — Tray/startup migration
-
-- add `cadgpt-tray.ps1`;
-- add icon + tray-ready marker;
-- add mutex;
-- register HKCU Run;
-- remove legacy Scheduled Task;
-- adapt setup/run/doctor;
-- low-frequency health checks.
-
-### P10 — Idle optimization and telemetry
-
-- remove idle AutoCAD `tasklist` polling;
-- report loaded capability families;
-- report active work/lease counts;
-- measure RSS/heap/latency in idle, admitted FILE, admitted CAD states.
-
-### P11 — Real acceptance and documentation cleanup
-
-Run the full scenarios below before Stage 2 scope is frozen.
-
-Update README/ROADMAP/doctor/acceptance only after behavior is implemented and tests pass.
-
----
-
-## 25. Mandatory regression tests
-
-### 25.1 Admission
+Acceptance:
 
 ```text
-MCP initialize
-→ heavy execution families remain unloaded
+valid file
+→ STATIC PASS
+→ LOAD PASS
 
-ChatGPT calls CadGPT without @cadgpt
-→ cadgpt_admission = INACTIVE
-→ no discovery
-→ no core work
-→ no CAD MCP
+syntax-broken file
+→ static or AutoCAD load failure
+→ patch
+→ reload same host
+→ PASS
 
-previous turn/chat contained @cadgpt
-current user turn does not
-→ INACTIVE
-
-current exact user turn contains @cadgpt
-→ ACTIVE/CONTROL as appropriate
+file loads with environment/dependency error
+→ exact blocker reported
+→ not mislabeled syntax PASS
 ```
 
-Missing/forged/stale admission token must be rejected by downstream work tools.
+### S2 — Real AutoCAD runtime acceptance
 
-CONTROL authority must not enter FILE/CAD execution.
+Run real Windows + AutoCAD tests for:
 
-### 25.2 Work/lease identity
-
-```text
-same capability + two executions
-→ distinct lease IDs
-
-same Job/Skill after generation replacement
-→ old handle rejected
-
-runtime restart
-→ prior epoch rejected
-```
-
-### 25.3 Absolute-path mutation safety
-
-Verify for `write-lisp`, `write-skill` (when present), `jobcreate` file authoring, and `cad-mcp-dev`:
-
-- relative mutation path is rejected;
-- path containing `..` that resolves outside the allowed root is rejected;
-- symlink/junction target escaping the allowed root is rejected;
-- absolute path inside the allowed root succeeds;
-- changing process CWD cannot change the resolved mutation target;
-- a similarly named file outside the intended root is never selected as fallback.
-
-### 25.4 CadGPT + GPTWorker FILE concurrency
-
-```text
-Chat A → @cadgpt → write-lisp → filesystem write
-Chat B → @gptworker → coding → filesystem write
-```
-
-Verify:
-
-- provider/work IDs remain distinct;
-- CadGPT scope never becomes GPTWorker workspace;
-- GPTWorker scope never becomes CadGPT draft scope;
-- different-file writes may proceed independently;
-- same-file conflicting write is detected rather than silently overwritten.
-
-### 25.5 Two chats / two drawings / same CAD tool
-
-```text
-Chat A
-@cadgpt
-Job A
-Drawing 1
-
-Chat B
-@cadgpt
-Job B
-Drawing 2
-
-both invoke the same CAD MCP operation
-```
-
-Verify:
-
-- distinct admission/work authority;
-- distinct ToolLeases;
-- correct drawing target for each;
+- drawing discovery/bind/rebind;
+- stale drawing after close/reopen;
+- two chats / two drawings / same CAD tool;
+- one execution / multiple drawings;
+- host scheduler serialization;
 - no ActiveDocument drift;
-- no cross-Job state;
-- same-host mutation is serialized safely.
+- verified Lisp load in the same AutoCAD window;
+- CAD MCP sleep/wake/reconnect;
+- AutoCAD-close behavior.
 
-### 25.6 Multi-drawing one execution
+No static/CI simulation substitutes for this phase.
 
-- one work execution binds drawing A + B;
-- read calls can identify either explicitly;
-- mutation requires explicit `drawing_id` when more than one is bound;
-- closing drawing A does not silently retarget to B.
+### S3 — Self-improve acceptance
 
-### 25.7 Lazy runtime
+Test `cad-mcp-dev` as a real development workflow:
 
-```text
-Windows idle
-→ tray ON
-→ slim MCP ON
-→ tunnel ON
-→ FILE heavy modules unloaded
-→ CAD modules unloaded
-→ CAD MCP OFF
+1. repair one existing CAD MCP tool;
+2. add or alter one tool schema;
+3. regenerate manifest;
+4. verify effective CadGPT public tool surface;
+5. start candidate;
+6. call changed tool against an explicitly approved drawing;
+7. accept successful candidate;
+8. separately force a broken candidate and verify rollback;
+9. restart CadGPT/Windows with pending recovery and verify recovery gate;
+10. verify every attempted write outside `runtimes/cad-mcp/**` is rejected.
 
-invalid/uninvoked CadGPT call
-→ state unchanged
-
-admitted FILE work
-→ FILE family loads
-→ CAD MCP remains OFF
-
-admitted CAD work
-→ CAD family loads
-→ CAD MCP activates on demand
-
-work ends / idle timeout
-→ execution authority expires
-→ heavy runtime can return to idle
-→ tray/slim MCP/tunnel remain
-```
-
-### 25.8 CAD MCP self-improve
-
-```text
-@cadgpt improve CAD MCP
-→ ACTIVE admission
-→ owner = skill:cad-mcp-dev
-→ explicit implementation confirmation
-```
+### S4 — FILE/Lisp/Job governance acceptance
 
 Verify:
 
-- runtime source read/edit works under `runtimes/cad-mcp/**`;
-- attempted write to `src/**`, `skills/**`, repo root, `.git/**`, or `appdata/**` is rejected;
-- read-only supporting repository context is available where required;
-- unrestricted raw shell escape is unavailable;
-- runtime-local compile/tests can run;
-- candidate CAD MCP failure rolls back to known-good runtime;
-- no unrelated active Job/drawing context is inherited;
-- live integration test requires an explicitly approved drawing;
-- dependency environment rebuild requires its separate privileged action;
-- no Git command, commit, push, branch, or PR capability is available;
-- adding/updating a CAD MCP tool regenerates `runtimes/cad-mcp/tool-manifest.json` and the effective Internal Registry reflects it;
-- User Registry remains unchanged by `cad-mcp-dev`;
-- production build/profile does not register or expose `cad-mcp-dev` at all.
+- external import source remains read-only;
+- managed library is generic read-only;
+- draft editing uses absolute paths;
+- same-file conflict is detected;
+- Lisp checkout/repair/promote works;
+- lightweight static + load gate works;
+- helper-only Lisp remains valid;
+- Job authoring/promotion remains rollback-safe;
+- User Registry cannot overwrite Internal Registry.
 
-### 25.9 Tray
+### S5 — Production-profile strip
 
-- Windows logon creates exactly one CadGPT tray icon;
-- second tray launch exits via mutex;
-- old Scheduled Task is removed;
-- status does not busy-poll;
-- restart stops only verified CadGPT-owned processes;
-- an unrelated process occupying a configured port is never killed.
+Create an explicit production build gate.
+
+Production profile must prove:
+
+```text
+cad-mcp-dev not registered
+cad_mcp_dev_* not listed
+runtime source mutation unavailable
+development recovery/candidate authoring unavailable
+normal CAD tools still available
+write-lisp still available
+Job runtime still available
+```
+
+This is a mandatory automated test.
+
+### S6 — Installer / packaged runtime
+
+Only after S0–S5 pass:
+
+- set production AppData default to `%LOCALAPPDATA%\CadGPT`;
+- package prebuilt CadGPT runtime;
+- package or install the required normal CAD MCP runtime;
+- configure Secure MCP Tunnel;
+- register HKCU tray startup;
+- add uninstall/repair behavior;
+- preserve user-managed AppData unless the user explicitly chooses data removal;
+- ensure install/uninstall never deletes arbitrary external Lisp/Job source folders.
+
+### S7 — Release CI
+
+Release CI must run at least:
+
+```text
+npm ci
+→ build
+→ unit/regression tests
+→ manifest validation
+→ production capability-strip test
+→ packaging test
+→ installer artifact
+```
+
+Development-only tests may run against `CADGPT_BUILD_PROFILE=development`.
+
+Production artifact validation must run against production profile.
+
+### S8 — Fresh-machine acceptance
+
+Test the installer on a clean Windows user profile.
+
+Required proof:
+
+```text
+install
+→ restart/sign-in
+→ one CadGPT tray
+→ slim MCP ready
+→ tunnel ready
+→ @cadgpt admission works
+→ CAD remains lazy
+→ open AutoCAD manually
+→ bind drawing
+→ perform safe CAD read
+→ write/load a small Lisp
+→ restart CadGPT
+→ reconnect without stale authority
+→ uninstall/repair works
+```
+
+Do not use the developer machine as the only release proof.
 
 ---
 
-## 26. Final acceptance demo before Stage 2
+## 11. Mandatory regression matrix
 
-The refactor is not complete until this full demo works:
+### Admission
 
-```text
-WINDOWS LOGIN
+- no `@cadgpt` → INACTIVE;
+- previous turn contained `@cadgpt`, current one does not → INACTIVE;
+- CONTROL cannot mutate FILE/CAD;
+- stale/forged admission token rejected.
 
-CadGPT tray visible
-slim CadGPT MCP ready
-Secure MCP Tunnel ready
-heavy FILE runtime unloaded
-CAD MCP off
-```
+### Work/ToolLease
 
-Then:
+- same tool + two executions → distinct leases;
+- old generation rejected after replacement;
+- old epoch rejected after runtime restart;
+- active ToolLease blocks unsafe stop/replace.
 
-```text
-Chat 1:
-@cadgpt
-Job A
-Drawing A
+### Absolute path
 
-Chat 2:
-@cadgpt
-Job B
-Drawing B
+For write-lisp, Job authoring, write-skill when present, and self-improve:
 
-→ both invoke the same CAD operation near-simultaneously
-→ independent work/tool leases
-→ correct drawings
-→ no conflict
-```
+- relative mutation rejected;
+- `..` escape rejected;
+- symlink/junction escape rejected;
+- process CWD cannot redirect target;
+- canonical in-root absolute path succeeds.
 
-At the same time:
+### Lisp load
 
-```text
-Chat 3:
-@gptworker
-coding on Repo X
+- static-valid + AutoCAD-valid Lisp → LOAD PASS;
+- malformed file → FAIL with real load evidence;
+- patch/reload uses the same host/window;
+- queued command without verified result is never PASS;
+- no automatic second AutoCAD instance.
 
-Chat 1:
-CadGPT write-lisp
+### Multi-drawing
 
-→ both use filesystem capabilities
-→ separate provider/execution scopes
-→ no workspace/path leakage
-```
+- two chats + same CAD tool + two drawings remain isolated;
+- multiple drawings in one execution require explicit mutation target;
+- close/reopen invalidates stale document identity.
 
-Also:
+### Lazy runtime
 
-```text
-Chat 4:
-@cadgpt improve CAD MCP capability X
+- idle → CAD MCP off;
+- FILE-only work → CAD MCP off;
+- actual CAD operation → CAD MCP on demand;
+- idle/stop → work authority expires and CAD backend may stop.
 
-→ cad-mcp-dev WorkRegistration
-→ source mutation allowed only in runtimes/cad-mcp/**
-→ compile/tests + candidate runtime validation
-→ approved test drawing if live CAD validation is needed
-→ failed candidate rolls back without killing CadGPT control plane
-→ request requiring src/cadgpt/** change returns OUT_OF_SCOPE_CORE_CHANGE
-```
+### Self-improve
 
-And:
+- one source-development owner at a time;
+- one self-improve ToolLease at a time;
+- source writes only under runtime root;
+- no unrestricted shell;
+- no Git workflow;
+- snapshot before mutation;
+- crash recovery enforced;
+- compile/import/tests run;
+- manifest regenerated when applicable;
+- public surface verified;
+- successful live candidate evidence required when candidate path is used;
+- failed candidate rolls back;
+- production profile exposes none of it.
 
-```text
-Chat 5:
-user does NOT write @cadgpt
-ChatGPT nevertheless considers/calls CadGPT
+### Tray/process ownership
 
-→ cadgpt_admission returns INACTIVE
-→ internal instruction: stop CadGPT flow
-→ no side effect
-→ ChatGPT continues normally or with the requested provider
-```
-
-Only after these scenarios pass may the runtime-isolation refactor be considered complete.
+- one tray instance;
+- verified process ownership before stop/restart;
+- unrelated process on configured port is not killed;
+- no short-interval AutoCAD polling.
 
 ---
 
-## 27. Stage 2 entry condition
+## 12. Ship blockers
 
-Stage 2 begins only after:
+CadGPT is not shippable while any of these remain true:
 
-- admission gate is server-enforced;
-- no downstream work path bypasses admission;
-- WorkRegistration + ToolLease isolation is tested;
-- multi-chat/multi-drawing targeting is safe;
-- CAD scheduler prevents ActiveDocument races;
-- all source/file mutation paths require absolute canonical targets and reject CWD/relative-path authority;
-- FILE and CAD execution paths are lazy and independent;
-- development build: `cad-mcp-dev` can complete a scoped edit/test/rollback cycle without writing outside `runtimes/cad-mcp/**`, including regeneration of the CAD MCP tool manifest/Internal Registry artifact;
-- production/package build: `cad-mcp-dev`, runtime coding tools, and source-mutation authority are absent;
-- candidate CAD MCP validation cannot hijack unrelated drawing/work contexts;
-- Windows tray/startup migration is stable;
-- managed library authoring integrity remains intact;
-- CI/regression tests pass.
+- Lisp authoring can claim success without a verified AutoCAD load;
+- load test may run in a different/uncontrolled AutoCAD instance;
+- drawing target can drift through ambient ActiveDocument;
+- any mutation can use relative/CWD-derived authority;
+- stale WorkRegistration/ToolLease can survive generation/runtime replacement;
+- CAD MCP self-improve can write outside its runtime root;
+- self-improve is present in production capability discovery;
+- production install rebuilds development source implicitly;
+- packaged AppData writes into the source repo by default;
+- installer/startup can kill an unrelated process;
+- release has not been tested on real AutoCAD and a fresh Windows profile.
 
-Stage 2 then validates the architecture against real Windows + AutoCAD behavior.
+---
 
-No static test or documentation claim is a substitute for real AutoCAD validation.
+## 13. Definition of Done — production ship
+
+The product is ready to ship only when all of the following are true.
+
+### Core
+
+- explicit `@cadgpt` admission is enforced server-side;
+- WorkRegistration and ToolLease isolation pass regression tests;
+- FILE/CAD paths remain separated;
+- stale authority is rejected.
+
+### CAD
+
+- real AutoCAD drawing binding/rebinding works;
+- multi-chat/multi-drawing test passes;
+- scheduler prevents drawing-target race;
+- CAD MCP starts only on demand and recovers cleanly.
+
+### Lisp
+
+- static validation works;
+- fixed same-window AutoCAD load-check works;
+- syntax/load failure produces actionable error;
+- patch/reload loop reaches verified PASS;
+- full command behavior is tested only when task requirements need it.
+
+### Self-improve
+
+- development-only `cad-mcp-dev` can repair/add a CAD MCP tool;
+- source write boundary is proven;
+- baseline/recovery/rollback work;
+- manifest + effective public tool surface are verified;
+- live changed behavior can be proven on an approved drawing;
+- production build strips the entire development capability.
+
+### Packaging
+
+- production uses per-user AppData;
+- installed runtime is prebuilt;
+- tray auto-start is stable;
+- setup/doctor/uninstall/repair work;
+- release CI produces a reproducible installer;
+- fresh-machine Windows + real-AutoCAD acceptance passes.
+
+Only after these gates pass should CadGPT be labeled a production release.
