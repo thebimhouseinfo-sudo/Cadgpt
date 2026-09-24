@@ -254,3 +254,4 @@ jobs:
           python -c "import os; from services.lisp_service import _resolve_lisp_path; _resolve_lisp_path(os.environ['CADGPT_LISP_OUTSIDE'])" 2>$null
           if ($LASTEXITCODE -eq 0) { throw "outside absolute Lisp path was accepted" }
           Write-Host "outside absolute Lisp path rejected"
+          exit 0
