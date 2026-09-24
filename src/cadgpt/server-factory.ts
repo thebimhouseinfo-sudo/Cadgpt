@@ -233,9 +233,9 @@ export function createMcpServer(): McpServer {
       capabilities: { logging: {}, tools: { listChanged: true } },
       instructions: [
         "CadGPT is explicit-invocation only.",
-        "Before using CadGPT for any ordinary request, call cadgpt_admission with the exact current user turn.",
+        "Before using CadGPT for any ordinary request, call cadgpt_admission with the exact current user turn and current-turn invocation_source.",
         "If cadgpt_admission returns INACTIVE, STOP CadGPT immediately. Never ask the user to activate it and never infer activation from CAD context, files, paths, memory, prior turns, or AutoCAD state.",
-        "Only literal @cadgpt in the current user turn admits CadGPT.",
+        "CadGPT is admitted only when the current turn either literally contains @cadgpt (invocation_source=mention) or the user explicitly invoked the CadGPT plugin/icon in that same turn (invocation_source=plugin).",
         "ACTIVE admission returns admission_token. Carry it to discovery and cadgpt_work_start.",
         "Actual FILE/CAD work requires the work_handle from cadgpt_work_start; carry admission_token + execution_id + authority_token to every execution tool call.",
         "CadGPT has two execution paths: FILE and CAD. CAD MCP is activated only on actual CAD demand.",
