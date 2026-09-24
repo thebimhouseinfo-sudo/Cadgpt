@@ -362,22 +362,53 @@ function Start-CadGptRuntime {
         }
 
         $tunnelScript = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "openai-tunnel.ps1"))
-        $quotedTunnelScript = '"' + ($tunnelScript -replace '"', '\"') + '"'
-        $tunnelArgs = "-NoProfile -ExecutionPolicy Bypass -File $quotedTunnelScript -Port $CadGptPort -HealthPort $TunnelHealthPort"
+        $tunnelOut = Join-Path $LogDir "tunnel.out.log"
+        $tunnelErr = Join-Path $LogDir "tunnel.err.log"
+        Remove-Item $tunnelOut,$tunnelErr -Force -ErrorAction SilentlyContinue
+
+        $escapedTunnelScript = $tunnelScript.Replace("'", "''")
+        $command = "& '$escapedTunnelScript' -Port $CadGptPort -HealthPort $TunnelHealthPort"
+        $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
         $tunnelParams = @{
             FilePath = "powershell.exe"
-            ArgumentList = $tunnelArgs
+            ArgumentList = "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand"
             WorkingDirectory = $ScriptDir
             WindowStyle = "Hidden"
-            RedirectStandardOutput = (Join-Path $LogDir "tunnel.out.log")
-            RedirectStandardError = (Join-Path $LogDir "tunnel.err.log")
+            RedirectStandardOutput = $tunnelOut
+            RedirectStandardError = $tunnelErr
             PassThru = $true
         }
         $script:TunnelLauncher = Start-Process @tunnelParams
+        Write-TrayLog "Started tunnel PowerShell launcher PID $($script:TunnelLauncher.Id) for health port $TunnelHealthPort."
 
-        if (-not (Wait-ForCondition { Test-TunnelHealthy } 65)) {
+        $deadline = (Get-Date).AddSeconds(65)
+        $tunnelReady = $false
+        do {
+            if (Test-TunnelHealthy) {
+                $tunnelReady = $true
+                break
+            }
+            $script:TunnelLauncher.Refresh()
+            if ($script:TunnelLauncher.HasExited) {
+                $exitCode = $script:TunnelLauncher.ExitCode
+                Write-TrayLog "Tunnel PowerShell launcher exited before readiness with code $exitCode."
+                if (Test-Path $tunnelErr) {
+                    $tail = (Get-Content $tunnelErr -Tail 20 -ErrorAction SilentlyContinue) -join " | "
+                    if ($tail) { Write-TrayLog "Tunnel stderr: $tail" }
+                }
+                if (Test-Path $tunnelOut) {
+                    $tail = (Get-Content $tunnelOut -Tail 20 -ErrorAction SilentlyContinue) -join " | "
+                    if ($tail) { Write-TrayLog "Tunnel stdout: $tail" }
+                }
+                break
+            }
+            Start-Sleep -Milliseconds 500
+        } while ((Get-Date) -lt $deadline)
+
+        if (-not $tunnelReady) {
             $script:RuntimeState = "Degraded"
             Update-TrayStatus
+            Write-TrayLog "Secure tunnel did not become ready on health port $TunnelHealthPort."
             return
         }
 
