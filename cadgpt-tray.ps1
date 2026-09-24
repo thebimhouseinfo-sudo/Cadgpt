@@ -461,7 +461,7 @@ try {
         $notify.Icon = [System.Drawing.SystemIcons]::Application
     }
 } catch {
-    Write-TrayLog "Failed to load tray icon from $trayIconPath: $($_.Exception.Message); using system fallback icon."
+    Write-TrayLog "Failed to load tray icon from ${trayIconPath}: $($_.Exception.Message); using system fallback icon."
     $notify.Icon = [System.Drawing.SystemIcons]::Application
 } finally {
     if ($trayIconBitmap) { $trayIconBitmap.Dispose() }
