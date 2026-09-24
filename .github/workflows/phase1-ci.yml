@@ -235,7 +235,7 @@ jobs:
       - name: Validate Python dependency graph
         run: python -m pip check
       - name: Compile CAD MCP slice
-        run: python -m compileall -q runtimes/cad-mcp scripts/generate-cad-tool-manifest.py
+        run: python scripts/check-cad-mcp-python.py
       - name: Generate CAD tool manifest without starting runtime
         run: python scripts/generate-cad-tool-manifest.py
       - name: Import CAD MCP entrypoint
