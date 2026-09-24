@@ -52,10 +52,12 @@ These rules are release blockers. A production build must not violate them.
 CadGPT is explicit-invocation only.
 
 ```text
-literal @cadgpt in the exact current user turn
+explicit invocation in the exact current user turn:
+- literal @cadgpt, or
+- user-selected CadGPT plugin/icon
 → admission may become ACTIVE/CONTROL
 
-no literal @cadgpt
+neither current-turn invocation source present
 → INACTIVE
 → no CadGPT work
 ```
@@ -155,7 +157,7 @@ The implemented authority model remains the product core.
 
 ### 3.1 Admission
 
-`cadgpt_admission(current_user_turn)` returns:
+`cadgpt_admission(current_user_turn, invocation_source)` returns:
 
 - `INACTIVE`
 - `CONTROL`
@@ -762,7 +764,7 @@ Do not re-implement already completed architecture.
 
 Verify current main contains and tests:
 
-- server-side explicit `@cadgpt` admission;
+- server-side explicit current-turn admission from literal `@cadgpt` or CadGPT plugin/icon invocation;
 - admission token enforcement;
 - WorkRegistration;
 - ToolLease;
@@ -915,7 +917,7 @@ install
 → one CadGPT tray
 → slim MCP ready
 → tunnel ready
-→ @cadgpt admission works
+→ `@cadgpt` and CadGPT plugin/icon admission both work
 → CAD remains lazy
 → open AutoCAD manually
 → bind drawing
@@ -934,8 +936,10 @@ Do not use the developer machine as the only release proof.
 
 ### Admission
 
-- no `@cadgpt` → INACTIVE;
-- previous turn contained `@cadgpt`, current one does not → INACTIVE;
+- literal `@cadgpt` in the current turn → admitted;
+- explicit CadGPT plugin/icon invocation in the current turn → admitted even without `@cadgpt` text;
+- neither current-turn source present → INACTIVE;
+- previous-turn `@cadgpt` or plugin invocation does not carry forward → INACTIVE;
 - CONTROL cannot mutate FILE/CAD;
 - stale/forged admission token rejected.
 
@@ -1026,7 +1030,7 @@ The product is ready to ship only when all of the following are true.
 
 ### Core
 
-- explicit `@cadgpt` admission is enforced server-side;
+- explicit current-turn admission from `@cadgpt` or CadGPT plugin/icon is enforced server-side;
 - WorkRegistration and ToolLease isolation pass regression tests;
 - FILE/CAD paths remain separated;
 - stale authority is rejected.
