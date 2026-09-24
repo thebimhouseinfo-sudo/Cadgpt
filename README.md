@@ -8,7 +8,7 @@ ChatGPT
 OpenAI Secure MCP Tunnel
    ⇅
 CadGPT slim control/admission plane
-   ↓  literal @cadgpt required in the current user turn
+   ↓  explicit current-turn invocation required: literal @cadgpt OR CadGPT plugin/icon
 WorkRegistration + ToolLease
    ├── FILE capability path
    └── CAD capability path
@@ -29,14 +29,14 @@ WorkRegistration + ToolLease
 
 ## Admission and Windows lifecycle
 
-CadGPT is explicit-invocation only. ChatGPT may route a request to CadGPT, but CadGPT admits work only when the **exact current user turn** literally contains `@cadgpt`.
+CadGPT is explicit-invocation only. CadGPT admits work only when the **current user turn** explicitly invokes it, either by literally containing `@cadgpt` or by the user selecting/calling the CadGPT plugin/icon for that same turn. Prior turns, memory, CAD context, files, paths, and AutoCAD state never count as activation.
 
 ```text
 ChatGPT considers CadGPT
-→ cadgpt_admission(exact current user turn)
-   ├── no @cadgpt → INACTIVE → stop CadGPT flow
+→ cadgpt_admission(exact current user turn, invocation_source)
+   ├── no @cadgpt and no current-turn CadGPT plugin/icon invocation → INACTIVE
    ├── control-only @cadgpt → CONTROL
-   └── explicit work request with @cadgpt → ACTIVE + short-lived admission token
+   └── @cadgpt OR current-turn CadGPT plugin/icon invocation → ACTIVE + short-lived admission token
 ```
 
 There is no contextual exception for an AutoCAD-looking task, an `.lsp` file, an absolute path, AutoCAD already running, memory, or prior CadGPT use.
