@@ -1,52 +1,69 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-test("admission accepts current-turn @cadgpt mention or explicit plugin invocation", async () => {
-  const { checkAdmission, validateAdmissionToken } = await import(
-    "../dist/cadgpt/lib/admission.js"
-  );
+test("admission claims one ChatGPT/MCP session and does not require repeated @cadgpt", async () => {
+  const {
+    checkAdmission,
+    validateAdmissionToken,
+    revokeSessionAdmissions,
+    isSessionClaimed,
+  } = await import("../dist/cadgpt/lib/admission.js");
 
   const inactive = checkAdmission("session-a", "Please edit this AutoCAD drawing");
   assert.equal(inactive.mode, "inactive");
   assert.equal(inactive.claimed, false);
   assert.equal(inactive.admission_token, undefined);
 
-  const mention = checkAdmission(
+  const bareMention = checkAdmission("session-a", "@cadgpt", "mention");
+  assert.equal(bareMention.mode, "active");
+  assert.equal(bareMention.reason, "explicit_cadgpt");
+  assert.ok(bareMention.admission_token);
+  assert.equal(isSessionClaimed("session-a"), true);
+
+  const mentionContinuation = checkAdmission(
     "session-a",
-    "@cadgpt edit this AutoCAD drawing",
+    "drawing nào đang mở",
     "mention"
   );
-  assert.equal(mention.mode, "active");
-  assert.equal(mention.reason, "explicit_cadgpt");
-  assert.ok(mention.admission_token);
+  assert.equal(mentionContinuation.mode, "active");
+  assert.equal(mentionContinuation.reason, "session_continuation");
+  assert.ok(mentionContinuation.admission_token);
 
   const plugin = checkAdmission(
     "session-plugin",
-    "Please edit this AutoCAD drawing",
+    "CG",
     "plugin"
   );
   assert.equal(plugin.mode, "active");
   assert.equal(plugin.reason, "explicit_cadgpt_plugin");
   assert.ok(plugin.admission_token);
-  assert.doesNotThrow(() =>
-    validateAdmissionToken(plugin.admission_token, "session-plugin")
-  );
+  assert.equal(isSessionClaimed("session-plugin"), true);
 
   const nextTurnWithoutInvocation = checkAdmission(
+    "session-plugin",
+    "drawing nào đang mở",
+    "mention"
+  );
+  assert.equal(nextTurnWithoutInvocation.mode, "active");
+  assert.equal(nextTurnWithoutInvocation.reason, "session_continuation");
+  assert.ok(nextTurnWithoutInvocation.admission_token);
+  assert.doesNotThrow(() =>
+    validateAdmissionToken(nextTurnWithoutInvocation.admission_token, "session-plugin")
+  );
+
+  assert.throws(
+    () => validateAdmissionToken(nextTurnWithoutInvocation.admission_token, "session-b"),
+    /another ChatGPT session/
+  );
+
+  revokeSessionAdmissions("session-plugin");
+  assert.equal(isSessionClaimed("session-plugin"), false);
+  const afterClose = checkAdmission(
     "session-plugin",
     "continue",
     "mention"
   );
-  assert.equal(nextTurnWithoutInvocation.mode, "inactive");
-  assert.throws(
-    () => validateAdmissionToken(plugin.admission_token, "session-plugin"),
-    /ADMISSION_REQUIRED/
-  );
-
-  assert.throws(
-    () => validateAdmissionToken(mention.admission_token, "session-b"),
-    /another ChatGPT session/
-  );
+  assert.equal(afterClose.mode, "inactive");
 });
 
 test("work registrations and tool leases remain isolated across sessions", async () => {
@@ -183,7 +200,7 @@ test("production profile blocks cad-mcp-dev work registration", async () => {
 });
 
 
-test("a new current-turn admission rotates old authority and CONTROL cannot execute work", async () => {
+test("a new turn rotates proof authority while the session claim persists; CONTROL cannot execute work", async () => {
   const { checkAdmission, validateAdmissionToken } = await import(
     "../dist/cadgpt/lib/admission.js"
   );
@@ -254,11 +271,15 @@ test("a new current-turn admission rotates old authority and CONTROL cannot exec
     /ACTIVE_ADMISSION_REQUIRED/
   );
 
-  const inactive = checkAdmission("rotation-session", "continue without invoking provider");
-  assert.equal(inactive.mode, "inactive");
+  const continuation = checkAdmission("rotation-session", "continue without invoking provider");
+  assert.equal(continuation.mode, "active");
+  assert.equal(continuation.reason, "session_continuation");
   assert.throws(
     () => validateAdmissionToken(control.admission_token, "rotation-session", "control_or_active"),
     /ADMISSION_REQUIRED/
+  );
+  assert.doesNotThrow(() =>
+    validateAdmissionToken(continuation.admission_token, "rotation-session")
   );
 
   releaseWorkRegistration(
