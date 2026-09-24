@@ -16,7 +16,7 @@ export function registerAdmissionTool(
     {
       title: "CadGPT Admission",
       description:
-        "Internal admission handshake. Call first whenever ChatGPT is considering CadGPT. Pass the exact current user turn and its current-turn invocation source. ACTIVE when the user explicitly invoked CadGPT either with literal @cadgpt or by selecting/calling the CadGPT plugin/icon in this same turn. Never infer plugin invocation from prior turns, memory, CAD context, files, or state.",
+        "Internal CadGPT session admission handshake. The user explicitly launches CadGPT once per ChatGPT/MCP session, either by calling this CadGPT plugin/icon (for example a connector renamed CG) or by using literal @cadgpt. That claim persists for later turns in the same session, so repeated @cadgpt is not required. Pass the exact current user turn. Never carry a claim across another MCP/chat session.",
       inputSchema: {
         user_turn: z
           .string()
@@ -24,8 +24,8 @@ export function registerAdmissionTool(
           .describe("Exact current user message; never reconstruct from memory or another turn"),
         invocation_source: z
           .enum(["mention", "plugin"])
-          .default("mention")
-          .describe("mention = current turn literally contains @cadgpt; plugin = user explicitly invoked CadGPT through its plugin/icon in this current turn"),
+          .default("plugin")
+          .describe("plugin = CadGPT connector/plugin was invoked; mention = the current turn literally contains @cadgpt. Once either claims this MCP session, later turns continue without repeating @cadgpt."),
       },
     },
     async ({ user_turn, invocation_source }) => {
@@ -40,7 +40,7 @@ export function registerAdmissionTool(
             ? "STOP CadGPT. Do not call discovery/work/CAD tools. Continue ordinary ChatGPT or use the provider the user actually invoked."
             : decision.mode === "control"
               ? "Use this CONTROL admission_token only for CadGPT control/status/stop. It cannot authorize discovery, FILE, CAD, or new work."
-              : "CadGPT is admitted for this current user turn. Carry admission_token into discovery and work registration.",
+              : "CadGPT is admitted for this ChatGPT/MCP session. Carry the fresh admission_token into discovery and work registration for this turn; later turns may continue without repeating @cadgpt.",
       });
     }
   );
