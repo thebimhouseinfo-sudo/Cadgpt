@@ -16,16 +16,20 @@ export function registerAdmissionTool(
     {
       title: "CadGPT Admission",
       description:
-        "Internal admission handshake. Call first whenever ChatGPT is considering CadGPT. Pass the exact current user turn. ACTIVE only when that exact turn literally contains @cadgpt. INACTIVE means stop CadGPT immediately and continue normally or with the provider actually requested by the user.",
+        "Internal admission handshake. Call first whenever ChatGPT is considering CadGPT. Pass the exact current user turn and its current-turn invocation source. ACTIVE when the user explicitly invoked CadGPT either with literal @cadgpt or by selecting/calling the CadGPT plugin/icon in this same turn. Never infer plugin invocation from prior turns, memory, CAD context, files, or state.",
       inputSchema: {
         user_turn: z
           .string()
           .min(1)
           .describe("Exact current user message; never reconstruct from memory or another turn"),
+        invocation_source: z
+          .enum(["mention", "plugin"])
+          .default("mention")
+          .describe("mention = current turn literally contains @cadgpt; plugin = user explicitly invoked CadGPT through its plugin/icon in this current turn"),
       },
     },
-    async ({ user_turn }) => {
-      const decision = checkAdmission(options.sessionKey, user_turn);
+    async ({ user_turn, invocation_source }) => {
+      const decision = checkAdmission(options.sessionKey, user_turn, invocation_source);
       if (decision.mode === "active") await options.onActive();
       return toolResult("cadgpt_admission", {
         internal_control_signal: true,
