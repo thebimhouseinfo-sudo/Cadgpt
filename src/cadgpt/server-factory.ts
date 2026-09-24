@@ -232,11 +232,12 @@ export function createMcpServer(): McpServer {
     {
       capabilities: { logging: {}, tools: { listChanged: true } },
       instructions: [
-        "CadGPT is explicit-invocation only.",
-        "Before using CadGPT for any ordinary request, call cadgpt_admission with the exact current user turn and current-turn invocation_source.",
-        "If cadgpt_admission returns INACTIVE, STOP CadGPT immediately. Never ask the user to activate it and never infer activation from CAD context, files, paths, memory, prior turns, or AutoCAD state.",
-        "CadGPT is admitted only when the current turn either literally contains @cadgpt (invocation_source=mention) or the user explicitly invoked the CadGPT plugin/icon in that same turn (invocation_source=plugin).",
-        "ACTIVE admission returns admission_token. Carry it to discovery and cadgpt_work_start.",
+        "CadGPT is explicit-launch, session-persistent.",
+        "The user launches CadGPT once per ChatGPT/MCP session, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt.",
+        "Call cadgpt_admission with the exact current user turn. Plugin invocation defaults to invocation_source=plugin. After the session is claimed, later turns in the same MCP session remain admitted without repeating @cadgpt.",
+        "Never carry admission across another MCP/chat session, memory, unrelated files, paths, or AutoCAD state. Session disposal revokes the claim.",
+        "Bare @cadgpt claims the session as ACTIVE; only explicit @cadgpt help/status/stop are CONTROL commands.",
+        "ACTIVE admission returns a fresh admission_token for the current turn. Carry it to discovery and cadgpt_work_start.",
         "Actual FILE/CAD work requires the work_handle from cadgpt_work_start; carry admission_token + execution_id + authority_token to every execution tool call.",
         "CadGPT has two execution paths: FILE and CAD. CAD MCP is activated only on actual CAD demand.",
         "Never assume AutoCAD ActiveDocument is the target; use explicit drawing contexts.",
