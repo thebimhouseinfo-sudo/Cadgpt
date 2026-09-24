@@ -52,13 +52,16 @@ These rules are release blockers. A production build must not violate them.
 CadGPT is explicit-invocation only.
 
 ```text
-explicit invocation in the exact current user turn:
+explicit session launch:
 - literal @cadgpt, or
-- user-selected CadGPT plugin/icon
-→ admission may become ACTIVE/CONTROL
+- user-selected CadGPT plugin/icon (including a renamed connector such as CG)
+→ claim this ChatGPT/MCP session
 
-neither current-turn invocation source present
-→ INACTIVE
+later turns in the same claimed session
+→ ACTIVE without repeating @cadgpt
+
+different/unclaimed MCP session
+→ INACTIVE until explicitly launched
 → no CadGPT work
 ```
 
@@ -764,7 +767,7 @@ Do not re-implement already completed architecture.
 
 Verify current main contains and tests:
 
-- server-side explicit current-turn admission from literal `@cadgpt` or CadGPT plugin/icon invocation;
+- server-side explicit one-time session launch from literal `@cadgpt` or CadGPT plugin/icon invocation;
 - admission token enforcement;
 - WorkRegistration;
 - ToolLease;
@@ -936,11 +939,13 @@ Do not use the developer machine as the only release proof.
 
 ### Admission
 
-- literal `@cadgpt` in the current turn → admitted;
-- explicit CadGPT plugin/icon invocation in the current turn → admitted even without `@cadgpt` text;
-- neither current-turn source present → INACTIVE;
-- previous-turn `@cadgpt` or plugin invocation does not carry forward → INACTIVE;
+- first literal `@cadgpt` or CadGPT plugin/icon launch claims the current ChatGPT/MCP session;
+- bare `@cadgpt` is ACTIVE and claims the session;
+- later turns in the same claimed session stay ACTIVE without repeated `@cadgpt`;
+- another MCP/chat session is not claimed automatically;
+- `@cadgpt help/status/stop` are CONTROL turns;
 - CONTROL cannot mutate FILE/CAD;
+- each turn receives a fresh short-lived admission token;
 - stale/forged admission token rejected.
 
 ### Work/ToolLease
@@ -1030,7 +1035,7 @@ The product is ready to ship only when all of the following are true.
 
 ### Core
 
-- explicit current-turn admission from `@cadgpt` or CadGPT plugin/icon is enforced server-side;
+- explicit one-time session launch from `@cadgpt` or CadGPT plugin/icon is enforced server-side;
 - WorkRegistration and ToolLease isolation pass regression tests;
 - FILE/CAD paths remain separated;
 - stale authority is rejected.
