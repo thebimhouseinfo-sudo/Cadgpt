@@ -296,11 +296,23 @@ try {
 }
 
 if ($mcpToken -and $tunnelId -and $tunnelKey -and (Test-Path "openai-tunnel.ps1")) {
-    Write-Host ""
-    Write-Host "Running tunnel-client doctor..." -ForegroundColor Cyan
-    & powershell -NoProfile -ExecutionPolicy Bypass -File "$ScriptDir\openai-tunnel.ps1" -Doctor -Port $port -HealthPort $healthPort
-    if ($LASTEXITCODE -eq 0) { Ok "tunnel-client doctor passed" }
-    else { Fail "tunnel-client doctor failed" }
+    $runtimeTunnelReady = $false
+    try {
+        $ready = Invoke-WebRequest -Uri "http://127.0.0.1:$healthPort/readyz" -UseBasicParsing -TimeoutSec 2
+        $runtimeTunnelReady = ($ready.StatusCode -eq 200 -and $ready.Content -match "ready")
+    } catch {
+        $runtimeTunnelReady = $false
+    }
+
+    if ($runtimeTunnelReady) {
+        Ok "Secure MCP Tunnel runtime is already ready; standalone tunnel-client doctor skipped to avoid rebinding health port $healthPort"
+    } else {
+        Write-Host ""
+        Write-Host "Running tunnel-client doctor..." -ForegroundColor Cyan
+        & powershell -NoProfile -ExecutionPolicy Bypass -File "$ScriptDir\openai-tunnel.ps1" -Doctor -Port $port -HealthPort $healthPort
+        if ($LASTEXITCODE -eq 0) { Ok "tunnel-client doctor passed" }
+        else { Fail "tunnel-client doctor failed" }
+    }
 }
 
 Write-Host ""
