@@ -67,14 +67,14 @@ function Resolve-Ports {
         $Port
     } else {
         $p = Get-DotEnvValue "PORT"
-        if ($p) { [int]$p } else { 3000 }
+        if ($p) { [int]$p } else { 3100 }
     }
 
     $script:ResolvedHealthPort = if ($HealthPort -gt 0) {
         $HealthPort
     } else {
         $p = Get-DotEnvValue "OPENAI_TUNNEL_HEALTH_PORT"
-        if ($p) { [int]$p } else { 8080 }
+        if ($p) { [int]$p } else { 8180 }
     }
 }
 
