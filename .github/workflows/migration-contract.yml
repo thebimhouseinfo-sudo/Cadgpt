@@ -87,7 +87,7 @@ jobs:
           }
           foreach ($rootFile in @(
             "package.json", "setup.bat", "run.bat", "doctor.bat", "doctor.ps1",
-            "acceptance.bat", "acceptance.ps1", "start.ps1", "openai-tunnel.ps1"
+            "acceptance.bat", "acceptance.ps1", "openai-tunnel.ps1"
           )) {
             if (Test-Path $rootFile -PathType Leaf) { $activeFiles.Add((Get-Item $rootFile)) }
           }
