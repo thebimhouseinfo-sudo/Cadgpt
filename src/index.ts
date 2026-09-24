@@ -14,6 +14,7 @@ import {
   toRepoRelative,
 } from "./cadgpt/lib/path-security.js";
 import { runtimeStateSnapshot } from "./cadgpt/lib/runtime-state.js";
+import { buildLegacyDiscoverFallback } from "./cadgpt/lib/mcp-discover-compat.js";
 import { activeToolLeaseCount, activeWorkCount, sweepExpiredWork } from "./cadgpt/lib/work-registration.js";
 
 const HOST = process.env.HOST || "127.0.0.1";
@@ -119,6 +120,14 @@ async function handlePost(
 ): Promise<void> {
   try {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
+
+    const discoverFallback = buildLegacyDiscoverFallback(req.body);
+    if (discoverFallback) {
+      console.log("[MCP] server/discover -> legacy initialize fallback");
+      res.status(200).json(discoverFallback);
+      return;
+    }
+
     const existing = sessionId ? sessions.get(sessionId) : undefined;
 
     if (existing) {
