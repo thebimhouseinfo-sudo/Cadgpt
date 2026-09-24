@@ -137,10 +137,6 @@ export function validateAdmissionToken(
   return proof;
 }
 
-export function revokeAdmissionToken(token: string | undefined): void {
-  if (token) proofs.delete(token);
-}
-
 export function revokeSessionAdmissions(sessionKey: string): void {
   for (const [token, proof] of proofs) {
     if (proof.sessionKey === sessionKey) proofs.delete(token);
