@@ -325,9 +325,10 @@ function Start-CadGptRuntime {
         }
 
         $node = (Get-Command node -ErrorAction Stop).Source
+        $quotedIndexPath = '"' + ($IndexPath -replace '"', '\"') + '"'
         $startParams = @{
             FilePath = $node
-            ArgumentList = @($IndexPath)
+            ArgumentList = $quotedIndexPath
             WorkingDirectory = $ScriptDir
             WindowStyle = "Hidden"
             RedirectStandardOutput = (Join-Path $LogDir "cadgpt.out.log")
@@ -360,14 +361,12 @@ function Start-CadGptRuntime {
             return
         }
 
+        $tunnelScript = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "openai-tunnel.ps1"))
+        $quotedTunnelScript = '"' + ($tunnelScript -replace '"', '\"') + '"'
+        $tunnelArgs = "-NoProfile -ExecutionPolicy Bypass -File $quotedTunnelScript -Port $CadGptPort -HealthPort $TunnelHealthPort"
         $tunnelParams = @{
             FilePath = "powershell.exe"
-            ArgumentList = @(
-                "-NoProfile", "-ExecutionPolicy", "Bypass",
-                "-File", (Join-Path $ScriptDir "openai-tunnel.ps1"),
-                "-Port", "$CadGptPort",
-                "-HealthPort", "$TunnelHealthPort"
-            )
+            ArgumentList = $tunnelArgs
             WorkingDirectory = $ScriptDir
             WindowStyle = "Hidden"
             RedirectStandardOutput = (Join-Path $LogDir "tunnel.out.log")
