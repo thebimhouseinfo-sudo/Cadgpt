@@ -232,9 +232,9 @@ if (Test-Path $cadPython) {
         Fail "CAD MCP Python dependency graph failed pip check; rerun setup.bat."
     }
 
-    $compileCode = 'import pathlib; root=pathlib.Path("runtimes/cad-mcp"); files=sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts); [compile(p.read_text(encoding="utf-8-sig"), str(p), "exec") for p in files]; print(f"compiled {len(files)} python files in-memory")'
+    $compileChecker = Join-Path $ScriptDir "scripts\check-cad-mcp-python.py"
     $env:PYTHONDONTWRITEBYTECODE = "1"
-    $compileOutput = & $cadPython -c $compileCode 2>&1
+    $compileOutput = & $cadPython $compileChecker 2>&1
     if ($LASTEXITCODE -eq 0) {
         Ok "CAD MCP Python source compiles in-memory"
     } else {
