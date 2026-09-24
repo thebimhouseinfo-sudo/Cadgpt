@@ -122,8 +122,18 @@ if errorlevel 1 goto :failed
 
 echo.
 echo [8/10] Removing legacy Scheduled Task startup if present...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=Get-ScheduledTask -TaskName 'CadGPT Background Agent' -ErrorAction SilentlyContinue; if($t){ Stop-ScheduledTask -TaskName 'CadGPT Background Agent' -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName 'CadGPT Background Agent' -Confirm:$false; Write-Host '[OK] Removed legacy CadGPT Scheduled Task.' }"
-if errorlevel 1 goto :failed
+schtasks /Query /TN "CadGPT Background Agent" >nul 2>nul
+if errorlevel 1 (
+  echo [OK] Legacy CadGPT Scheduled Task is absent.
+) else (
+  schtasks /End /TN "CadGPT Background Agent" >nul 2>nul
+  schtasks /Delete /TN "CadGPT Background Agent" /F >nul 2>nul
+  if errorlevel 1 (
+    echo [ERROR] Could not remove legacy CadGPT Scheduled Task.
+    goto :failed
+  )
+  echo [OK] Removed legacy CadGPT Scheduled Task.
+)
 
 echo.
 echo [9/10] Installing and starting CadGPT tray runtime...
