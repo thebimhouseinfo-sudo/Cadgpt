@@ -179,6 +179,52 @@ if ($loadJson -notmatch '"loaded"\s*:\s*true') {
 }
 Pass "Verified AutoLISP load passed"
 
+Step "AutoLISP syntax/load rejection and recovery"
+$appDataConfigured = Get-DotEnvValue "CADGPT_APPDATA_ROOT"
+if (-not $appDataConfigured) { $appDataConfigured = "appdata" }
+$appDataRoot = if ([System.IO.Path]::IsPathRooted($appDataConfigured)) {
+    [System.IO.Path]::GetFullPath($appDataConfigured)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $ScriptDir $appDataConfigured))
+}
+$negativeDir = Join-Path $appDataRoot "workspace\lisp-draft\acceptance"
+$negativePath = Join-Path $negativeDir "CADGPT_EXPECTED_LOAD_FAIL.lsp"
+New-Item -ItemType Directory -Force -Path $negativeDir | Out-Null
+@'
+(defun c:CADGPT_EXPECTED_LOAD_FAIL (/
+  (princ "\nThis file is intentionally malformed for acceptance.")
+(princ)
+'@ | Set-Content -LiteralPath $negativePath -Encoding UTF8
+
+try {
+    $badLoadResult = Invoke-WorkTool "cad__cad_load_lisp_file" @{ drawing_id=$drawingId; path=$negativePath }
+    $badLoadJson = $badLoadResult | ConvertTo-Json -Depth 20 -Compress
+    if ($badLoadJson -match '"loaded"\s*:\s*true') {
+        Write-Host $badLoadJson
+        Fail "Intentionally malformed AutoLISP unexpectedly loaded successfully."
+    }
+    if ($badLoadJson -notmatch '"loaded"\s*:\s*false') {
+        Write-Host $badLoadJson
+        Fail "Malformed AutoLISP did not return a verified loaded=false result."
+    }
+    if ($badLoadJson -notmatch '"error"\s*:\s*"[^"]+') {
+        Write-Host $badLoadJson
+        Fail "Malformed AutoLISP load failure did not preserve AutoCAD error evidence."
+    }
+    Pass "AutoCAD rejected malformed AutoLISP with verified load-error evidence"
+
+    $reloadResult = Invoke-WorkTool "cad__cad_load_lisp_file" @{ drawing_id=$drawingId; path=$fixture }
+    $reloadJson = $reloadResult | ConvertTo-Json -Depth 20 -Compress
+    if ($reloadJson -notmatch '"loaded"\s*:\s*true') {
+        Write-Host $reloadJson
+        Fail "Known-good AutoLISP did not reload in the same bound drawing after the expected syntax failure."
+    }
+    Pass "Known-good AutoLISP reloaded in the same bound AutoCAD drawing after failure"
+}
+finally {
+    Remove-Item -LiteralPath $negativePath -Force -ErrorAction SilentlyContinue
+}
+
 $runResult = Invoke-WorkTool "cad__cad_run_lisp_command" @{ drawing_id=$drawingId; name="CADGPT_LOAD_SMOKE"; args=@() }
 if ($runResult.isError -eq $true) { Fail "Safe no-op AutoLISP command dispatch failed." }
 Pass "Safe AutoLISP command dispatch accepted"
