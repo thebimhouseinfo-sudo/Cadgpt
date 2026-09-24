@@ -454,7 +454,8 @@ try {
     if (Test-Path $trayIconPath) {
         $trayIconBitmap = New-Object System.Drawing.Bitmap($trayIconPath)
         $trayIconHandle = $trayIconBitmap.GetHicon()
-        $notify.Icon = [System.Drawing.Icon]::FromHandle($trayIconHandle).Clone()
+        $sourceIcon = [System.Drawing.Icon]::FromHandle($trayIconHandle)
+        $notify.Icon = [System.Drawing.Icon]$sourceIcon.Clone()
     } else {
         Write-TrayLog "Tray icon asset missing at $trayIconPath; using system fallback icon."
         $notify.Icon = [System.Drawing.SystemIcons]::Application
