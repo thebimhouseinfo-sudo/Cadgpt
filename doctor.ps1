@@ -58,10 +58,12 @@ else { Fail "npm not found in PATH." }
 if (Test-Command "python") {
     $pyVersion = (& python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>$null).Trim()
     $parts = $pyVersion.Split('.')
-    if ($parts.Count -ge 2 -and [int]$parts[0] -eq 3 -and [int]$parts[1] -eq 11) {
+    $major = if ($parts.Count -ge 1) { [int]$parts[0] } else { 0 }
+    $minor = if ($parts.Count -ge 2) { [int]$parts[1] } else { 0 }
+    if ($major -eq 3 -and $minor -ge 11 -and $minor -le 14) {
         Ok "Python $pyVersion"
     } else {
-        Fail "Python $pyVersion found; current CadGPT beta requires Python 3.11.x."
+        Fail "Python $pyVersion found; CadGPT currently supports Python 3.11 through 3.14."
     }
 } else {
     Fail "Python not found in PATH."
