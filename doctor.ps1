@@ -72,7 +72,8 @@ foreach ($required in @(
     "runtimes\cad-mcp\requirements.lock.txt",
     "runtimes\cad-mcp\tool-manifest.json",
     "knowledge\jobs\JOB_RULES.md",
-    "resources\cad\CADGPT_LOAD_SMOKE.lsp"
+    "resources\cad\CADGPT_LOAD_SMOKE.lsp",
+    "cadgpt-tray.vbs"
 )) {
     if (Test-Path $required) { Ok "Required file exists: $required" }
     else { Fail "Required file missing: $required" }
@@ -152,10 +153,10 @@ if (Test-Path $recoveryRoot) {
 }
 
 $startup = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CadGPT" -ErrorAction SilentlyContinue
-if ($startup -and $startup.CadGPT -match "cadgpt-tray\.ps1") {
-    Ok "HKCU Run startup points to CadGPT tray"
+if ($startup -and $startup.CadGPT -match "wscript(?:\.exe)?\s+.*cadgpt-tray\.vbs") {
+    Ok "HKCU Run startup points to the silent CadGPT tray launcher"
 } else {
-    Warn "CadGPT tray is not registered in HKCU Run. Run run.bat install."
+    Warn "CadGPT silent tray launcher is not registered in HKCU Run. Run run.bat install."
 }
 
 $legacy = Get-ScheduledTask -TaskName "CadGPT Background Agent" -ErrorAction SilentlyContinue
