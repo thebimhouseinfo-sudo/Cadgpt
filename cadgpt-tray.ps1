@@ -289,25 +289,25 @@ function Update-TrayStatus {
 }
 
 function AdoptExistingCadGpt {
-    $pid = Get-PortOwnerPid -TargetPort $CadGptPort
-    if (-not $pid) { return $false }
+    $ownerPid = Get-PortOwnerPid -TargetPort $CadGptPort
+    if (-not $ownerPid) { return $false }
     if (-not (Get-CadGptHealth)) { return $false }
-    if (-not (Test-OwnedCadGptProcess -ProcessId $pid)) {
-        Write-TrayLog "Healthy-looking CadGPT service on port $CadGptPort is not owned by this source tree; refusing to adopt PID $pid."
+    if (-not (Test-OwnedCadGptProcess -ProcessId $ownerPid)) {
+        Write-TrayLog "Healthy-looking CadGPT service on port $CadGptPort is not owned by this source tree; refusing to adopt PID $ownerPid."
         return $false
     }
-    $script:CadGptPid = $pid
+    $script:CadGptPid = $ownerPid
     return $true
 }
 
 function AdoptExistingTunnel {
-    $pid = Get-PortOwnerPid -TargetPort $TunnelHealthPort
-    if (-not $pid -or -not (Test-TunnelHealthy)) { return $false }
-    if (-not (Test-OwnedTunnelProcess -ProcessId $pid)) {
-        Write-TrayLog "Healthy-looking tunnel on port $TunnelHealthPort is not owned by this CadGPT profile; refusing to adopt PID $pid."
+    $ownerPid = Get-PortOwnerPid -TargetPort $TunnelHealthPort
+    if (-not $ownerPid -or -not (Test-TunnelHealthy)) { return $false }
+    if (-not (Test-OwnedTunnelProcess -ProcessId $ownerPid)) {
+        Write-TrayLog "Healthy-looking tunnel on port $TunnelHealthPort is not owned by this CadGPT profile; refusing to adopt PID $ownerPid."
         return $false
     }
-    $script:TunnelPid = $pid
+    $script:TunnelPid = $ownerPid
     return $true
 }
 
