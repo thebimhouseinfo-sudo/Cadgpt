@@ -16,7 +16,6 @@ const DELETE_GRACE_MS = Number(process.env.MCP_SESSION_DELETE_GRACE_MS || 45_000
 export interface McpSession {
   transport: StreamableHTTPServerTransport;
   server: McpServer;
-  createdAt: number;
   lastAccessedAt: number;
 }
 
@@ -142,7 +141,6 @@ export function createSessionManager(port: number): SessionManager {
         const replacement: McpSession = {
           server,
           transport,
-          createdAt: previous?.createdAt ?? Date.now(),
           lastAccessedAt: Date.now(),
         };
         sessions.set(id, replacement);
@@ -182,7 +180,6 @@ export function createSessionManager(port: number): SessionManager {
     return {
       server,
       transport,
-      createdAt: Date.now(),
       lastAccessedAt: Date.now(),
     };
   }
