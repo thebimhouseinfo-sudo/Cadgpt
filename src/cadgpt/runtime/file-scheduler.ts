@@ -52,6 +52,3 @@ export async function withFileMutationLocks<T>(
   return acquire(0);
 }
 
-export function activeFileMutationLocks(): number {
-  return chains.size;
-}
