@@ -168,7 +168,7 @@ Current Beta source requirements:
 
 - Windows
 - Node.js 20+
-- Python 3.11.x
+- Python 3.11–3.14
 - AutoCAD for live CAD validation
 
 One-time setup:
