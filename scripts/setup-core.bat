@@ -149,6 +149,9 @@ echo Waiting for slim MCP + Secure Tunnel on ports %CADGPT_PORT% / %CADGPT_TUNNE
 powershell -NoProfile -Command "$ok=$false; foreach($i in 1..150){ try{$h=Invoke-RestMethod 'http://127.0.0.1:%CADGPT_PORT%/health' -TimeoutSec 1; $t=Invoke-WebRequest 'http://127.0.0.1:%CADGPT_TUNNEL_HEALTH_PORT%/readyz' -UseBasicParsing -TimeoutSec 1; if($h.status -eq 'ok' -and $h.name -eq 'cadgpt' -and $t.StatusCode -eq 200){$ok=$true;break}}catch{}; Start-Sleep -Milliseconds 500}; if(-not $ok){exit 1}"
 if errorlevel 1 (
   echo [ERROR] Tray started but slim MCP or Secure Tunnel did not become ready.
+  echo.
+  echo ---- CadGPT runtime diagnostics ----
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$log='appdata\logs'; foreach($n in @('tray.log','cadgpt.err.log','cadgpt.out.log','tunnel.err.log','tunnel.out.log')){ $p=Join-Path $log $n; if(Test-Path $p){ Write-Host ('--- '+$n+' ---'); Get-Content $p -Tail 30 } }"
   goto :failed
 )
 
