@@ -55,7 +55,7 @@ Stage 1 is complete. Its code-complete gate established the beta foundation with
 [x] migration contracts
 [x] preserved Revit excluded from active runtime dependency
 [x] setup/run/doctor/acceptance non-host contracts
-[x] coherent background wake-agent + stable MCP surface
+[x] coherent Windows tray + slim MCP control plane + stable MCP surface
 ```
 
 Repository state after Stage 1:
