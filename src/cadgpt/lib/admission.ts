@@ -2,10 +2,16 @@ import { randomUUID } from "node:crypto";
 
 export type AdmissionMode = "active" | "control" | "inactive";
 
+export type AdmissionInvocationSource = "mention" | "plugin";
+
 export interface AdmissionDecision {
   mode: AdmissionMode;
   claimed: boolean;
-  reason: "explicit_cadgpt" | "control_command" | "user_did_not_invoke_cadgpt";
+  reason:
+    | "explicit_cadgpt"
+    | "explicit_cadgpt_plugin"
+    | "control_command"
+    | "user_did_not_invoke_cadgpt";
   admission_token?: string;
   next:
     | "continue_cadgpt"
@@ -18,6 +24,7 @@ export interface AdmissionProof {
   sessionKey: string;
   userTurn: string;
   mode: "active" | "control";
+  invocationSource: AdmissionInvocationSource;
   createdAt: number;
 }
 
@@ -43,7 +50,11 @@ function isControlOnly(userTurn: string): boolean {
   return /^@cadgpt(?:\s+(?:help|status|stop))?\s*$/i.test(value);
 }
 
-export function checkAdmission(sessionKey: string, userTurnRaw: string): AdmissionDecision {
+export function checkAdmission(
+  sessionKey: string,
+  userTurnRaw: string,
+  invocationSource: AdmissionInvocationSource = "mention"
+): AdmissionDecision {
   cleanup();
 
   // A new admission check represents a new current-turn decision for this MCP session.
@@ -52,7 +63,10 @@ export function checkAdmission(sessionKey: string, userTurnRaw: string): Admissi
   revokeSessionAdmissions(sessionKey);
 
   const userTurn = userTurnRaw?.trim() || "";
-  if (!userTurn || !hasExplicitInvocation(userTurn)) {
+  const invokedByMention = Boolean(userTurn && hasExplicitInvocation(userTurn));
+  const invokedByPlugin = invocationSource === "plugin";
+
+  if (!userTurn || (!invokedByMention && !invokedByPlugin)) {
     return {
       mode: "inactive",
       claimed: false,
@@ -68,6 +82,7 @@ export function checkAdmission(sessionKey: string, userTurnRaw: string): Admissi
       sessionKey,
       userTurn,
       mode: "control",
+      invocationSource,
       createdAt: Date.now(),
     });
     return {
@@ -85,12 +100,13 @@ export function checkAdmission(sessionKey: string, userTurnRaw: string): Admissi
     sessionKey,
     userTurn,
     mode: "active",
+    invocationSource,
     createdAt: Date.now(),
   });
   return {
     mode: "active",
     claimed: true,
-    reason: "explicit_cadgpt",
+    reason: invokedByPlugin && !invokedByMention ? "explicit_cadgpt_plugin" : "explicit_cadgpt",
     admission_token: token,
     next: "continue_cadgpt",
   };
