@@ -293,12 +293,54 @@ function Start-TemporarySlimMcp {
         throw "Node.js is not available to start the temporary CadGPT slim MCP."
     }
 
-    Write-Host "Starting temporary CadGPT slim MCP for tunnel doctor..." -ForegroundColor Yellow
-    $proc = Start-Process -FilePath $node.Source -ArgumentList @($indexPath) -WorkingDirectory $ScriptDir -PassThru -WindowStyle Hidden
+    $tempLogDir = Join-Path $ScriptDir "appdata\logs"
+    New-Item -ItemType Directory -Force -Path $tempLogDir | Out-Null
+    $stdoutPath = Join-Path $tempLogDir "setup-slim.stdout.log"
+    $stderrPath = Join-Path $tempLogDir "setup-slim.stderr.log"
+    Remove-Item $stdoutPath,$stderrPath -Force -ErrorAction SilentlyContinue
+
+    $saved = @{
+        HOST = $env:HOST
+        PORT = $env:PORT
+        MCP_TOKEN = $env:MCP_TOKEN
+        CADGPT_BUILD_PROFILE = $env:CADGPT_BUILD_PROFILE
+        CADGPT_APPDATA_ROOT = $env:CADGPT_APPDATA_ROOT
+    }
+
+    try {
+        $env:HOST = $(if (Get-DotEnvValue "HOST") { Get-DotEnvValue "HOST" } else { "127.0.0.1" })
+        $env:PORT = [string]$ResolvedPort
+        $env:MCP_TOKEN = Get-DotEnvValue "MCP_TOKEN"
+        $env:CADGPT_BUILD_PROFILE = $(if (Get-DotEnvValue "CADGPT_BUILD_PROFILE") { Get-DotEnvValue "CADGPT_BUILD_PROFILE" } else { "development" })
+        $env:CADGPT_APPDATA_ROOT = $(if (Get-DotEnvValue "CADGPT_APPDATA_ROOT") { Get-DotEnvValue "CADGPT_APPDATA_ROOT" } else { "appdata" })
+
+        if (-not $env:MCP_TOKEN) {
+            throw "MCP_TOKEN is empty before starting temporary CadGPT slim MCP."
+        }
+
+        Write-Host "Starting temporary CadGPT slim MCP for tunnel doctor..." -ForegroundColor Yellow
+        $proc = Start-Process -FilePath $node.Source -ArgumentList @($indexPath) -WorkingDirectory $ScriptDir -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    } finally {
+        $env:HOST = $saved.HOST
+        $env:PORT = $saved.PORT
+        $env:MCP_TOKEN = $saved.MCP_TOKEN
+        $env:CADGPT_BUILD_PROFILE = $saved.CADGPT_BUILD_PROFILE
+        $env:CADGPT_APPDATA_ROOT = $saved.CADGPT_APPDATA_ROOT
+    }
 
     $deadline = (Get-Date).AddSeconds(15)
     do {
         if ($proc.HasExited) {
+            $stderr = if (Test-Path $stderrPath) { (Get-Content $stderrPath -Tail 30) -join [Environment]::NewLine } else { "" }
+            $stdout = if (Test-Path $stdoutPath) { (Get-Content $stdoutPath -Tail 30) -join [Environment]::NewLine } else { "" }
+            if ($stderr) {
+                Write-Host "--- temporary slim MCP stderr ---" -ForegroundColor Red
+                Write-Host $stderr
+            }
+            if ($stdout) {
+                Write-Host "--- temporary slim MCP stdout ---" -ForegroundColor DarkGray
+                Write-Host $stdout
+            }
             throw "Temporary CadGPT slim MCP exited before becoming ready (exit code $($proc.ExitCode))."
         }
         if (Test-CadGptReady) {
@@ -306,9 +348,15 @@ function Start-TemporarySlimMcp {
             return $proc
         }
         Start-Sleep -Milliseconds 250
+        $proc.Refresh()
     } while ((Get-Date) -lt $deadline)
 
     try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+    $stderr = if (Test-Path $stderrPath) { (Get-Content $stderrPath -Tail 30) -join [Environment]::NewLine } else { "" }
+    if ($stderr) {
+        Write-Host "--- temporary slim MCP stderr ---" -ForegroundColor Red
+        Write-Host $stderr
+    }
     throw "Temporary CadGPT slim MCP did not become ready on port $ResolvedPort."
 }
 
