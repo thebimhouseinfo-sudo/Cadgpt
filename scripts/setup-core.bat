@@ -4,12 +4,6 @@ for %%I in ("%~dp0..") do set "ROOT=%%~fI"
 cd /d "%ROOT%"
 title CadGPT Setup Core
 
-echo.
-echo ========================================
-echo   CadGPT - One-time setup
-echo ========================================
-echo.
-
 where node >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] Node.js is not installed or not in PATH.
