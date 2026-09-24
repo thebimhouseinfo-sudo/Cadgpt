@@ -251,7 +251,6 @@ jobs:
           $outside = Join-Path $env:RUNNER_TEMP "cadgpt-outside-load.lsp"
           Set-Content -LiteralPath $outside -Value "(princ)" -NoNewline
           $env:CADGPT_LISP_OUTSIDE = $outside
-          python -c "import os; from services.lisp_service import _resolve_lisp_path, LispServiceError; p=os.environ['CADGPT_LISP_OUTSIDE']; ok=False; 
-try: _resolve_lisp_path(p)
-except LispServiceError: ok=True
-assert ok, 'outside absolute Lisp path was accepted'; print('outside absolute Lisp path rejected')"
+          python -c "import os; from services.lisp_service import _resolve_lisp_path; _resolve_lisp_path(os.environ['CADGPT_LISP_OUTSIDE'])" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "outside absolute Lisp path was accepted" }
+          Write-Host "outside absolute Lisp path rejected"
