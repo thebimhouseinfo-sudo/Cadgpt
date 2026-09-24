@@ -196,9 +196,9 @@ if (Test-Path $trayMarker) {
 }
 
 $portValue = Get-DotEnvValue "PORT"
-$port = if ($portValue) { [int]$portValue } else { 3000 }
+$port = if ($portValue) { [int]$portValue } else { 3100 }
 $healthPortValue = Get-DotEnvValue "OPENAI_TUNNEL_HEALTH_PORT"
-$healthPort = if ($healthPortValue) { [int]$healthPortValue } else { 8080 }
+$healthPort = if ($healthPortValue) { [int]$healthPortValue } else { 8180 }
 
 $mcpToken = Get-DotEnvValue "MCP_TOKEN"
 if ($mcpToken) {
