@@ -1,6 +1,6 @@
 # CadGPT Product Roadmap
 
-This roadmap defines the product-level delivery stages. Detailed implementation phases and migration commits may be smaller, but they roll up into these four stages.
+This roadmap defines the product-level delivery stages. Detailed implementation phases and cleanup commits may be smaller, but they roll up into these four stages.
 
 ## Stage 1 — Beta Build / Code Complete
 
@@ -27,7 +27,6 @@ Real-AutoCAD behavior is not an exit requirement for Stage 1. Anything that can 
 - `jobcreate` planning/authoring skill plus controlled Job draft/validate/promote lifecycle;
 - `setup.bat`, `run.bat`, `doctor.bat`, `acceptance.bat` contracts;
 - reproducible Node/Python dependency locks;
-- migration tooling for TBH Toolkit and preserved Revit source;
 - CI and smoke gates that do not require AutoCAD;
 - current architecture/migration/product documentation.
 
@@ -52,7 +51,6 @@ Stage 1 is complete. Its code-complete gate established the beta foundation with
 [x] managed AppData/file sandbox contract
 [x] write-lisp skill/scaffold/static validation surface
 [x] drawing-binding and safe-test-drawing contracts
-[x] migration contracts
 [x] preserved Revit excluded from active runtime dependency
 [x] setup/run/doctor/acceptance non-host contracts
 [x] coherent Windows tray + slim MCP control plane + stable MCP surface
