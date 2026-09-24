@@ -64,38 +64,46 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
     if not isinstance(input_path, str) or not input_path.strip():
         raise LispServiceError("path is required")
 
-    raw = input_path.strip().replace("\\", "/")
+    raw = input_path.strip()
+    normalized = raw.replace("\\", "/")
+    roots = [
+        (os.path.realpath(os.path.join(_repo_root(), "resources", "cad")), "resources/cad"),
+        (os.path.realpath(os.path.join(_appdata_root(), "libraries", "lisp")), "appdata/libraries/lisp"),
+        (os.path.realpath(os.path.join(_appdata_root(), "workspace", "lisp-draft")), "appdata/workspace/lisp-draft"),
+        (os.path.realpath(os.path.join(_appdata_root(), "runtime", "dynamic-lisp")), "appdata/runtime/dynamic-lisp"),
+    ]
+
     if os.path.isabs(raw):
-        raise LispServiceError("absolute paths are not allowed; use a CadGPT virtual Lisp path")
-
-    normalized = raw[2:] if raw.startswith("./") else raw
-    lower = normalized.lower()
-
-    if lower.startswith("resources/cad/"):
-        suffix = normalized[len("resources/cad/") :]
-        root = os.path.realpath(os.path.join(_repo_root(), "resources", "cad"))
-        virtual_prefix = "resources/cad"
-    elif lower.startswith("appdata/libraries/lisp/"):
-        suffix = normalized[len("appdata/libraries/lisp/") :]
-        root = os.path.realpath(os.path.join(_appdata_root(), "libraries", "lisp"))
-        virtual_prefix = "appdata/libraries/lisp"
-    elif lower.startswith("appdata/workspace/lisp-draft/"):
-        suffix = normalized[len("appdata/workspace/lisp-draft/") :]
-        root = os.path.realpath(os.path.join(_appdata_root(), "workspace", "lisp-draft"))
-        virtual_prefix = "appdata/workspace/lisp-draft"
-    elif lower.startswith("appdata/runtime/dynamic-lisp/"):
-        suffix = normalized[len("appdata/runtime/dynamic-lisp/") :]
-        root = os.path.realpath(os.path.join(_appdata_root(), "runtime", "dynamic-lisp"))
-        virtual_prefix = "appdata/runtime/dynamic-lisp"
+        candidate = os.path.realpath(raw)
+        match = next(((root, prefix) for root, prefix in roots if _inside(candidate, root)), None)
+        if not match:
+            raise LispServiceError("absolute LISP path is outside approved CadGPT Lisp roots")
+        root, virtual_prefix = match
     else:
-        raise LispServiceError(
-            "LISP path must be under resources/cad/**, appdata/libraries/lisp/**, "
-            "appdata/workspace/lisp-draft/**, or appdata/runtime/dynamic-lisp/**"
-        )
+        normalized = normalized[2:] if normalized.startswith("./") else normalized
+        lower = normalized.lower()
 
-    candidate = os.path.realpath(os.path.join(root, suffix))
-    if not _inside(candidate, root):
-        raise LispServiceError(f"LISP path escapes the {virtual_prefix}/** sandbox")
+        if lower.startswith("resources/cad/"):
+            suffix = normalized[len("resources/cad/") :]
+            root, virtual_prefix = roots[0]
+        elif lower.startswith("appdata/libraries/lisp/"):
+            suffix = normalized[len("appdata/libraries/lisp/") :]
+            root, virtual_prefix = roots[1]
+        elif lower.startswith("appdata/workspace/lisp-draft/"):
+            suffix = normalized[len("appdata/workspace/lisp-draft/") :]
+            root, virtual_prefix = roots[2]
+        elif lower.startswith("appdata/runtime/dynamic-lisp/"):
+            suffix = normalized[len("appdata/runtime/dynamic-lisp/") :]
+            root, virtual_prefix = roots[3]
+        else:
+            raise LispServiceError(
+                "LISP path must be under resources/cad/**, appdata/libraries/lisp/**, "
+                "appdata/workspace/lisp-draft/**, or appdata/runtime/dynamic-lisp/**"
+            )
+
+        candidate = os.path.realpath(os.path.join(root, suffix))
+        if not _inside(candidate, root):
+            raise LispServiceError(f"LISP path escapes the {virtual_prefix}/** sandbox")
     if os.path.splitext(candidate)[1].lower() != ".lsp":
         raise LispServiceError("only .lsp files can be loaded")
     if not os.path.isfile(candidate):
