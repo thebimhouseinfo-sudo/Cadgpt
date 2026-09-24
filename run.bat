@@ -25,6 +25,14 @@ if not exist "cadgpt-tray.ps1" (
   echo [ERROR] cadgpt-tray.ps1 is missing.
   exit /b 1
 )
+if not exist "cadgpt-tray.vbs" (
+  echo [ERROR] cadgpt-tray.vbs is missing.
+  exit /b 1
+)
+if not exist "dist\index.js" (
+  echo [ERROR] dist\index.js is missing. Run setup.bat or npm run build first.
+  exit /b 1
+)
 exit /b 0
 
 :install
@@ -37,7 +45,7 @@ goto :start
 :start
 call :preflight
 if errorlevel 1 exit /b 1
-start "" powershell -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1"
+wscript "%~dp0cadgpt-tray.vbs"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wait-tray-ready.ps1" -TimeoutSeconds 15
 if errorlevel 1 exit /b 1
 exit /b 0
@@ -52,7 +60,7 @@ exit /b %ERRORLEVEL%
 call :preflight
 if errorlevel 1 exit /b 1
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1" -StopInstalled
-start "" powershell -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1" -RestartRuntimeOnStart
+wscript "%~dp0cadgpt-tray.vbs" -RestartRuntimeOnStart
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wait-tray-ready.ps1" -TimeoutSeconds 15
 exit /b %ERRORLEVEL%
 
