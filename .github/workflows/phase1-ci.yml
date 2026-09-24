@@ -2,7 +2,7 @@ name: CadGPT Core CI
 
 on:
   push:
-    branches: ['phase*', 'beta-review-*']
+    branches: [main, 'phase*', 'beta-review-*']
   pull_request:
     branches: [main]
 
@@ -17,6 +17,52 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Guard retired legacy runtime surface
+        shell: pwsh
+        run: |
+          foreach ($retired in @(
+            "start.ps1",
+            "agent-task.ps1",
+            "src/wake-agent.ts",
+            "config/README.md",
+            "src/cadgpt/commands/README.md",
+            "src/cadgpt/file_tools/README.md",
+            "src/cadgpt/job_runtime/README.md",
+            "src/cadgpt/launcher/README.md",
+            "src/cadgpt/skill_runtime/README.md"
+          )) {
+            if (Test-Path -LiteralPath $retired) {
+              throw "Retired legacy/placeholder surface reintroduced: $retired"
+            }
+          }
+
+          $legacyPatterns = @(
+            "codex-hooks",
+            "ponytail",
+            "mcp-upstream",
+            "Computer Use",
+            "project-memory",
+            "remember"
+          )
+          $activeFiles = @(
+            Get-ChildItem "src" -Recurse -File -Include *.ts,*.js -ErrorAction SilentlyContinue
+          )
+          foreach ($file in $activeFiles) {
+            $text = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction SilentlyContinue
+            foreach ($pattern in $legacyPatterns) {
+              if ($text -and $text.IndexOf($pattern, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                throw "Retired inherited runtime marker '$pattern' found in active source: $($file.FullName)"
+              }
+            }
+          }
+
+          foreach ($required in @("setup.bat", "run.bat", "cadgpt-tray.vbs", "cadgpt-tray.ps1", "openai-tunnel.ps1")) {
+            if (-not (Test-Path -LiteralPath $required)) {
+              throw "Required lightweight runtime entrypoint missing: $required"
+            }
+          }
+          Write-Host "Legacy cleanup boundary and lightweight startup surface OK"
       - name: Install locked dependencies
         run: npm ci
       - name: Generate stable CAD tool manifest
