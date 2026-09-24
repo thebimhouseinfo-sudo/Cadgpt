@@ -5,7 +5,7 @@ Repository: `thebimhouseinfo-sudo/Cadgpt`
 Current architecture: **admission + WorkRegistration + ToolLease + lazy FILE/CAD runtime + development-only CAD MCP self-improve already implemented at source level**  
 Remaining objective: **close real-AutoCAD gaps, add deterministic Lisp load-check loop, harden release/runtime packaging, then ship a production build with development-only self-improve removed**
 
-This file is the current implementation authority for taking CadGPT from the current development state to a shippable product. Historical migration/refactor details belong in `MIGRATION_PLAN.md` / `MIGRATION_MATRIX.md`.
+This file is the current implementation authority for taking CadGPT from the current development state to a shippable product. Completed CAD-Agent migration scaffolding is intentionally not part of the active repository contract.
 
 ---
 
