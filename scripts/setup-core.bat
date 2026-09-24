@@ -34,17 +34,19 @@ if errorlevel 1 (
 where python >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] Python is not installed or not in PATH.
-  echo Python 3.11 is required for the current CadGPT beta runtime.
+  echo CadGPT currently supports Python 3.11 through 3.14.
   pause
   exit /b 1
 )
-python -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3,11) else 1)"
+python -c "import sys; raise SystemExit(0 if (3,11) <= sys.version_info[:2] <= (3,14) else 1)"
 if errorlevel 1 (
-  echo [ERROR] Python 3.11.x is required for this beta build.
+  echo [ERROR] CadGPT currently supports Python 3.11 through 3.14.
   python --version
   pause
   exit /b 1
 )
+for /f "delims=" %%V in ('python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))"') do set "PYTHON_VERSION=%%V"
+echo [OK] Python %PYTHON_VERSION%
 
 if not exist "package-lock.json" (
   echo [ERROR] package-lock.json is missing.
