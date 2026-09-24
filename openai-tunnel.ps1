@@ -278,6 +278,49 @@ function Configure-Environment([string]$TunnelId, [string]$ApiKey) {
     $env:CONTROL_PLANE_TUNNEL_ID = $TunnelId
 }
 
+function Start-TemporarySlimMcp {
+    if (Test-CadGptReady) {
+        return $null
+    }
+
+    $indexPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "dist\index.js"))
+    if (-not (Test-Path $indexPath)) {
+        throw "CadGPT dist\index.js is missing. Build CadGPT before tunnel setup."
+    }
+
+    $node = Get-Command node -ErrorAction SilentlyContinue
+    if (-not $node) {
+        throw "Node.js is not available to start the temporary CadGPT slim MCP."
+    }
+
+    Write-Host "Starting temporary CadGPT slim MCP for tunnel doctor..." -ForegroundColor Yellow
+    $proc = Start-Process -FilePath $node.Source -ArgumentList @($indexPath) -WorkingDirectory $ScriptDir -PassThru -WindowStyle Hidden
+
+    $deadline = (Get-Date).AddSeconds(15)
+    do {
+        if ($proc.HasExited) {
+            throw "Temporary CadGPT slim MCP exited before becoming ready (exit code $($proc.ExitCode))."
+        }
+        if (Test-CadGptReady) {
+            Write-Host "[OK] Temporary CadGPT slim MCP is ready on port $ResolvedPort." -ForegroundColor Green
+            return $proc
+        }
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $deadline)
+
+    try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+    throw "Temporary CadGPT slim MCP did not become ready on port $ResolvedPort."
+}
+
+function Stop-TemporarySlimMcp($Process) {
+    if (-not $Process) { return }
+    try {
+        if (-not $Process.HasExited) {
+            Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+        }
+    } catch {}
+}
+
 function Stop-VerifiedTunnel([int]$TargetHealthPort) {
     $ownerPid = Get-PortOwnerPid -TargetPort $TargetHealthPort
     if (-not $ownerPid) { return }
@@ -336,10 +379,17 @@ if ($Init) {
     $mcpUrl = Ensure-Profile $tunnelId
     Configure-Environment $tunnelId $apiKey
 
-    Write-Host "Running tunnel doctor..." -ForegroundColor Yellow
-    & $bin doctor --profile-file $ProfileFile --explain
-    if ($LASTEXITCODE -ne 0) {
-        throw "OpenAI tunnel doctor failed."
+    $temporarySlim = $null
+    try {
+        $temporarySlim = Start-TemporarySlimMcp
+
+        Write-Host "Running tunnel doctor..." -ForegroundColor Yellow
+        & $bin doctor --profile-file $ProfileFile --explain
+        if ($LASTEXITCODE -ne 0) {
+            throw "OpenAI tunnel doctor failed."
+        }
+    } finally {
+        Stop-TemporarySlimMcp $temporarySlim
     }
 
     Write-Host "[OK] Stable tunnel configured for CadGPT." -ForegroundColor Green
