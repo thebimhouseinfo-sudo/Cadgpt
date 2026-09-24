@@ -6,13 +6,13 @@ title CadGPT Setup
 
 echo.
 echo ========================================
-echo   CadGPT - One-time setup
+echo   CadGPT - Source setup
 echo ========================================
 echo.
 
 if not exist "%~dp0scripts\setup-core.bat" (
   echo [ERROR] Missing scripts\setup-core.bat
-  echo The checkout may be incomplete. Run git pull and try again.
+  echo The checkout may be incomplete. Run git pull --ff-only and try again.
   echo.
   pause
   exit /b 1
