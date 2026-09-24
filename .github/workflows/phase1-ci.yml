@@ -42,8 +42,7 @@ jobs:
             "ponytail",
             "mcp-upstream",
             "Computer Use",
-            "project-memory",
-            "remember"
+            "project-memory"
           )
           $activeFiles = @(
             Get-ChildItem "src" -Recurse -File -Include *.ts,*.js -ErrorAction SilentlyContinue
