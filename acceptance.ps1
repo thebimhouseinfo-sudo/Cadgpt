@@ -31,7 +31,7 @@ if (-not (Test-Path ".env")) { Fail ".env is missing. Run setup.bat first." }
 if (-not (Test-Path "resources\cad\CADGPT_LOAD_SMOKE.lsp")) { Fail "Internal CadGPT AutoLISP smoke resource is missing." }
 
 $portValue = Get-DotEnvValue "PORT"
-$port = if ($portValue) { [int]$portValue } else { 3000 }
+$port = if ($portValue) { [int]$portValue } else { 3100 }
 $mcpToken = Get-DotEnvValue "MCP_TOKEN"
 $mcpPath = if ($mcpToken) { "/mcp/$mcpToken" } else { "/mcp" }
 $mcpUrl = "http://127.0.0.1:$port$mcpPath"
