@@ -17,6 +17,7 @@ $ProfileDir = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "profiles"))
 $ProfileFile = [System.IO.Path]::GetFullPath((Join-Path $ProfileDir "cadgpt.yaml"))
 $ZipName = "tunnel-client-$TunnelVersion-windows-amd64.zip"
 $DownloadUrl = "https://github.com/openai/tunnel-client/releases/download/$TunnelVersion/$ZipName"
+$TunnelZipSha256 = "784ab8da7b5a88f0109f1fd8aaf0a1c86067430b896dddf307ef7e3cc49fa1a5"
 
 function Get-DotEnvValue([string]$Name) {
     if (-not (Test-Path ".env")) { return $null }
@@ -123,17 +124,92 @@ function Test-OwnedTunnelProcess([int]$ProcessId) {
     ) -ge 0
 }
 
+function Get-TunnelClientVersion([string]$Path) {
+    if (-not $Path -or -not (Test-Path $Path)) { return $null }
+    try {
+        $line = (& $Path --version 2>$null | Select-Object -First 1)
+        if ($line -and $line.ToString() -match '(\d+\.\d+\.\d+)') {
+            return $Matches[1]
+        }
+    } catch {}
+    return $null
+}
+
 function Install-TunnelClient {
-    if (Test-Path $TunnelExe) { return $TunnelExe }
+    $targetVersion = $TunnelVersion.TrimStart('v')
+
+    if (Test-Path $TunnelExe) {
+        $installedVersion = Get-TunnelClientVersion $TunnelExe
+        if ($installedVersion -eq $targetVersion) {
+            return $TunnelExe
+        }
+
+        $displayVersion = if ($installedVersion) { $installedVersion } else { "unknown" }
+        Write-Host "Updating tunnel-client $displayVersion -> $targetVersion..." -ForegroundColor Yellow
+        Remove-Item $TunnelExe -Force
+    }
 
     New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
-    $zipPath = Join-Path $env:TEMP $ZipName
+    $zipPath = Join-Path $env:TEMP ("cadgpt-" + [guid]::NewGuid().ToString("N") + "-" + $ZipName)
+    $downloadOk = $false
 
-    Write-Host "Downloading OpenAI tunnel-client $TunnelVersion..." -ForegroundColor Yellow
-    Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipPath -UseBasicParsing
     try {
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+            Write-Host ("Downloading OpenAI tunnel-client $TunnelVersion ({0}/3)..." -f $attempt) -ForegroundColor Yellow
+
+            try {
+                $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+                if ($curl) {
+                    & $curl.Source -fL --retry 2 --retry-delay 2 --connect-timeout 20 -o $zipPath $DownloadUrl
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "curl.exe download failed with exit code $LASTEXITCODE"
+                    }
+                } else {
+                    Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipPath -UseBasicParsing
+                }
+
+                if (-not (Test-Path $zipPath)) {
+                    throw "Tunnel ZIP was not created."
+                }
+
+                $fileInfo = Get-Item $zipPath
+                if ($fileInfo.Length -lt 1000000) {
+                    throw "Tunnel download is unexpectedly small ($($fileInfo.Length) bytes)."
+                }
+
+                $stream = [System.IO.File]::OpenRead($zipPath)
+                try {
+                    $b1 = $stream.ReadByte()
+                    $b2 = $stream.ReadByte()
+                } finally {
+                    $stream.Dispose()
+                }
+                if ($b1 -ne 0x50 -or $b2 -ne 0x4B) {
+                    throw "Tunnel download does not have the ZIP PK signature."
+                }
+
+                $actualHash = (Get-FileHash -Algorithm SHA256 $zipPath).Hash.ToLowerInvariant()
+                if ($actualHash -ne $TunnelZipSha256) {
+                    throw "Tunnel ZIP SHA256 mismatch. Expected $TunnelZipSha256, got $actualHash"
+                }
+
+                $downloadOk = $true
+                break
+            } catch {
+                Write-Host ("Tunnel download attempt failed: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
+                if ($attempt -lt 3) { Start-Sleep -Seconds 2 }
+            }
+        }
+
+        if (-not $downloadOk) {
+            throw "Could not download a verified tunnel-client archive after 3 attempts."
+        }
+
+        Write-Host "[OK] tunnel-client ZIP signature and SHA256 verified." -ForegroundColor Green
         Expand-Archive -Path $zipPath -DestinationPath $BinDir -Force
-        $candidate = Get-ChildItem $BinDir -Recurse -Filter "tunnel-client.exe" | Select-Object -First 1
+
+        $candidate = Get-ChildItem $BinDir -Recurse -Filter "tunnel-client.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $candidate) {
             throw "tunnel-client.exe not found after extracting $ZipName"
         }
