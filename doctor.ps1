@@ -161,8 +161,14 @@ if ($startup -and $startup.CadGPT -match "wscript(?:\.exe)?\s+.*cadgpt-tray\.vbs
     Warn "CadGPT silent tray launcher is not registered in HKCU Run. Run run.bat install."
 }
 
-$legacy = Get-ScheduledTask -TaskName "CadGPT Background Agent" -ErrorAction SilentlyContinue
-if ($legacy) {
+$legacyExists = $false
+try {
+    & schtasks.exe /Query /TN "CadGPT Background Agent" *> $null
+    $legacyExists = ($LASTEXITCODE -eq 0)
+} catch {
+    $legacyExists = $false
+}
+if ($legacyExists) {
     Warn "Legacy CadGPT Scheduled Task still exists; rerun setup.bat to remove it."
 } else {
     Ok "Legacy Scheduled Task startup is absent"
