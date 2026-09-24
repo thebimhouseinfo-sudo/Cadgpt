@@ -151,7 +151,7 @@ echo   Setup complete
 echo ========================================
 echo CadGPT now starts as a Windows tray app for this user.
 echo Idle runtime: tray + slim admission MCP + Secure Tunnel.
-echo Heavy FILE/CAD capabilities load only after explicit current-turn CadGPT invocation (@cadgpt or CadGPT plugin/icon) and work registration.
+echo Launch CadGPT once per chat using @cadgpt or the CadGPT plugin/icon; later turns in that chat do not need repeated @cadgpt.
 echo CAD MCP starts only on actual CAD demand; AutoCAD is never launched by CadGPT.
 echo cad-mcp-dev is development-only and is excluded from production packaging.
 echo.
