@@ -319,7 +319,8 @@ function Start-TemporarySlimMcp {
         }
 
         Write-Host "Starting temporary CadGPT slim MCP for tunnel doctor..." -ForegroundColor Yellow
-        $proc = Start-Process -FilePath $node.Source -ArgumentList @($indexPath) -WorkingDirectory $ScriptDir -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $quotedIndexPath = '"' + ($indexPath -replace '"', '\"') + '"'
+        $proc = Start-Process -FilePath $node.Source -ArgumentList $quotedIndexPath -WorkingDirectory $ScriptDir -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
     } finally {
         $env:HOST = $saved.HOST
         $env:PORT = $saved.PORT
@@ -331,6 +332,8 @@ function Start-TemporarySlimMcp {
     $deadline = (Get-Date).AddSeconds(15)
     do {
         if ($proc.HasExited) {
+            $proc.Refresh()
+            $exitCode = $proc.ExitCode
             $stderr = if (Test-Path $stderrPath) { (Get-Content $stderrPath -Tail 30) -join [Environment]::NewLine } else { "" }
             $stdout = if (Test-Path $stdoutPath) { (Get-Content $stdoutPath -Tail 30) -join [Environment]::NewLine } else { "" }
             if ($stderr) {
@@ -341,7 +344,7 @@ function Start-TemporarySlimMcp {
                 Write-Host "--- temporary slim MCP stdout ---" -ForegroundColor DarkGray
                 Write-Host $stdout
             }
-            throw "Temporary CadGPT slim MCP exited before becoming ready (exit code $($proc.ExitCode))."
+            throw "Temporary CadGPT slim MCP exited before becoming ready (exit code $exitCode)."
         }
         if (Test-CadGptReady) {
             Write-Host "[OK] Temporary CadGPT slim MCP is ready on port $ResolvedPort." -ForegroundColor Green
