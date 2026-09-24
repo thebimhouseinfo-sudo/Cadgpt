@@ -142,9 +142,9 @@ After static validation passes, use an already-explicit user choice if one exist
 
 Never silently test on a project drawing. If `drawing_create_test` fails, do not fall back to a project drawing.
 
-### 7. Verified load — mandatory
+### 7. Verified same-window load — mandatory
 
-`cad__cad_load_lisp_file` accepts only:
+Use `cad__cad_load_lisp_file` on the exact already-bound drawing/AutoCAD host. The load path may be a CadGPT Lisp virtual path or a canonical absolute path that resolves inside one of these approved roots:
 
 ```text
 resources/cad/**
@@ -153,11 +153,15 @@ appdata/workspace/lisp-draft/**
 appdata/runtime/dynamic-lisp/**
 ```
 
-A result with `loaded: true` is required. Queued `SendCommand` is not proof of load success.
+A result with `loaded: true` is required. Queued `SendCommand` is not proof of load success. Do not open a second AutoCAD instance just to test the file.
 
-### 8. Execute and verify
+If load returns `loaded: false`, preserve the AutoCAD error evidence, patch the draft narrowly, rerun static validation, and load again in the same bound drawing until PASS or a real environment/dependency blocker is identified.
 
-For deterministic non-interactive commands, run them and verify structured CAD postconditions. For commands requiring manual selection/point/keyword/dialog interaction, do not invent input; after static + verified load PASS, ask the user to execute the named command in the approved drawing.
+### 8. Functional execution — only when required
+
+Static PASS + verified same-window LOAD PASS is the normal source/load reliability gate. Do **not** turn every Lisp edit into a full functional QA cycle.
+
+Run the command and verify CAD postconditions only when the requested task, a concrete Job, or the changed behavior requires functional proof. For commands requiring manual selection/point/keyword/dialog interaction, do not invent input; after static + verified load PASS, hand the named command to the user for manual interaction.
 
 ### 9. Promote only after acceptance
 
@@ -190,8 +194,8 @@ classify failure
 → static validate
 → same approved test drawing
 → verified load
-→ execute when safe
-→ inspect postcondition
+→ if load fails: patch → static validate → reload same drawing
+→ functional execution only when required
 → promote only if intended reusable
 ```
 
