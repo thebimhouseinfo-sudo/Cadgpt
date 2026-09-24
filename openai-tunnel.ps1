@@ -44,6 +44,24 @@ function Set-DotEnvValue([string]$Name, [string]$Value) {
     Set-Content ".env" -Value $out -Encoding UTF8
 }
 
+function Ensure-DedicatedCadGptPorts {
+    if ($Port -le 0) {
+        $configuredPort = Get-DotEnvValue "PORT"
+        if (-not $configuredPort -or [int]$configuredPort -eq 3000) {
+            Set-DotEnvValue "PORT" "3100"
+            Write-Host "[OK] CadGPT MCP port set to dedicated port 3100." -ForegroundColor Green
+        }
+    }
+
+    if ($HealthPort -le 0) {
+        $configuredHealth = Get-DotEnvValue "OPENAI_TUNNEL_HEALTH_PORT"
+        if (-not $configuredHealth -or [int]$configuredHealth -eq 8080) {
+            Set-DotEnvValue "OPENAI_TUNNEL_HEALTH_PORT" "8180"
+            Write-Host "[OK] CadGPT tunnel health port set to dedicated port 8180." -ForegroundColor Green
+        }
+    }
+}
+
 function Ensure-McpToken {
     $token = Get-DotEnvValue "MCP_TOKEN"
     if ($token) { return $token }
@@ -282,6 +300,9 @@ function Stop-VerifiedTunnel([int]$TargetHealthPort) {
     throw "Verified tunnel-client PID $ownerPid did not stop within timeout."
 }
 
+if ($Init) {
+    Ensure-DedicatedCadGptPorts
+}
 Resolve-Ports
 $bin = Install-TunnelClient
 
