@@ -22,11 +22,12 @@ def register(mcp):
     def cad_load_lisp_file(path: str) -> dict:
         """Load and verify one sandboxed `.lsp` file.
 
-        Accepted virtual namespaces are internal `resources/cad/**`, managed
-        user `appdata/libraries/lisp/**`, write-lisp workspace
-        `appdata/workspace/lisp-draft/**`, and parameterized runtime
+        Accepted inputs are the CadGPT virtual Lisp namespaces or canonical
+        absolute paths that resolve inside those same approved roots:
+        `resources/cad/**`, `appdata/libraries/lisp/**`,
+        `appdata/workspace/lisp-draft/**`, and
         `appdata/runtime/dynamic-lisp/**`. External user source folders and
-        arbitrary absolute paths are rejected.
+        absolute paths outside those roots are rejected.
 
         The tool waits for an AutoCAD load sentinel and returns `loaded`, error
         evidence, and command-log tail when available. `loaded: false` blocks
