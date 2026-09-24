@@ -1,6 +1,7 @@
 @echo off
 setlocal
-cd /d "%~dp0"
+for %%I in ("%~dp0..") do set "ROOT=%%~fI"
+cd /d "%ROOT%"
 title CadGPT Setup Core
 
 echo.
@@ -68,11 +69,11 @@ if errorlevel 1 (
 
 echo.
 echo Stopping any previously owned CadGPT tray/runtime before dependency/build changes...
-call "%~dp0run.bat" stop >nul 2>nul
+call "%ROOT%\run.bat" stop >nul 2>nul
 
 echo.
 echo Checking for pending CAD MCP development recovery...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$repo=[System.IO.Path]::GetFullPath('%~dp0'); $line=Get-Content '.env' -ErrorAction SilentlyContinue | Where-Object { $_ -match '^\s*CADGPT_APPDATA_ROOT\s*=' -and -not $_.TrimStart().StartsWith('#') } | Select-Object -First 1; $configured=if($line){(($line -split '=',2)[1].Trim()).Trim([char]39).Trim([char]34)}else{'appdata'}; $root=if([System.IO.Path]::IsPathRooted($configured)){[System.IO.Path]::GetFullPath($configured)}else{[System.IO.Path]::GetFullPath((Join-Path $repo $configured))}; $recovery=Join-Path $root 'state\cad-mcp-dev-recovery'; $pending=@(); if(Test-Path $recovery){$pending=@(Get-ChildItem $recovery -Directory -ErrorAction SilentlyContinue | Where-Object { -not ($_.Name.StartsWith('.') -and $_.Name.EndsWith('.tmp')) })}; if($pending.Count -gt 0){ Write-Host '[ERROR] Pending CAD MCP development recovery baseline found.' -ForegroundColor Red; Write-Host 'Run CadGPT development recovery before setup so setup cannot overwrite an unaccepted runtime.' -ForegroundColor Yellow; exit 42 }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$repo=[System.IO.Path]::GetFullPath('%ROOT%\'); $line=Get-Content '.env' -ErrorAction SilentlyContinue | Where-Object { $_ -match '^\s*CADGPT_APPDATA_ROOT\s*=' -and -not $_.TrimStart().StartsWith('#') } | Select-Object -First 1; $configured=if($line){(($line -split '=',2)[1].Trim()).Trim([char]39).Trim([char]34)}else{'appdata'}; $root=if([System.IO.Path]::IsPathRooted($configured)){[System.IO.Path]::GetFullPath($configured)}else{[System.IO.Path]::GetFullPath((Join-Path $repo $configured))}; $recovery=Join-Path $root 'state\cad-mcp-dev-recovery'; $pending=@(); if(Test-Path $recovery){$pending=@(Get-ChildItem $recovery -Directory -ErrorAction SilentlyContinue | Where-Object { -not ($_.Name.StartsWith('.') -and $_.Name.EndsWith('.tmp')) })}; if($pending.Count -gt 0){ Write-Host '[ERROR] Pending CAD MCP development recovery baseline found.' -ForegroundColor Red; Write-Host 'Run CadGPT development recovery before setup so setup cannot overwrite an unaccepted runtime.' -ForegroundColor Yellow; exit 42 }"
 if errorlevel 1 (
   echo [ERROR] Setup stopped to preserve CAD MCP crash-recovery state.
   pause
@@ -81,7 +82,7 @@ if errorlevel 1 (
 
 echo.
 echo [1/10] Initializing configured CadGPT AppData...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$repo=[System.IO.Path]::GetFullPath('%~dp0'); $line=Get-Content '.env' -ErrorAction SilentlyContinue | Where-Object { $_ -match '^\s*CADGPT_APPDATA_ROOT\s*=' -and -not $_.TrimStart().StartsWith('#') } | Select-Object -First 1; $configured=if($line){(($line -split '=',2)[1].Trim()).Trim([char]39).Trim([char]34)}else{'appdata'}; $root=if([System.IO.Path]::IsPathRooted($configured)){[System.IO.Path]::GetFullPath($configured)}else{[System.IO.Path]::GetFullPath((Join-Path $repo $configured))}; $dirs=@('libraries\lisp','libraries\jobs','registry\user','workspace\lisp-draft','workspace\job-draft','data\runs','runtime\dynamic-lisp','drawings','state','logs'); New-Item -ItemType Directory -Force -Path $root | Out-Null; foreach($rel in $dirs){$target=Join-Path $root $rel; New-Item -ItemType Directory -Force -Path $target | Out-Null; if(-not (Test-Path $target)){Write-Error ('Could not create AppData directory: '+$target); exit 1}}; Write-Host ('[OK] CadGPT AppData root: '+$root)"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$repo=[System.IO.Path]::GetFullPath('%ROOT%\'); $line=Get-Content '.env' -ErrorAction SilentlyContinue | Where-Object { $_ -match '^\s*CADGPT_APPDATA_ROOT\s*=' -and -not $_.TrimStart().StartsWith('#') } | Select-Object -First 1; $configured=if($line){(($line -split '=',2)[1].Trim()).Trim([char]39).Trim([char]34)}else{'appdata'}; $root=if([System.IO.Path]::IsPathRooted($configured)){[System.IO.Path]::GetFullPath($configured)}else{[System.IO.Path]::GetFullPath((Join-Path $repo $configured))}; $dirs=@('libraries\lisp','libraries\jobs','registry\user','workspace\lisp-draft','workspace\job-draft','data\runs','runtime\dynamic-lisp','drawings','state','logs'); New-Item -ItemType Directory -Force -Path $root | Out-Null; foreach($rel in $dirs){$target=Join-Path $root $rel; New-Item -ItemType Directory -Force -Path $target | Out-Null; if(-not (Test-Path $target)){Write-Error ('Could not create AppData directory: '+$target); exit 1}}; Write-Host ('[OK] CadGPT AppData root: '+$root)"
 if errorlevel 1 goto :failed
 
 echo.
@@ -91,7 +92,7 @@ if errorlevel 1 goto :failed
 
 echo.
 echo [3/10] Generating CAD MCP tool manifest...
-python "%~dp0scripts\generate-cad-tool-manifest.py"
+python "%ROOT%\scripts\generate-cad-tool-manifest.py"
 if errorlevel 1 goto :failed
 if not exist "runtimes\cad-mcp\tool-manifest.json" (
   echo [ERROR] CAD tool manifest was not generated.
@@ -128,7 +129,7 @@ if errorlevel 1 goto :failed
 
 echo.
 echo [7/10] Configuring OpenAI Secure MCP Tunnel...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0openai-tunnel.ps1" -Init
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\openai-tunnel.ps1" -Init
 if errorlevel 1 goto :failed
 
 echo.
@@ -138,7 +139,7 @@ if errorlevel 1 goto :failed
 
 echo.
 echo [9/10] Installing and starting CadGPT tray runtime...
-call "%~dp0run.bat" install
+call "%ROOT%\run.bat" install
 if errorlevel 1 goto :failed
 
 set "CADGPT_PORT=3000"
@@ -155,7 +156,7 @@ if errorlevel 1 (
 
 echo.
 echo [10/10] Running installation doctor...
-call "%~dp0doctor.bat"
+call "%ROOT%\doctor.bat"
 if errorlevel 1 goto :failed
 
 echo.
