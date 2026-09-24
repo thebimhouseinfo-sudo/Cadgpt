@@ -446,7 +446,25 @@ function Get-RuntimeStatus {
 }
 
 $notify = New-Object System.Windows.Forms.NotifyIcon
-$notify.Icon = [System.Drawing.SystemIcons]::Application
+
+$trayIconPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "icon.png"))
+$trayIconBitmap = $null
+$trayIconHandle = [IntPtr]::Zero
+try {
+    if (Test-Path $trayIconPath) {
+        $trayIconBitmap = New-Object System.Drawing.Bitmap($trayIconPath)
+        $trayIconHandle = $trayIconBitmap.GetHicon()
+        $notify.Icon = [System.Drawing.Icon]::FromHandle($trayIconHandle).Clone()
+    } else {
+        Write-TrayLog "Tray icon asset missing at $trayIconPath; using system fallback icon."
+        $notify.Icon = [System.Drawing.SystemIcons]::Application
+    }
+} catch {
+    Write-TrayLog "Failed to load tray icon from $trayIconPath: $($_.Exception.Message); using system fallback icon."
+    $notify.Icon = [System.Drawing.SystemIcons]::Application
+} finally {
+    if ($trayIconBitmap) { $trayIconBitmap.Dispose() }
+}
 $notify.Text = "CadGPT - Starting"
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -520,6 +538,9 @@ try {
     $bootstrapTimer.Stop()
     Remove-Item $TrayReadyPath -Force -ErrorAction SilentlyContinue
     $notify.Visible = $false
+    if ($notify.Icon -and $notify.Icon -ne [System.Drawing.SystemIcons]::Application) {
+        $notify.Icon.Dispose()
+    }
     $notify.Dispose()
     $menu.Dispose()
     try { $mutex.ReleaseMutex() } catch {}
