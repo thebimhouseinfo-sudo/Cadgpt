@@ -164,14 +164,40 @@ function Get-AutoCadProbeStatus {
 
             $count = [int]$app.Documents.Count
             $activeName = $null
+            $activeFullName = $null
             if ($count -gt 0) {
-                try { $activeName = [string]$app.ActiveDocument.Name } catch {}
+                try {
+                    $activeName = [string]$app.ActiveDocument.Name
+                    $activeFullName = [string]$app.ActiveDocument.FullName
+                } catch {}
             }
+
+            $drawings = @()
+            for ($i = 0; $i -lt $count; $i++) {
+                try {
+                    $doc = $app.Documents.Item($i)
+                    $name = [string]$doc.Name
+                    $fullName = [string]$doc.FullName
+                    $isActive = $false
+                    if ($activeFullName) {
+                        $isActive = $fullName -eq $activeFullName
+                    } elseif ($activeName) {
+                        $isActive = $name -eq $activeName
+                    }
+                    $drawings += [pscustomobject]@{
+                        name = $name
+                        full_name = $fullName
+                        active = $isActive
+                    }
+                } catch {}
+            }
+
             return [pscustomobject]@{
                 running = $true
                 attached = $true
                 drawing_count = $count
                 active_document = $activeName
+                drawings = $drawings
                 state = "ON"
             }
         } catch {}
@@ -182,6 +208,7 @@ function Get-AutoCadProbeStatus {
         attached = $false
         drawing_count = $null
         active_document = $null
+        drawings = @()
         state = "ON"
     }
 }
@@ -213,8 +240,9 @@ function Write-TrayState {
         autocad_attached = [bool]$script:CadProbe.attached
         autocad_drawing_count = $script:CadProbe.drawing_count
         autocad_active_document = $script:CadProbe.active_document
+        autocad_drawings = @($script:CadProbe.drawings)
         autocad_probe_at = $script:CadProbeAt
-    } | ConvertTo-Json | Set-Content -Path $TrayReadyPath -Encoding UTF8
+    } | ConvertTo-Json -Depth 5 | Set-Content -Path $TrayReadyPath -Encoding UTF8
 }
 
 function Resolve-OwnedCadGptPid {
@@ -359,6 +387,7 @@ $script:CadProbe = [pscustomobject]@{
     attached = $false
     drawing_count = 0
     active_document = $null
+    drawings = @()
     state = "OFF"
 }
 $script:CadProbeAt = $null
