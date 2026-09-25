@@ -49,7 +49,9 @@ async function readTrayCadSnapshot(): Promise<{
 }> {
   try {
     const raw = await fs.readFile(getTrayStatePath(), "utf8");
-    const snapshot = JSON.parse(raw) as TrayCadSnapshot;
+    // Windows PowerShell 5.1 writes UTF-8 with a BOM. Strip it before JSON.parse
+    // so the slim MCP can consume the same tray snapshot that PowerShell reads.
+    const snapshot = JSON.parse(raw.replace(/^\uFEFF/, "")) as TrayCadSnapshot;
     const probeAt = snapshot.autocad_probe_at
       ? Date.parse(snapshot.autocad_probe_at)
       : Number.NaN;
