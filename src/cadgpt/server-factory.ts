@@ -220,11 +220,11 @@ export function createMcpServer(sessionKey: string): McpServer {
     {
       capabilities: { logging: {}, tools: { listChanged: true } },
       instructions: [
-        "CadGPT entry routing — highest priority: bare CadGPT plugin/icon invocation (including a connector renamed CG) or bare @cadgpt must call cadgpt_admission and return its welcome_text verbatim when present. Do not replace it with prose such as 'activated'.",
+        "CadGPT entry routing — highest priority: bare CadGPT plugin/icon invocation (including a connector renamed CG) or bare @cadgpt or @cg must call cadgpt_admission and return its welcome_text verbatim when present. Do not replace it with prose such as 'activated'.",
         "Exact cg/ calls cadgpt_control(surface=commands); cg/list -> surface=list; cg/cl -> surface=cl; cg/cj -> surface=cj; cg/job -> surface=job; cg/rl -> register Lisp folder; cg/rj -> register Job folder; cg/il -> import Lisp; cg/el -> export Lisp; cg/ij -> import Job; cg/ej -> export Job; cg/mcp -> surface=mcp; cg/help -> surface=help; cg/stop -> surface=stop. cg/list reads tray cache only and never wakes full CAD MCP.",
         "CadGPT is explicit-launch, session-persistent.",
-        "The user launches CadGPT once per ChatGPT/MCP session, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt.",
-        "On a bare plugin/icon or bare @cadgpt launch, call cadgpt_admission once. If that launch also contains a real task, claim the session and continue directly instead of forcing the generic Welcome. After the session is claimed, do not call admission again on every turn.",
+        "The user launches CadGPT once per ChatGPT/MCP session, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt or @cg.",
+        "On a bare plugin/icon or bare @cadgpt or @cg launch, call cadgpt_admission once. If that launch also contains a real task, claim the session and continue directly instead of forcing the generic Welcome. After the session is claimed, do not call admission again on every turn.",
         "Never carry admission across another MCP/chat session, memory, unrelated files, paths, or AutoCAD state. Session disposal revokes the claim.",
         "Bare @cadgpt or bare CG/plugin launch makes the session READY, not WORK ACTIVE. Work becomes ACTIVE only after cadgpt_work_start.",
         "CadGPT session claim is routing state only; it is not an execution credential and has no per-turn token.",
