@@ -29,6 +29,25 @@ WorkRegistration + ToolLease
 
 ## Admission and Windows lifecycle
 
+CadGPT launcher is context-aware:
+
+```text
+CG / @cadgpt
+├─ AutoCAD not detected
+│  → General Welcome
+│  → SESSION READY / WORK IDLE / CAD MCP SLEEPING
+│
+└─ AutoCAD detected
+   → CAD PREPARE (read-only)
+   → list open drawings
+   → ask user to confirm the CAD workspace
+   → confirmation creates/reuses direct-cad WorkRegistration
+   → bind selected drawings
+   → CAD Work CLI + quick commands
+```
+
+Detection/prepare never launches AutoCAD and never grants mutation authority. Execution authority begins only after workspace confirmation.
+
 CadGPT is explicit-launch only. The user launches CadGPT once per ChatGPT/MCP session, either with literal `@cadgpt` or by selecting/calling the CadGPT plugin/icon (the connector may be renamed, for example `CG`). That claim persists for later turns in the same session, so repeated `@cadgpt` is not required. A different chat/MCP session starts unclaimed.
 
 ```text
