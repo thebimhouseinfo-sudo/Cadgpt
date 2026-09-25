@@ -252,6 +252,289 @@ test("CAD prepare capability is session-bound, replaceable, single-use, and tran
   }
 });
 
+test("production MCP router recovers headerless CAD confirm after detached transport grace", async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const express = (await import("express")).default;
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const { LATEST_PROTOCOL_VERSION } = await import(
+    "@modelcontextprotocol/sdk/types.js"
+  );
+  const { createSessionManager } = await import(
+    "../dist/cadgpt/lib/mcp-session-manager.js"
+  );
+  const { routeMcpPost } = await import(
+    "../dist/cadgpt/lib/mcp-post-routing.js"
+  );
+  const {
+    prepareCadLaunch,
+    resolveCadPrepareSessionByToken,
+    registerCadPrepareConfirmTool,
+    clearCadPrepare,
+  } = await import("../dist/cadgpt/tools/cad-launcher.js");
+  const { registerAdmissionTool } = await import(
+    "../dist/cadgpt/tools/admission.js"
+  );
+  const { revokeSessionAdmissions } = await import(
+    "../dist/cadgpt/lib/admission.js"
+  );
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-router-"));
+  const previousRoot = process.env.CADGPT_APPDATA_ROOT;
+  process.env.CADGPT_APPDATA_ROOT = tempRoot;
+
+  const app = express();
+  app.use(express.json());
+  let sessions;
+  const route = "/mcp/test-token";
+
+  const httpServer = app.listen(0, "127.0.0.1");
+  await new Promise((resolve, reject) => {
+    if (httpServer.listening) return resolve();
+    httpServer.once("listening", resolve);
+    httpServer.once("error", reject);
+  });
+  const address = httpServer.address();
+  assert.ok(address && typeof address === "object");
+  const port = address.port;
+
+  const createServer = (sessionKey) => {
+    const server = new McpServer(
+      { name: "cadgpt-test", version: "0.1.0" },
+      { capabilities: { tools: { listChanged: true } } }
+    );
+
+    registerAdmissionTool(server, {
+      sessionKey,
+      onActive: async ({ bareLaunch }) => {
+        if (!bareLaunch) return;
+        const launch = await prepareCadLaunch(sessionKey);
+        return {
+          launch_mode: launch.mode,
+          welcome_text: launch.welcome_text,
+          autocad_detected: launch.autocad_detected,
+          ...(launch.confirmation_token
+            ? { confirmation_token: launch.confirmation_token }
+            : {}),
+          ...(launch.drawings ? { drawings: launch.drawings } : {}),
+        };
+      },
+    });
+
+    registerCadPrepareConfirmTool(server, {
+      sessionKey,
+      activateWorkspace: async (drawing) => ({
+        text: "CadGPT / CG — Workspace Ready",
+        work_handle: {
+          execution_id: "integration-exec",
+          authority_token: "integration-authority",
+        },
+        drawing: {
+          ...drawing,
+          runtime_document_id: "integration-doc-1",
+        },
+      }),
+    });
+
+    return server;
+  };
+
+  sessions = createSessionManager(port, {
+    createServer,
+    deleteGraceMs: 10,
+    cleanupMs: 10,
+    sessionTtlMs: 60_000,
+  });
+  sessions.startCleanup();
+
+  app.post(route, async (req, res) => {
+    try {
+      await routeMcpPost({
+        req,
+        res,
+        sessions,
+        sessionRecovery: true,
+        resolveCadPrepareSessionByToken,
+      });
+    } catch (error) {
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: "2.0",
+          error: {
+            code: -32603,
+            message: error instanceof Error ? error.message : String(error),
+          },
+          id: req.body?.id ?? null,
+        });
+      }
+    }
+  });
+  app.delete(route, async (req, res) => {
+    const sessionId = req.headers["mcp-session-id"];
+    const session =
+      typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
+    if (!session) {
+      sessions.sendNotFound(res, req.body?.id ?? null);
+      return;
+    }
+    await sessions.handleExisting(session, req, res, req.body);
+  });
+
+  let sessionId;
+  try {
+    const stateDir = path.join(tempRoot, "state");
+    await fs.mkdir(stateDir, { recursive: true });
+    await fs.writeFile(
+      path.join(stateDir, "tray-ready.json"),
+      JSON.stringify({
+        autocad_running: true,
+        autocad_attached: true,
+        autocad_drawing_count: 1,
+        autocad_drawings: [
+          { name: "Drawing1.dwg", full_name: "C:\\Drawing1.dwg" },
+        ],
+        autocad_probe_at: new Date().toISOString(),
+      }),
+      "utf8"
+    );
+
+    const url = `http://127.0.0.1:${port}${route}`;
+    const baseHeaders = {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    };
+
+    const initialized = await fetch(url, {
+      method: "POST",
+      headers: baseHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: LATEST_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: "cadgpt-integration-test", version: "0.1.0" },
+        },
+      }),
+    });
+    assert.equal(initialized.ok, true);
+    sessionId = initialized.headers.get("mcp-session-id");
+    assert.ok(sessionId);
+
+    const sessionHeaders = {
+      ...baseHeaders,
+      "mcp-session-id": sessionId,
+      "mcp-protocol-version": LATEST_PROTOCOL_VERSION,
+    };
+
+    const notification = await fetch(url, {
+      method: "POST",
+      headers: sessionHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      }),
+    });
+    assert.equal(notification.ok, true);
+
+    const admission = await fetch(url, {
+      method: "POST",
+      headers: sessionHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "cadgpt_admission",
+          arguments: {
+            user_turn: "@cadgpt",
+            invocation_source: "mention",
+          },
+        },
+      }),
+    });
+    assert.equal(admission.ok, true);
+    const admissionBody = await admission.json();
+    const token = admissionBody.result?.structuredContent?.confirmation_token;
+    assert.equal(typeof token, "string");
+    assert.equal(resolveCadPrepareSessionByToken(token), sessionId);
+
+    const closed = await fetch(url, {
+      method: "DELETE",
+      headers: sessionHeaders,
+    });
+    assert.equal(closed.ok, true);
+
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    assert.equal(sessions.get(sessionId), undefined);
+    assert.equal(resolveCadPrepareSessionByToken(token), sessionId);
+
+    const confirmed = await fetch(url, {
+      method: "POST",
+      headers: baseHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "cadgpt_cad_confirm",
+          arguments: {
+            confirmation_token: token,
+            choice_key: "1",
+          },
+        },
+      }),
+    });
+    assert.equal(confirmed.ok, true);
+    const confirmBody = await confirmed.json();
+    assert.match(
+      confirmBody.result?.structuredContent?.text ?? "",
+      /Workspace Ready/
+    );
+    assert.equal(
+      confirmBody.result?.structuredContent?.drawing?.runtime_document_id,
+      "integration-doc-1"
+    );
+    assert.equal(resolveCadPrepareSessionByToken(token), undefined);
+
+    const unrelated = await fetch(url, {
+      method: "POST",
+      headers: baseHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "cadgpt_admission",
+          arguments: {
+            user_turn: "continue",
+            invocation_source: "mention",
+          },
+        },
+      }),
+    });
+    assert.equal(unrelated.status, 400);
+    const unrelatedBody = await unrelated.json();
+    assert.match(
+      unrelatedBody.error?.message ?? "",
+      /Mcp-Session-Id is required/
+    );
+  } finally {
+    sessions.stopCleanup();
+    await sessions.closeAll("integration test cleanup");
+    if (sessionId) {
+      clearCadPrepare(sessionId);
+      revokeSessionAdmissions(sessionId);
+    }
+    await new Promise((resolve) => httpServer.close(resolve));
+    if (previousRoot === undefined) delete process.env.CADGPT_APPDATA_ROOT;
+    else process.env.CADGPT_APPDATA_ROOT = previousRoot;
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("MCP transport recovery preserves session claim and work handle for the same logical session", async () => {
   const { checkAdmission, assertSessionClaimed } = await import(
     "../dist/cadgpt/lib/admission.js"
