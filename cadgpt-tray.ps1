@@ -43,8 +43,22 @@ $TrayLog = Join-Path $LogDir "tray.log"
 $TrayReadyPath = Join-Path $StateDir "tray-ready.json"
 $LegacyTrayReadyPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "appdata\state\tray-ready.json"))
 
-New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
-New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
+# Keep the managed user/runtime tree self-healing for source upgrades and legacy
+# checkouts that moved from repo-local appdata to %LOCALAPPDATA%\CadGPT.
+foreach ($relative in @(
+    "libraries\lisp",
+    "libraries\jobs",
+    "registry\user",
+    "workspace\lisp-draft",
+    "workspace\job-draft",
+    "data\runs",
+    "runtime\dynamic-lisp",
+    "drawings",
+    "state",
+    "logs"
+)) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $AppDataRoot $relative) | Out-Null
+}
 
 function Write-TrayLog([string]$Message) {
     Add-Content -Path $TrayLog -Value "[$((Get-Date).ToString('s'))] $Message" -Encoding UTF8
