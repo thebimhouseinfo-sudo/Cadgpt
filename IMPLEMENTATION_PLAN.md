@@ -905,9 +905,9 @@ Verify current main contains and tests:
 
 Fix regressions first.
 
-### S1 — Deterministic Lisp load-check
+### S1 — Deterministic Lisp load-check — implemented, host verification pending
 
-Implement the missing lightweight reliability gate:
+The lightweight reliability gate is implemented in the current source. Preserve and verify this contract:
 
 - add a fixed internal `lisp_load_check` path or formalize the existing verified load tool as that contract;
 - bind it to explicit `drawing_id` / host;
