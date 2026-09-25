@@ -80,6 +80,7 @@ export function isBareCadGptLaunch(userTurn: string): boolean {
   const value = userTurn.trim();
   return (
     /^@cadgpt\s*$/i.test(value) ||
-    /^(?:cg|cadgpt)\s*$/i.test(value)
+    /^(?:cg|cadgpt)\s*$/i.test(value) ||
+    /^\[\$(?:cg|cadgpt)\]\(app:\/\/[^)]+\)\s*$/i.test(value)
   );
 }
