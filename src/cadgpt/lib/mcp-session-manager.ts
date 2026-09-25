@@ -22,6 +22,7 @@ export interface McpSession {
 export interface SessionManager {
   get(id: string): McpSession | undefined;
   count(): number;
+  getSoleRecoverableId(): string | undefined;
   createNew(req: Request, res: Response, body: unknown): Promise<void>;
   handleExisting(session: McpSession, req: Request, res: Response, body?: unknown): Promise<void>;
   tryRecover(id: string, req: Request, res: Response, body: unknown): Promise<boolean>;
@@ -300,6 +301,15 @@ export function createSessionManager(port: number): SessionManager {
 
     count() {
       return sessions.size;
+    },
+
+    getSoleRecoverableId() {
+      const ids = new Set<string>([
+        ...sessions.keys(),
+        ...pending.keys(),
+        ...detached.keys(),
+      ]);
+      return ids.size === 1 ? [...ids][0] : undefined;
     },
 
     sendNotFound(res, requestId = null) {
