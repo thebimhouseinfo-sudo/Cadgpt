@@ -66,6 +66,69 @@ test("admission claims one ChatGPT/MCP session and does not require repeated @ca
   assert.equal(afterClose.mode, "inactive");
 });
 
+
+test("MCP transport recovery preserves admission and work authority for the same logical session", async () => {
+  const { checkAdmission, validateAdmissionToken } = await import(
+    "../dist/cadgpt/lib/admission.js"
+  );
+  const {
+    createWorkRegistration,
+    validateWorkHandle,
+  } = await import("../dist/cadgpt/lib/work-registration.js");
+  const {
+    createMcpServer,
+    disposeMcpServerRuntime,
+  } = await import("../dist/cadgpt/server-factory.js");
+
+  const sessionId = "mcp-recovery-authority";
+  const serverA = createMcpServer(sessionId);
+
+  const admission = checkAdmission(sessionId, "CG", "plugin");
+  assert.equal(admission.mode, "active");
+  assert.ok(admission.admission_token);
+
+  const work = createWorkRegistration({
+    sessionKey: sessionId,
+    admissionToken: admission.admission_token,
+    ownerType: "file",
+    ownerId: "recovery-test",
+    executionPath: "file",
+  });
+
+  await disposeMcpServerRuntime(serverA, { preserveSessionState: true });
+
+  const serverB = createMcpServer(sessionId);
+  assert.doesNotThrow(() =>
+    validateAdmissionToken(admission.admission_token, sessionId)
+  );
+  assert.doesNotThrow(() =>
+    validateWorkHandle(work.executionId, work.authorityToken, sessionId)
+  );
+
+  await disposeMcpServerRuntime(serverB);
+
+  assert.throws(
+    () => validateAdmissionToken(admission.admission_token, sessionId),
+    /ADMISSION_REQUIRED/
+  );
+  assert.throws(
+    () => validateWorkHandle(work.executionId, work.authorityToken, sessionId),
+    /NO_ACTIVE_WORK/
+  );
+});
+
+test("CadGPT welcome exposes the lightweight fake CLI control surface", async () => {
+  const { CADGPT_WELCOME, CADGPT_ROOT_MENU } = await import(
+    "../dist/cadgpt/lib/quickstart.js"
+  );
+
+  assert.match(CADGPT_WELCOME, /CadGPT \/ CG/);
+  assert.match(CADGPT_WELCOME, /SESSION\s+ACTIVE/);
+  assert.match(CADGPT_WELCOME, /CAD MCP\s+ON DEMAND/);
+  assert.match(CADGPT_WELCOME, /cadgpt\/status/);
+  assert.match(CADGPT_ROOT_MENU, /cadgpt\/help/);
+});
+
 test("work registrations and tool leases remain isolated across sessions", async () => {
   const { checkAdmission } = await import("../dist/cadgpt/lib/admission.js");
   const {
