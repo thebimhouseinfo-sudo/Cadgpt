@@ -166,7 +166,7 @@ Bare CadGPT launch is context-aware and follows the same PREPARE principle used 
 launch
 → detect running AutoCAD without starting it
 → if absent: General Welcome, no CAD work
-→ if present: read-only CAD MCP PREPARE
+→ if present: tray-cache PREPARE
 → enumerate open drawings
 → ask user to confirm workspace
 → only confirmation creates/reuses direct-cad WorkRegistration
@@ -174,7 +174,7 @@ launch
 → expose CAD Work CLI
 ```
 
-PREPARE may read host/document state only. It must not create ToolLeases, mutate CAD, or treat AutoCAD `ActiveDocument` as execution authority.
+PREPARE reads only the tray CAD snapshot. It must not start CAD MCP, create ToolLeases, mutate CAD, or treat cached/ActiveDocument data as execution authority. Confirmation starts full CAD MCP and re-verifies the selected drawings before binding.
 
 ### 3.1 Admission
 
