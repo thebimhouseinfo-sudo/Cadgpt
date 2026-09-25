@@ -239,6 +239,7 @@ export function createMcpServer(sessionKey: string): McpServer {
         "Bare launch is context-aware. If AutoCAD is not detected, return the General Welcome and keep WORK IDLE / CAD MCP SLEEPING.",
         "If AutoCAD is detected, enter CAD PREPARE: read-only CAD MCP discovery lists open drawings and asks the user to confirm the CAD workspace. PREPARE has no WorkRegistration and cannot mutate CAD.",
         "After explicit workspace confirmation, call cadgpt_cad_confirm with the pending confirmation_token and optional drawing choice keys. That transition creates/reuses direct-cad work, binds the confirmed drawings, promotes CAD MCP to ACTIVE, and returns the CAD Work CLI.",
+        "Treat a natural follow-up such as 'xác nhận', 'ok', 'yes', or equivalent as confirmation of the pending CAD workspace. Reuse the private confirmation_token from the launcher result; never ask the user to copy or provide it. If the user selects drawing numbers, pass those numbers as choice_keys; no choice_keys means all listed drawings.",
         "For later compatible CAD requests in that chat, reuse the active work_handle. Do not re-run workspace confirmation unless the user changes workspace or the binding becomes stale.",
         "CadGPT has two execution paths: FILE and CAD. CAD MCP is activated only on actual CAD demand.",
         "Never assume AutoCAD ActiveDocument is the target; use explicit drawing contexts.",
