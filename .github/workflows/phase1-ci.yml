@@ -120,6 +120,21 @@ jobs:
           }
           Write-Host "Tray managed AppData initialization contract present"
 
+      - name: Guard live AutoCAD probe contract
+        shell: pwsh
+        run: |
+          $tray = Get-Content "cadgpt-tray.ps1" -Raw
+          if ($tray -notmatch [regex]::Escape('foreach ($attempt in 1..4)')) {
+            throw "AutoCAD probe lost bounded COM retry"
+          }
+          if ($tray -notmatch [regex]::Escape('$probe = Get-AutoCadProbeStatus')) {
+            throw "Status path no longer performs a live AutoCAD probe"
+          }
+          if ($tray -match [regex]::Escape('Write-Host "AutoCAD          : ON - $($state.autocad_drawing_count) drawing(s)"')) {
+            throw "Status path regressed to stale tray drawing-count snapshot"
+          }
+          Write-Host "Live AutoCAD probe contract present"
+
       - name: Smoke admission, lazy families, managed sandbox and registry
         shell: pwsh
         run: |
