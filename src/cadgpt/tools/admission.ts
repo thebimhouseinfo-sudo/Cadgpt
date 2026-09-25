@@ -31,7 +31,7 @@ export function registerAdmissionTool(
     },
     async ({ user_turn, invocation_source }) => {
       const decision = checkAdmission(options.sessionKey, user_turn, invocation_source);
-      const bareLaunch = isBareCadGptLaunch(user_turn);
+      const bareLaunch = isBareCadGptLaunch(user_turn, invocation_source);
       const launch =
         decision.mode === "active"
           ? await options.onActive({ bareLaunch })
