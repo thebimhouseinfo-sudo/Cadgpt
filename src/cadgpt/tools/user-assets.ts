@@ -205,6 +205,7 @@ export async function resolveRegisteredAssetPath(
 
 async function importLibrary(kind: AssetKind, libraryId: string, name: string, folderPath: string, replaceExisting: boolean) {
   const source = await assertSourceFolder(folderPath);
+  const entries = await indexLibrary(kind, libraryId, source);
   const targetParent = kind === "lisp" ? getLispLibrariesRoot() : getJobLibrariesRoot();
   await fs.mkdir(targetParent, { recursive: true });
   const target = await resolveAbsoluteMutationPath(path.join(targetParent, libraryId), {
@@ -231,7 +232,6 @@ async function importLibrary(kind: AssetKind, libraryId: string, name: string, f
   if (exists) await fs.rm(target, { recursive: true, force: true });
   await fs.rename(staging, target);
 
-  const entries = await indexLibrary(kind, libraryId, target);
   await saveLibraryAndRegistry({
     id: libraryId,
     kind,
@@ -276,8 +276,12 @@ async function exportLibrary(kind: AssetKind, libraryId: string, folderPath: str
     throw new Error("Thư mục export không được trùng hoặc nằm bên trong thư mục nguồn của CadGPT.");
   }
   await fs.mkdir(destination, { recursive: true });
-  await fs.cp(source, destination, { recursive: true, force: overwrite, errorOnExist: !overwrite });
-  return { library_id: libraryId, kind, folder_path: destination, exported: true };
+  const realDestination = await fs.realpath(destination);
+  if (isPathInside(realDestination, source) || isPathInside(source, realDestination)) {
+    throw new Error("Thư mục export không được trùng hoặc nằm bên trong thư mục nguồn của CadGPT.");
+  }
+  await fs.cp(source, realDestination, { recursive: true, force: overwrite, errorOnExist: !overwrite });
+  return { library_id: libraryId, kind, folder_path: realDestination, exported: true };
 }
 
 export function registerUserAssetTools(server: McpServer): void {
