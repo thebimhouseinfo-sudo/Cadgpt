@@ -33,7 +33,7 @@ function isControlOnly(userTurn: string): boolean {
   const value = userTurn.trim();
   return (
     /^@cadgpt\s+(?:help|status|stop)\s*$/i.test(value) ||
-    /^cadgpt\/(?:help|status|stop)\s*$/i.test(value)
+    /^cg\/(?:list|cad|help|status|stop)?\s*$/i.test(value)
   );
 }
 
