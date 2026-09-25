@@ -13,6 +13,7 @@ import {
 import { isPathInside, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
+import { resolveRegisteredAssetPath } from "./user-assets.js";
 
 interface JobEntry {
   id: string;
@@ -90,6 +91,15 @@ export async function listRegisteredJobs(): Promise<Array<{
     title: job.title,
     ...(job.summary ? { summary: job.summary } : {}),
   }));
+}
+
+function safeRelativeRegisteredJob(value: string): string {
+  const normalized = value.replaceAll("\\", "/").replace(/^\/+/, "");
+  const ext = path.extname(normalized).toLowerCase();
+  if (!normalized || normalized.split("/").includes("..") || path.isAbsolute(normalized) || ![".md", ".py"].includes(ext)) {
+    throw new Error("relative_path must be a safe .md or .py path inside the registered Job library");
+  }
+  return normalized;
 }
 
 function safeRelativeJob(value: string): string {
@@ -205,14 +215,21 @@ export function registerJobDiscoveryTools(server: McpServer): void {
         const jobs = await loadJobs();
         const entry = jobs.find((job) => job.id.toLowerCase() === id.trim().toLowerCase());
         if (!entry) throw new Error(`Job not found in User Registry: ${id}`);
-        const real = await resolveAllowedPath(resolveManagedJob(entry));
+        const relative = safeRelativeRegisteredJob(entry.relative_path);
+        const real = await resolveRegisteredAssetPath("job", entry.library_id, relative);
         const content = await fs.readFile(real, "utf8");
+        const executionMode = path.extname(real).toLowerCase() === ".py" ? "direct" : "reasoning";
         return toolResult("job_get", {
           id: entry.id,
           title: entry.title,
           library_id: entry.library_id,
-          path: toCadgptPath(real),
+          path: real,
+          relative_path: relative,
+          execution_mode: executionMode,
           content,
+          ...(executionMode === "reasoning"
+            ? { harness: "knowledge/jobs/REASONING_HARNESS.md" }
+            : {}),
           rules: "knowledge/jobs/JOB_RULES.md",
         });
       } catch (error) {
