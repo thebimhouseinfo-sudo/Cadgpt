@@ -971,6 +971,8 @@ Do not use the developer machine as the only release proof.
 - another MCP/chat session is not claimed automatically;
 - `@cadgpt help/status/stop` are CONTROL turns;
 - public CONTROL commands route only through the control surface and do not start FILE/CAD work;
+- public fake CLI commands use the short `cg/` prefix; `@cadgpt` remains text activation only;
+- `cg/list` refreshes the drawing launcher from the latest tray snapshot without starting full CAD MCP;
 - session claim persists for the logical MCP/chat session and carries no execution credential;
 - WorkRegistration is created only when real FILE/CAD work starts;
 - compatible active work is reused instead of generating a new handle every turn;
