@@ -391,7 +391,7 @@ test("tray JSON parser tolerates Windows PowerShell UTF-8 BOM", async () => {
     assert.match(launch.welcome_text, /Test\.dwg/);
     assert.doesNotMatch(launch.welcome_text, /OPEN DRAWINGS/);
     assert.doesNotMatch(launch.welcome_text, /\nOnline\n/);
-    assert.match(launch.welcome_text, /CAD\n1\. C:\\\\Test\.dwg/);
+    assert.match(launch.welcome_text, /CAD\n1\. C:\\Test\.dwg/);
   } finally {
     if (previous === undefined) delete process.env.CADGPT_APPDATA_ROOT;
     else process.env.CADGPT_APPDATA_ROOT = previous;
