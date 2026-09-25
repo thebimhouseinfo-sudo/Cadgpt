@@ -699,7 +699,10 @@ Requirements:
 - verified ownership before stopping/restarting child processes;
 - tray-ready marker;
 - low-frequency health check;
-- immediate health refresh when tray menu opens;
+- lightweight read-only AutoCAD tray probe (process + COM document count) on a low-frequency timer;
+- tray must show AutoCAD OFF or AutoCAD ON + open drawing count without waking full CAD MCP;
+- tray probe must not create WorkRegistration, bind a drawing, load CAD business tools, or grant mutation authority;
+- immediate runtime + AutoCAD-probe refresh when tray menu opens;
 - logs under managed AppData;
 - no busy AutoCAD polling;
 - never kill an unrelated process merely because it occupies a configured port.
@@ -707,7 +710,8 @@ Requirements:
 Minimal tray surface:
 
 ```text
-Status
+CadGPT: Ready / Working / Degraded
+AutoCAD: OFF | ON · N drawings
 Open diagnostics/logs
 Restart CadGPT
 Exit CadGPT
