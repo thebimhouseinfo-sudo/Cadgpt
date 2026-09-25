@@ -91,8 +91,23 @@ test("MCP transport recovery preserves session claim and work handle for the sam
 });
 
 test("CadGPT welcome exposes the lightweight fake CLI control surface", async () => {
-  const { CADGPT_WELCOME, CADGPT_ROOT_MENU } = await import(
+  const { CADGPT_WELCOME, CADGPT_ROOT_MENU, isBareCadGptLaunch } = await import(
     "../dist/cadgpt/lib/quickstart.js"
+  );
+
+  assert.equal(isBareCadGptLaunch("CG"), true);
+  assert.equal(isBareCadGptLaunch("@cadgpt"), true);
+  assert.equal(
+    isBareCadGptLaunch("[$cg](app://asdk_app_6ab535cdbd948191afeacf6b0ad5b863)"),
+    true
+  );
+  assert.equal(
+    isBareCadGptLaunch("[$CadGPT](app://asdk_app_example)"),
+    true
+  );
+  assert.equal(
+    isBareCadGptLaunch("[$cg](app://asdk_app_example) draw a line"),
+    false
   );
 
   assert.match(CADGPT_WELCOME, /CadGPT \/ CG/);
