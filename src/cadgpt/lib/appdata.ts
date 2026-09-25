@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import os from "node:os";
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(MODULE_DIR, "..", "..", "..");
@@ -18,18 +18,29 @@ export type AppDataArea =
 /**
  * CadGPT user/runtime data root.
  *
- * Beta default: <repo>/appdata
- * Packaged target: an absolute per-user location such as %LOCALAPPDATA%\CadGPT.
+ * Default on Windows: %LOCALAPPDATA%\CadGPT.
+ * CADGPT_APPDATA_ROOT may override this for development/tests.
  *
- * User-provided Lisp/Job folders are import sources only. CadGPT copies them
- * into managed libraries under AppData and subsequently reads/writes only the
- * managed AppData copy.
+ * The historical relative value "appdata" is treated as unset so old source
+ * checkouts automatically stop using the repository as user AppData.
  */
 export function getAppDataRoot(): string {
-  const configured = (process.env.CADGPT_APPDATA_ROOT || "appdata").trim() || "appdata";
-  return path.isAbsolute(configured)
-    ? path.resolve(configured)
-    : path.resolve(REPO_ROOT, configured);
+  const configuredRaw = (process.env.CADGPT_APPDATA_ROOT || "").trim();
+  const configured =
+    configuredRaw.toLowerCase() === "appdata" ? "" : configuredRaw;
+
+  if (configured) {
+    return path.isAbsolute(configured)
+      ? path.resolve(configured)
+      : path.resolve(REPO_ROOT, configured);
+  }
+
+  if (process.platform === "win32") {
+    const local = (process.env.LOCALAPPDATA || "").trim();
+    if (local) return path.resolve(local, "CadGPT");
+  }
+
+  return path.resolve(os.homedir(), ".local", "share", "CadGPT");
 }
 
 export function getAppDataPath(area: AppDataArea, ...parts: string[]): string {
