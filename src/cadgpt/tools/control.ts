@@ -15,7 +15,7 @@ function workflowPrompt(surface: "cl" | "cj" | "mcp"): string {
       "CG / Create Lisp",
       "────────────────────────────────",
       "Hãy mô tả Lisp bạn muốn tạo hoặc sửa.",
-      "CadGPT sẽ dùng drawing workspace hiện tại để load/test.",
+      "Có drawing workspace thì CadGPT sẽ load/test; nếu chưa có vẫn có thể tạo hoặc sửa Lisp.",
       "────────────────────────────────",
       "```",
     ].join("\n");
@@ -36,7 +36,27 @@ function workflowPrompt(surface: "cl" | "cj" | "mcp"): string {
     "CG / CAD MCP Development",
     "────────────────────────────────",
     "Hãy mô tả tool hoặc phần CAD MCP bạn muốn cập nhật.",
-    "CadGPT sẽ dùng cad-mcp-dev trên drawing workspace hiện tại.",
+    "Có drawing workspace thì CadGPT có thể live-test; nếu chưa có vẫn có thể sửa/validate CAD MCP source.",
+    "────────────────────────────────",
+    "```",
+  ].join("\n");
+}
+
+function assetPrompt(surface: "rl" | "rj" | "il" | "el" | "ij" | "ej"): string {
+  const map: Record<typeof surface, [string, string]> = {
+    rl: ["Register Lisp", "Hãy cung cấp đường dẫn thư mục chứa Lisp cần đăng ký."],
+    rj: ["Register Job", "Hãy cung cấp đường dẫn thư mục chứa Job cần đăng ký."],
+    il: ["Import Lisp", "Hãy cung cấp đường dẫn thư mục chứa Lisp cần import."],
+    el: ["Export Lisp", "Hãy cung cấp đường dẫn thư mục để export Lisp."],
+    ij: ["Import Job", "Hãy cung cấp đường dẫn thư mục chứa Job cần import."],
+    ej: ["Export Job", "Hãy cung cấp đường dẫn thư mục để export Job."],
+  };
+  const [title, prompt] = map[surface];
+  return [
+    "```text",
+    "CG / " + title,
+    "────────────────────────────────",
+    prompt,
     "────────────────────────────────",
     "```",
   ].join("\n");
@@ -57,7 +77,7 @@ export function registerCadGptControlTool(
     {
       title: "CadGPT Control",
       description:
-        "Lightweight CG fake CLI. cg/list refreshes the tray-backed drawing launcher without waking full CAD MCP; cg/job lists registered Jobs; cg/cl, cg/cj and cg/mcp enter the corresponding workflow; cg/ shows the full command menu.",
+        "Lightweight CG fake CLI. cg/list refreshes the tray-backed drawing launcher without waking full CAD MCP; cg/job lists registered Jobs; cg/cl/cj/mcp enter authoring workflows; cg/rl,rj,il,el,ij,ej enter Lisp/Job register/import/export workflows; cg/ shows the full command menu.",
       inputSchema: {
         surface: z.enum([
           "commands",
@@ -65,6 +85,12 @@ export function registerCadGptControlTool(
           "cl",
           "cj",
           "job",
+          "rl",
+          "rj",
+          "il",
+          "el",
+          "ij",
+          "ej",
           "mcp",
           "help",
           "status",
@@ -85,19 +111,13 @@ export function registerCadGptControlTool(
       } else if (surface === "job") {
         text = await options.listJobs();
       } else if (surface === "cl" || surface === "cj" || surface === "mcp") {
-        const work = workStatus(options.sessionKey);
-        text = work.active === true
-          ? workflowPrompt(surface)
-          : [
-              "```text",
-              "CG / Workspace Required",
-              "────────────────────────────────",
-              "Chưa có drawing workspace.",
-              "",
-              "Dùng cg/list và chọn 1 drawing trước khi bắt đầu workflow này.",
-              "────────────────────────────────",
-              "```",
-            ].join("\n");
+        text = workflowPrompt(surface);
+      } else if (
+        surface === "rl" || surface === "rj" ||
+        surface === "il" || surface === "el" ||
+        surface === "ij" || surface === "ej"
+      ) {
+        text = assetPrompt(surface);
       } else if (surface === "help") {
         text = CADGPT_HELP;
       } else if (surface === "status") {
