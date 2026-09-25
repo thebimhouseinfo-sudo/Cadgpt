@@ -80,21 +80,29 @@ export function isBareCadGptLaunch(
   userTurn: string,
   invocationSource: "mention" | "plugin" = "mention"
 ): boolean {
-  const value = userTurn.trim();
+  const value = userTurn
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\u2060\uFEFF\uFFFC]/g, "")
+    .trim();
 
-  if (/^@cadgpt\s*$/i.test(value) || /^(?:cg|cadgpt)\s*$/i.test(value)) {
+  if (/^@cadgpt\s*$/i.test(value) || /^(?:\$?cg|\$?cadgpt)\s*$/i.test(value)) {
     return true;
   }
 
-  // ChatGPT may serialize a bare plugin/icon invocation differently from the
-  // visible chip text. Treat any app-link-only turn as bare regardless of the
-  // connector display label, but never do this for ordinary mention routing.
-  if (
-    invocationSource === "plugin" &&
-    /^\[[^\]]+\]\(app:\/\/[^)]+\)\s*$/i.test(value)
-  ) {
-    return true;
-  }
+  if (invocationSource !== "plugin") return false;
 
-  return false;
+  // ChatGPT may serialize the connector chip differently from the visible UI.
+  // Remove known app-link / mention wrappers, then classify the invocation by
+  // whether any real task text remains.
+  const remainder = value
+    .replace(/\[[^\]]*\]\(app:\/\/[^)]+\)/gi, " ")
+    .replace(/app:\/\/[^\s)]+/gi, " ")
+    .replace(/@cadgpt\b/gi, " ")
+    .replace(/\$(?:cg|cadgpt)\b/gi, " ")
+    .replace(/\b(?:cadgpt|cg)\b/gi, " ")
+    .replace(/[\[\](){}<>|:;,_*~`'"-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return remainder.length === 0;
 }
