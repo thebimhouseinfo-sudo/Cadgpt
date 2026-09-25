@@ -76,11 +76,25 @@ export const CADGPT_HELP = [
   "Fake CLI không tự cập nhật theo AutoCAD. Dùng `cg/list` sau khi mở hoặc đóng drawing.",
 ].join("\n");
 
-export function isBareCadGptLaunch(userTurn: string): boolean {
+export function isBareCadGptLaunch(
+  userTurn: string,
+  invocationSource: "mention" | "plugin" = "mention"
+): boolean {
   const value = userTurn.trim();
-  return (
-    /^@cadgpt\s*$/i.test(value) ||
-    /^(?:cg|cadgpt)\s*$/i.test(value) ||
-    /^\[\$(?:cg|cadgpt)\]\(app:\/\/[^)]+\)\s*$/i.test(value)
-  );
+
+  if (/^@cadgpt\s*$/i.test(value) || /^(?:cg|cadgpt)\s*$/i.test(value)) {
+    return true;
+  }
+
+  // ChatGPT may serialize a bare plugin/icon invocation differently from the
+  // visible chip text. Treat any app-link-only turn as bare regardless of the
+  // connector display label, but never do this for ordinary mention routing.
+  if (
+    invocationSource === "plugin" &&
+    /^\[[^\]]+\]\(app:\/\/[^)]+\)\s*$/i.test(value)
+  ) {
+    return true;
+  }
+
+  return false;
 }
