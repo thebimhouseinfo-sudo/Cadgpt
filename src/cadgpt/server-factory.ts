@@ -223,6 +223,8 @@ export function createMcpServer(sessionKey: string): McpServer {
         "CadGPT session claim is routing state only; it is not an execution credential and has no per-turn token.",
         "Actual FILE/CAD work begins with cadgpt_work_start. The returned work_handle (execution_id + authority_token) is the only execution credential.",
         "Reuse the active work_handle for later compatible requests in the same chat. Do not call cadgpt_work_start again unless there is no active work or the owner/execution path must change.",
+        "For an ordinary direct AutoCAD request (for example list/open/bind/query drawings), call cadgpt_work_start with owner_type=direct-cad, owner_id=direct-cad, execution_path=cad. The call is idempotent and returns the existing compatible work_handle when one is already active.",
+        "After direct-CAD work_start, use drawing_list/drawing_bind/CAD tools with that work_handle. CAD MCP wakes on the first actual CAD tool call, not merely on Welcome/status.",
         "CadGPT has two execution paths: FILE and CAD. CAD MCP is activated only on actual CAD demand.",
         "Never assume AutoCAD ActiveDocument is the target; use explicit drawing contexts.",
         "All file mutations require absolute canonical target paths and allowed-root verification. Relative/CWD-authorized mutation is forbidden.",
