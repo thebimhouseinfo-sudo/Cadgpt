@@ -91,3 +91,7 @@ export async function ensureAppDataLayout(): Promise<void> {
   ];
   await Promise.all(directories.map((dir) => fs.mkdir(dir, { recursive: true })));
 }
+
+export function getTrayStatePath(): string {
+  return getAppDataPath("state", "tray-ready.json");
+}
