@@ -13,6 +13,7 @@ export function registerCadGptControlTool(
   options: {
     sessionKey: string;
     getCadState: () => Promise<string>;
+    launchCadWorkspace: () => Promise<string>;
     stopCurrentWork: () => Promise<{ stopped: boolean; pending: boolean }>;
   }
 ): void {
@@ -21,9 +22,9 @@ export function registerCadGptControlTool(
     {
       title: "CadGPT Control",
       description:
-        "Lightweight CadGPT CLI. Exact cadgpt/ -> commands, cadgpt/help -> help, cadgpt/status -> direct session/work/CAD status, cadgpt/stop -> stop this session's active work. Never call cadgpt_work_status to implement these public commands.",
+        "Lightweight CadGPT CLI. Exact cadgpt/ -> commands, cadgpt/cad -> AutoCAD detect/workspace launcher, cadgpt/help -> help, cadgpt/status -> direct session/work/CAD status, cadgpt/stop -> stop this session's active work. Never call cadgpt_work_status to implement these public commands.",
       inputSchema: {
-        surface: z.enum(["commands", "help", "status", "stop"]),
+        surface: z.enum(["commands", "cad", "help", "status", "stop"]),
       },
       outputSchema: {
         text: z.string(),
@@ -34,6 +35,8 @@ export function registerCadGptControlTool(
 
       if (surface === "commands") {
         text = CADGPT_ROOT_MENU;
+      } else if (surface === "cad") {
+        text = await options.launchCadWorkspace();
       } else if (surface === "help") {
         text = CADGPT_HELP;
       } else if (surface === "status") {
