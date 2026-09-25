@@ -3,13 +3,13 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { checkAdmission } from "../lib/admission.js";
 import { toolResult } from "../lib/tool-result.js";
-import { CADGPT_WELCOME, isBareCadGptLaunch } from "../lib/quickstart.js";
+import { isBareCadGptLaunch } from "../lib/quickstart.js";
 
 export function registerAdmissionTool(
   server: McpServer,
   options: {
     sessionKey: string;
-    onActive: () => Promise<void>;
+    onActive: (input: { bareLaunch: boolean }) => Promise<Record<string, unknown> | void>;
   }
 ): void {
   server.registerTool(
@@ -31,16 +31,21 @@ export function registerAdmissionTool(
     },
     async ({ user_turn, invocation_source }) => {
       const decision = checkAdmission(options.sessionKey, user_turn, invocation_source);
-      if (decision.mode === "active") await options.onActive();
+      const bareLaunch = isBareCadGptLaunch(user_turn);
+      const launch =
+        decision.mode === "active"
+          ? await options.onActive({ bareLaunch })
+          : undefined;
       const welcome =
-        decision.mode === "active" && isBareCadGptLaunch(user_turn)
-          ? CADGPT_WELCOME
+        bareLaunch && launch && typeof launch.welcome_text === "string"
+          ? launch.welcome_text
           : undefined;
 
       const data = {
         internal_control_signal: true,
         render_to_user: Boolean(welcome),
         ...decision,
+        ...(launch ?? {}),
         ...(welcome ? { welcome_text: welcome } : {}),
         instruction:
           decision.mode === "inactive"
@@ -48,7 +53,7 @@ export function registerAdmissionTool(
             : decision.mode === "control"
               ? "Route the exact CadGPT control command through cadgpt_control. CONTROL never starts FILE/CAD work."
               : welcome
-                ? "Return welcome_text verbatim for a bare CadGPT/CG launch. The session is ready; no execution authority exists until cadgpt_work_start."
+                ? "Return welcome_text verbatim. If launch_mode is cad_prepare, preserve confirmation_token privately and wait for the user's workspace confirmation before calling cadgpt_cad_confirm."
                 : "CadGPT session is ready. If the user requested real FILE/CAD work, start or reuse a compatible work_handle; otherwise continue conversationally.",
       };
 
