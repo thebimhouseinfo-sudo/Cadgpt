@@ -106,11 +106,6 @@ function renderCadPrepare(
     "```text",
     "CadGPT / CG — CAD Workspace Launcher",
     "────────────────────────────────",
-    "SESSION   READY",
-    "WORK      PREPARE",
-    "AUTOCAD   DETECTED",
-    "SOURCE    TRAY CACHE",
-    "CAD MCP   SLEEPING",
     "",
     "OPEN DRAWINGS",
   ];
@@ -125,23 +120,36 @@ function renderCadPrepare(
   }
 
   lines.push(
-    "",
-    "* = AutoCAD active drawing",
     "────────────────────────────────",
     "```"
   );
 
-  if (options.stale) {
-    lines.push("", "Tray CAD snapshot is older than expected; confirmation will verify the workspace against live AutoCAD before work starts.");
-  }
   if (options.attachWarning) {
-    lines.push("", options.attachWarning);
+    lines.push(
+      "",
+      options.attachWarning,
+      "",
+      "Mở hoặc chọn drawing trong AutoCAD rồi dùng cadgpt/cad để làm mới danh sách."
+    );
   } else if (!drawings.length) {
-    lines.push("", "AutoCAD is open but no drawing is cached. Open a drawing, then use cadgpt/cad.");
+    lines.push(
+      "",
+      "Mở drawing trong AutoCAD rồi dùng cadgpt/cad để làm mới danh sách.",
+      "",
+      "Hoặc dùng cadgpt/ để gọi các command khác (viết lisp, viết skill, etc.)."
+    );
   } else {
     lines.push(
       "",
-      "Confirm this workspace to start CAD work. By default all listed drawings are selected; you may choose specific drawing numbers."
+      "Chọn drawing để bắt đầu làm việc",
+      "hoặc cadgpt/ để gọi các command khác (viết lisp, viết skill, etc.)."
+    );
+  }
+
+  if (options.stale) {
+    lines.push(
+      "",
+      "_Danh sách được lấy từ tray cache và sẽ được kiểm tra lại khi bắt đầu CAD work._"
     );
   }
 
