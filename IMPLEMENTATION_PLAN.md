@@ -164,11 +164,15 @@ The implemented authority model remains the product core.
 
 - `INACTIVE`
 - `CONTROL`
-- `ACTIVE + admission_token`
+- `ACTIVE` session claim (no execution token)
 
-Downstream work must not bypass admission.
+Downstream work must not bypass the claimed ChatGPT/MCP session. Admission is routing state only; execution authority begins at WorkRegistration.
 
 ### 3.2 WorkRegistration
+
+A WorkRegistration is the first execution credential. It is created only when real FILE/CAD work starts.
+
+For a compatible active session, `cadgpt_work_start` is idempotent and returns the existing work_handle instead of rotating authority on every user turn.
 
 Each work execution records at least:
 
@@ -768,7 +772,7 @@ Do not re-implement already completed architecture.
 Verify current main contains and tests:
 
 - server-side explicit one-time session launch from literal `@cadgpt` or CadGPT plugin/icon invocation;
-- admission token enforcement;
+- session-claim enforcement without per-turn admission tokens;
 - WorkRegistration;
 - ToolLease;
 - absolute canonical mutation boundary;
@@ -944,9 +948,11 @@ Do not use the developer machine as the only release proof.
 - later turns in the same claimed session stay ACTIVE without repeated `@cadgpt`;
 - another MCP/chat session is not claimed automatically;
 - `@cadgpt help/status/stop` are CONTROL turns;
-- CONTROL cannot mutate FILE/CAD;
-- each turn receives a fresh short-lived admission token;
-- stale/forged admission token rejected.
+- public CONTROL commands route only through the control surface and do not start FILE/CAD work;
+- session claim persists for the logical MCP/chat session and carries no execution credential;
+- WorkRegistration is created only when real FILE/CAD work starts;
+- compatible active work is reused instead of generating a new handle every turn;
+- stale/forged work_handle authority is rejected.
 
 ### Work/ToolLease
 
@@ -1036,7 +1042,8 @@ The product is ready to ship only when all of the following are true.
 ### Core
 
 - explicit one-time session launch from `@cadgpt` or CadGPT plugin/icon is enforced server-side;
-- WorkRegistration and ToolLease isolation pass regression tests;
+- session claim is routing state only and never substitutes for execution authority;
+- WorkRegistration/work_handle and ToolLease isolation pass regression tests;
 - FILE/CAD paths remain separated;
 - stale authority is rejected.
 
