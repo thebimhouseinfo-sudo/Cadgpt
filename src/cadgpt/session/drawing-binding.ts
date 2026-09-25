@@ -90,9 +90,10 @@ export async function listOpenDrawings(): Promise<Array<Record<string, unknown>>
   return normalizeDocuments(raw);
 }
 
-export async function bindDrawing(document: string): Promise<BoundDrawing> {
-  const lease = currentToolLease();
-  const executionId = lease.workId;
+export async function bindDrawingForExecution(
+  executionId: string,
+  document: string
+): Promise<BoundDrawing> {
   const needle = document.trim().toLowerCase();
   if (!needle) throw new Error("document is required");
 
@@ -142,6 +143,15 @@ export async function bindDrawing(document: string): Promise<BoundDrawing> {
   };
   map.set(binding.drawing_id, binding);
   return binding;
+}
+
+export async function bindDrawing(document: string): Promise<BoundDrawing> {
+  const lease = currentToolLease();
+  return bindDrawingForExecution(lease.workId, document);
+}
+
+export function getBoundDrawingsForExecution(executionId: string): BoundDrawing[] {
+  return [...executionContexts(executionId).values()];
 }
 
 export function getBoundDrawings(): BoundDrawing[] {
