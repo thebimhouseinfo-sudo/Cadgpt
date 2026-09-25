@@ -17,7 +17,7 @@ export function registerAdmissionTool(
     {
       title: "CadGPT Admission",
       description:
-        "Internal CadGPT session admission handshake. On a bare CadGPT/CG plugin invocation or bare @cadgpt launch, the returned text content IS the final user-visible Welcome screen: output it verbatim and do not summarize it as ready/activated. The session claim persists for later turns in the same session. Pass the exact current user turn. Never carry a claim across another MCP/chat session.",
+        "Internal CadGPT session admission handshake. On a bare CadGPT/CG plugin invocation or bare @cadgpt / @cg launch, the returned text content IS the final user-visible Welcome screen: output it verbatim and do not summarize it as ready/activated. The session claim persists for later turns in the same session. Pass the exact current user turn. Never carry a claim across another MCP/chat session.",
       inputSchema: {
         user_turn: z
           .string()
@@ -26,7 +26,7 @@ export function registerAdmissionTool(
         invocation_source: z
           .enum(["mention", "plugin"])
           .default("plugin")
-          .describe("plugin = CadGPT connector/plugin was invoked; mention = the current turn literally contains @cadgpt. Once either claims this MCP session, later turns continue without repeating @cadgpt."),
+          .describe("plugin = CadGPT connector/plugin was invoked; mention = the current turn literally contains @cadgpt or @cg. Once either claims this MCP session, later turns continue without repeating the mention."),
       },
     },
     async ({ user_turn, invocation_source }) => {
