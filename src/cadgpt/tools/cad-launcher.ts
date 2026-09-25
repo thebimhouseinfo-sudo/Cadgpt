@@ -1,15 +1,15 @@
+import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { assertSessionClaimed } from "../lib/admission.js";
-import { cadUpstream } from "../runtime/cad-upstream.js";
+import { getTrayStatePath } from "../lib/appdata.js";
 
 interface CadPrepareDrawing {
   key: string;
   name: string;
   full_name: string;
-  runtime_document_id: string;
   active: boolean;
 }
 
@@ -20,55 +20,22 @@ interface PendingCadPrepare {
   drawings: CadPrepareDrawing[];
 }
 
+interface TrayCadSnapshot {
+  autocad_running?: boolean;
+  autocad_attached?: boolean;
+  autocad_drawing_count?: number | null;
+  autocad_active_document?: string | null;
+  autocad_drawings?: Array<{
+    name?: string;
+    full_name?: string;
+    active?: boolean;
+  }>;
+  autocad_probe_at?: string | null;
+}
+
 const PREPARE_TTL_MS = 30 * 60 * 1000;
+const TRAY_PROBE_FRESH_MS = 45_000;
 const pendingBySession = new Map<string, PendingCadPrepare>();
-
-function extractPayload(raw: unknown): unknown {
-  if (!raw || typeof raw !== "object") return raw;
-  const obj = raw as {
-    structuredContent?: unknown;
-    content?: Array<{ type?: string; text?: string }>;
-  };
-  if (obj.structuredContent !== undefined) return obj.structuredContent;
-  const text = obj.content?.find(
-    (item) => item.type === "text" && typeof item.text === "string"
-  )?.text;
-  if (text === undefined) return raw;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-}
-
-function normalizeDrawings(raw: unknown): CadPrepareDrawing[] {
-  const payload = extractPayload(raw);
-  let rows: Array<Record<string, unknown>> = [];
-  if (Array.isArray(payload)) {
-    rows = payload.filter(
-      (item): item is Record<string, unknown> => !!item && typeof item === "object"
-    );
-  } else if (payload && typeof payload === "object") {
-    const obj = payload as Record<string, unknown>;
-    for (const key of ["documents", "result", "data"]) {
-      if (Array.isArray(obj[key])) {
-        rows = (obj[key] as unknown[]).filter(
-          (item): item is Record<string, unknown> =>
-            !!item && typeof item === "object"
-        );
-        break;
-      }
-    }
-  }
-
-  return rows.map((item, index) => ({
-    key: String(index + 1),
-    name: String(item.name ?? ""),
-    full_name: String(item.full_name ?? ""),
-    runtime_document_id: String(item.runtime_document_id ?? ""),
-    active: item.active === true,
-  }));
-}
 
 function cleanupPending(): void {
   const now = Date.now();
@@ -79,8 +46,37 @@ function cleanupPending(): void {
   }
 }
 
-function renderGeneralWelcome(): string {
-  return [
+async function readTrayCadSnapshot(): Promise<{
+  snapshot: TrayCadSnapshot | null;
+  age_ms: number | null;
+}> {
+  try {
+    const raw = await fs.readFile(getTrayStatePath(), "utf8");
+    const snapshot = JSON.parse(raw) as TrayCadSnapshot;
+    const probeAt = snapshot.autocad_probe_at
+      ? Date.parse(snapshot.autocad_probe_at)
+      : Number.NaN;
+    const ageMs = Number.isFinite(probeAt) ? Math.max(0, Date.now() - probeAt) : null;
+    return { snapshot, age_ms: ageMs };
+  } catch {
+    return { snapshot: null, age_ms: null };
+  }
+}
+
+function normalizeDrawings(snapshot: TrayCadSnapshot): CadPrepareDrawing[] {
+  const rows = Array.isArray(snapshot.autocad_drawings)
+    ? snapshot.autocad_drawings
+    : [];
+  return rows.map((item, index) => ({
+    key: String(index + 1),
+    name: String(item.name ?? ""),
+    full_name: String(item.full_name ?? ""),
+    active: item.active === true,
+  }));
+}
+
+function renderGeneralWelcome(reason?: string): string {
+  const lines = [
     "```text",
     "CadGPT / CG",
     "────────────────────────────────",
@@ -90,16 +86,22 @@ function renderGeneralWelcome(): string {
     "CAD MCP   SLEEPING",
     "",
     "cadgpt/         command menu",
+    "cadgpt/cad      refresh CAD launcher",
     "cadgpt/help     usage help",
     "cadgpt/status   session/work status",
     "────────────────────────────────",
     "```",
     "",
     "CadGPT is ready. You can write/edit Lisp, work with files/jobs/skills, or open AutoCAD later.",
-  ].join("\n");
+  ];
+  if (reason) lines.push("", reason);
+  return lines.join("\n");
 }
 
-function renderCadPrepare(drawings: CadPrepareDrawing[], attachWarning?: string): string {
+function renderCadPrepare(
+  drawings: CadPrepareDrawing[],
+  options: { stale?: boolean; attachWarning?: string } = {}
+): string {
   const lines = [
     "```text",
     "CadGPT / CG — CAD Workspace Launcher",
@@ -107,13 +109,14 @@ function renderCadPrepare(drawings: CadPrepareDrawing[], attachWarning?: string)
     "SESSION   READY",
     "WORK      PREPARE",
     "AUTOCAD   DETECTED",
-    "CAD MCP   PREPARE (READ ONLY)",
+    "SOURCE    TRAY CACHE",
+    "CAD MCP   SLEEPING",
     "",
     "OPEN DRAWINGS",
   ];
 
   if (!drawings.length) {
-    lines.push("  — no open drawing detected —");
+    lines.push("  — no open drawing cached —");
   } else {
     for (const item of drawings) {
       const label = item.full_name || item.name || "(unnamed)";
@@ -128,16 +131,20 @@ function renderCadPrepare(drawings: CadPrepareDrawing[], attachWarning?: string)
     "```"
   );
 
-  if (attachWarning) {
-    lines.push("", `AutoCAD was detected but CadGPT could not attach cleanly: ${attachWarning}`);
+  if (options.stale) {
+    lines.push("", "Tray CAD snapshot is older than expected; confirmation will verify the workspace against live AutoCAD before work starts.");
+  }
+  if (options.attachWarning) {
+    lines.push("", options.attachWarning);
   } else if (!drawings.length) {
-    lines.push("", "Open a drawing in AutoCAD, then call CG again or use cadgpt/cad.");
+    lines.push("", "AutoCAD is open but no drawing is cached. Open a drawing, then use cadgpt/cad.");
   } else {
     lines.push(
       "",
-      "Confirm this CAD workspace to start CAD work. By default, confirmation binds all listed drawings; you may also choose specific drawing numbers."
+      "Confirm this workspace to start CAD work. By default all listed drawings are selected; you may choose specific drawing numbers."
     );
   }
+
   return lines.join("\n");
 }
 
@@ -147,69 +154,85 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
   confirmation_token?: string;
   drawings?: CadPrepareDrawing[];
   autocad_detected: boolean;
+  source: "tray_cache";
+  probe_age_ms: number | null;
 }> {
   assertSessionClaimed(sessionKey);
   cleanupPending();
 
-  try {
-    const probe = await cadUpstream.prepare();
-    const drawings = normalizeDrawings(probe.drawings);
-    if (!drawings.length) {
-      pendingBySession.delete(sessionKey);
-      return {
-        mode: "cad_prepare",
-        welcome_text: renderCadPrepare([]),
-        autocad_detected: true,
-        drawings: [],
-      };
-    }
-
-    const token = randomUUID();
-    const pending: PendingCadPrepare = {
-      token,
-      sessionKey,
-      createdAt: Date.now(),
-      drawings,
-    };
-    pendingBySession.set(sessionKey, pending);
-
-    return {
-      mode: "cad_prepare",
-      welcome_text: renderCadPrepare(drawings),
-      confirmation_token: token,
-      drawings,
-      autocad_detected: true,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+  const { snapshot, age_ms } = await readTrayCadSnapshot();
+  if (!snapshot) {
     pendingBySession.delete(sessionKey);
+    return {
+      mode: "general",
+      welcome_text: renderGeneralWelcome(
+        "Tray CAD snapshot is unavailable. CadGPT did not start CAD MCP to compensate."
+      ),
+      autocad_detected: false,
+      source: "tray_cache",
+      probe_age_ms: null,
+    };
+  }
 
-    if (/AutoCAD is not running/i.test(message)) {
-      await cadUpstream.deactivate().catch(() => undefined);
-      return {
-        mode: "general",
-        welcome_text: renderGeneralWelcome(),
-        autocad_detected: false,
-      };
-    }
-
-    const detected = /AutoCAD is running/i.test(message);
-    if (detected) {
-      return {
-        mode: "cad_prepare",
-        welcome_text: renderCadPrepare([], message),
-        autocad_detected: true,
-        drawings: [],
-      };
-    }
-
-    await cadUpstream.deactivate().catch(() => undefined);
+  if (snapshot.autocad_running !== true) {
+    pendingBySession.delete(sessionKey);
     return {
       mode: "general",
       welcome_text: renderGeneralWelcome(),
       autocad_detected: false,
+      source: "tray_cache",
+      probe_age_ms: age_ms,
     };
   }
+
+  const drawings = normalizeDrawings(snapshot);
+  const stale = age_ms === null || age_ms > TRAY_PROBE_FRESH_MS;
+
+  if (snapshot.autocad_attached !== true) {
+    pendingBySession.delete(sessionKey);
+    return {
+      mode: "cad_prepare",
+      welcome_text: renderCadPrepare([], {
+        stale,
+        attachWarning:
+          "AutoCAD process is open, but the tray probe cannot read its document collection. CadGPT still keeps full CAD MCP asleep.",
+      }),
+      autocad_detected: true,
+      source: "tray_cache",
+      probe_age_ms: age_ms,
+      drawings: [],
+    };
+  }
+
+  if (!drawings.length) {
+    pendingBySession.delete(sessionKey);
+    return {
+      mode: "cad_prepare",
+      welcome_text: renderCadPrepare([], { stale }),
+      autocad_detected: true,
+      source: "tray_cache",
+      probe_age_ms: age_ms,
+      drawings: [],
+    };
+  }
+
+  const token = randomUUID();
+  pendingBySession.set(sessionKey, {
+    token,
+    sessionKey,
+    createdAt: Date.now(),
+    drawings,
+  });
+
+  return {
+    mode: "cad_prepare",
+    welcome_text: renderCadPrepare(drawings, { stale }),
+    confirmation_token: token,
+    drawings,
+    autocad_detected: true,
+    source: "tray_cache",
+    probe_age_ms: age_ms,
+  };
 }
 
 export function consumeCadPrepare(
@@ -221,7 +244,7 @@ export function consumeCadPrepare(
   const pending = pendingBySession.get(sessionKey);
   if (!pending || pending.token !== confirmationToken) {
     throw new Error(
-      "CAD_PREPARE_REQUIRED: CAD workspace confirmation is missing or stale. Launch the CAD workspace again."
+      "CAD_PREPARE_REQUIRED: CAD workspace confirmation is missing or stale. Open the CAD launcher again."
     );
   }
 
@@ -233,7 +256,7 @@ export function consumeCadPrepare(
     : pending.drawings;
 
   if (!selected.length) {
-    throw new Error("CAD_WORKSPACE_EMPTY: select at least one open drawing.");
+    throw new Error("CAD_WORKSPACE_EMPTY: select at least one cached open drawing.");
   }
 
   pendingBySession.delete(sessionKey);
@@ -258,7 +281,7 @@ export function registerCadPrepareConfirmTool(
     {
       title: "Confirm CadGPT CAD Workspace",
       description:
-        "Confirm the pending read-only CAD workspace prepared at CadGPT launch. Only this confirmation creates/reuses direct CAD work authority and binds drawings.",
+        "Confirm the pending tray-cached CAD workspace. Only this transition starts full CAD MCP, verifies the live drawings, creates/reuses direct CAD work authority, and binds the workspace.",
       inputSchema: {
         confirmation_token: z.string().min(1),
         choice_keys: z.array(z.string()).optional(),
