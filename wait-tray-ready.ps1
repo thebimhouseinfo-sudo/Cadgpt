@@ -56,9 +56,13 @@ do {
                     [System.StringComparison]::OrdinalIgnoreCase
                 ) -ge 0
 
-            if ($state.ready -eq $true -and $owned) {
-                Write-Host "[OK] CadGPT tray ready (PID $trayPid)." -ForegroundColor Green
+            if ($state.ready -eq $true -and $owned -and $state.runtime_state -eq "Ready") {
+                Write-Host "[OK] CadGPT runtime ready (tray PID $trayPid)." -ForegroundColor Green
                 exit 0
+            }
+            if ($state.ready -eq $true -and $owned -and $state.runtime_state -eq "Degraded") {
+                Write-Host "[ERROR] CadGPT tray started but runtime is degraded." -ForegroundColor Red
+                exit 2
             }
         } catch {
             # Marker may be in the middle of an atomic-ish rewrite; retry until timeout.
@@ -68,5 +72,5 @@ do {
     Start-Sleep -Milliseconds 250
 } while ((Get-Date) -lt $deadline)
 
-Write-Host "[ERROR] CadGPT tray did not become ready." -ForegroundColor Red
+Write-Host "[ERROR] CadGPT runtime did not become ready before timeout." -ForegroundColor Red
 exit 1
