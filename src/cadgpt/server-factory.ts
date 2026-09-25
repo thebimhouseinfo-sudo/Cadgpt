@@ -232,7 +232,7 @@ export function createMcpServer(sessionKey: string): McpServer {
       capabilities: { logging: {}, tools: { listChanged: true } },
       instructions: [
         "CadGPT entry routing — highest priority: bare CadGPT plugin/icon invocation (including a connector renamed CG) or bare @cadgpt must call cadgpt_admission and return its welcome_text verbatim when present. Do not replace it with prose such as 'activated'.",
-        "Exact cadgpt/ calls cadgpt_control(surface=commands); exact cadgpt/help calls cadgpt_control(surface=help). These are static controls and must not wake CAD MCP.",
+        "Exact cadgpt/ calls cadgpt_control(surface=commands); exact cadgpt/help calls cadgpt_control(surface=help); exact cadgpt/status calls cadgpt_control(surface=status); exact cadgpt/stop calls cadgpt_control(surface=stop). Commands/help/status must not wake CAD MCP."
         "CadGPT is explicit-launch, session-persistent.",
         "The user launches CadGPT once per ChatGPT/MCP session, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt.",
         "Call cadgpt_admission with the exact current user turn. Plugin invocation defaults to invocation_source=plugin. After the session is claimed, later turns in the same MCP session remain admitted without repeating @cadgpt.",
@@ -251,7 +251,23 @@ export function createMcpServer(sessionKey: string): McpServer {
   sessionKeyByServer.set(server, sessionKey);
   configureToolRegistration(server, sessionKey);
 
-  registerCadGptControlTool(server);
+  registerCadGptControlTool(server, {
+    sessionKey,
+    stopCurrentWork: async () => {
+      const activeExecution = activeExecutionForSession(sessionKey);
+      if (!activeExecution) {
+        return { stopped: false, pending: false };
+      }
+
+      const cleanupExecutionId = releaseSessionWork(sessionKey);
+      if (!cleanupExecutionId) {
+        return { stopped: false, pending: true };
+      }
+
+      await cleanupExecutionState(cleanupExecutionId);
+      return { stopped: true, pending: false };
+    },
+  });
   registerAdmissionTool(server, {
     sessionKey,
     onActive: () => loadDiscoveryFamily(server),
