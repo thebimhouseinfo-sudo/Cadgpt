@@ -41,6 +41,7 @@ $LogDir = Join-Path $AppDataRoot "logs"
 $StateDir = Join-Path $AppDataRoot "state"
 $TrayLog = Join-Path $LogDir "tray.log"
 $TrayReadyPath = Join-Path $StateDir "tray-ready.json"
+$LegacyTrayReadyPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "appdata\state\tray-ready.json"))
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
@@ -293,22 +294,29 @@ function Stop-VerifiedRuntime {
     if ($script:IsTrayHost -and (Test-Path $TrayReadyPath)) { Write-TrayState }
 }
 
-function Stop-TrayHostFromMarker {
-    $state = Read-TrayState
-    if (-not $state -or -not $state.pid) {
-        Remove-Item $TrayReadyPath -Force -ErrorAction SilentlyContinue
-        return
-    }
-
-    $trayPid = [int]$state.pid
-    if ($trayPid -gt 0 -and $trayPid -ne $PID) {
-        if (Test-OwnedTrayProcess -ProcessId $trayPid) {
-            Stop-Process -Id $trayPid -Force -ErrorAction SilentlyContinue
-        } else {
-            Write-TrayLog "Tray marker PID $trayPid is not an owned CadGPT tray process; refusing to kill it."
+function Stop-TrayHostAtMarker([string]$MarkerPath) {
+    if (-not $MarkerPath -or -not (Test-Path $MarkerPath)) { return }
+    $state = $null
+    try { $state = Get-Content $MarkerPath -Raw | ConvertFrom-Json } catch {}
+    if ($state -and $state.pid) {
+        $trayPid = [int]$state.pid
+        if ($trayPid -gt 0 -and $trayPid -ne $PID) {
+            if (Test-OwnedTrayProcess -ProcessId $trayPid) {
+                Stop-Process -Id $trayPid -Force -ErrorAction SilentlyContinue
+                Write-TrayLog "Stopped owned CadGPT tray PID $trayPid from marker $MarkerPath."
+            } else {
+                Write-TrayLog "Tray marker PID $trayPid is not an owned CadGPT tray process; refusing to kill it."
+            }
         }
     }
-    Remove-Item $TrayReadyPath -Force -ErrorAction SilentlyContinue
+    Remove-Item $MarkerPath -Force -ErrorAction SilentlyContinue
+}
+
+function Stop-TrayHostFromMarker {
+    Stop-TrayHostAtMarker $TrayReadyPath
+    if ($LegacyTrayReadyPath -ne $TrayReadyPath) {
+        Stop-TrayHostAtMarker $LegacyTrayReadyPath
+    }
 }
 
 if ($InstallStartup) {
