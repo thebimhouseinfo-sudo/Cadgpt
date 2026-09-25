@@ -85,7 +85,19 @@ export function registerCadGptControlTool(
       } else if (surface === "job") {
         text = await options.listJobs();
       } else if (surface === "cl" || surface === "cj" || surface === "mcp") {
-        text = workflowPrompt(surface);
+        const work = workStatus(options.sessionKey);
+        text = work.active === true
+          ? workflowPrompt(surface)
+          : [
+              "```text",
+              "CG / Workspace Required",
+              "────────────────────────────────",
+              "Chưa có drawing workspace.",
+              "",
+              "Dùng cg/list và chọn 1 drawing trước khi bắt đầu workflow này.",
+              "────────────────────────────────",
+              "```",
+            ].join("\n");
       } else if (surface === "help") {
         text = CADGPT_HELP;
       } else if (surface === "status") {
