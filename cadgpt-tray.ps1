@@ -413,11 +413,13 @@ function Update-CadProbeStatus {
     if ($cadItem) {
         if (-not $script:CadProbe.running) {
             $cadItem.Text = "AutoCAD: OFF"
+            if ($drawingItem) { $drawingItem.Text = "Drawings: 0" }
         } elseif ($script:CadProbe.attached) {
-            $suffix = if ([int]$script:CadProbe.drawing_count -eq 1) { "drawing" } else { "drawings" }
-            $cadItem.Text = "AutoCAD: ON · $($script:CadProbe.drawing_count) $suffix"
+            $cadItem.Text = "AutoCAD: ON"
+            if ($drawingItem) { $drawingItem.Text = "Drawings: $($script:CadProbe.drawing_count)" }
         } else {
-            $cadItem.Text = "AutoCAD: ON · COM unavailable"
+            $cadItem.Text = "AutoCAD: ON"
+            if ($drawingItem) { $drawingItem.Text = "Drawings: unavailable" }
         }
     }
 
@@ -623,6 +625,11 @@ $cadItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $cadItem.Enabled = $false
 $cadItem.Text = "AutoCAD: checking..."
 [void]$menu.Items.Add($cadItem)
+
+$drawingItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$drawingItem.Enabled = $false
+$drawingItem.Text = "Drawings: checking..."
+[void]$menu.Items.Add($drawingItem)
 
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 
