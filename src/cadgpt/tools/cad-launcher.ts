@@ -129,9 +129,6 @@ function renderOnlineWelcome(
     "────────────────────────────────",
     "",
     "CAD",
-    "Online",
-    "",
-    "OPEN DRAWINGS",
   ];
 
   if (!drawings.length) {
@@ -139,7 +136,7 @@ function renderOnlineWelcome(
   } else {
     for (const item of drawings) {
       const label = item.full_name || item.name || "(unnamed)";
-      lines.push(`  ${item.key}. ${label}`);
+      lines.push(`${item.key}. ${label}`);
     }
   }
 
