@@ -31,6 +31,8 @@ WorkRegistration + ToolLease
 
 The Windows tray independently runs a lightweight read-only AutoCAD probe. It does not start the full CAD MCP, create WorkRegistration, bind drawings, or grant mutation authority. The tray reports `AutoCAD: OFF` or `AutoCAD: ON · N drawings` and refreshes the probe periodically plus immediately when the tray menu opens.
 
+The fake CLI is response-based, not live-updating. Use `cg/list` to refresh the drawing list from the newest tray snapshot after drawings are opened or closed in AutoCAD.
+
 CadGPT launcher is context-aware:
 
 ```text
@@ -59,7 +61,7 @@ ChatGPT considers CadGPT
    ├── no work_handle yet → WORK IDLE / CAD MCP SLEEPING
    ├── first real FILE/CAD task → cadgpt_work_start → create work_handle
    ├── later compatible tasks → reuse the same active work_handle
-   ├── cadgpt/status and cadgpt/stop → direct control surface, no token handshake
+   ├── cg/status and cg/stop → direct control surface, no token handshake
    └── a different/unclaimed MCP session → IDLE until explicitly launched
 ```
 
@@ -263,7 +265,7 @@ writable source root:
 <repo>\runtimes\cad-mcp\**
 
 read-only supporting context:
-src/cadgpt/**
+src/cg/**
 knowledge/**
 registry/**
 selected contract/docs/generator files
