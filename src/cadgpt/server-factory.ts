@@ -7,7 +7,9 @@ import {
 import { assertSessionClaimed, revokeSessionAdmissions } from "./lib/admission.js";
 import {
   activeExecutionForSession,
+  activeWorkForSession,
   acquireToolLease,
+  createWorkRegistration,
   releaseSessionWork,
   runWithToolLease,
   setWorkExpirationHandler,
@@ -22,6 +24,11 @@ import { markFamilyLoaded, runtimeStateSnapshot } from "./lib/runtime-state.js";
 import { registerAdmissionTool } from "./tools/admission.js";
 import { registerCadGptControlTool } from "./tools/control.js";
 import { registerWorkControlTools } from "./tools/work-control.js";
+import {
+  prepareCadLaunch,
+  registerCadPrepareConfirmTool,
+  clearCadPrepare,
+} from "./tools/cad-launcher.js";
 import { cleanupExecutionState } from "./runtime/execution-cleanup.js";
 
 const loadedByServer = new WeakMap<McpServer, Set<string>>();
@@ -193,6 +200,12 @@ async function prepareFamilies(
   ownerId: string,
   executionId: string
 ): Promise<void> {
+  if (executionPath === "file") {
+    const { cadUpstream } = await import("./runtime/cad-upstream.js");
+    if (cadUpstream.status().phase === "prepare") {
+      await cadUpstream.deactivate();
+    }
+  }
   if (executionPath === "file" || executionPath === "hybrid") await loadFileFamily(server);
   if (executionPath === "cad" || executionPath === "hybrid") {
     const [{ assertCadCandidateAccess }, { assertCadDevSourceAccess }] =
@@ -223,8 +236,10 @@ export function createMcpServer(sessionKey: string): McpServer {
         "CadGPT session claim is routing state only; it is not an execution credential and has no per-turn token.",
         "Actual FILE/CAD work begins with cadgpt_work_start. The returned work_handle (execution_id + authority_token) is the only execution credential.",
         "Reuse the active work_handle for later compatible requests in the same chat. Do not call cadgpt_work_start again unless there is no active work or the owner/execution path must change.",
-        "For an ordinary direct AutoCAD request (for example list/open/bind/query drawings), call cadgpt_work_start with owner_type=direct-cad, owner_id=direct-cad, execution_path=cad. The call is idempotent and returns the existing compatible work_handle when one is already active.",
-        "After direct-CAD work_start, use drawing_list/drawing_bind/CAD tools with that work_handle. CAD MCP wakes on the first actual CAD tool call, not merely on Welcome/status.",
+        "Bare launch is context-aware. If AutoCAD is not detected, return the General Welcome and keep WORK IDLE / CAD MCP SLEEPING.",
+        "If AutoCAD is detected, enter CAD PREPARE: read-only CAD MCP discovery lists open drawings and asks the user to confirm the CAD workspace. PREPARE has no WorkRegistration and cannot mutate CAD.",
+        "After explicit workspace confirmation, call cadgpt_cad_confirm with the pending confirmation_token and optional drawing choice keys. That transition creates/reuses direct-cad work, binds the confirmed drawings, promotes CAD MCP to ACTIVE, and returns the CAD Work CLI.",
+        "For later compatible CAD requests in that chat, reuse the active work_handle. Do not re-run workspace confirmation unless the user changes workspace or the binding becomes stale.",
         "CadGPT has two execution paths: FILE and CAD. CAD MCP is activated only on actual CAD demand.",
         "Never assume AutoCAD ActiveDocument is the target; use explicit drawing contexts.",
         "All file mutations require absolute canonical target paths and allowed-root verification. Relative/CWD-authorized mutation is forbidden.",
@@ -236,6 +251,95 @@ export function createMcpServer(sessionKey: string): McpServer {
   sessionKeyByServer.set(server, sessionKey);
   configureToolRegistration(server, sessionKey);
 
+  registerCadPrepareConfirmTool(server, {
+    sessionKey,
+    activateWorkspace: async (drawings) => {
+      const prior = activeWorkForSession(sessionKey);
+      let work = prior;
+
+      if (
+        !work ||
+        work.ownerType !== "direct-cad" ||
+        work.ownerId !== "direct-cad" ||
+        work.executionPath !== "cad"
+      ) {
+        const priorExecution = activeExecutionForSession(sessionKey);
+        if (priorExecution) {
+          const cleanupId = releaseSessionWork(sessionKey);
+          if (cleanupId) await cleanupExecutionState(cleanupId);
+        }
+
+        work = createWorkRegistration({
+          sessionKey,
+          ownerType: "direct-cad",
+          ownerId: "direct-cad",
+          executionPath: "cad",
+        });
+      }
+
+      try {
+        await prepareFamilies(server, "cad", "direct-cad", work.executionId);
+        const { cadUpstream } = await import("./runtime/cad-upstream.js");
+        cadUpstream.promotePreparedToActive();
+
+        const { bindDrawingForExecution } = await import(
+          "./session/drawing-binding.js"
+        );
+        const bound = [];
+        for (const drawing of drawings) {
+          const selector = drawing.full_name || drawing.name;
+          bound.push(
+            await bindDrawingForExecution(work.executionId, selector)
+          );
+        }
+
+        const lines = [
+          "```text",
+          "CadGPT / CG — CAD Work",
+          "────────────────────────────────",
+          "SESSION   READY",
+          "WORK      ACTIVE",
+          "MODE      CAD",
+          "CAD MCP   ACTIVE",
+          "",
+          "WORKSPACE",
+          ...bound.map(
+            (item, index) =>
+              `  ${index + 1}. ${item.full_name || item.name}  [${item.drawing_id}]`
+          ),
+          "",
+          "QUICK COMMANDS",
+          "  cadgpt/status     session / work / CAD status",
+          "  cadgpt/stop       stop current CAD work",
+          "  drawing nào đang mở",
+          "  đọc layer của drawing <n>",
+          "  bind thêm <drawing>",
+          "  load lisp <file> vào drawing <n>",
+          "────────────────────────────────",
+          "```",
+        ];
+        return {
+          text: lines.join("\n"),
+          work_handle: {
+            execution_id: work.executionId,
+            authority_token: work.authorityToken,
+            owner_type: work.ownerType,
+            owner_id: work.ownerId,
+            execution_path: work.executionPath,
+            generation: work.generation,
+          },
+          drawings: bound,
+        };
+      } catch (error) {
+        if (!prior || prior.executionId !== work.executionId) {
+          const cleanupId = releaseSessionWork(sessionKey);
+          if (cleanupId) await cleanupExecutionState(cleanupId);
+        }
+        throw error;
+      }
+    },
+  });
+
   registerCadGptControlTool(server, {
     sessionKey,
     getCadState: async () => {
@@ -244,8 +348,7 @@ export function createMcpServer(sessionKey: string): McpServer {
       try {
         const { cadUpstream } = await import("./runtime/cad-upstream.js");
         const state = cadUpstream.status() as unknown as Record<string, unknown>;
-        if (state.connected === true) return "CONNECTED";
-        const raw = typeof state.state === "string" ? state.state : "SLEEPING";
+        const raw = typeof state.phase === "string" ? state.phase : "sleeping";
         return raw.toUpperCase();
       } catch {
         return "ERROR";
@@ -268,7 +371,20 @@ export function createMcpServer(sessionKey: string): McpServer {
   });
   registerAdmissionTool(server, {
     sessionKey,
-    onActive: () => loadDiscoveryFamily(server),
+    onActive: async ({ bareLaunch }) => {
+      await loadDiscoveryFamily(server);
+      if (!bareLaunch) return;
+      const launch = await prepareCadLaunch(sessionKey);
+      return {
+        launch_mode: launch.mode,
+        welcome_text: launch.welcome_text,
+        autocad_detected: launch.autocad_detected,
+        ...(launch.confirmation_token
+          ? { confirmation_token: launch.confirmation_token }
+          : {}),
+        ...(launch.drawings ? { drawings: launch.drawings } : {}),
+      };
+    },
   });
   registerWorkControlTools(server, {
     sessionKey,
@@ -293,6 +409,7 @@ export async function disposeMcpServerRuntime(
       await cleanupExecutionState(executionIdReadyForCleanup);
     }
     revokeSessionAdmissions(sessionKey);
+    clearCadPrepare(sessionKey);
   }
 
   loadedByServer.delete(server);
