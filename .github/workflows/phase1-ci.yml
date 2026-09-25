@@ -98,6 +98,28 @@ jobs:
           }
           Write-Host "Doctor AppData resolution matches runtime legacy/default contract"
 
+      - name: Guard tray managed AppData initialization
+        shell: pwsh
+        run: |
+          $tray = Get-Content "cadgpt-tray.ps1" -Raw
+          foreach ($required in @(
+            '"libraries\lisp"',
+            '"libraries\jobs"',
+            '"registry\user"',
+            '"workspace\lisp-draft"',
+            '"workspace\job-draft"',
+            '"data\runs"',
+            '"runtime\dynamic-lisp"',
+            '"drawings"',
+            '"state"',
+            '"logs"'
+          )) {
+            if ($tray -notmatch [regex]::Escape($required)) {
+              throw "cadgpt-tray.ps1 managed AppData initialization missing $required"
+            }
+          }
+          Write-Host "Tray managed AppData initialization contract present"
+
       - name: Smoke admission, lazy families, managed sandbox and registry
         shell: pwsh
         run: |
