@@ -250,7 +250,7 @@ function Read-TrayState {
 }
 
 function Write-TrayState {
-    @{
+    $payload = @{
         pid = $PID
         ready = $true
         runtime_state = $script:RuntimeState
@@ -264,7 +264,12 @@ function Write-TrayState {
         autocad_active_document = $script:CadProbe.active_document
         autocad_drawings = @($script:CadProbe.drawings)
         autocad_probe_at = $script:CadProbeAt
-    } | ConvertTo-Json -Depth 5 | Set-Content -Path $TrayReadyPath -Encoding UTF8
+    } | ConvertTo-Json -Depth 5
+
+    $tempPath = "$TrayReadyPath.tmp"
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($tempPath, $payload, $utf8NoBom)
+    Move-Item -Path $tempPath -Destination $TrayReadyPath -Force
 }
 
 function Resolve-OwnedCadGptPid {
