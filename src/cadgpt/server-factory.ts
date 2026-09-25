@@ -4,7 +4,7 @@ import {
   type RegisteredTool,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { validateAdmissionToken } from "./lib/admission.js";
+import { assertSessionClaimed, revokeSessionAdmissions } from "./lib/admission.js";
 import {
   activeExecutionForSession,
   acquireToolLease,
@@ -13,7 +13,6 @@ import {
   setWorkExpirationHandler,
   type ExecutionPath,
 } from "./lib/work-registration.js";
-import { revokeSessionAdmissions } from "./lib/admission.js";
 import {
   toolAuthority,
   toolFamily,
@@ -49,38 +48,27 @@ function configureToolRegistration(server: McpServer, sessionKey: string): void 
     const baseInputSchema = (config.inputSchema || {}) as Record<string, unknown>;
 
     const authoritySchema =
-      authority === "admission"
+      authority === "work"
         ? {
-            admission_token: z
+            execution_id: z
               .string()
               .min(1)
-              .describe("ACTIVE token returned by cadgpt_admission for this exact ChatGPT session"),
+              .describe("execution_id returned by cadgpt_work_start"),
+            authority_token: z
+              .string()
+              .min(1)
+              .describe("opaque authority_token returned by cadgpt_work_start"),
           }
-        : authority === "work"
-          ? {
-              admission_token: z
-                .string()
-                .min(1)
-                .describe("ACTIVE token returned by cadgpt_admission"),
-              execution_id: z
-                .string()
-                .min(1)
-                .describe("execution_id returned by cadgpt_work_start"),
-              authority_token: z
-                .string()
-                .min(1)
-                .describe("opaque authority_token returned by cadgpt_work_start"),
-            }
-          : {};
+        : {};
 
     const nextConfig = {
       ...config,
       inputSchema: { ...baseInputSchema, ...authoritySchema },
       description:
-        authority === "admission"
-          ? `${config.description || ""} Requires ACTIVE cadgpt_admission.`.trim()
+        authority === "session"
+          ? `${config.description || ""} Requires this MCP/chat session to have launched CadGPT.`.trim()
           : authority === "work"
-            ? `${config.description || ""} Requires ACTIVE admission + current CadGPT work_handle.`.trim()
+            ? `${config.description || ""} Requires the current CadGPT work_handle.`.trim()
             : config.description,
     };
 
@@ -89,14 +77,9 @@ function configureToolRegistration(server: McpServer, sessionKey: string): void 
     }
 
     const wrapped = async (args: Record<string, unknown> = {}, ...rest: unknown[]) => {
-      const admissionToken =
-        typeof args.admission_token === "string" ? args.admission_token : undefined;
-
-      if (authority === "admission") {
-        validateAdmissionToken(admissionToken, sessionKey);
-        const toolArgs = { ...args };
-        delete toolArgs.admission_token;
-        return callback(toolArgs, ...rest);
+      if (authority === "session") {
+        assertSessionClaimed(sessionKey);
+        return callback(args, ...rest);
       }
 
       const executionId =
@@ -110,11 +93,9 @@ function configureToolRegistration(server: McpServer, sessionKey: string): void 
         targetId: toolTargetId(args, family),
         executionId,
         authorityToken,
-        admissionToken,
         sessionKey,
       });
       const toolArgs = { ...args };
-      delete toolArgs.admission_token;
       delete toolArgs.execution_id;
       delete toolArgs.authority_token;
       return runWithToolLease(lease, () => callback(toolArgs, ...rest));
@@ -239,8 +220,9 @@ export function createMcpServer(sessionKey: string): McpServer {
         "Call cadgpt_admission with the exact current user turn. Plugin invocation defaults to invocation_source=plugin. After the session is claimed, later turns in the same MCP session remain admitted without repeating @cadgpt.",
         "Never carry admission across another MCP/chat session, memory, unrelated files, paths, or AutoCAD state. Session disposal revokes the claim.",
         "Bare @cadgpt claims the session as ACTIVE; only explicit @cadgpt help/status/stop are CONTROL commands.",
-        "ACTIVE admission returns a fresh admission_token for the current turn. Carry it to discovery and cadgpt_work_start.",
-        "Actual FILE/CAD work requires the work_handle from cadgpt_work_start; carry admission_token + execution_id + authority_token to every execution tool call.",
+        "CadGPT session claim is routing state only; it is not an execution credential and has no per-turn token.",
+        "Actual FILE/CAD work begins with cadgpt_work_start. The returned work_handle (execution_id + authority_token) is the only execution credential.",
+        "Reuse the active work_handle for later compatible requests in the same chat. Do not call cadgpt_work_start again unless there is no active work or the owner/execution path must change.",
         "CadGPT has two execution paths: FILE and CAD. CAD MCP is activated only on actual CAD demand.",
         "Never assume AutoCAD ActiveDocument is the target; use explicit drawing contexts.",
         "All file mutations require absolute canonical target paths and allowed-root verification. Relative/CWD-authorized mutation is forbidden.",
