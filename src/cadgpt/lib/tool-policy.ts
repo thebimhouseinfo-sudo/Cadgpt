@@ -16,11 +16,11 @@ const DISCOVERY_TOOLS = new Set([
   "library_list",
 ]);
 
-export type ToolAuthority = "control" | "admission" | "work";
+export type ToolAuthority = "control" | "session" | "work";
 
 export function toolAuthority(toolName: string): ToolAuthority {
   if (CONTROL_TOOLS.has(toolName)) return "control";
-  if (DISCOVERY_TOOLS.has(toolName)) return "admission";
+  if (DISCOVERY_TOOLS.has(toolName)) return "session";
   return "work";
 }
 
