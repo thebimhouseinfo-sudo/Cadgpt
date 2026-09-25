@@ -146,12 +146,16 @@ jobs:
             }
             if ($initialNames -contains "file_roots" -or $initialNames -contains "drawing_list") { throw "Execution tools leaked into pre-admission surface" }
 
-            $inactive = Invoke-Tool "cadgpt_admission" @{ user_turn="inspect this drawing" }
-            if ($inactive.result.structuredContent.data.mode -ne "inactive") { throw "CadGPT admitted a request without literal @cadgpt" }
+            $inactive = Invoke-Tool "cadgpt_admission" @{ user_turn="inspect this drawing"; invocation_source="mention" }
+            if ($inactive.result.structuredContent.data.mode -ne "inactive") { throw "Unclaimed session should remain inactive before explicit CadGPT launch" }
 
-            $admit = Invoke-Tool "cadgpt_admission" @{ user_turn="@cadgpt run CI file smoke" }
+            $admit = Invoke-Tool "cadgpt_admission" @{ user_turn="CG"; invocation_source="plugin" }
             $admissionToken = [string]$admit.result.structuredContent.data.admission_token
-            if (-not $admissionToken) { throw "ACTIVE admission returned no token" }
+            if (-not $admissionToken -or $admit.result.structuredContent.data.mode -ne "active") { throw "Plugin launch did not claim session" }
+
+            $continued = Invoke-Tool "cadgpt_admission" @{ user_turn="inspect this drawing"; invocation_source="mention" }
+            $admissionToken = [string]$continued.result.structuredContent.data.admission_token
+            if (-not $admissionToken -or $continued.result.structuredContent.data.reason -ne "session_continuation") { throw "Claimed session did not continue without repeated @cadgpt" }
 
             $afterAdmission = Invoke-Mcp "tools/list" @{}
             $afterAdmissionNames = @($afterAdmission.result.tools | ForEach-Object { $_.name })
