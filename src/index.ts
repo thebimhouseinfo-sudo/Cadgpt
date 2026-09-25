@@ -216,7 +216,7 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`Local MCP:  http://${HOST}:${PORT}${mcpPaths[0]}`);
   console.log(`Health:     http://${HOST}:${PORT}/health`);
   console.log(
-    "Admission:  literal @cadgpt in current user turn; no contextual exceptions"
+    "Admission:  launch once per ChatGPT/MCP session via @cadgpt or CadGPT plugin/icon; later turns continue in-session"
   );
   console.log("FILE/CAD:   lazy-loaded only after admitted work registration");
   console.log("CAD MCP:    activated only on actual CAD tool demand");
