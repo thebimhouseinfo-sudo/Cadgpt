@@ -221,7 +221,7 @@ export function createMcpServer(sessionKey: string): McpServer {
       capabilities: { logging: {}, tools: { listChanged: true } },
       instructions: [
         "CadGPT entry routing — highest priority: bare CadGPT plugin/icon invocation (including a connector renamed CG) or bare @cadgpt must call cadgpt_admission and return its welcome_text verbatim when present. Do not replace it with prose such as 'activated'.",
-        "Exact cg/ calls cadgpt_control(surface=commands); exact cg/list calls cadgpt_control(surface=list); exact cg/cad calls cadgpt_control(surface=cad); exact cg/help calls cadgpt_control(surface=help); exact cg/status calls cadgpt_control(surface=status); exact cg/stop calls cadgpt_control(surface=stop). cg/list and cg/cad read tray cache only and never wake full CAD MCP.",
+        "Exact cg/ calls cadgpt_control(surface=commands); cg/list -> surface=list; cg/cl -> surface=cl; cg/cj -> surface=cj; cg/job -> surface=job; cg/mcp -> surface=mcp; cg/help -> surface=help; cg/stop -> surface=stop. cg/list reads tray cache only and never wakes full CAD MCP.",
         "CadGPT is explicit-launch, session-persistent.",
         "The user launches CadGPT once per ChatGPT/MCP session, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt.",
         "On a bare plugin/icon or bare @cadgpt launch, call cadgpt_admission once. If that launch also contains a real task, claim the session and continue directly instead of forcing the generic Welcome. After the session is claimed, do not call admission again on every turn.",
@@ -230,11 +230,11 @@ export function createMcpServer(sessionKey: string): McpServer {
         "CadGPT session claim is routing state only; it is not an execution credential and has no per-turn token.",
         "Actual FILE/CAD work begins with cadgpt_work_start. The returned work_handle (execution_id + authority_token) is the only execution credential.",
         "Reuse the active work_handle for later compatible requests in the same chat. Do not call cadgpt_work_start again unless there is no active work or the owner/execution path must change.",
-        "Bare launch is context-aware. If AutoCAD is not detected, return the General Welcome and keep WORK IDLE / CAD MCP SLEEPING.",
-        "If the tray cache reports AutoCAD, enter CAD PREPARE from the cached drawing list and ask the user to select drawings. The fake CLI is not live-updating; cg/list refreshes the launcher from the newest tray snapshot. PREPARE does not start CAD MCP, has no WorkRegistration, and cannot mutate CAD.",
-        "After explicit workspace confirmation, call cadgpt_cad_confirm with the pending confirmation_token and optional drawing choice keys. That transition creates/reuses direct-cad work, starts full CAD MCP, verifies the cached selections against live AutoCAD, binds the confirmed drawings, and returns the CAD Work CLI.",
-        "Treat a natural follow-up such as 'xác nhận', 'ok', 'yes', or equivalent as confirmation of the pending CAD workspace. Reuse the private confirmation_token from the launcher result; never ask the user to copy or provide it. If the user selects drawing numbers, pass those numbers as choice_keys; no choice_keys means all listed drawings.",
-        "For later compatible CAD requests in that chat, reuse the active work_handle. Do not re-run workspace confirmation unless the user changes workspace or the binding becomes stale.",
+        "Bare launch always renders the three-section CadGPT Welcome from tray state. If AutoCAD is offline, keep WORK IDLE and tell the user to open AutoCAD/a drawing then use cg/list.",
+        "If the tray cache reports AutoCAD, list open drawings with no active-drawing marker and ask the user to choose exactly one drawing. The fake CLI is not live-updating; cg/list refreshes from the newest tray snapshot. PREPARE does not start CAD MCP, has no WorkRegistration, and cannot mutate CAD.",
+        "After the user chooses one drawing number, call cadgpt_cad_confirm with the private confirmation_token and exactly one choice_key. Multi-drawing selection is forbidden. This transition replaces any prior work, starts full CAD MCP, verifies the selected drawing live, binds exactly one DrawingContext, and returns Workspace Ready.",
+        "A workspace choice must identify exactly one listed drawing number (for example '1'). Do not treat bare 'xác nhận' as a drawing choice and never default to all drawings. Reuse the private confirmation_token internally; never ask the user to copy it.",
+        "Hard invariant: 1 work = 1 drawing. For later compatible requests, reuse the active work_handle. cg/list may prepare a replacement workspace; selecting a new drawing releases the prior work before registering the new one.",
         "CadGPT has two execution paths: FILE and CAD. CAD MCP is activated only on actual CAD demand.",
         "Never assume AutoCAD ActiveDocument is the target; use explicit drawing contexts.",
         "All file mutations require absolute canonical target paths and allowed-root verification. Relative/CWD-authorized mutation is forbidden.",
@@ -248,71 +248,59 @@ export function createMcpServer(sessionKey: string): McpServer {
 
   registerCadPrepareConfirmTool(server, {
     sessionKey,
-    activateWorkspace: async (drawings) => {
-      const prior = activeWorkForSession(sessionKey);
-      let work = prior;
-
-      if (
-        !work ||
-        work.ownerType !== "direct-cad" ||
-        work.ownerId !== "direct-cad" ||
-        work.executionPath !== "cad"
-      ) {
-        const priorExecution = activeExecutionForSession(sessionKey);
-        if (priorExecution) {
-          const cleanupId = releaseSessionWork(sessionKey);
-          if (cleanupId) await cleanupExecutionState(cleanupId);
-        }
-
-        work = createWorkRegistration({
-          sessionKey,
-          ownerType: "direct-cad",
-          ownerId: "direct-cad",
-          executionPath: "cad",
-        });
+    activateWorkspace: async (drawing) => {
+      const previousExecution = activeExecutionForSession(sessionKey);
+      if (previousExecution) {
+        const cleanupId = releaseSessionWork(sessionKey);
+        if (cleanupId) await cleanupExecutionState(cleanupId);
       }
 
+      const work = createWorkRegistration({
+        sessionKey,
+        ownerType: "direct-cad",
+        ownerId: "drawing-workspace",
+        executionPath: "hybrid",
+      });
+
       try {
-        await prepareFamilies(server, "cad", "direct-cad", work.executionId);
+        await prepareFamilies(server, "hybrid", "drawing-workspace", work.executionId);
         const { cadUpstream } = await import("./runtime/cad-upstream.js");
         await cadUpstream.activate();
 
         const { bindDrawingForExecution } = await import(
           "./session/drawing-binding.js"
         );
-        const bound = [];
-        for (const drawing of drawings) {
-          const selector = drawing.full_name || drawing.name;
-          bound.push(
-            await bindDrawingForExecution(work.executionId, selector)
-          );
-        }
+        const selector = drawing.full_name || drawing.name;
+        const bound = await bindDrawingForExecution(work.executionId, selector);
 
+        const { listRegisteredJobs } = await import("./tools/jobs.js");
+        const jobs = await listRegisteredJobs();
+        const jobLines = jobs.length
+          ? jobs.map((job, index) => `  ${index + 1}. ${job.title} [${job.id}]`)
+          : ["  — chưa có Job nào được đăng ký —"];
+
+        const drawingLabel = bound.full_name || bound.name;
         const lines = [
           "```text",
-          "CadGPT / CG — CAD Work",
+          "CadGPT / CG — Workspace Ready",
           "────────────────────────────────",
-          "SESSION   READY",
-          "WORK      ACTIVE",
-          "MODE      CAD",
-          "CAD MCP   ACTIVE",
           "",
-          "WORKSPACE",
-          ...bound.map(
-            (item, index) =>
-              `  ${index + 1}. ${item.full_name || item.name}  [${item.drawing_id}]`
-          ),
+          "Chúng ta bắt đầu làm việc trên bản vẽ:",
+          drawingLabel,
           "",
-          "QUICK COMMANDS",
-          "  cg/status     session / work / CAD status",
-          "  cg/stop       stop current CAD work",
-          "  drawing nào đang mở",
-          "  đọc layer của drawing <n>",
-          "  bind thêm <drawing>",
-          "  load lisp <file> vào drawing <n>",
+          "────────────────────────────────",
+          "",
+          "Hãy nói với tôi yêu cầu của bạn",
+          "hoặc chạy một Job bên dưới:",
+          "",
+          ...jobLines,
+          "",
+          "cg/job      xem toàn bộ Job đã đăng ký",
+          "cg/         xem toàn bộ command",
           "────────────────────────────────",
           "```",
         ];
+
         return {
           text: lines.join("\n"),
           work_handle: {
@@ -323,13 +311,11 @@ export function createMcpServer(sessionKey: string): McpServer {
             execution_path: work.executionPath,
             generation: work.generation,
           },
-          drawings: bound,
+          drawing: bound,
         };
       } catch (error) {
-        if (!prior || prior.executionId !== work.executionId) {
-          const cleanupId = releaseSessionWork(sessionKey);
-          if (cleanupId) await cleanupExecutionState(cleanupId);
-        }
+        const cleanupId = releaseSessionWork(sessionKey);
+        if (cleanupId) await cleanupExecutionState(cleanupId);
         throw error;
       }
     },
@@ -349,6 +335,21 @@ export function createMcpServer(sessionKey: string): McpServer {
     launchCadWorkspace: async () => {
       const launch = await prepareCadLaunch(sessionKey);
       return launch.welcome_text;
+    },
+    listJobs: async () => {
+      const { listRegisteredJobs } = await import("./tools/jobs.js");
+      const jobs = await listRegisteredJobs();
+      const lines = [
+        "```text",
+        "CG / Registered Jobs",
+        "────────────────────────────────",
+        ...(jobs.length
+          ? jobs.map((job, index) => `  ${index + 1}. ${job.title} [${job.id}]`)
+          : ["  — chưa có Job nào được đăng ký —"]),
+        "────────────────────────────────",
+        "```",
+      ];
+      return lines.join("\n");
     },
     stopCurrentWork: async () => {
       const activeExecution = activeExecutionForSession(sessionKey);
