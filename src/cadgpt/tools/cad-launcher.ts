@@ -47,19 +47,27 @@ async function readTrayCadSnapshot(): Promise<{
   snapshot: TrayCadSnapshot | null;
   age_ms: number | null;
 }> {
-  try {
-    const raw = await fs.readFile(getTrayStatePath(), "utf8");
-    // Windows PowerShell 5.1 writes UTF-8 with a BOM. Strip it before JSON.parse
-    // so the slim MCP can consume the same tray snapshot that PowerShell reads.
-    const snapshot = JSON.parse(raw.replace(/^\uFEFF/, "")) as TrayCadSnapshot;
-    const probeAt = snapshot.autocad_probe_at
-      ? Date.parse(snapshot.autocad_probe_at)
-      : Number.NaN;
-    const ageMs = Number.isFinite(probeAt) ? Math.max(0, Date.now() - probeAt) : null;
-    return { snapshot, age_ms: ageMs };
-  } catch {
-    return { snapshot: null, age_ms: null };
+  const statePath = getTrayStatePath();
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const raw = await fs.readFile(statePath, "utf8");
+      const snapshot = JSON.parse(raw.replace(/^\uFEFF/, "")) as TrayCadSnapshot;
+      const probeAt = snapshot.autocad_probe_at
+        ? Date.parse(snapshot.autocad_probe_at)
+        : Number.NaN;
+      const ageMs = Number.isFinite(probeAt)
+        ? Math.max(0, Date.now() - probeAt)
+        : null;
+      return { snapshot, age_ms: ageMs };
+    } catch {
+      if (attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+    }
   }
+
+  return { snapshot: null, age_ms: null };
 }
 
 function normalizeDrawings(snapshot: TrayCadSnapshot): CadPrepareDrawing[] {
