@@ -31,7 +31,7 @@ function hasExplicitInvocation(userTurn: string): boolean {
 
 function isControlOnly(userTurn: string): boolean {
   const value = userTurn.trim();
-  return /^cg\/(?:list|cl|cj|job|mcp|help|status|stop)?\s*$/i.test(value);
+  return /^cg\/(?:list|cl|cj|job|mcp|help|stop)?\s*$/i.test(value);
 }
 
 function touchClaim(sessionKey: string): SessionClaim | undefined {
