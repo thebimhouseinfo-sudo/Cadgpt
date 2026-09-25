@@ -51,7 +51,7 @@ export const CADGPT_ROOT_MENU = [
 export const CADGPT_HELP = [
   "# CG Help",
   "",
-  "Gọi **CG** hoặc dùng `@cadgpt` một lần để kích hoạt CadGPT cho chat hiện tại.",
+  "Gọi **CG** hoặc dùng `@cadgpt` / `@cg` một lần để kích hoạt CadGPT cho chat hiện tại.",
   "",
   "CadGPT làm việc trên một CAD workspace duy nhất:",
   "`1 work = 1 drawing`.",
@@ -85,7 +85,7 @@ export function isBareCadGptLaunch(
     .replace(/[\u200B-\u200D\u2060\uFEFF\uFFFC]/g, "")
     .trim();
 
-  if (/^@cadgpt\s*$/i.test(value) || /^(?:\$?cg|\$?cadgpt)\s*$/i.test(value)) {
+  if (/^@(?:cadgpt|cg)\s*$/i.test(value) || /^(?:\$?cg|\$?cadgpt)\s*$/i.test(value)) {
     return true;
   }
 
@@ -97,7 +97,7 @@ export function isBareCadGptLaunch(
   const remainder = value
     .replace(/\[[^\]]*\]\(app:\/\/[^)]+\)/gi, " ")
     .replace(/app:\/\/[^\s)]+/gi, " ")
-    .replace(/@cadgpt\b/gi, " ")
+    .replace(/@(?:cadgpt|cg)\b/gi, " ")
     .replace(/\$(?:cg|cadgpt)\b/gi, " ")
     .replace(/\b(?:cadgpt|cg)\b/gi, " ")
     .replace(/[\[\](){}<>|:;,_*~`'"-]+/g, " ")
