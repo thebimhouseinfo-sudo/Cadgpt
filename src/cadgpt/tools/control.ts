@@ -8,12 +8,47 @@ import {
   CADGPT_ROOT_MENU,
 } from "../lib/quickstart.js";
 
+function workflowPrompt(surface: "cl" | "cj" | "mcp"): string {
+  if (surface === "cl") {
+    return [
+      "```text",
+      "CG / Create Lisp",
+      "────────────────────────────────",
+      "Hãy mô tả Lisp bạn muốn tạo hoặc sửa.",
+      "CadGPT sẽ dùng drawing workspace hiện tại để load/test.",
+      "────────────────────────────────",
+      "```",
+    ].join("\n");
+  }
+  if (surface === "cj") {
+    return [
+      "```text",
+      "CG / Create Job",
+      "────────────────────────────────",
+      "Hãy mô tả Job bạn muốn tạo hoặc sửa.",
+      "Job sẽ được author/validate theo Job workflow của CadGPT.",
+      "────────────────────────────────",
+      "```",
+    ].join("\n");
+  }
+  return [
+    "```text",
+    "CG / CAD MCP Development",
+    "────────────────────────────────",
+    "Hãy mô tả tool hoặc phần CAD MCP bạn muốn cập nhật.",
+    "CadGPT sẽ dùng cad-mcp-dev trên drawing workspace hiện tại.",
+    "────────────────────────────────",
+    "```",
+  ].join("\n");
+}
+
 export function registerCadGptControlTool(
   server: McpServer,
   options: {
     sessionKey: string;
     getCadState: () => Promise<string>;
     launchCadWorkspace: () => Promise<string>;
+    listJobs: () => Promise<string>;
     stopCurrentWork: () => Promise<{ stopped: boolean; pending: boolean }>;
   }
 ): void {
@@ -22,9 +57,19 @@ export function registerCadGptControlTool(
     {
       title: "CadGPT Control",
       description:
-        "Lightweight CG CLI. Exact cg/ -> commands, cg/list -> refresh drawing launcher from tray cache, cg/cad -> CAD workspace launcher, cg/help -> help, cg/status -> direct session/work/CAD status, cg/stop -> stop this session's active work. cg/list and cg/cad never start full CAD MCP."
+        "Lightweight CG fake CLI. cg/list refreshes the tray-backed drawing launcher without waking full CAD MCP; cg/job lists registered Jobs; cg/cl, cg/cj and cg/mcp enter the corresponding workflow; cg/ shows the full command menu.",
       inputSchema: {
-        surface: z.enum(["commands", "list", "cad", "help", "status", "stop"]),
+        surface: z.enum([
+          "commands",
+          "list",
+          "cl",
+          "cj",
+          "job",
+          "mcp",
+          "help",
+          "status",
+          "stop",
+        ]),
       },
       outputSchema: {
         text: z.string(),
@@ -35,8 +80,12 @@ export function registerCadGptControlTool(
 
       if (surface === "commands") {
         text = CADGPT_ROOT_MENU;
-      } else if (surface === "list" || surface === "cad") {
+      } else if (surface === "list") {
         text = await options.launchCadWorkspace();
+      } else if (surface === "job") {
+        text = await options.listJobs();
+      } else if (surface === "cl" || surface === "cj" || surface === "mcp") {
+        text = workflowPrompt(surface);
       } else if (surface === "help") {
         text = CADGPT_HELP;
       } else if (surface === "status") {
