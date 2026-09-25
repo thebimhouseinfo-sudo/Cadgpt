@@ -1,4 +1,5 @@
 const CONTROL_TOOLS = new Set([
+  "cadgpt_control",
   "cadgpt_admission",
   "cadgpt_work_start",
   "cadgpt_work_status",
