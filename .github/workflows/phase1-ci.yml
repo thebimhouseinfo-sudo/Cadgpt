@@ -150,8 +150,8 @@ jobs:
             if ($inactive.result.structuredContent.data.mode -ne "inactive") { throw "Unclaimed session should remain inactive before explicit CadGPT launch" }
 
             $admit = Invoke-Tool "cadgpt_admission" @{ user_turn="CG"; invocation_source="plugin" }
-            if ($admit.result.structuredContent.data.mode -ne "active") { throw "Plugin launch did not claim session" }
-            $welcome = [string]$admit.result.structuredContent.data.welcome_text
+            if ($admit.result.structuredContent.render_verbatim -ne $true) { throw "Bare plugin launch did not request verbatim Welcome rendering" }
+            $welcome = [string]$admit.result.structuredContent.welcome_text
             foreach ($section in @("CAD","WORKSPACE","COMMANDS")) {
               if ($welcome -notmatch $section) { throw "Bare plugin launch missing Welcome section: $section" }
             }
