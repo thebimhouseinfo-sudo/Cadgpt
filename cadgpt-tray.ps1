@@ -235,6 +235,7 @@ function Write-TrayState {
     @{
         pid = $PID
         ready = $true
+        runtime_state = $script:RuntimeState
         started_at = $script:TrayStartedAt
         script = $TrayScriptPath
         cadgpt_pid = $script:CadGptPid
