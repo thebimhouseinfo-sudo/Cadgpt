@@ -18,6 +18,48 @@ WorkRegistration + ToolLease
        AutoCAD
 ```
 
+## User flow
+
+CadGPT is drawing-workspace-first.
+
+```text
+CG plugin / @cadgpt
+→ read latest tray snapshot
+→ show 3-section Welcome
+→ choose exactly 1 open drawing
+→ start full CAD MCP
+→ verify the selected drawing live
+→ bind 1 drawing
+→ register 1 work
+→ Workspace Ready
+→ natural request or registered Job
+```
+
+**Invariant: `1 work = 1 drawing`.** Multi-drawing workspace selection is not supported.
+
+Welcome always contains:
+
+1. **CAD** — `Offline`, or `Online` plus the open drawing list. The launcher does not display AutoCAD's active-document marker.
+2. **WORKSPACE** — choose one drawing; `cg/list` refreshes from the latest tray snapshot without starting full CAD MCP.
+3. **COMMANDS** — only the common shortcuts `cg/cl`, `cg/cj`, `cg/job`, and `cg/` for the full command menu.
+
+Full fake CLI:
+
+```text
+cg/       full command menu
+cg/list   refresh drawings / choose workspace
+cg/cl     create or repair Lisp
+cg/cj     create or repair Job
+cg/job    list registered Jobs
+cg/mcp    update/develop CAD MCP
+cg/help   help
+cg/stop   stop current work
+```
+
+`@cadgpt` is activation text, not the CLI namespace.
+
+After the drawing is verified and bound, CadGPT reports the selected drawing and lists the Jobs currently registered in User Registry. Lisp/Job/file work uses the same single-drawing hybrid workspace; CAD MCP development remains development-only and retains its stricter authority rules.
+
 ## Product model
 
 - ChatGPT is the reasoning/chat UI.
