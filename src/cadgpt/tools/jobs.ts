@@ -79,6 +79,19 @@ async function loadJobs(): Promise<JobEntry[]> {
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
+export async function listRegisteredJobs(): Promise<Array<{
+  id: string;
+  title: string;
+  summary?: string;
+}>> {
+  const jobs = await loadJobs();
+  return jobs.map((job) => ({
+    id: job.id,
+    title: job.title,
+    ...(job.summary ? { summary: job.summary } : {}),
+  }));
+}
+
 function safeRelativeJob(value: string): string {
   const normalized = value.replaceAll("\\", "/").replace(/^\/+/, "");
   if (!normalized || normalized.split("/").includes("..") || path.isAbsolute(normalized) || path.basename(normalized).toLowerCase() !== "job.md") {
