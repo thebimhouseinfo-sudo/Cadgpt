@@ -7,7 +7,8 @@ import { getUserCapabilitiesPath } from "../lib/appdata.js";
 import { getRepoRoot } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { isDevelopmentBuild } from "../lib/work-registration.js";
-import { listBundledLispEntries } from "../lib/bundled-assets.js";
+import { listBundledLispEntries, resolveBundledLispPath } from "../lib/bundled-assets.js";
+import { resolveRegisteredAssetPath } from "./user-assets.js";
 
 interface ToolManifestEntry {
   name: string;
@@ -311,7 +312,18 @@ export function registerCapabilityRegistryTools(server: McpServer): void {
         });
         if (!matches.length) throw new Error(`Registry capability not found: ${id}`);
         if (matches.length > 1) throw new Error(`Registry lookup is ambiguous for ${id}; specify kind or canonical id`);
-        return toolResult("registry_get", { entry: matches[0] });
+        const entry = matches[0];
+        let resolved_path: string | undefined;
+        if (entry.kind === "lisp" && entry.registry === "internal" && entry.library_id && entry.relative_path) {
+          resolved_path = await resolveBundledLispPath(String(entry.library_id), String(entry.relative_path));
+        } else if ((entry.kind === "lisp" || entry.kind === "job") && entry.registry === "user" && entry.library_id && entry.relative_path) {
+          resolved_path = await resolveRegisteredAssetPath(
+            entry.kind as "lisp" | "job",
+            String(entry.library_id),
+            String(entry.relative_path)
+          );
+        }
+        return toolResult("registry_get", { entry, ...(resolved_path ? { resolved_path } : {}) });
       } catch (error) {
         return toolError("registry_get", error);
       }
