@@ -148,12 +148,14 @@ async function loadFileFamily(server: McpServer): Promise<void> {
     { registerLispWorkspaceTools },
     { registerLibraryMutationTools },
     { registerJobAuthoringTools },
+    { registerUserAssetTools },
   ] = await Promise.all([
     import("./tools/filesystem.js"),
     import("./tools/lisp-harness.js"),
     import("./tools/lisp-workspace.js"),
     import("./tools/libraries.js"),
     import("./tools/jobs.js"),
+    import("./tools/user-assets.js"),
   ]);
 
   registerFilesystemTools(server);
@@ -161,6 +163,7 @@ async function loadFileFamily(server: McpServer): Promise<void> {
   registerLispWorkspaceTools(server);
   registerLibraryMutationTools(server);
   registerJobAuthoringTools(server);
+  registerUserAssetTools(server);
 
   loaded.add("file");
   markFamilyLoaded("file");
@@ -221,21 +224,21 @@ export function createMcpServer(sessionKey: string): McpServer {
       capabilities: { logging: {}, tools: { listChanged: true } },
       instructions: [
         "CadGPT entry routing — highest priority: bare CadGPT plugin/icon invocation (including a connector renamed CG) or bare @cadgpt must call cadgpt_admission and return its welcome_text verbatim when present. Do not replace it with prose such as 'activated'.",
-        "Exact cg/ calls cadgpt_control(surface=commands); cg/list -> surface=list; cg/cl -> surface=cl; cg/cj -> surface=cj; cg/job -> surface=job; cg/mcp -> surface=mcp; cg/help -> surface=help; cg/stop -> surface=stop. cg/list reads tray cache only and never wakes full CAD MCP.",
+        "Exact cg/ calls cadgpt_control(surface=commands); cg/list -> surface=list; cg/cl -> surface=cl; cg/cj -> surface=cj; cg/job -> surface=job; cg/rl -> register Lisp folder; cg/rj -> register Job folder; cg/il -> import Lisp; cg/el -> export Lisp; cg/ij -> import Job; cg/ej -> export Job; cg/mcp -> surface=mcp; cg/help -> surface=help; cg/stop -> surface=stop. cg/list reads tray cache only and never wakes full CAD MCP.",
         "CadGPT is explicit-launch, session-persistent.",
         "The user launches CadGPT once per ChatGPT/MCP session, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt.",
         "On a bare plugin/icon or bare @cadgpt launch, call cadgpt_admission once. If that launch also contains a real task, claim the session and continue directly instead of forcing the generic Welcome. After the session is claimed, do not call admission again on every turn.",
         "Never carry admission across another MCP/chat session, memory, unrelated files, paths, or AutoCAD state. Session disposal revokes the claim.",
         "Bare @cadgpt or bare CG/plugin launch makes the session READY, not WORK ACTIVE. Work becomes ACTIVE only after cadgpt_work_start.",
         "CadGPT session claim is routing state only; it is not an execution credential and has no per-turn token.",
-        "Actual FILE/CAD work begins with cadgpt_work_start. The returned work_handle (execution_id + authority_token) is the only execution credential.",
+        "Actual FILE/CAD work begins with cadgpt_work_start. The returned work_handle (execution_id + authority_token) is the only execution credential. Lisp/Job authoring, register, import and export are FILE work and do not require a drawing workspace.",
         "Reuse the active work_handle for later compatible requests in the same chat. Do not call cadgpt_work_start again unless there is no active work or the owner/execution path must change.",
         "Bare launch always renders the three-section CadGPT Welcome from tray state. If AutoCAD is offline, keep WORK IDLE and tell the user to open AutoCAD/a drawing then use cg/list.",
         "If the tray cache reports AutoCAD, list open drawings with no active-drawing marker and ask the user to choose exactly one drawing. The fake CLI is not live-updating; cg/list refreshes from the newest tray snapshot. PREPARE does not start CAD MCP, has no WorkRegistration, and cannot mutate CAD.",
         "After the user chooses one drawing number, call cadgpt_cad_confirm with the private confirmation_token and exactly one choice_key. Multi-drawing selection is forbidden. This transition replaces any prior work, starts full CAD MCP, verifies the selected drawing live, binds exactly one DrawingContext, and returns Workspace Ready.",
         "A workspace choice must identify exactly one listed drawing number (for example '1'). Do not treat bare 'xác nhận' as a drawing choice and never default to all drawings. Reuse the private confirmation_token internally; never ask the user to copy it.",
         "Hard invariant: 1 work = 1 drawing. For later compatible requests, reuse the active work_handle. cg/list may prepare a replacement workspace; selecting a new drawing releases the prior work before registering the new one.",
-        "CadGPT has two execution paths: FILE and CAD. CAD MCP is activated only on actual CAD demand.",
+        "CadGPT has two execution paths: FILE and CAD. CAD MCP is activated only on actual CAD demand. User-managed Lisp/Job data lives in the real per-user AppData; repo-shipped Lisp/Job resources are system/read-only and are never copied into user AppData automatically.",
         "Never assume AutoCAD ActiveDocument is the target; use explicit drawing contexts.",
         "All file mutations require absolute canonical target paths and allowed-root verification. Relative/CWD-authorized mutation is forbidden.",
         "cad-mcp-dev is development-only and may mutate source only under the absolute runtimes/cad-mcp root.",
