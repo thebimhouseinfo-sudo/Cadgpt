@@ -29,7 +29,7 @@ export function toolFamily(toolName: string): string {
   if (toolName.startsWith("file_")) return "filesystem";
   if (toolName.startsWith("lisp_")) return "lisp-authoring";
   if (toolName.startsWith("job_")) return "job-authoring";
-  if (toolName.startsWith("library_")) return "library";
+  if (toolName.startsWith("library_") || toolName.startsWith("asset_")) return "library";
   if (toolName.startsWith("registry_")) return "registry";
   if (toolName.startsWith("skill_")) return "skills";
   if (toolName.startsWith("observator_")) return "observator";
