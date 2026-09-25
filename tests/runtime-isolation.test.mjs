@@ -136,6 +136,50 @@ test("CadGPT welcome exposes the lightweight fake CLI control surface", async ()
   assert.match(CADGPT_ROOT_MENU, /cg\/list/);
 });
 
+test("tray JSON parser tolerates Windows PowerShell UTF-8 BOM", async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-bom-"));
+  const previous = process.env.CADGPT_APPDATA_ROOT;
+  process.env.CADGPT_APPDATA_ROOT = tempRoot;
+
+  try {
+    const stateDir = path.join(tempRoot, "state");
+    await fs.mkdir(stateDir, { recursive: true });
+    const statePath = path.join(stateDir, "tray-ready.json");
+    const payload = {
+      autocad_running: true,
+      autocad_attached: true,
+      autocad_drawing_count: 1,
+      autocad_drawings: [{ name: "Test.dwg", full_name: "C:\\Test.dwg" }],
+      autocad_probe_at: new Date().toISOString()
+    };
+    await fs.writeFile(statePath, "\uFEFF" + JSON.stringify(payload), "utf8");
+
+    const { checkAdmission } = await import("../dist/cadgpt/lib/admission.js");
+    checkAdmission("bom-session", "@cadgpt", "mention");
+
+    const modUrl = pathToFileURL(
+      path.resolve("dist/cadgpt/tools/cad-launcher.js")
+    ).href + `?bom=${Date.now()}`;
+    const { prepareCadLaunch } = await import(modUrl);
+    const launch = await prepareCadLaunch("bom-session");
+
+    assert.equal(launch.autocad_detected, true);
+    assert.equal(launch.mode, "cad_prepare");
+    assert.equal(launch.drawings?.length, 1);
+    assert.match(launch.welcome_text, /Test\.dwg/);
+  } finally {
+    if (previous === undefined) delete process.env.CADGPT_APPDATA_ROOT;
+    else process.env.CADGPT_APPDATA_ROOT = previous;
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+
 test("work registrations and tool leases remain isolated across sessions", async () => {
   const { checkAdmission } = await import("../dist/cadgpt/lib/admission.js");
   const {
