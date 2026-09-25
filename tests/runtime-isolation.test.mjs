@@ -48,21 +48,208 @@ test("CadGPT launch claims the MCP session without creating execution authority"
   );
 });
 
-test("headerless continuation recovery only reuses one unambiguous logical session", async () => {
-  const { selectSoleSessionId } = await import(
-    "../dist/cadgpt/lib/mcp-session-manager.js"
+test("headerless recovery accepts only cadgpt_cad_confirm with an explicit token", async () => {
+  const { extractHeaderlessCadConfirmToken } = await import(
+    "../dist/cadgpt/lib/headerless-recovery.js"
   );
 
-  assert.equal(selectSoleSessionId([]), undefined);
-  assert.equal(selectSoleSessionId(["session-a"]), "session-a");
   assert.equal(
-    selectSoleSessionId(["session-a", "session-a"]),
-    "session-a"
+    extractHeaderlessCadConfirmToken({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "cadgpt_cad_confirm",
+        arguments: { confirmation_token: "token-a", choice_key: "1" },
+      },
+    }),
+    "token-a"
   );
   assert.equal(
-    selectSoleSessionId(["session-a", "session-b"]),
+    extractHeaderlessCadConfirmToken({
+      method: "tools/call",
+      params: {
+        name: "cadgpt_work_start",
+        arguments: { confirmation_token: "token-a" },
+      },
+    }),
     undefined
   );
+  assert.equal(
+    extractHeaderlessCadConfirmToken({
+      method: "notifications/initialized",
+      confirmation_token: "token-a",
+    }),
+    undefined
+  );
+});
+
+test("CAD prepare capability is session-bound, replaceable, single-use, and transactional", async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-prepare-"));
+  const previous = process.env.CADGPT_APPDATA_ROOT;
+  process.env.CADGPT_APPDATA_ROOT = tempRoot;
+
+  const {
+    checkAdmission,
+    revokeSessionAdmissions,
+  } = await import("../dist/cadgpt/lib/admission.js");
+  const {
+    prepareCadLaunch,
+    resolveCadPrepareSessionByToken,
+    registerCadPrepareConfirmTool,
+    clearCadPrepare,
+  } = await import("../dist/cadgpt/tools/cad-launcher.js");
+
+  try {
+    const stateDir = path.join(tempRoot, "state");
+    await fs.mkdir(stateDir, { recursive: true });
+    await fs.writeFile(
+      path.join(stateDir, "tray-ready.json"),
+      JSON.stringify({
+        autocad_running: true,
+        autocad_attached: true,
+        autocad_drawing_count: 1,
+        autocad_drawings: [
+          { name: "Drawing1.dwg", full_name: "C:\\Drawing1.dwg" },
+        ],
+        autocad_probe_at: new Date().toISOString(),
+      }),
+      "utf8"
+    );
+
+    checkAdmission("prepare-session-a", "@cadgpt", "mention");
+    checkAdmission("prepare-session-b", "@cadgpt", "mention");
+
+    const launchA1 = await prepareCadLaunch("prepare-session-a");
+    const launchB = await prepareCadLaunch("prepare-session-b");
+    assert.ok(launchA1.confirmation_token);
+    assert.ok(launchB.confirmation_token);
+    assert.notEqual(launchA1.confirmation_token, launchB.confirmation_token);
+    assert.equal(
+      resolveCadPrepareSessionByToken(launchA1.confirmation_token),
+      "prepare-session-a"
+    );
+    assert.equal(
+      resolveCadPrepareSessionByToken(launchB.confirmation_token),
+      "prepare-session-b"
+    );
+
+    const launchA2 = await prepareCadLaunch("prepare-session-a");
+    assert.ok(launchA2.confirmation_token);
+    assert.notEqual(launchA2.confirmation_token, launchA1.confirmation_token);
+    assert.equal(
+      resolveCadPrepareSessionByToken(launchA1.confirmation_token),
+      undefined
+    );
+    assert.equal(
+      resolveCadPrepareSessionByToken(launchA2.confirmation_token),
+      "prepare-session-a"
+    );
+
+    let callback;
+    const fakeServer = {
+      registerTool(name, _config, registered) {
+        assert.equal(name, "cadgpt_cad_confirm");
+        callback = registered;
+      },
+    };
+
+    registerCadPrepareConfirmTool(fakeServer, {
+      sessionKey: "prepare-session-a",
+      activateWorkspace: async (drawing) => ({
+        text: "CadGPT / CG — Workspace Ready",
+        work_handle: { execution_id: "exec-a", authority_token: "authority-a" },
+        drawing,
+      }),
+    });
+
+    await assert.rejects(
+      () =>
+        callback({
+          confirmation_token: launchB.confirmation_token,
+          choice_key: "1",
+        }),
+      /CAD_PREPARE_REQUIRED/
+    );
+
+    const ready = await callback({
+      confirmation_token: launchA2.confirmation_token,
+      choice_key: "1",
+    });
+    assert.match(ready.structuredContent.text, /Workspace Ready/);
+    assert.equal(
+      resolveCadPrepareSessionByToken(launchA2.confirmation_token),
+      undefined
+    );
+    await assert.rejects(
+      () =>
+        callback({
+          confirmation_token: launchA2.confirmation_token,
+          choice_key: "1",
+        }),
+      /CAD_PREPARE_REQUIRED/
+    );
+
+    const retryLaunch = await prepareCadLaunch("prepare-session-a");
+    assert.ok(retryLaunch.confirmation_token);
+    let attempts = 0;
+    let retryCallback;
+    const retryServer = {
+      registerTool(_name, _config, registered) {
+        retryCallback = registered;
+      },
+    };
+    registerCadPrepareConfirmTool(retryServer, {
+      sessionKey: "prepare-session-a",
+      activateWorkspace: async (drawing) => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("temporary activation failure");
+        return {
+          text: "CadGPT / CG — Workspace Ready",
+          work_handle: {
+            execution_id: "exec-retry",
+            authority_token: "authority-retry",
+          },
+          drawing,
+        };
+      },
+    });
+
+    await assert.rejects(
+      () =>
+        retryCallback({
+          confirmation_token: retryLaunch.confirmation_token,
+          choice_key: "1",
+        }),
+      /temporary activation failure/
+    );
+    assert.equal(
+      resolveCadPrepareSessionByToken(retryLaunch.confirmation_token),
+      "prepare-session-a"
+    );
+
+    const retried = await retryCallback({
+      confirmation_token: retryLaunch.confirmation_token,
+      choice_key: "1",
+    });
+    assert.match(retried.structuredContent.text, /Workspace Ready/);
+    assert.equal(
+      resolveCadPrepareSessionByToken(retryLaunch.confirmation_token),
+      undefined
+    );
+  } finally {
+    clearCadPrepare("prepare-session-a");
+    clearCadPrepare("prepare-session-b");
+    revokeSessionAdmissions("prepare-session-a");
+    revokeSessionAdmissions("prepare-session-b");
+    if (previous === undefined) delete process.env.CADGPT_APPDATA_ROOT;
+    else process.env.CADGPT_APPDATA_ROOT = previous;
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("MCP transport recovery preserves session claim and work handle for the same logical session", async () => {
