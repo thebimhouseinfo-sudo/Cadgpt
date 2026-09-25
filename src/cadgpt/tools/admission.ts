@@ -33,8 +33,7 @@ export function registerAdmissionTool(
       const decision = checkAdmission(options.sessionKey, user_turn, invocation_source);
       if (decision.mode === "active") await options.onActive();
       const welcome =
-        decision.mode === "active" &&
-        (invocation_source === "plugin" || isBareCadGptLaunch(user_turn))
+        decision.mode === "active" && isBareCadGptLaunch(user_turn)
           ? CADGPT_WELCOME
           : undefined;
 
@@ -47,10 +46,10 @@ export function registerAdmissionTool(
           decision.mode === "inactive"
             ? "STOP CadGPT. Do not call discovery/work/CAD tools. Continue ordinary ChatGPT or use the provider the user actually invoked."
             : decision.mode === "control"
-              ? "Use this CONTROL admission_token only for CadGPT control/status/stop. It cannot authorize discovery, FILE, CAD, or new work."
+              ? "Route the exact CadGPT control command through cadgpt_control. CONTROL never starts FILE/CAD work."
               : welcome
-                ? "Return welcome_text verbatim for a bare CadGPT/CG launch. The session is now claimed; later turns continue without repeated @cadgpt."
-                : "CadGPT is admitted for this ChatGPT/MCP session. Carry the fresh admission_token into discovery and work registration for this turn; later turns may continue without repeating @cadgpt.",
+                ? "Return welcome_text verbatim for a bare CadGPT/CG launch. The session is ready; no execution authority exists until cadgpt_work_start."
+                : "CadGPT session is ready. If the user requested real FILE/CAD work, start or reuse a compatible work_handle; otherwise continue conversationally.",
       };
 
       if (welcome) {
