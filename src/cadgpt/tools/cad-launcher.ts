@@ -6,11 +6,10 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { assertSessionClaimed } from "../lib/admission.js";
 import { getTrayStatePath } from "../lib/appdata.js";
 
-interface CadPrepareDrawing {
+export interface CadPrepareDrawing {
   key: string;
   name: string;
   full_name: string;
-  active: boolean;
 }
 
 interface PendingCadPrepare {
@@ -24,11 +23,9 @@ interface TrayCadSnapshot {
   autocad_running?: boolean;
   autocad_attached?: boolean;
   autocad_drawing_count?: number | null;
-  autocad_active_document?: string | null;
   autocad_drawings?: Array<{
     name?: string;
     full_name?: string;
-    active?: boolean;
   }>;
   autocad_probe_at?: string | null;
 }
@@ -71,86 +68,113 @@ function normalizeDrawings(snapshot: TrayCadSnapshot): CadPrepareDrawing[] {
     key: String(index + 1),
     name: String(item.name ?? ""),
     full_name: String(item.full_name ?? ""),
-    active: item.active === true,
   }));
 }
 
-function renderGeneralWelcome(reason?: string): string {
+function commonCommands(lines: string[]): void {
+  lines.push(
+    "COMMANDS",
+    "cg/cl       create Lisp",
+    "cg/cj       create Job",
+    "cg/job      list registered Jobs",
+    "",
+    "cg/         xem toàn bộ command",
+    "────────────────────────────────"
+  );
+}
+
+function renderOfflineWelcome(reason?: string): string {
   const lines = [
     "```text",
     "CadGPT / CG",
     "────────────────────────────────",
-    "SESSION   READY",
-    "WORK      IDLE",
-    "AUTOCAD   NOT DETECTED",
-    "CAD MCP   SLEEPING",
     "",
-    "cg/         command menu",
-    "cg/list      refresh CAD launcher",
-    "cg/help     usage help",
-    "cg/status   session/work status",
+    "CAD",
+    "Offline",
+    "",
     "────────────────────────────────",
-    "```",
     "",
-    "CadGPT is ready. You can write/edit Lisp, work with files/jobs/skills, or open AutoCAD later.",
+    "WORKSPACE",
+    "AutoCAD đang tắt nên chưa có bản vẽ nào đang mở.",
+    "Hãy mở AutoCAD và drawing cần làm việc, sau đó dùng:",
+    "",
+    "cg/list     cập nhật danh sách drawing và tạo workspace",
+    "",
+    "────────────────────────────────",
+    "",
   ];
+  commonCommands(lines);
+  lines.push("```");
   if (reason) lines.push("", reason);
   return lines.join("\n");
 }
 
-function renderCadPrepare(
+function renderOnlineWelcome(
   drawings: CadPrepareDrawing[],
   options: { stale?: boolean; attachWarning?: string } = {}
 ): string {
   const lines = [
     "```text",
-    "CadGPT / CG — CAD Workspace Launcher",
+    "CadGPT / CG",
     "────────────────────────────────",
+    "",
+    "CAD",
+    "Online",
     "",
     "OPEN DRAWINGS",
   ];
 
   if (!drawings.length) {
-    lines.push("  — no open drawing cached —");
+    lines.push("  — chưa có drawing đang mở —");
   } else {
     for (const item of drawings) {
       const label = item.full_name || item.name || "(unnamed)";
-      lines.push(`  ${item.key}. ${item.active ? "* " : "  "}${label}`);
+      lines.push(`  ${item.key}. ${label}`);
     }
   }
 
   lines.push(
+    "",
     "────────────────────────────────",
-    "```"
+    "",
+    "WORKSPACE"
   );
 
   if (options.attachWarning) {
     lines.push(
+      "AutoCAD đang mở nhưng tray chưa đọc được danh sách drawing.",
+      "Mở/đóng lại drawing nếu cần rồi dùng:",
       "",
-      options.attachWarning,
-      "",
-      "Mở hoặc chọn drawing trong AutoCAD rồi dùng cg/list để làm mới danh sách."
+      "cg/list     cập nhật danh sách drawing đang mở"
     );
   } else if (!drawings.length) {
     lines.push(
+      "Chưa có drawing để tạo workspace.",
+      "Hãy mở một drawing trong AutoCAD rồi dùng:",
       "",
-      "Mở drawing trong AutoCAD rồi dùng cg/list để làm mới danh sách.",
-      "",
-      "Hoặc dùng cg/ để gọi các command khác (viết lisp, viết skill, etc.)."
+      "cg/list     cập nhật danh sách drawing đang mở"
     );
   } else {
     lines.push(
+      "Chọn 1 drawing để làm workspace.",
+      "Ví dụ: 1",
       "",
-      "Chọn drawing để bắt đầu làm việc",
-      "cg/list để cập nhật danh sách drawing đang mở",
-      "hoặc cg/ để gọi các command khác (viết lisp, viết skill, etc.)."
+      "cg/list     cập nhật danh sách drawing đang mở"
     );
   }
+
+  lines.push(
+    "",
+    "────────────────────────────────",
+    ""
+  );
+  commonCommands(lines);
+  lines.push("```");
 
   if (options.stale) {
     lines.push(
       "",
-      "_Danh sách được lấy từ tray cache và sẽ được kiểm tra lại khi bắt đầu CAD work._"
+      "_Danh sách lấy từ tray cache; drawing đã chọn sẽ được kiểm tra live trước khi workspace được đăng ký._"
     );
   }
 
@@ -158,7 +182,7 @@ function renderCadPrepare(
 }
 
 export async function prepareCadLaunch(sessionKey: string): Promise<{
-  mode: "general" | "cad_prepare";
+  mode: "offline" | "cad_prepare";
   welcome_text: string;
   confirmation_token?: string;
   drawings?: CadPrepareDrawing[];
@@ -173,9 +197,9 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
   if (!snapshot) {
     pendingBySession.delete(sessionKey);
     return {
-      mode: "general",
-      welcome_text: renderGeneralWelcome(
-        "Tray CAD snapshot is unavailable. CadGPT did not start CAD MCP to compensate."
+      mode: "offline",
+      welcome_text: renderOfflineWelcome(
+        "Tray snapshot chưa sẵn sàng. CadGPT không khởi động full CAD MCP để bù cho bước kiểm tra này."
       ),
       autocad_detected: false,
       source: "tray_cache",
@@ -186,25 +210,23 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
   if (snapshot.autocad_running !== true) {
     pendingBySession.delete(sessionKey);
     return {
-      mode: "general",
-      welcome_text: renderGeneralWelcome(),
+      mode: "offline",
+      welcome_text: renderOfflineWelcome(),
       autocad_detected: false,
       source: "tray_cache",
       probe_age_ms: age_ms,
     };
   }
 
-  const drawings = normalizeDrawings(snapshot);
   const stale = age_ms === null || age_ms > TRAY_PROBE_FRESH_MS;
 
   if (snapshot.autocad_attached !== true) {
     pendingBySession.delete(sessionKey);
     return {
       mode: "cad_prepare",
-      welcome_text: renderCadPrepare([], {
+      welcome_text: renderOnlineWelcome([], {
         stale,
-        attachWarning:
-          "AutoCAD process is open, but the tray probe cannot read its document collection. CadGPT still keeps full CAD MCP asleep.",
+        attachWarning: "Tray probe chưa đọc được document collection.",
       }),
       autocad_detected: true,
       source: "tray_cache",
@@ -213,11 +235,12 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
     };
   }
 
+  const drawings = normalizeDrawings(snapshot);
   if (!drawings.length) {
     pendingBySession.delete(sessionKey);
     return {
       mode: "cad_prepare",
-      welcome_text: renderCadPrepare([], { stale }),
+      welcome_text: renderOnlineWelcome([], { stale }),
       autocad_detected: true,
       source: "tray_cache",
       probe_age_ms: age_ms,
@@ -235,7 +258,7 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
 
   return {
     mode: "cad_prepare",
-    welcome_text: renderCadPrepare(drawings, { stale }),
+    welcome_text: renderOnlineWelcome(drawings, { stale }),
     confirmation_token: token,
     drawings,
     autocad_detected: true,
@@ -247,25 +270,28 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
 export function consumeCadPrepare(
   sessionKey: string,
   confirmationToken: string,
-  choiceKeys?: string[]
-): CadPrepareDrawing[] {
+  choiceKey: string
+): CadPrepareDrawing {
   cleanupPending();
   const pending = pendingBySession.get(sessionKey);
   if (!pending || pending.token !== confirmationToken) {
     throw new Error(
-      "CAD_PREPARE_REQUIRED: CAD workspace confirmation is missing or stale. Open the CAD launcher again."
+      "CAD_PREPARE_REQUIRED: CAD workspace selection is missing or stale. Use cg/list and select one drawing again."
     );
   }
 
-  const selectedKeys = new Set(
-    (choiceKeys ?? []).map((value) => value.trim()).filter(Boolean)
-  );
-  const selected = selectedKeys.size
-    ? pending.drawings.filter((drawing) => selectedKeys.has(drawing.key))
-    : pending.drawings;
+  const key = choiceKey.trim();
+  if (!key || key.includes(",") || /\s/.test(key)) {
+    throw new Error(
+      "CAD_SINGLE_DRAWING_REQUIRED: choose exactly one drawing number for this work."
+    );
+  }
 
-  if (!selected.length) {
-    throw new Error("CAD_WORKSPACE_EMPTY: select at least one cached open drawing.");
+  const selected = pending.drawings.find((drawing) => drawing.key === key);
+  if (!selected) {
+    throw new Error(
+      "CAD_WORKSPACE_INVALID_SELECTION: choose one drawing number from the current cg/list result."
+    );
   }
 
   pendingBySession.delete(sessionKey);
@@ -281,34 +307,34 @@ export function registerCadPrepareConfirmTool(
   options: {
     sessionKey: string;
     activateWorkspace: (
-      drawings: CadPrepareDrawing[]
-    ) => Promise<{ text: string; work_handle: Record<string, unknown>; drawings: unknown[] }>;
+      drawing: CadPrepareDrawing
+    ) => Promise<{ text: string; work_handle: Record<string, unknown>; drawing: unknown }>;
   }
 ): void {
   server.registerTool(
     "cadgpt_cad_confirm",
     {
-      title: "Confirm CadGPT CAD Workspace",
+      title: "Confirm CadGPT Drawing Workspace",
       description:
-        "Confirm the pending tray-cached CAD workspace. Only this transition starts full CAD MCP, verifies the live drawings, creates/reuses direct CAD work authority, and binds the workspace.",
+        "Register exactly one tray-cached drawing as the CadGPT workspace. This transition starts full CAD MCP, verifies the drawing live, binds one DrawingContext, and creates/reuses work authority.",
       inputSchema: {
         confirmation_token: z.string().min(1),
-        choice_keys: z.array(z.string()).optional(),
+        choice_key: z.string().min(1),
       },
     },
-    async ({ confirmation_token, choice_keys }) => {
-      const drawings = consumeCadPrepare(
+    async ({ confirmation_token, choice_key }) => {
+      const drawing = consumeCadPrepare(
         options.sessionKey,
         confirmation_token,
-        choice_keys
+        choice_key
       );
-      const activated = await options.activateWorkspace(drawings);
+      const activated = await options.activateWorkspace(drawing);
       return {
         content: [{ type: "text" as const, text: activated.text }],
         structuredContent: {
           text: activated.text,
           work_handle: activated.work_handle,
-          drawings: activated.drawings,
+          drawing: activated.drawing,
         },
       };
     }
