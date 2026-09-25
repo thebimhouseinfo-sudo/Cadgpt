@@ -132,9 +132,10 @@ export function createSessionManager(port: number): SessionManager {
   }
 
   async function build(preferredId?: string): Promise<McpSession> {
-    const server = createMcpServer();
+    const logicalSessionId = preferredId ?? randomUUID();
+    const server = createMcpServer(logicalSessionId);
     const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: preferredId ? () => preferredId : () => randomUUID(),
+      sessionIdGenerator: () => logicalSessionId,
       enableJsonResponse: true,
       onsessioninitialized: (id) => {
         const previous = sessions.get(id);
@@ -147,7 +148,11 @@ export function createSessionManager(port: number): SessionManager {
         pending.delete(id);
         clearGrace(id);
         if (previous && previous.transport !== transport) {
-          void disposeMcpServerRuntime(previous.server).catch(() => undefined);
+          // Transport recovery must not revoke admission/work belonging to the
+          // same logical MCP session. Only detach the replaced server object.
+          void disposeMcpServerRuntime(previous.server, {
+            preserveSessionState: true,
+          }).catch(() => undefined);
           void previous.transport.close().catch(() => undefined);
         }
         console.log(`[MCP] Session initialized: ${id}`);
@@ -237,7 +242,9 @@ export function createSessionManager(port: number): SessionManager {
         if (!recovered || recovered.transport !== replacement.transport) {
           // Do not delete a different session that may have won a race.
           pending.delete(id);
-          void disposeMcpServerRuntime(replacement.server).catch(() => undefined);
+          void disposeMcpServerRuntime(replacement.server, {
+            preserveSessionState: true,
+          }).catch(() => undefined);
           void replacement.transport.close().catch(() => undefined);
           return sessions.get(id);
         }
