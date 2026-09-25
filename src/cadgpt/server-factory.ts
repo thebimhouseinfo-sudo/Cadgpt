@@ -200,12 +200,6 @@ async function prepareFamilies(
   ownerId: string,
   executionId: string
 ): Promise<void> {
-  if (executionPath === "file") {
-    const { cadUpstream } = await import("./runtime/cad-upstream.js");
-    if (cadUpstream.status().phase === "prepare") {
-      await cadUpstream.deactivate();
-    }
-  }
   if (executionPath === "file" || executionPath === "hybrid") await loadFileFamily(server);
   if (executionPath === "cad" || executionPath === "hybrid") {
     const [{ assertCadCandidateAccess }, { assertCadDevSourceAccess }] =
@@ -227,7 +221,7 @@ export function createMcpServer(sessionKey: string): McpServer {
       capabilities: { logging: {}, tools: { listChanged: true } },
       instructions: [
         "CadGPT entry routing — highest priority: bare CadGPT plugin/icon invocation (including a connector renamed CG) or bare @cadgpt must call cadgpt_admission and return its welcome_text verbatim when present. Do not replace it with prose such as 'activated'.",
-        "Exact cadgpt/ calls cadgpt_control(surface=commands); exact cadgpt/cad calls cadgpt_control(surface=cad); exact cadgpt/help calls cadgpt_control(surface=help); exact cadgpt/status calls cadgpt_control(surface=status); exact cadgpt/stop calls cadgpt_control(surface=stop). Commands/help/status must not wake CAD MCP; cadgpt/cad may enter read-only CAD PREPARE.",
+        "Exact cadgpt/ calls cadgpt_control(surface=commands); exact cadgpt/cad calls cadgpt_control(surface=cad); exact cadgpt/help calls cadgpt_control(surface=help); exact cadgpt/status calls cadgpt_control(surface=status); exact cadgpt/stop calls cadgpt_control(surface=stop). Commands/help/status never wake CAD MCP; cadgpt/cad reads the tray CAD cache only."
         "CadGPT is explicit-launch, session-persistent.",
         "The user launches CadGPT once per ChatGPT/MCP session, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt.",
         "On a bare plugin/icon or bare @cadgpt launch, call cadgpt_admission once. If that launch also contains a real task, claim the session and continue directly instead of forcing the generic Welcome. After the session is claimed, do not call admission again on every turn.",
@@ -237,8 +231,8 @@ export function createMcpServer(sessionKey: string): McpServer {
         "Actual FILE/CAD work begins with cadgpt_work_start. The returned work_handle (execution_id + authority_token) is the only execution credential.",
         "Reuse the active work_handle for later compatible requests in the same chat. Do not call cadgpt_work_start again unless there is no active work or the owner/execution path must change.",
         "Bare launch is context-aware. If AutoCAD is not detected, return the General Welcome and keep WORK IDLE / CAD MCP SLEEPING.",
-        "If AutoCAD is detected, enter CAD PREPARE: read-only CAD MCP discovery lists open drawings and asks the user to confirm the CAD workspace. PREPARE has no WorkRegistration and cannot mutate CAD.",
-        "After explicit workspace confirmation, call cadgpt_cad_confirm with the pending confirmation_token and optional drawing choice keys. That transition creates/reuses direct-cad work, binds the confirmed drawings, promotes CAD MCP to ACTIVE, and returns the CAD Work CLI.",
+        "If the tray cache reports AutoCAD, enter CAD PREPARE from the cached drawing list and ask the user to confirm the CAD workspace. PREPARE does not start CAD MCP, has no WorkRegistration, and cannot mutate CAD."
+        "After explicit workspace confirmation, call cadgpt_cad_confirm with the pending confirmation_token and optional drawing choice keys. That transition creates/reuses direct-cad work, starts full CAD MCP, verifies the cached selections against live AutoCAD, binds the confirmed drawings, and returns the CAD Work CLI."
         "Treat a natural follow-up such as 'xác nhận', 'ok', 'yes', or equivalent as confirmation of the pending CAD workspace. Reuse the private confirmation_token from the launcher result; never ask the user to copy or provide it. If the user selects drawing numbers, pass those numbers as choice_keys; no choice_keys means all listed drawings.",
         "For later compatible CAD requests in that chat, reuse the active work_handle. Do not re-run workspace confirmation unless the user changes workspace or the binding becomes stale.",
         "CadGPT has two execution paths: FILE and CAD. CAD MCP is activated only on actual CAD demand.",
@@ -281,7 +275,7 @@ export function createMcpServer(sessionKey: string): McpServer {
       try {
         await prepareFamilies(server, "cad", "direct-cad", work.executionId);
         const { cadUpstream } = await import("./runtime/cad-upstream.js");
-        cadUpstream.promotePreparedToActive();
+        await cadUpstream.activate();
 
         const { bindDrawingForExecution } = await import(
           "./session/drawing-binding.js"
