@@ -275,7 +275,7 @@ test("session continuation and control routing do not rotate the active work han
   const activationWithTask = checkAdmission(sessionKey, "@cadgpt status");
   assert.equal(activationWithTask.mode, "active");
 
-  const control = checkAdmission(sessionKey, "cg/status");
+  const control = checkAdmission(sessionKey, "cg/help");
   assert.equal(control.mode, "control");
 
   const leaseAfterControl = acquireToolLease({
