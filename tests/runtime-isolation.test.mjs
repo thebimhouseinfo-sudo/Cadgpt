@@ -96,8 +96,8 @@ test("CadGPT welcome exposes the lightweight fake CLI control surface", async ()
   );
 
   assert.match(CADGPT_WELCOME, /CadGPT \/ CG/);
-  assert.match(CADGPT_WELCOME, /SESSION\s+ACTIVE/);
-  assert.match(CADGPT_WELCOME, /CAD MCP\s+ON DEMAND/);
+  assert.match(CADGPT_WELCOME, /SESSION\s+READY/);
+  assert.match(CADGPT_WELCOME, /CAD MCP\s+SLEEPING/);
   assert.match(CADGPT_WELCOME, /cadgpt\/status/);
   assert.match(CADGPT_ROOT_MENU, /cadgpt\/help/);
 });
