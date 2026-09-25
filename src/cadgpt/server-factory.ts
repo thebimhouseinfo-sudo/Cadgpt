@@ -241,7 +241,7 @@ export function createMcpServer(sessionKey: string): McpServer {
       if (!runtime.loaded_families.includes("cad")) return "SLEEPING";
       try {
         const { cadUpstream } = await import("./runtime/cad-upstream.js");
-        const state = cadUpstream.status() as Record<string, unknown>;
+        const state = cadUpstream.status() as unknown as Record<string, unknown>;
         if (state.connected === true) return "CONNECTED";
         const raw = typeof state.state === "string" ? state.state : "SLEEPING";
         return raw.toUpperCase();
