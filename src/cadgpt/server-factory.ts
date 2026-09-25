@@ -227,7 +227,7 @@ export function createMcpServer(sessionKey: string): McpServer {
       capabilities: { logging: {}, tools: { listChanged: true } },
       instructions: [
         "CadGPT entry routing — highest priority: bare CadGPT plugin/icon invocation (including a connector renamed CG) or bare @cadgpt must call cadgpt_admission and return its welcome_text verbatim when present. Do not replace it with prose such as 'activated'.",
-        "Exact cadgpt/ calls cadgpt_control(surface=commands); exact cadgpt/help calls cadgpt_control(surface=help); exact cadgpt/status calls cadgpt_control(surface=status); exact cadgpt/stop calls cadgpt_control(surface=stop). Commands/help/status must not wake CAD MCP.",
+        "Exact cadgpt/ calls cadgpt_control(surface=commands); exact cadgpt/cad calls cadgpt_control(surface=cad); exact cadgpt/help calls cadgpt_control(surface=help); exact cadgpt/status calls cadgpt_control(surface=status); exact cadgpt/stop calls cadgpt_control(surface=stop). Commands/help/status must not wake CAD MCP; cadgpt/cad may enter read-only CAD PREPARE.",
         "CadGPT is explicit-launch, session-persistent.",
         "The user launches CadGPT once per ChatGPT/MCP session, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt.",
         "On a bare plugin/icon or bare @cadgpt launch, call cadgpt_admission once. If that launch also contains a real task, claim the session and continue directly instead of forcing the generic Welcome. After the session is claimed, do not call admission again on every turn.",
@@ -343,16 +343,17 @@ export function createMcpServer(sessionKey: string): McpServer {
   registerCadGptControlTool(server, {
     sessionKey,
     getCadState: async () => {
-      const runtime = runtimeStateSnapshot();
-      if (!runtime.loaded_families.includes("cad")) return "SLEEPING";
       try {
         const { cadUpstream } = await import("./runtime/cad-upstream.js");
-        const state = cadUpstream.status() as unknown as Record<string, unknown>;
-        const raw = typeof state.phase === "string" ? state.phase : "sleeping";
-        return raw.toUpperCase();
+        const state = cadUpstream.status();
+        return state.phase.toUpperCase();
       } catch {
         return "ERROR";
       }
+    },
+    launchCadWorkspace: async () => {
+      const launch = await prepareCadLaunch(sessionKey);
+      return launch.welcome_text;
     },
     stopCurrentWork: async () => {
       const activeExecution = activeExecutionForSession(sessionKey);
