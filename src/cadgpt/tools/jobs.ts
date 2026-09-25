@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -10,10 +12,14 @@ import {
   getUserCapabilitiesPath,
   getUserLibrariesManifestPath,
 } from "../lib/appdata.js";
-import { isPathInside, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
+import { getRepoRoot, isPathInside, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
+import { currentToolLease } from "../lib/work-registration.js";
+import { getBoundDrawingsForExecution } from "../session/drawing-binding.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { resolveRegisteredAssetPath } from "./user-assets.js";
+
+const execFileAsync = promisify(execFile);
 
 interface JobEntry {
   id: string;
@@ -239,7 +245,87 @@ export function registerJobDiscoveryTools(server: McpServer): void {
   );
 }
 
+function directJobPython(): string {
+  return path.join(
+    getRepoRoot(),
+    ".venv-cad",
+    process.platform === "win32" ? "Scripts" : "bin",
+    process.platform === "win32" ? "python.exe" : "python"
+  );
+}
+
 export function registerJobAuthoringTools(server: McpServer): void {
+  server.registerTool(
+    "job_run_direct",
+    {
+      title: "Run Direct Python Job",
+      description: "Run one registered .py Job directly with CadGPT's fixed Python runtime. No shell and no model planning are used. Registered .md Jobs are rejected and must use the reasoning Job harness.",
+      inputSchema: {
+        id: z.string().min(1),
+        args: z.array(z.string()).max(50).optional().default([]),
+      },
+    },
+    async ({ id, args }) => {
+      try {
+        const jobs = await loadJobs();
+        const entry = jobs.find((job) => job.id.toLowerCase() === id.trim().toLowerCase());
+        if (!entry) throw new Error(`Job not found in User Registry: ${id}`);
+        const relative = safeRelativeRegisteredJob(entry.relative_path);
+        if (path.extname(relative).toLowerCase() !== ".py") {
+          throw new Error("REASONING_JOB_REQUIRED: Markdown Jobs must run through the reasoning Job harness.");
+        }
+        const script = await resolveRegisteredAssetPath("job", entry.library_id, relative);
+        const python = directJobPython();
+        const pythonStat = await fs.stat(python).catch(() => null);
+        if (!pythonStat?.isFile()) {
+          throw new Error("CadGPT Python runtime is not ready. Run setup.bat first.");
+        }
+
+        const lease = currentToolLease();
+        const drawings = getBoundDrawingsForExecution(lease.workId);
+        if (drawings.length > 1) {
+          throw new Error("DIRECT_JOB_DRAWING_AMBIGUOUS: one work may bind only one drawing.");
+        }
+        const drawing = drawings[0];
+        const env: NodeJS.ProcessEnv = {
+          ...process.env,
+          CADGPT_EXECUTION_ID: lease.workId,
+          CADGPT_JOB_ID: entry.id,
+          ...(drawing
+            ? {
+                CADGPT_DRAWING_ID: drawing.drawing_id,
+                CADGPT_DRAWING_NAME: drawing.name,
+                CADGPT_DRAWING_PATH: drawing.full_name || drawing.name,
+              }
+            : {}),
+        };
+
+        const result = await execFileAsync(python, [script, ...args], {
+          cwd: path.dirname(script),
+          env,
+          windowsHide: true,
+          timeout: 5 * 60 * 1000,
+          maxBuffer: 4 * 1024 * 1024,
+        });
+
+        return toolResult("job_run_direct", {
+          id: entry.id,
+          title: entry.title,
+          script,
+          execution_mode: "direct",
+          exit_code: 0,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          drawing: drawing
+            ? { drawing_id: drawing.drawing_id, name: drawing.name, full_name: drawing.full_name }
+            : null,
+        });
+      } catch (error) {
+        return toolError("job_run_direct", error);
+      }
+    }
+  );
+
   server.registerTool(
     "job_checkout",
     {
