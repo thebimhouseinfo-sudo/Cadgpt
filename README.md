@@ -33,11 +33,13 @@ CadGPT is explicit-launch only. The user launches CadGPT once per ChatGPT/MCP se
 
 ```text
 ChatGPT considers CadGPT
-→ cadgpt_admission(exact current user turn, invocation_source)
-   ├── first plugin/icon call OR bare/qualified @cadgpt → claim this MCP session
-   ├── later turns in the same session → ACTIVE without repeated @cadgpt
-   ├── @cadgpt help/status/stop → CONTROL for that turn
-   └── a different/unclaimed MCP session → INACTIVE until explicitly launched
+→ cadgpt_admission(exact launch turn, invocation_source)
+   ├── first plugin/icon call OR bare/qualified @cadgpt → SESSION READY
+   ├── no work_handle yet → WORK IDLE / CAD MCP SLEEPING
+   ├── first real FILE/CAD task → cadgpt_work_start → create work_handle
+   ├── later compatible tasks → reuse the same active work_handle
+   ├── cadgpt/status and cadgpt/stop → direct control surface, no token handshake
+   └── a different/unclaimed MCP session → IDLE until explicitly launched
 ```
 
 There is no contextual exception for an AutoCAD-looking task, an `.lsp` file, an absolute path, AutoCAD already running, memory, or prior CadGPT use.
@@ -190,7 +192,7 @@ doctor.bat
 
 ## Execution isolation
 
-Every admitted work flow receives an execution-scoped WorkRegistration and opaque authority token. Every actual capability call receives a per-call ToolLease. Different chats, Jobs, Skills and providers therefore share implementations without sharing execution context.
+Launching CadGPT claims only the current ChatGPT/MCP session; that claim is routing state, not execution authority. Real FILE/CAD work creates (or reuses) an execution-scoped WorkRegistration and opaque work_handle. Every actual capability call then receives a per-call ToolLease. Different chats, Jobs, Skills and providers therefore share implementations without sharing execution context.
 
 CadGPT does not use global `currentJob`, `currentWorkspace`, or `currentDrawing` authority.
 
