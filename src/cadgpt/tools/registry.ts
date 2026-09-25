@@ -7,6 +7,7 @@ import { getUserCapabilitiesPath } from "../lib/appdata.js";
 import { getRepoRoot } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { isDevelopmentBuild } from "../lib/work-registration.js";
+import { listBundledLispEntries } from "../lib/bundled-assets.js";
 
 interface ToolManifestEntry {
   name: string;
@@ -233,8 +234,15 @@ async function loadUserEntries(): Promise<Array<Record<string, unknown>>> {
 }
 
 async function loadEffectiveRegistry(): Promise<Array<Record<string, unknown>>> {
-  const [tools, skills, users] = await Promise.all([loadToolEntries(), loadSkillEntries(), loadUserEntries()]);
-  return [...tools, ...skills, ...users].sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`));
+  const [tools, skills, bundledLisp, users] = await Promise.all([
+    loadToolEntries(),
+    loadSkillEntries(),
+    listBundledLispEntries(),
+    loadUserEntries(),
+  ]);
+  return [...tools, ...skills, ...bundledLisp, ...users].sort((a, b) =>
+    `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`)
+  );
 }
 
 function textMatch(value: unknown, query: string): boolean {
@@ -246,7 +254,7 @@ export function registerCapabilityRegistryTools(server: McpServer): void {
     "registry_list",
     {
       title: "List CadGPT Effective Capability Registry",
-      description: "List the unified view of Internal Registry (MCP tools + system skills) and User Registry (managed Lisp + Jobs). Ownership is disjoint; User Registry cannot overwrite Internal Registry. Unreviewed Lisp cannot retain effective dynamic AI mode.",
+      description: "List the lightweight effective registry: internal MCP tools/system skills/bundled read-only Lisp plus user Lisp/Jobs. User Registry cannot overwrite internal resources.",
       inputSchema: {
         kind: z.enum(["tool", "skill", "lisp", "job"]).optional(),
         registry: z.enum(["internal", "user"]).optional(),
@@ -271,7 +279,7 @@ export function registerCapabilityRegistryTools(server: McpServer): void {
           count: selected.length,
           total_matches: entries.length,
           entries: selected,
-          ownership: { internal: ["tool", "skill"], user: ["lisp", "job"] },
+          ownership: { internal: ["tool", "skill", "lisp"], user: ["lisp", "job"] },
         });
       } catch (error) {
         return toolError("registry_list", error);
