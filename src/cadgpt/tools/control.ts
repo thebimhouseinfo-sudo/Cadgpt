@@ -12,6 +12,7 @@ export function registerCadGptControlTool(
   server: McpServer,
   options: {
     sessionKey: string;
+    getCadState: () => Promise<string>;
     stopCurrentWork: () => Promise<{ stopped: boolean; pending: boolean }>;
   }
 ): void {
@@ -20,7 +21,7 @@ export function registerCadGptControlTool(
     {
       title: "CadGPT Control",
       description:
-        "Lightweight CadGPT CLI control surface. Exact cadgpt/ -> commands, cadgpt/help -> help, cadgpt/status -> status, cadgpt/stop -> stop. Status/stop are scoped to this MCP session and do not require user-visible authority tokens. Never wake CAD MCP merely for commands/help/status.",
+        "Lightweight CadGPT CLI. Exact cadgpt/ -> commands, cadgpt/help -> help, cadgpt/status -> direct session/work/CAD status, cadgpt/stop -> stop this session's active work. Never call cadgpt_work_status to implement these public commands.",
       inputSchema: {
         surface: z.enum(["commands", "help", "status", "stop"]),
       },
@@ -38,25 +39,33 @@ export function registerCadGptControlTool(
       } else if (surface === "status") {
         const claimed = isSessionClaimed(options.sessionKey);
         const work = workStatus(options.sessionKey);
-        text = [
+        const cadState = await options.getCadState();
+        const lines = [
           "```text",
-          "CadGPT Status",
+          "CadGPT",
           "────────────────────────────────",
-          `SESSION   ${claimed ? "ACTIVE" : "IDLE"}`,
+          `SESSION   ${claimed ? "READY" : "IDLE"}`,
           `WORK      ${work.active === true ? "ACTIVE" : "IDLE"}`,
-          "CAD MCP   ON DEMAND",
+        ];
+        if (work.active === true && typeof work.execution_path === "string") {
+          lines.push(`MODE      ${String(work.execution_path).toUpperCase()}`);
+        }
+        lines.push(
+          `CAD MCP   ${cadState}`,
           "────────────────────────────────",
-          "```",
-        ].join("\n");
+          "```"
+        );
+        text = lines.join("\n");
       } else {
         const result = await options.stopCurrentWork();
+        const cadState = await options.getCadState();
         text = [
           "```text",
-          "CadGPT Stop",
+          "CadGPT",
           "────────────────────────────────",
-          `WORK      ${result.pending ? "STOPPING" : result.stopped ? "STOPPED" : "IDLE"}`,
-          "SESSION   ACTIVE",
-          "CAD MCP   ON DEMAND",
+          "SESSION   READY",
+          `WORK      ${result.pending ? "STOPPING" : "IDLE"}`,
+          `CAD MCP   ${cadState}`,
           "────────────────────────────────",
           "```",
         ].join("\n");
