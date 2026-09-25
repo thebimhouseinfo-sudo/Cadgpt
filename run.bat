@@ -62,6 +62,13 @@ exit /b %ERRORLEVEL%
 :restart
 call :preflight
 if errorlevel 1 exit /b 1
+echo.
+echo Rebuilding CadGPT source before restart...
+call npm run build
+if errorlevel 1 (
+  echo [ERROR] Build failed. Existing runtime was not restarted.
+  exit /b 1
+)
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1" -StopInstalled
 wscript "%~dp0cadgpt-tray.vbs" -RestartRuntimeOnStart
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wait-tray-ready.ps1" -TimeoutSeconds 15
@@ -96,7 +103,7 @@ echo.
 echo   run.bat              Start CadGPT and show current status
 echo   run.bat start        Start tray + slim MCP + Secure Tunnel, then show status
 echo   run.bat stop         Stop verified CadGPT-owned runtime only
-echo   run.bat restart      Restart runtime and show status
+echo   run.bat restart      Rebuild source, restart runtime, and show status
 echo   run.bat status       Show tray / slim MCP / tunnel / CAD MCP status
 echo   run.bat doctor       Run CadGPT diagnostics
 echo   run.bat install      Register per-user Windows startup and start CadGPT
