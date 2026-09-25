@@ -154,6 +154,71 @@ When CAD work ends and no valid execution still needs CAD, the CAD MCP child may
 
 ---
 
+## 2.1 Locked user flow — single-drawing workspace
+
+CadGPT is drawing-workspace-first. Every real work session is bound to exactly one open AutoCAD drawing.
+
+```text
+CG plugin / @cadgpt
+→ read latest tray snapshot only
+→ render 3-section Welcome
+→ user selects exactly one drawing
+→ start full CAD MCP
+→ verify that drawing live
+→ bind exactly one DrawingContext
+→ create/reuse WorkRegistration
+→ Workspace Ready
+→ natural request or registered Job
+```
+
+Hard invariant:
+
+```text
+1 work = 1 drawing
+```
+
+Multi-drawing selection is rejected. Changing drawings means ending/replacing the current work and registering a new single-drawing workspace.
+
+The Welcome always has three sections:
+
+1. **CAD** — when online, list open drawings with no active-drawing marker; when offline, show `Offline`.
+2. **WORKSPACE** — instruct the user to select one drawing. `cg/list` refreshes the list from the latest tray snapshot and never wakes full CAD MCP.
+3. **COMMANDS** — show only the common shortcuts `cg/cl`, `cg/cj`, `cg/job`, plus `cg/` for the full command menu.
+
+Public fake CLI:
+
+```text
+cg/       full command menu
+cg/list   refresh open drawings / workspace launcher
+cg/cl     create or repair Lisp
+cg/cj     create or repair Job
+cg/job    list registered Jobs
+cg/mcp    update/develop CAD MCP
+cg/help   help
+cg/stop   stop current work
+```
+
+`@cadgpt` is text activation, not the CLI namespace.
+
+If AutoCAD is offline, CadGPT remains activated but no work is registered. The Workspace section tells the user to open AutoCAD/a drawing and use `cg/list`.
+
+After successful single-drawing registration, respond with the bound drawing and registered Jobs:
+
+```text
+CadGPT / CG — Workspace Ready
+────────────────────────────────
+Chúng ta bắt đầu làm việc trên bản vẽ:
+<absolute drawing path>
+
+Hãy nói với tôi yêu cầu của bạn
+hoặc chạy một Job bên dưới:
+<registered jobs>
+
+cg/job   xem toàn bộ Job đã đăng ký
+cg/      xem toàn bộ command
+────────────────────────────────
+```
+
 ## 3. Admission / WorkRegistration / ToolLease
 
 The implemented authority model remains the product core.
@@ -439,7 +504,7 @@ DrawingContext
 
 `drawing_id` must survive filename ambiguity and distinguish reopened documents.
 
-If one execution owns multiple drawings, mutating operations must require explicit `drawing_id`.
+A CadGPT work execution owns exactly one drawing. Multi-drawing workspace registration is forbidden.
 
 Required CAD call sequence:
 
@@ -847,7 +912,7 @@ Run real Windows + AutoCAD tests for:
 - drawing discovery/bind/rebind;
 - stale drawing after close/reopen;
 - two chats / two drawings / same CAD tool;
-- one execution / multiple drawings;
+- one execution / exactly one drawing;
 - host scheduler serialization;
 - no ActiveDocument drift;
 - verified Lisp load in the same AutoCAD window;
@@ -1006,7 +1071,7 @@ For write-lisp, Job authoring, write-skill when present, and self-improve:
 ### Multi-drawing
 
 - two chats + same CAD tool + two drawings remain isolated;
-- multiple drawings in one execution require explicit mutation target;
+- multi-drawing workspace selection is rejected;
 - close/reopen invalidates stale document identity.
 
 ### Lazy runtime
