@@ -13,9 +13,9 @@ import {
   disposeMcpServerRuntime,
 } from "../server-factory.js";
 
-const sessionTtlMs = Number(process.env.MCP_sessionTtlMs || 86_400_000);
-const cleanupMs = Number(process.env.MCP_SESSION_cleanupMs || 300_000);
-const DELETE_GRACE_MS = Number(process.env.MCP_SESSION_DELETE_GRACE_MS || 45_000);
+const DEFAULT_SESSION_TTL_MS = Number(process.env.MCP_SESSION_TTL_MS || 86_400_000);
+const DEFAULT_CLEANUP_MS = Number(process.env.MCP_SESSION_CLEANUP_MS || 300_000);
+const DEFAULT_DELETE_GRACE_MS = Number(process.env.MCP_SESSION_DELETE_GRACE_MS || 45_000);
 
 export interface McpSession {
   transport: StreamableHTTPServerTransport;
@@ -96,9 +96,9 @@ export function createSessionManager(
   options: SessionManagerOptions = {}
 ): SessionManager {
   const createServer = options.createServer ?? createMcpServer;
-  const sessionTtlMs = options.sessionTtlMs ?? sessionTtlMs;
-  const cleanupMs = options.cleanupMs ?? cleanupMs;
-  const deleteGraceMs = options.deleteGraceMs ?? DELETE_GRACE_MS;
+  const sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
+  const cleanupMs = options.cleanupMs ?? DEFAULT_CLEANUP_MS;
+  const deleteGraceMs = options.deleteGraceMs ?? DEFAULT_DELETE_GRACE_MS;
   const sessions = new Map<string, McpSession>();
   const pending = new Map<string, McpSession>();
   // A transport can be logically closed by the client while the CadGPT
