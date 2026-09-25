@@ -158,6 +158,24 @@ When CAD work ends and no valid execution still needs CAD, the CAD MCP child may
 
 The implemented authority model remains the product core.
 
+### 3.0 Context-aware launcher / PREPARE
+
+Bare CadGPT launch is context-aware and follows the same PREPARE principle used by GPTWorker:
+
+```text
+launch
+→ detect running AutoCAD without starting it
+→ if absent: General Welcome, no CAD work
+→ if present: read-only CAD MCP PREPARE
+→ enumerate open drawings
+→ ask user to confirm workspace
+→ only confirmation creates/reuses direct-cad WorkRegistration
+→ bind confirmed drawings
+→ expose CAD Work CLI
+```
+
+PREPARE may read host/document state only. It must not create ToolLeases, mutate CAD, or treat AutoCAD `ActiveDocument` as execution authority.
+
 ### 3.1 Admission
 
 `cadgpt_admission(current_user_turn, invocation_source)` returns:
