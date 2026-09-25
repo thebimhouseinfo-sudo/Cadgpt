@@ -22,9 +22,9 @@ export function registerCadGptControlTool(
     {
       title: "CadGPT Control",
       description:
-        "Lightweight CadGPT CLI. Exact cadgpt/ -> commands, cadgpt/cad -> AutoCAD detect/workspace launcher, cadgpt/help -> help, cadgpt/status -> direct session/work/CAD status, cadgpt/stop -> stop this session's active work. Never call cadgpt_work_status to implement these public commands.",
+        "Lightweight CG CLI. Exact cg/ -> commands, cg/list -> refresh drawing launcher from tray cache, cg/cad -> CAD workspace launcher, cg/help -> help, cg/status -> direct session/work/CAD status, cg/stop -> stop this session's active work. cg/list and cg/cad never start full CAD MCP."
       inputSchema: {
-        surface: z.enum(["commands", "cad", "help", "status", "stop"]),
+        surface: z.enum(["commands", "list", "cad", "help", "status", "stop"]),
       },
       outputSchema: {
         text: z.string(),
@@ -35,7 +35,7 @@ export function registerCadGptControlTool(
 
       if (surface === "commands") {
         text = CADGPT_ROOT_MENU;
-      } else if (surface === "cad") {
+      } else if (surface === "list" || surface === "cad") {
         text = await options.launchCadWorkspace();
       } else if (surface === "help") {
         text = CADGPT_HELP;
