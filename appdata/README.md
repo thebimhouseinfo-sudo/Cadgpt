@@ -68,13 +68,17 @@ The anchor revision is **not** a guarantee that AutoCAD saved the latest in-memo
 
 ## Imported library contract
 
-A user-selected Lisp/Job folder is an **import source only**:
+A user-selected Lisp/Job folder can either be registered in place or imported:
 
 ```text
-explicitly user-approved external folder (read-only)
-→ library_import
-→ managed copy in appdata/libraries/**
-→ User Registry index
+external folder
+→ asset_register_external → index in place, no copy
+
+or
+
+external folder
+→ asset_import → copy into %LOCALAPPDATA%\CadGPT\libraries\**
+→ lightweight User Registry index
 ```
 
 CadGPT never writes to the external source folder. Import rejects symlinked source entries, excludes repository metadata such as `.git/.svn`, and enforces bounded file-count/byte-size limits.
