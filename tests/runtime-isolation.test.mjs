@@ -48,6 +48,23 @@ test("CadGPT launch claims the MCP session without creating execution authority"
   );
 });
 
+test("headerless continuation recovery only reuses one unambiguous logical session", async () => {
+  const { selectSoleSessionId } = await import(
+    "../dist/cadgpt/lib/mcp-session-manager.js"
+  );
+
+  assert.equal(selectSoleSessionId([]), undefined);
+  assert.equal(selectSoleSessionId(["session-a"]), "session-a");
+  assert.equal(
+    selectSoleSessionId(["session-a", "session-a"]),
+    "session-a"
+  );
+  assert.equal(
+    selectSoleSessionId(["session-a", "session-b"]),
+    undefined
+  );
+});
+
 test("MCP transport recovery preserves session claim and work handle for the same logical session", async () => {
   const { checkAdmission, assertSessionClaimed } = await import(
     "../dist/cadgpt/lib/admission.js"
