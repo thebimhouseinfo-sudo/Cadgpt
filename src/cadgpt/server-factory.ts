@@ -394,6 +394,17 @@ export function createMcpServer(sessionKey: string): McpServer {
 }
 
 
+export async function disposeLogicalSessionState(
+  sessionKey: string
+): Promise<void> {
+  const executionIdReadyForCleanup = releaseSessionWork(sessionKey);
+  if (executionIdReadyForCleanup) {
+    await cleanupExecutionState(executionIdReadyForCleanup);
+  }
+  revokeSessionAdmissions(sessionKey);
+  clearCadPrepare(sessionKey);
+}
+
 export async function disposeMcpServerRuntime(
   server: McpServer,
   options: { preserveSessionState?: boolean } = {}
@@ -402,12 +413,7 @@ export async function disposeMcpServerRuntime(
   if (!sessionKey) return;
 
   if (!options.preserveSessionState) {
-    const executionIdReadyForCleanup = releaseSessionWork(sessionKey);
-    if (executionIdReadyForCleanup) {
-      await cleanupExecutionState(executionIdReadyForCleanup);
-    }
-    revokeSessionAdmissions(sessionKey);
-    clearCadPrepare(sessionKey);
+    await disposeLogicalSessionState(sessionKey);
   }
 
   loadedByServer.delete(server);
