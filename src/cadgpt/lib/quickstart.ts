@@ -2,9 +2,9 @@ export const CADGPT_WELCOME = [
   "```text",
   "CadGPT / CG",
   "────────────────────────────────",
-  "SESSION   ACTIVE",
-  "CONTROL   READY",
-  "CAD MCP   ON DEMAND",
+  "SESSION   READY",
+  "WORK      IDLE",
+  "CAD MCP   SLEEPING",
   "",
   "cadgpt/         command menu",
   "cadgpt/help     usage help",
@@ -13,7 +13,7 @@ export const CADGPT_WELCOME = [
   "────────────────────────────────",
   "```",
   "",
-  "CadGPT is ready for this chat. Send CAD requests normally; you do not need to call CG or @cadgpt again in this chat.",
+  "CadGPT is ready for this chat. Send CAD requests normally; work and CAD MCP start only when a task needs them.",
 ].join("\n");
 
 export const CADGPT_ROOT_MENU = [
