@@ -5,9 +5,12 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { getRepoRoot } from "../lib/path-security.js";
 
+export type CadUpstreamPhase = "sleeping" | "prepare" | "active";
+
 export interface CadUpstreamStatus {
   enabled: boolean;
   connected: boolean;
+  phase: CadUpstreamPhase;
   tool_count: number;
   pid: number | null;
   last_error: string | null;
@@ -16,7 +19,7 @@ export interface CadUpstreamStatus {
 }
 
 class CadUpstream {
-  private enabled = false;
+  private phase: CadUpstreamPhase = "sleeping";
   private client: Client | null = null;
   private transport: StdioClientTransport | null = null;
   private tools: Tool[] = [];
@@ -52,7 +55,7 @@ class CadUpstream {
   }
 
   async activate(): Promise<Tool[]> {
-    this.enabled = true;
+    this.phase = "active";
     try {
       await this.connect();
       if (!this.client) throw new Error("CAD MCP client did not connect");
@@ -67,15 +70,44 @@ class CadUpstream {
     }
   }
 
+  async prepare(): Promise<{ host: unknown; drawings: unknown }> {
+    this.phase = "prepare";
+    try {
+      await this.connect();
+      if (!this.client) throw new Error("CAD MCP client did not connect");
+      const host = await this.client.callTool({
+        name: "cad_host_status",
+        arguments: {},
+      });
+      const drawings = await this.client.callTool({
+        name: "acad_list_open_documents",
+        arguments: {},
+      });
+      this.lastError = null;
+      return { host, drawings };
+    } catch (error) {
+      this.rememberError(error);
+      await this.shutdown();
+      this.phase = "sleeping";
+      throw error;
+    }
+  }
+
+  promotePreparedToActive(): void {
+    if (this.phase === "prepare" && this.client && this.transport) {
+      this.phase = "active";
+    }
+  }
+
   async deactivate(): Promise<void> {
-    this.enabled = false;
+    this.phase = "sleeping";
     await this.shutdown();
     this.lastError = null;
   }
 
   async connect(force = false): Promise<void> {
-    if (!this.enabled) {
-      throw new Error("CAD MCP is sleeping. It may be activated only by admitted CAD work; AutoCAD must already be running with an open drawing.");
+    if (this.phase === "sleeping") {
+      throw new Error("CAD MCP is sleeping. It may be prepared for read-only launch discovery or activated by CAD work; AutoCAD must already be running.");
     }
     if (this.client && this.transport && !force) return;
     if (this.connecting && !force) return this.connecting;
@@ -152,8 +184,9 @@ class CadUpstream {
   status(): CadUpstreamStatus {
     const transportWithPid = this.transport as (StdioClientTransport & { pid?: number }) | null;
     return {
-      enabled: this.enabled,
+      enabled: this.phase !== "sleeping",
       connected: Boolean(this.client && this.transport),
+      phase: this.phase,
       tool_count: this.tools.length,
       pid: transportWithPid?.pid ?? null,
       last_error: this.lastError,
