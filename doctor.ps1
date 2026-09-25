@@ -98,8 +98,12 @@ if ($buildProfile.Trim().ToLowerInvariant() -eq "development") {
 }
 
 $appDataConfigured = Get-DotEnvValue "CADGPT_APPDATA_ROOT"
-if (-not $appDataConfigured) { $appDataConfigured = "appdata" }
-$appDataRoot = if ([System.IO.Path]::IsPathRooted($appDataConfigured)) {
+# Legacy source checkouts may still contain CADGPT_APPDATA_ROOT=appdata.
+# Runtime/setup treat that legacy value as "use the per-user LocalAppData default".
+if ($appDataConfigured -eq "appdata") { $appDataConfigured = $null }
+$appDataRoot = if (-not $appDataConfigured) {
+    [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA "CadGPT"))
+} elseif ([System.IO.Path]::IsPathRooted($appDataConfigured)) {
     [System.IO.Path]::GetFullPath($appDataConfigured)
 } else {
     [System.IO.Path]::GetFullPath((Join-Path $ScriptDir $appDataConfigured))
