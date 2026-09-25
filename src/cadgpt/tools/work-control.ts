@@ -3,13 +3,14 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import {
   activeExecutionForSession,
+  activeWorkForSession,
   createWorkRegistration,
-  releaseWorkRegistration,
+  releaseSessionWork,
   workStatus,
   type ExecutionPath,
   type WorkOwnerType,
 } from "../lib/work-registration.js";
-import { validateAdmissionToken } from "../lib/admission.js";
+import { assertSessionClaimed } from "../lib/admission.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { cleanupExecutionState } from "../runtime/execution-cleanup.js";
 
@@ -27,24 +28,49 @@ export function registerWorkControlTools(
   server.registerTool(
     "cadgpt_work_start",
     {
-      title: "Start CadGPT Work",
+      title: "Start or Reuse CadGPT Work",
       description:
-        "Create one execution-scoped work handle after ACTIVE cadgpt_admission. The handle owns later ToolLeases. Starting replacement work in the same ChatGPT session invalidates the prior work handle.",
+        "Start execution only after this chat has launched CadGPT. If compatible work is already active in this session, reuse its work_handle instead of creating a new generation.",
       inputSchema: {
-        admission_token: z.string().min(1),
         owner_type: z.enum(["skill", "job", "direct-cad", "file"]),
         owner_id: z.string().min(1).max(160),
         execution_path: z.enum(["file", "cad", "hybrid"]),
       },
     },
-    async ({ admission_token, owner_type, owner_id, execution_path }) => {
+    async ({ owner_type, owner_id, execution_path }) => {
       try {
-        validateAdmissionToken(admission_token, options.sessionKey);
-        const previousExecution = activeExecutionForSession(options.sessionKey);
+        assertSessionClaimed(options.sessionKey);
 
+        const existing = activeWorkForSession(options.sessionKey);
+        if (
+          existing &&
+          existing.ownerType === owner_type &&
+          existing.ownerId === owner_id.trim() &&
+          existing.executionPath === execution_path
+        ) {
+          await options.prepareFamilies(
+            existing.executionPath,
+            existing.ownerId,
+            existing.executionId
+          );
+          return toolResult("cadgpt_work_start", {
+            reused: true,
+            work_handle: {
+              execution_id: existing.executionId,
+              authority_token: existing.authorityToken,
+              owner_type: existing.ownerType,
+              owner_id: existing.ownerId,
+              job_id: existing.jobId,
+              execution_path: existing.executionPath,
+              driver_epoch: existing.driverEpoch,
+              generation: existing.generation,
+            },
+          });
+        }
+
+        const previousExecution = activeExecutionForSession(options.sessionKey);
         const work = createWorkRegistration({
           sessionKey: options.sessionKey,
-          admissionToken: admission_token,
           ownerType: owner_type as WorkOwnerType,
           ownerId: owner_id,
           executionPath: execution_path as ExecutionPath,
@@ -53,14 +79,17 @@ export function registerWorkControlTools(
         const previousCleanup = previousExecution
           ? await cleanupExecutionState(previousExecution)
           : null;
+
         try {
           await options.prepareFamilies(work.executionPath, work.ownerId, work.executionId);
         } catch (error) {
-          const released = releaseWorkRegistration(work.executionId, work.authorityToken, options.sessionKey);
-          await cleanupExecutionState(released.executionId);
+          const cleanupId = releaseSessionWork(options.sessionKey);
+          if (cleanupId) await cleanupExecutionState(cleanupId);
           throw error;
         }
+
         return toolResult("cadgpt_work_start", {
+          reused: false,
           work_handle: {
             execution_id: work.executionId,
             authority_token: work.authorityToken,
@@ -71,9 +100,7 @@ export function registerWorkControlTools(
             driver_epoch: work.driverEpoch,
             generation: work.generation,
           },
-          ...(previousCleanup
-            ? { previous_cleanup: previousCleanup }
-            : {}),
+          ...(previousCleanup ? { previous_cleanup: previousCleanup } : {}),
         });
       } catch (error) {
         return toolError("cadgpt_work_start", error);
@@ -85,19 +112,16 @@ export function registerWorkControlTools(
     "cadgpt_work_status",
     {
       title: "CadGPT Work Status",
-      description: "Show this ChatGPT session's CadGPT work state. It never exposes an authority token.",
-      inputSchema: {
-        admission_token: z.string().min(1),
-        execution_id: z.string().optional(),
-        authority_token: z.string().optional(),
-      },
+      description:
+        "Internal session-scoped work status. No admission token or work handle is required and no CAD runtime is started.",
+      inputSchema: {},
     },
-    async ({ admission_token, execution_id, authority_token }) => {
+    async () => {
       try {
-        validateAdmissionToken(admission_token, options.sessionKey, "control_or_active");
+        assertSessionClaimed(options.sessionKey);
         return toolResult(
           "cadgpt_work_status",
-          workStatus(options.sessionKey, execution_id, authority_token)
+          workStatus(options.sessionKey)
         );
       } catch (error) {
         return toolError("cadgpt_work_status", error);
@@ -109,28 +133,34 @@ export function registerWorkControlTools(
     "cadgpt_work_stop",
     {
       title: "Stop CadGPT Work",
-      description: "Release only this ChatGPT session's supplied work handle.",
-      inputSchema: {
-        admission_token: z.string().min(1),
-        execution_id: z.string().min(1),
-        authority_token: z.string().min(1),
-      },
+      description:
+        "Stop only the active work owned by this MCP/chat session. Session remains ready for later CadGPT requests.",
+      inputSchema: {},
     },
-    async ({ admission_token, execution_id, authority_token }) => {
+    async () => {
       try {
-        validateAdmissionToken(admission_token, options.sessionKey, "control_or_active");
-        const released = releaseWorkRegistration(
-          execution_id,
-          authority_token,
-          options.sessionKey
-        );
-        const cleanup = await cleanupExecutionState(
-          released.executionId
-        );
+        assertSessionClaimed(options.sessionKey);
+        const activeExecution = activeExecutionForSession(options.sessionKey);
+        if (!activeExecution) {
+          return toolResult("cadgpt_work_stop", {
+            stopped: false,
+            active: false,
+          });
+        }
+
+        const cleanupId = releaseSessionWork(options.sessionKey);
+        if (!cleanupId) {
+          return toolResult("cadgpt_work_stop", {
+            stopped: false,
+            pending: true,
+            execution_id: activeExecution,
+          });
+        }
+
+        const cleanup = await cleanupExecutionState(cleanupId);
         return toolResult("cadgpt_work_stop", {
-          released: true,
-          execution_id: released.executionId,
-          owner_id: released.ownerId,
+          stopped: true,
+          execution_id: cleanupId,
           cleanup,
           recovery_required: cleanup.recovery_required,
         });
