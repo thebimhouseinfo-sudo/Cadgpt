@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import "dotenv/config";
-import { randomUUID } from "node:crypto";
 import express from "express";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
@@ -145,8 +144,10 @@ async function handlePost(
     }
 
     if (!sessionId && SESSION_RECOVERY) {
-      const recoveryId = randomUUID();
-      if (await sessions.tryRecover(recoveryId, req, res, req.body)) return;
+      const recoveryId = sessions.getSoleRecoverableId();
+      if (recoveryId && (await sessions.tryRecover(recoveryId, req, res, req.body))) {
+        return;
+      }
     }
 
     if (sessionId) {
