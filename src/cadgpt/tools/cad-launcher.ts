@@ -85,10 +85,10 @@ function renderGeneralWelcome(reason?: string): string {
     "AUTOCAD   NOT DETECTED",
     "CAD MCP   SLEEPING",
     "",
-    "cadgpt/         command menu",
-    "cadgpt/cad      refresh CAD launcher",
-    "cadgpt/help     usage help",
-    "cadgpt/status   session/work status",
+    "cg/         command menu",
+    "cg/list      refresh CAD launcher",
+    "cg/help     usage help",
+    "cg/status   session/work status",
     "────────────────────────────────",
     "```",
     "",
@@ -129,20 +129,21 @@ function renderCadPrepare(
       "",
       options.attachWarning,
       "",
-      "Mở hoặc chọn drawing trong AutoCAD rồi dùng cadgpt/cad để làm mới danh sách."
+      "Mở hoặc chọn drawing trong AutoCAD rồi dùng cg/list để làm mới danh sách."
     );
   } else if (!drawings.length) {
     lines.push(
       "",
-      "Mở drawing trong AutoCAD rồi dùng cadgpt/cad để làm mới danh sách.",
+      "Mở drawing trong AutoCAD rồi dùng cg/list để làm mới danh sách.",
       "",
-      "Hoặc dùng cadgpt/ để gọi các command khác (viết lisp, viết skill, etc.)."
+      "Hoặc dùng cg/ để gọi các command khác (viết lisp, viết skill, etc.)."
     );
   } else {
     lines.push(
       "",
       "Chọn drawing để bắt đầu làm việc",
-      "hoặc cadgpt/ để gọi các command khác (viết lisp, viết skill, etc.)."
+      "cg/list để cập nhật danh sách drawing đang mở",
+      "hoặc cg/ để gọi các command khác (viết lisp, viết skill, etc.)."
     );
   }
 
