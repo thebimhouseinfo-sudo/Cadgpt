@@ -134,6 +134,58 @@ function Test-TunnelHealthy {
     }
 }
 
+function Get-AutoCadProbeStatus {
+    $processes = @(Get-Process -Name "acad" -ErrorAction SilentlyContinue)
+    if ($processes.Count -eq 0) {
+        return [pscustomobject]@{
+            running = $false
+            attached = $false
+            drawing_count = 0
+            active_document = $null
+            state = "OFF"
+        }
+    }
+
+    $progIds = @(
+        "AutoCAD.Application",
+        "AutoCAD.Application.24.3",
+        "AutoCAD.Application.24.2",
+        "AutoCAD.Application.24.1",
+        "AutoCAD.Application.24",
+        "AutoCAD.Application.23.1",
+        "AutoCAD.Application.23",
+        "AutoCAD.Application.22"
+    )
+
+    foreach ($progId in $progIds) {
+        try {
+            $app = [System.Runtime.InteropServices.Marshal]::GetActiveObject($progId)
+            if (-not $app) { continue }
+
+            $count = [int]$app.Documents.Count
+            $activeName = $null
+            if ($count -gt 0) {
+                try { $activeName = [string]$app.ActiveDocument.Name } catch {}
+            }
+            return [pscustomobject]@{
+                running = $true
+                attached = $true
+                drawing_count = $count
+                active_document = $activeName
+                state = "ON"
+            }
+        } catch {}
+    }
+
+    return [pscustomobject]@{
+        running = $true
+        attached = $false
+        drawing_count = $null
+        active_document = $null
+        state = "ON"
+    }
+}
+
 function Wait-ForCondition([scriptblock]$Condition, [int]$TimeoutSeconds) {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     do {
@@ -157,6 +209,11 @@ function Write-TrayState {
         script = $TrayScriptPath
         cadgpt_pid = $script:CadGptPid
         tunnel_pid = $script:TunnelPid
+        autocad_running = [bool]$script:CadProbe.running
+        autocad_attached = [bool]$script:CadProbe.attached
+        autocad_drawing_count = $script:CadProbe.drawing_count
+        autocad_active_document = $script:CadProbe.active_document
+        autocad_probe_at = $script:CadProbeAt
     } | ConvertTo-Json | Set-Content -Path $TrayReadyPath -Encoding UTF8
 }
 
@@ -253,6 +310,24 @@ if ($StatusOnly) {
         Write-Host "CAD MCP          : $(if ($health.cad_mcp.connected) { 'CONNECTED' } else { 'SLEEPING' })"
     }
     Write-Host "Secure tunnel    : $(if (Test-TunnelHealthy) { 'READY' } else { 'OFFLINE' })"
+    if ($state -and $null -ne $state.autocad_running) {
+        if (-not [bool]$state.autocad_running) {
+            Write-Host "AutoCAD          : OFF"
+        } elseif ([bool]$state.autocad_attached) {
+            Write-Host "AutoCAD          : ON - $($state.autocad_drawing_count) drawing(s)"
+        } else {
+            Write-Host "AutoCAD          : ON - COM unavailable"
+        }
+    } else {
+        $probe = Get-AutoCadProbeStatus
+        if (-not $probe.running) {
+            Write-Host "AutoCAD          : OFF"
+        } elseif ($probe.attached) {
+            Write-Host "AutoCAD          : ON - $($probe.drawing_count) drawing(s)"
+        } else {
+            Write-Host "AutoCAD          : ON - COM unavailable"
+        }
+    }
     exit 0
 }
 
@@ -279,12 +354,53 @@ $script:TunnelPid = $null
 $script:RuntimeState = "Starting"
 $script:Exiting = $false
 $script:TrayStartedAt = (Get-Date).ToString("o")
+$script:CadProbe = [pscustomobject]@{
+    running = $false
+    attached = $false
+    drawing_count = 0
+    active_document = $null
+    state = "OFF"
+}
+$script:CadProbeAt = $null
+
+function Set-TrayTooltip([string]$RuntimeStatus) {
+    if (-not $notify) { return }
+    $cadText = if (-not $script:CadProbe.running) {
+        "CAD OFF"
+    } elseif ($script:CadProbe.attached) {
+        "CAD $($script:CadProbe.drawing_count) dwg"
+    } else {
+        "CAD ON"
+    }
+    $text = "CadGPT $RuntimeStatus | $cadText"
+    if ($text.Length -gt 63) { $text = $text.Substring(0, 63) }
+    $notify.Text = $text
+}
+
+function Update-CadProbeStatus {
+    $script:CadProbe = Get-AutoCadProbeStatus
+    $script:CadProbeAt = (Get-Date).ToString("o")
+
+    if ($cadItem) {
+        if (-not $script:CadProbe.running) {
+            $cadItem.Text = "AutoCAD: OFF"
+        } elseif ($script:CadProbe.attached) {
+            $suffix = if ([int]$script:CadProbe.drawing_count -eq 1) { "drawing" } else { "drawings" }
+            $cadItem.Text = "AutoCAD: ON · $($script:CadProbe.drawing_count) $suffix"
+        } else {
+            $cadItem.Text = "AutoCAD: ON · COM unavailable"
+        }
+    }
+
+    Set-TrayTooltip -RuntimeStatus (Get-RuntimeStatus)
+    Write-TrayState
+}
 
 function Update-TrayStatus {
     if (-not $notify) { return }
     $status = Get-RuntimeStatus
-    $statusItem.Text = "Status: $status"
-    $notify.Text = "CadGPT - $status"
+    $statusItem.Text = "CadGPT: $status"
+    Set-TrayTooltip -RuntimeStatus $status
     Write-TrayState
 }
 
@@ -471,8 +587,14 @@ $notify.Text = "CadGPT - Starting"
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $statusItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $statusItem.Enabled = $false
-$statusItem.Text = "Status: Starting"
+$statusItem.Text = "CadGPT: Starting"
 [void]$menu.Items.Add($statusItem)
+
+$cadItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$cadItem.Enabled = $false
+$cadItem.Text = "AutoCAD: checking..."
+[void]$menu.Items.Add($cadItem)
+
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 
 $logsItem = New-Object System.Windows.Forms.ToolStripMenuItem
@@ -510,12 +632,20 @@ $exitItem.Add_Click({
     $notify.Visible = $false
     [System.Windows.Forms.Application]::Exit()
 })
-$menu.Add_Opening({ Update-TrayStatus })
+$menu.Add_Opening({
+    Update-CadProbeStatus
+    Update-TrayStatus
+})
 
 $statusTimer = New-Object System.Windows.Forms.Timer
 $statusTimer.Interval = 60000
 $statusTimer.Add_Tick({ Update-TrayStatus })
 $statusTimer.Start()
+
+$cadProbeTimer = New-Object System.Windows.Forms.Timer
+$cadProbeTimer.Interval = 15000
+$cadProbeTimer.Add_Tick({ Update-CadProbeStatus })
+$cadProbeTimer.Start()
 
 $bootstrapTimer = New-Object System.Windows.Forms.Timer
 $bootstrapTimer.Interval = 250
@@ -523,6 +653,7 @@ $bootstrapTimer.Add_Tick({
     $bootstrapTimer.Stop()
     try {
         if ($RestartRuntimeOnStart) { Stop-VerifiedRuntime }
+        Update-CadProbeStatus
         Start-CadGptRuntime
     } catch {
         Write-TrayLog "Runtime bootstrap failed: $($_.Exception.Message)"
@@ -536,6 +667,7 @@ try {
     [System.Windows.Forms.Application]::Run()
 } finally {
     $statusTimer.Stop()
+    $cadProbeTimer.Stop()
     $bootstrapTimer.Stop()
     Remove-Item $TrayReadyPath -Force -ErrorAction SilentlyContinue
     $notify.Visible = $false
