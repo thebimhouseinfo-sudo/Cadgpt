@@ -150,7 +150,7 @@ A user-selected Lisp or Job folder is an **import source only**:
 
 ```text
 explicitly approved external source folder (read-only)
-→ library_import
+→ asset_import
 → managed copy in AppData
 → User Registry
 ```
@@ -160,6 +160,10 @@ CadGPT never writes to the external source folder. Import rejects symlinked sour
 After import, execution reads from the managed AppData copy. Permanent managed-library changes do **not** use generic file editing: they go through controlled draft/validation/promotion flows so the implementation and User Registry stay synchronized.
 
 Most users need only Lisp Libraries. Job Libraries are optional for advanced/legacy CadGPT users.
+
+Asset commands: `cg/rl` / `cg/rj` register an external folder in place; `cg/il` / `cg/ij` import by copying into AppData and indexing; `cg/el` / `cg/ej` export managed content to a user folder. Registry entries stay lightweight: identity/title/library/path/commands only; source is read when deeper understanding is actually needed.
+
+Registered Jobs are extension-driven: `.py` is a Direct Job dispatched without model planning; `.md` is a sequential Reasoning Job that uses the per-stage READ → PLAN → REVIEW → REVISE → EXEC → READBACK loop.
 
 ## Capability Registry
 
@@ -282,9 +286,9 @@ appdata/workspace/**
 appdata/data/**
 ```
 
-`appdata/libraries/**` is permanent managed content and is read-only to generic file tools. It changes only through controlled operations such as `library_import`, `lisp_promote_draft` and `job_promote_draft`.
+`appdata/libraries/**` is permanent managed content and is read-only to generic file tools. It changes only through controlled operations such as `asset_import`, `lisp_promote_draft` and `job_promote_draft`.
 
-External user folders are not generic file-tool roots. `library_import` is the controlled read/copy boundary. Registry/runtime/state/log areas remain internal.
+External folders may be registered in place with `asset_register_external`, imported into AppData with `asset_import`, or used as export destinations with `asset_export`. Registry/runtime/state/log areas remain internal.
 
 ## Drawing binding and concurrency
 
