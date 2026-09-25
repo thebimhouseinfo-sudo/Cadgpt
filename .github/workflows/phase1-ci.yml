@@ -170,7 +170,7 @@ jobs:
             foreach ($required in @("library_list","registry_list","job_list","job_get","skill_list","skill_get")) {
               if ($afterAdmissionNames -notcontains $required) { throw "Discovery family missing after admission: $required" }
             }
-            foreach ($forbidden in @("file_roots","file_create","file_edit","library_import","job_checkout","job_draft_validate","job_promote_draft","lisp_checkout","drawing_list")) {
+            foreach ($forbidden in @("file_roots","file_create","file_edit","asset_import","asset_export","asset_register_external","job_checkout","job_run_direct","job_draft_validate","job_promote_draft","lisp_checkout","drawing_list")) {
               if ($afterAdmissionNames -contains $forbidden) { throw "Execution/mutation tool leaked into admission-only discovery surface: $forbidden" }
             }
 
@@ -198,7 +198,7 @@ jobs:
 
             $afterWork = Invoke-Mcp "tools/list" @{}
             $names = @($afterWork.result.tools | ForEach-Object { $_.name })
-            foreach ($required in @("file_roots","file_read","file_search","library_import","lisp_scaffold","lisp_checkout","lisp_validate")) {
+            foreach ($required in @("file_roots","file_read","file_search","asset_import","asset_export","asset_register_external","lisp_scaffold","lisp_checkout","lisp_validate","job_run_direct")) {
               if ($names -notcontains $required) { throw "FILE work tool missing after work start: $required" }
             }
             if ($names -contains "drawing_list") { throw "CAD family loaded during FILE-only work" }
