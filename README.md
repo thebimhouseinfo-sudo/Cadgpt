@@ -324,3 +324,8 @@ Adding/removing/changing a CAD MCP tool regenerates `runtimes/cad-mcp/tool-manif
 Stage 1 is complete. The current branch is tightening admission, execution isolation, multi-drawing safety, lazy runtime lifecycle, controlled CAD MCP self-improvement, and Windows tray startup before Stage 2 real-AutoCAD validation.
 
 Static/CI checks do not substitute for real AutoCAD validation.
+
+
+### Work idle cleanup
+
+An active CadGPT work expires after **30 minutes of no CadGPT work/tool activity**. This prevents a closed or abandoned chat from leaving drawing/work authority alive indefinitely. Active ToolLeases are never interrupted; cleanup occurs only after the work is idle and no tool call is in flight.
