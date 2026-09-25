@@ -325,7 +325,7 @@ Adding/removing/changing a CAD MCP tool regenerates `runtimes/cad-mcp/tool-manif
 
 ## Development status
 
-Stage 1 is complete. The current branch is tightening admission, execution isolation, multi-drawing safety, lazy runtime lifecycle, controlled CAD MCP self-improvement, and Windows tray startup before Stage 2 real-AutoCAD validation.
+Stage 1 is complete. Source/CI integrity review and local Windows installation/runtime stabilization are in progress before the Human-run Stage 2 real-AutoCAD validation.
 
 Static/CI checks do not substitute for real AutoCAD validation.
 
