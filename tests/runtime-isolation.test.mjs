@@ -106,7 +106,19 @@ test("CadGPT welcome exposes the lightweight fake CLI control surface", async ()
     true
   );
   assert.equal(
-    isBareCadGptLaunch("[$cg](app://asdk_app_example) draw a line"),
+    isBareCadGptLaunch("[$cg](app://asdk_app_example) draw a line", "plugin"),
+    false
+  );
+  assert.equal(
+    isBareCadGptLaunch("[CG](app://asdk_app_example)", "plugin"),
+    true
+  );
+  assert.equal(
+    isBareCadGptLaunch("[Renamed Connector](app://asdk_app_example)", "plugin"),
+    true
+  );
+  assert.equal(
+    isBareCadGptLaunch("[Renamed Connector](app://asdk_app_example)", "mention"),
     false
   );
 
