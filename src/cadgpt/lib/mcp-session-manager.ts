@@ -39,6 +39,11 @@ export function extractRequestId(body: unknown): string | number | null {
   return typeof id === "string" || typeof id === "number" ? id : null;
 }
 
+export function selectSoleSessionId(ids: Iterable<string>): string | undefined {
+  const unique = new Set(ids);
+  return unique.size === 1 ? [...unique][0] : undefined;
+}
+
 function negotiateProtocol(requested?: string): string {
   if (requested && (SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(requested)) return requested;
   return LATEST_PROTOCOL_VERSION;
@@ -304,12 +309,11 @@ export function createSessionManager(port: number): SessionManager {
     },
 
     getSoleRecoverableId() {
-      const ids = new Set<string>([
+      return selectSoleSessionId([
         ...sessions.keys(),
         ...pending.keys(),
         ...detached.keys(),
       ]);
-      return ids.size === 1 ? [...ids][0] : undefined;
     },
 
     sendNotFound(res, requestId = null) {
