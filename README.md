@@ -48,7 +48,7 @@ CG / @cadgpt
    → CAD Work CLI + quick commands
 ```
 
-Detection/prepare never launches AutoCAD and never grants mutation authority. Execution authority begins only after workspace confirmation.
+Detection/prepare never launches AutoCAD, never starts full CAD MCP, and never grants mutation authority. The launcher reads the tray snapshot only. Full CAD MCP starts after workspace confirmation, then live AutoCAD is re-verified before binding.
 
 CadGPT is explicit-launch only. The user launches CadGPT once per ChatGPT/MCP session, either with literal `@cadgpt` or by selecting/calling the CadGPT plugin/icon (the connector may be renamed, for example `CG`). That claim persists for later turns in the same session, so repeated `@cadgpt` is not required. A different chat/MCP session starts unclaimed.
 
