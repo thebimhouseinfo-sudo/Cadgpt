@@ -38,8 +38,12 @@ export interface ToolLease {
 
 const WORK_IDLE_MS = Math.max(
   60_000,
-  Number(process.env.CADGPT_WORK_IDLE_MS || 10 * 60 * 1000)
+  Number(process.env.CADGPT_WORK_IDLE_MS || 30 * 60 * 1000)
 );
+
+export function getWorkIdleTimeoutMs(): number {
+  return WORK_IDLE_MS;
+}
 const DRIVER_EPOCH = Date.now();
 const registrations = new Map<string, WorkRegistration>();
 const activeBySession = new Map<string, string>();
