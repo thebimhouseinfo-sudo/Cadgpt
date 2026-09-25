@@ -777,3 +777,11 @@ test("cad-mcp-dev reserved owner id cannot be reached through sanitized aliases"
     else process.env.CADGPT_BUILD_PROFILE = previous;
   }
 });
+
+
+test("work idle timeout defaults to 30 minutes", async () => {
+  const { getWorkIdleTimeoutMs } = await import(
+    "../dist/cadgpt/lib/work-registration.js"
+  );
+  assert.equal(getWorkIdleTimeoutMs(), 30 * 60 * 1000);
+});
