@@ -96,9 +96,15 @@ test("CadGPT welcome exposes the lightweight fake CLI control surface", async ()
   );
 
   assert.match(CADGPT_WELCOME, /CadGPT \/ CG/);
-  assert.match(CADGPT_WELCOME, /SESSION\s+READY/);
-  assert.match(CADGPT_WELCOME, /CAD MCP\s+SLEEPING/);
-  assert.match(CADGPT_WELCOME, /cg\/status/);
+  assert.match(CADGPT_WELCOME, /CAD/);
+  assert.match(CADGPT_WELCOME, /WORKSPACE/);
+  assert.match(CADGPT_WELCOME, /COMMANDS/);
+  assert.match(CADGPT_WELCOME, /cg\/cl/);
+  assert.match(CADGPT_WELCOME, /cg\/cj/);
+  assert.match(CADGPT_WELCOME, /cg\/job/);
+  assert.match(CADGPT_WELCOME, /cg\//);
+  assert.doesNotMatch(CADGPT_WELCOME, /cg\/mcp/);
+  assert.match(CADGPT_ROOT_MENU, /cg\/mcp/);
   assert.match(CADGPT_ROOT_MENU, /cg\/help/);
   assert.match(CADGPT_ROOT_MENU, /cg\/list/);
 });
@@ -266,7 +272,10 @@ test("session continuation and control routing do not rotate the active work han
   await runWithToolLease(lease, async () => undefined);
   assert.equal(activeToolLeaseCount(), 0);
 
-  const control = checkAdmission(sessionKey, "@cadgpt status");
+  const activationWithTask = checkAdmission(sessionKey, "@cadgpt status");
+  assert.equal(activationWithTask.mode, "active");
+
+  const control = checkAdmission(sessionKey, "cg/status");
   assert.equal(control.mode, "control");
 
   const leaseAfterControl = acquireToolLease({
