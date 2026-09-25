@@ -83,6 +83,10 @@ async function loopbackPost(
 export function createSessionManager(port: number): SessionManager {
   const sessions = new Map<string, McpSession>();
   const pending = new Map<string, McpSession>();
+  // A transport can be logically closed by the client while the CadGPT
+  // session/work should remain recoverable for a short grace window. Never
+  // leave a terminated transport in the active session map.
+  const detached = new Map<string, McpSession>();
   const graceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const opChains = new Map<string, Promise<void>>();
   const recoveryFlights = new Map<string, Promise<McpSession | undefined>>();
@@ -92,6 +96,14 @@ export function createSessionManager(port: number): SessionManager {
     const timer = graceTimers.get(id);
     if (timer) clearTimeout(timer);
     graceTimers.delete(id);
+  }
+
+  function finalizeDetached(id: string, reason: string): void {
+    const old = detached.get(id);
+    if (!old) return;
+    detached.delete(id);
+    void disposeMcpServerRuntime(old.server).catch(() => undefined);
+    console.log(`[MCP] Detached session finalized (${reason}): ${id}`);
   }
 
   function touch(id: string): void {
@@ -139,6 +151,7 @@ export function createSessionManager(port: number): SessionManager {
       enableJsonResponse: true,
       onsessioninitialized: (id) => {
         const previous = sessions.get(id);
+        const detachedPrevious = detached.get(id);
         const replacement: McpSession = {
           server,
           transport,
@@ -147,9 +160,17 @@ export function createSessionManager(port: number): SessionManager {
         sessions.set(id, replacement);
         pending.delete(id);
         clearGrace(id);
+
+        if (detachedPrevious && detachedPrevious.transport !== transport) {
+          detached.delete(id);
+          // Recovery keeps admission/work authority for the same logical
+          // session, but the terminated server/transport object can go away.
+          void disposeMcpServerRuntime(detachedPrevious.server, {
+            preserveSessionState: true,
+          }).catch(() => undefined);
+        }
+
         if (previous && previous.transport !== transport) {
-          // Transport recovery must not revoke admission/work belonging to the
-          // same logical MCP session. Only detach the replaced server object.
           void disposeMcpServerRuntime(previous.server, {
             preserveSessionState: true,
           }).catch(() => undefined);
@@ -159,19 +180,29 @@ export function createSessionManager(port: number): SessionManager {
       },
       onsessionclosed: (id) => {
         if (!id) return;
-        // Ignore close callbacks from a stale transport after a replacement with
-        // the same session ID has already become current.
+        // MCP SDK marks this transport terminated as part of close/DELETE.
+        // Remove it from the active map immediately so the next POST takes the
+        // recovery path instead of being sent back into a dead transport.
         const active = sessions.get(id) ?? pending.get(id);
         if (!active || active.transport !== transport) return;
+
+        sessions.delete(id);
+        pending.delete(id);
+        opChains.delete(id);
+        detached.set(id, active);
         clearGrace(id);
+
         const timer = setTimeout(() => {
-          const current = sessions.get(id) ?? pending.get(id);
-          if (current?.transport === transport) {
-            remove(id, "client close grace expired", transport);
+          if (!sessions.has(id)) {
+            finalizeDetached(id, "client close grace expired");
+          } else {
+            detached.delete(id);
           }
+          graceTimers.delete(id);
         }, DELETE_GRACE_MS);
         timer.unref?.();
         graceTimers.set(id, timer);
+        console.log(`[MCP] Transport terminated; logical session detached for recovery: ${id}`);
       },
     });
     transport.onerror = (error) => console.warn("[MCP] transport error:", error.message);
@@ -345,9 +376,11 @@ export function createSessionManager(port: number): SessionManager {
       const all = new Map<string, McpSession>();
       for (const [id, session] of sessions) all.set(`session:${id}`, session);
       for (const [id, session] of pending) all.set(`pending:${id}`, session);
+      for (const [id, session] of detached) all.set(`detached:${id}`, session);
 
       sessions.clear();
       pending.clear();
+      detached.clear();
       opChains.clear();
       recoveryFlights.clear();
 
