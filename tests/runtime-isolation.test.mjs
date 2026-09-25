@@ -121,6 +121,14 @@ test("CadGPT welcome exposes the lightweight fake CLI control surface", async ()
     isBareCadGptLaunch("[Renamed Connector](app://asdk_app_example)", "mention"),
     false
   );
+  assert.equal(
+    isBareCadGptLaunch("\uFFFC[Renamed Connector](app://asdk_app_example)\u200B", "plugin"),
+    true
+  );
+  assert.equal(
+    isBareCadGptLaunch("$cg", "plugin"),
+    true
+  );
 
   assert.match(CADGPT_WELCOME, /CadGPT \/ CG/);
   assert.match(CADGPT_WELCOME, /CAD/);
@@ -172,6 +180,9 @@ test("tray JSON parser tolerates Windows PowerShell UTF-8 BOM", async () => {
     assert.equal(launch.mode, "cad_prepare");
     assert.equal(launch.drawings?.length, 1);
     assert.match(launch.welcome_text, /Test\.dwg/);
+    assert.doesNotMatch(launch.welcome_text, /OPEN DRAWINGS/);
+    assert.doesNotMatch(launch.welcome_text, /\nOnline\n/);
+    assert.match(launch.welcome_text, /CAD\n1\. C:\\\\Test\.dwg/);
   } finally {
     if (previous === undefined) delete process.env.CADGPT_APPDATA_ROOT;
     else process.env.CADGPT_APPDATA_ROOT = previous;
