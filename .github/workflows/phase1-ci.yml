@@ -151,7 +151,13 @@ jobs:
 
             $admit = Invoke-Tool "cadgpt_admission" @{ user_turn="CG"; invocation_source="plugin" }
             if ($admit.result.structuredContent.data.mode -ne "active") { throw "Plugin launch did not claim session" }
-            if ([string]$admit.result.structuredContent.data.welcome_text -notmatch "SESSION\s+READY") { throw "Bare plugin launch did not return the CadGPT welcome CLI" }
+            $welcome = [string]$admit.result.structuredContent.data.welcome_text
+            foreach ($section in @("CAD","WORKSPACE","COMMANDS")) {
+              if ($welcome -notmatch $section) { throw "Bare plugin launch missing Welcome section: $section" }
+            }
+            foreach ($command in @("cg/cl","cg/cj","cg/job","cg/")) {
+              if ($welcome -notmatch [regex]::Escape($command)) { throw "Bare plugin launch missing Welcome command: $command" }
+            }
 
             $idleStatus = Invoke-Tool "cadgpt_control" @{ surface="status" }
             if ([string]$idleStatus.result.structuredContent.text -notmatch "WORK\s+IDLE") { throw "CadGPT status did not report idle session directly" }
