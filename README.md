@@ -29,6 +29,8 @@ WorkRegistration + ToolLease
 
 ## Admission and Windows lifecycle
 
+The Windows tray independently runs a lightweight read-only AutoCAD probe. It does not start the full CAD MCP, create WorkRegistration, bind drawings, or grant mutation authority. The tray reports `AutoCAD: OFF` or `AutoCAD: ON · N drawings` and refreshes the probe periodically plus immediately when the tray menu opens.
+
 CadGPT launcher is context-aware:
 
 ```text
