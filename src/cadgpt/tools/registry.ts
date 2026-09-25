@@ -243,7 +243,8 @@ async function loadEffectiveRegistry(): Promise<Array<Record<string, unknown>>> 
     listBundledLispEntries(),
     loadUserEntries(),
   ]);
-  return [...tools, ...skills, ...bundledLisp, ...users].sort((a, b) =>
+  const bundled = bundledLisp as unknown as Array<Record<string, unknown>>;
+  return [...tools, ...skills, ...bundled, ...users].sort((a, b) =>
     `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`)
   );
 }
