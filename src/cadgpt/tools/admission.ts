@@ -38,7 +38,7 @@ export function registerAdmissionTool(
           ? CADGPT_WELCOME
           : undefined;
 
-      return toolResult("cadgpt_admission", {
+      const data = {
         internal_control_signal: true,
         render_to_user: Boolean(welcome),
         ...decision,
@@ -51,7 +51,21 @@ export function registerAdmissionTool(
               : welcome
                 ? "Return welcome_text verbatim for a bare CadGPT/CG launch. The session is now claimed; later turns continue without repeated @cadgpt."
                 : "CadGPT is admitted for this ChatGPT/MCP session. Carry the fresh admission_token into discovery and work registration for this turn; later turns may continue without repeating @cadgpt.",
-      });
+      };
+
+      if (welcome) {
+        return {
+          content: [{ type: "text" as const, text: welcome }],
+          structuredContent: {
+            ok: true,
+            tool: "cadgpt_admission",
+            summary: "CadGPT session claimed",
+            data,
+          },
+        };
+      }
+
+      return toolResult("cadgpt_admission", data);
     }
   );
 }
