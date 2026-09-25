@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { checkAdmission } from "../lib/admission.js";
 import { toolResult } from "../lib/tool-result.js";
+import { CADGPT_WELCOME, isBareCadGptLaunch } from "../lib/quickstart.js";
 
 export function registerAdmissionTool(
   server: McpServer,
@@ -31,16 +32,25 @@ export function registerAdmissionTool(
     async ({ user_turn, invocation_source }) => {
       const decision = checkAdmission(options.sessionKey, user_turn, invocation_source);
       if (decision.mode === "active") await options.onActive();
+      const welcome =
+        decision.mode === "active" &&
+        (invocation_source === "plugin" || isBareCadGptLaunch(user_turn))
+          ? CADGPT_WELCOME
+          : undefined;
+
       return toolResult("cadgpt_admission", {
         internal_control_signal: true,
-        render_to_user: false,
+        render_to_user: Boolean(welcome),
         ...decision,
+        ...(welcome ? { welcome_text: welcome } : {}),
         instruction:
           decision.mode === "inactive"
             ? "STOP CadGPT. Do not call discovery/work/CAD tools. Continue ordinary ChatGPT or use the provider the user actually invoked."
             : decision.mode === "control"
               ? "Use this CONTROL admission_token only for CadGPT control/status/stop. It cannot authorize discovery, FILE, CAD, or new work."
-              : "CadGPT is admitted for this ChatGPT/MCP session. Carry the fresh admission_token into discovery and work registration for this turn; later turns may continue without repeating @cadgpt.",
+              : welcome
+                ? "Return welcome_text verbatim for a bare CadGPT/CG launch. The session is now claimed; later turns continue without repeated @cadgpt."
+                : "CadGPT is admitted for this ChatGPT/MCP session. Carry the fresh admission_token into discovery and work registration for this turn; later turns may continue without repeating @cadgpt.",
       });
     }
   );
