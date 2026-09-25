@@ -340,16 +340,25 @@ Managed roots remain:
 └── logs/
 ```
 
-External Lisp/Job folders are import sources only.
+Runtime user data resolves to `%LOCALAPPDATA%\CadGPT` by default. Repo-shipped Lisp is bundled/default read-only installation content and is never copied into user AppData automatically.
+
+External Lisp/Job folders support two lightweight modes:
 
 ```text
-external user folder (read-only import source)
-→ controlled import
-→ managed AppData copy
-→ User Registry
+register
+→ index external folder in place
+→ no copy
+
+import
+→ copy into user AppData
+→ read Lisp/Job content
+→ lightweight User Registry index
+
+export
+→ copy managed AppData content to a user folder
 ```
 
-CadGPT must not write back to the external original.
+Registry entries are intentionally small: identity/title/library/path/commands, plus the internal kind discriminator used to filter Lisp vs Job. Deeper source understanding is loaded only when the asset is actually used.
 
 Registry ownership remains:
 
@@ -364,6 +373,15 @@ User Registry
 ```
 
 User content cannot overwrite internal tools/Skills.
+
+### 4.1 Job execution modes
+
+```text
+.py → Direct Job → dispatch directly
+.md → Reasoning Job → sequential READ → PLAN → REVIEW → REVISE → EXEC → READBACK → NEXT
+```
+
+Reasoning review is internal and may repeat at each dynamic stage. A later step may depend on the drawing state produced by an earlier step, so the runtime must not require one frozen plan for the entire workflow. Safe uncertain items may be deferred while the Job continues; unresolved items are reported at the end.
 
 ---
 
@@ -851,15 +869,15 @@ download
 → install/extract
 ```
 
-### 9.4 AppData move
+### 9.4 AppData location — implemented
 
-Before shipping, default managed data should resolve to a per-user location such as:
+Runtime user data now defaults to:
 
 ```text
 %LOCALAPPDATA%\CadGPT
 ```
 
-The repo-local `appdata` layout remains a development convenience, not the final product data location.
+`CADGPT_APPDATA_ROOT` remains a development/test override. The historical repo `appdata/libraries/lisp/**` content is treated as bundled read-only Lisp rather than runtime user data.
 
 ---
 
@@ -985,7 +1003,7 @@ This is a mandatory automated test.
 
 Only after S0–S5 pass:
 
-- set production AppData default to `%LOCALAPPDATA%\CadGPT`;
+- preserve the implemented `%LOCALAPPDATA%\CadGPT` runtime default;
 - package prebuilt CadGPT runtime;
 - package or install the required normal CAD MCP runtime;
 - configure Secure MCP Tunnel;
