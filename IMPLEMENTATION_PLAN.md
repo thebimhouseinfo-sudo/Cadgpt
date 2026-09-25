@@ -122,6 +122,19 @@ The development-only `cad-mcp-dev` Skill and its write/rollback/candidate tools 
 
 ## 2. Idle/runtime lifecycle
 
+Active work has a **30-minute idle timeout**. If no CadGPT work/tool activity occurs for 30 minutes:
+
+```text
+expire WorkRegistration
+→ revoke its work authority
+→ clean drawing/runtime state
+→ stop/release CAD backend when no other CAD work remains
+→ keep the lightweight CadGPT session/tray available
+```
+
+The sweeper must never interrupt an active ToolLease. Tool acquire/completion refreshes work activity. The timeout exists so abandoned chats do not leave work sessions alive indefinitely.
+
+
 Windows idle state should remain small:
 
 ```text
