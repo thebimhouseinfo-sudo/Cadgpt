@@ -17,6 +17,7 @@ interface PendingCadPrepare {
   sessionKey: string;
   createdAt: number;
   drawings: CadPrepareDrawing[];
+  state: "ready" | "in_flight";
 }
 
 interface TrayCadSnapshot {
@@ -33,14 +34,40 @@ interface TrayCadSnapshot {
 const PREPARE_TTL_MS = 30 * 60 * 1000;
 const TRAY_PROBE_FRESH_MS = 45_000;
 const pendingBySession = new Map<string, PendingCadPrepare>();
+const pendingByToken = new Map<string, PendingCadPrepare>();
+
+function removePending(pending: PendingCadPrepare): void {
+  if (pendingBySession.get(pending.sessionKey) === pending) {
+    pendingBySession.delete(pending.sessionKey);
+  }
+  if (pendingByToken.get(pending.token) === pending) {
+    pendingByToken.delete(pending.token);
+  }
+}
 
 function cleanupPending(): void {
   const now = Date.now();
-  for (const [sessionKey, pending] of pendingBySession) {
+  for (const pending of pendingBySession.values()) {
     if (now - pending.createdAt > PREPARE_TTL_MS) {
-      pendingBySession.delete(sessionKey);
+      removePending(pending);
     }
   }
+}
+
+function replacePending(sessionKey: string, pending?: PendingCadPrepare): void {
+  const previous = pendingBySession.get(sessionKey);
+  if (previous) removePending(previous);
+  if (!pending) return;
+  pendingBySession.set(sessionKey, pending);
+  pendingByToken.set(pending.token, pending);
+}
+
+export function resolveCadPrepareSessionByToken(
+  confirmationToken: string
+): string | undefined {
+  cleanupPending();
+  const pending = pendingByToken.get(confirmationToken);
+  return pending?.sessionKey;
 }
 
 async function readTrayCadSnapshot(): Promise<{
@@ -202,7 +229,7 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
 
   const { snapshot, age_ms } = await readTrayCadSnapshot();
   if (!snapshot) {
-    pendingBySession.delete(sessionKey);
+    replacePending(sessionKey);
     return {
       mode: "offline",
       welcome_text: renderOfflineWelcome(
@@ -215,7 +242,7 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
   }
 
   if (snapshot.autocad_running !== true) {
-    pendingBySession.delete(sessionKey);
+    replacePending(sessionKey);
     return {
       mode: "offline",
       welcome_text: renderOfflineWelcome(),
@@ -228,7 +255,7 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
   const stale = age_ms === null || age_ms > TRAY_PROBE_FRESH_MS;
 
   if (snapshot.autocad_attached !== true) {
-    pendingBySession.delete(sessionKey);
+    replacePending(sessionKey);
     return {
       mode: "cad_prepare",
       welcome_text: renderOnlineWelcome([], {
@@ -244,7 +271,7 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
 
   const drawings = normalizeDrawings(snapshot);
   if (!drawings.length) {
-    pendingBySession.delete(sessionKey);
+    replacePending(sessionKey);
     return {
       mode: "cad_prepare",
       welcome_text: renderOnlineWelcome([], { stale }),
@@ -256,11 +283,12 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
   }
 
   const token = randomUUID();
-  pendingBySession.set(sessionKey, {
+  replacePending(sessionKey, {
     token,
     sessionKey,
     createdAt: Date.now(),
     drawings,
+    state: "ready",
   });
 
   return {
@@ -274,14 +302,19 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
   };
 }
 
-export function consumeCadPrepare(
+export function beginCadPrepareConfirm(
   sessionKey: string,
   confirmationToken: string,
   choiceKey: string
 ): CadPrepareDrawing {
   cleanupPending();
   const pending = pendingBySession.get(sessionKey);
-  if (!pending || pending.token !== confirmationToken) {
+  if (
+    !pending ||
+    pending.token !== confirmationToken ||
+    pendingByToken.get(confirmationToken) !== pending ||
+    pending.state !== "ready"
+  ) {
     throw new Error(
       "CAD_PREPARE_REQUIRED: CAD workspace selection is missing or stale. Use cg/list and select one drawing again."
     );
@@ -301,12 +334,47 @@ export function consumeCadPrepare(
     );
   }
 
-  pendingBySession.delete(sessionKey);
+  pending.state = "in_flight";
   return selected;
 }
 
+export function commitCadPrepareConfirm(
+  sessionKey: string,
+  confirmationToken: string
+): void {
+  cleanupPending();
+  const pending = pendingBySession.get(sessionKey);
+  if (
+    !pending ||
+    pending.token !== confirmationToken ||
+    pendingByToken.get(confirmationToken) !== pending ||
+    pending.state !== "in_flight"
+  ) {
+    throw new Error(
+      "CAD_PREPARE_REQUIRED: CAD workspace selection is missing or stale. Use cg/list and select one drawing again."
+    );
+  }
+  removePending(pending);
+}
+
+export function rollbackCadPrepareConfirm(
+  sessionKey: string,
+  confirmationToken: string
+): void {
+  cleanupPending();
+  const pending = pendingBySession.get(sessionKey);
+  if (
+    pending &&
+    pending.token === confirmationToken &&
+    pendingByToken.get(confirmationToken) === pending &&
+    pending.state === "in_flight"
+  ) {
+    pending.state = "ready";
+  }
+}
+
 export function clearCadPrepare(sessionKey: string): void {
-  pendingBySession.delete(sessionKey);
+  replacePending(sessionKey);
 }
 
 export function registerCadPrepareConfirmTool(
@@ -330,20 +398,26 @@ export function registerCadPrepareConfirmTool(
       },
     },
     async ({ confirmation_token, choice_key }) => {
-      const drawing = consumeCadPrepare(
+      const drawing = beginCadPrepareConfirm(
         options.sessionKey,
         confirmation_token,
         choice_key
       );
-      const activated = await options.activateWorkspace(drawing);
-      return {
-        content: [{ type: "text" as const, text: activated.text }],
-        structuredContent: {
-          text: activated.text,
-          work_handle: activated.work_handle,
-          drawing: activated.drawing,
-        },
-      };
+      try {
+        const activated = await options.activateWorkspace(drawing);
+        commitCadPrepareConfirm(options.sessionKey, confirmation_token);
+        return {
+          content: [{ type: "text" as const, text: activated.text }],
+          structuredContent: {
+            text: activated.text,
+            work_handle: activated.work_handle,
+            drawing: activated.drawing,
+          },
+        };
+      } catch (error) {
+        rollbackCadPrepareConfirm(options.sessionKey, confirmation_token);
+        throw error;
+      }
     }
   );
 }
