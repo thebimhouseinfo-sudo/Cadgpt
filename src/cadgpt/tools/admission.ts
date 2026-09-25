@@ -17,7 +17,7 @@ export function registerAdmissionTool(
     {
       title: "CadGPT Admission",
       description:
-        "Internal CadGPT session admission handshake. The user explicitly launches CadGPT once per ChatGPT/MCP session, either by calling this CadGPT plugin/icon (for example a connector renamed CG) or by using literal @cadgpt. That claim persists for later turns in the same session, so repeated @cadgpt is not required. Pass the exact current user turn. Never carry a claim across another MCP/chat session.",
+        "Internal CadGPT session admission handshake. On a bare CadGPT/CG plugin invocation or bare @cadgpt launch, the returned text content IS the final user-visible Welcome screen: output it verbatim and do not summarize it as ready/activated. The session claim persists for later turns in the same session. Pass the exact current user turn. Never carry a claim across another MCP/chat session.",
       inputSchema: {
         user_turn: z
           .string()
@@ -61,10 +61,14 @@ export function registerAdmissionTool(
         return {
           content: [{ type: "text" as const, text: welcome }],
           structuredContent: {
-            ok: true,
-            tool: "cadgpt_admission",
-            summary: "CadGPT session claimed",
-            data,
+            welcome_text: welcome,
+            render_verbatim: true,
+            launch_mode: launch?.launch_mode,
+            autocad_detected: launch?.autocad_detected,
+            ...(launch?.confirmation_token
+              ? { confirmation_token: launch.confirmation_token }
+              : {}),
+            ...(launch?.drawings ? { drawings: launch.drawings } : {}),
           },
         };
       }
