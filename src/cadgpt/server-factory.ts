@@ -6,6 +6,7 @@ import {
 
 import { validateAdmissionToken } from "./lib/admission.js";
 import {
+  activeExecutionForSession,
   acquireToolLease,
   releaseSessionWork,
   runWithToolLease,
