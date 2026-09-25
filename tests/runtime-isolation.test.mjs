@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-test("admission claims one ChatGPT/MCP session and does not require repeated @cadgpt", async () => {
+test("CadGPT launch claims the MCP session without creating execution authority", async () => {
   const {
     checkAdmission,
-    validateAdmissionToken,
+    assertSessionClaimed,
     revokeSessionAdmissions,
     isSessionClaimed,
   } = await import("../dist/cadgpt/lib/admission.js");
@@ -12,63 +12,40 @@ test("admission claims one ChatGPT/MCP session and does not require repeated @ca
   const inactive = checkAdmission("session-a", "Please edit this AutoCAD drawing");
   assert.equal(inactive.mode, "inactive");
   assert.equal(inactive.claimed, false);
-  assert.equal(inactive.admission_token, undefined);
+  assert.throws(
+    () => assertSessionClaimed("session-a"),
+    /CADGPT_SESSION_REQUIRED/
+  );
 
   const bareMention = checkAdmission("session-a", "@cadgpt", "mention");
   assert.equal(bareMention.mode, "active");
   assert.equal(bareMention.reason, "explicit_cadgpt");
-  assert.ok(bareMention.admission_token);
   assert.equal(isSessionClaimed("session-a"), true);
 
-  const mentionContinuation = checkAdmission(
+  const continuation = checkAdmission(
     "session-a",
     "drawing nào đang mở",
     "mention"
   );
-  assert.equal(mentionContinuation.mode, "active");
-  assert.equal(mentionContinuation.reason, "session_continuation");
-  assert.ok(mentionContinuation.admission_token);
+  assert.equal(continuation.mode, "active");
+  assert.equal(continuation.reason, "session_continuation");
+  assert.doesNotThrow(() => assertSessionClaimed("session-a"));
 
-  const plugin = checkAdmission(
-    "session-plugin",
-    "CG",
-    "plugin"
-  );
+  const plugin = checkAdmission("session-plugin", "CG", "plugin");
   assert.equal(plugin.mode, "active");
   assert.equal(plugin.reason, "explicit_cadgpt_plugin");
-  assert.ok(plugin.admission_token);
   assert.equal(isSessionClaimed("session-plugin"), true);
-
-  const nextTurnWithoutInvocation = checkAdmission(
-    "session-plugin",
-    "drawing nào đang mở",
-    "mention"
-  );
-  assert.equal(nextTurnWithoutInvocation.mode, "active");
-  assert.equal(nextTurnWithoutInvocation.reason, "session_continuation");
-  assert.ok(nextTurnWithoutInvocation.admission_token);
-  assert.doesNotThrow(() =>
-    validateAdmissionToken(nextTurnWithoutInvocation.admission_token, "session-plugin")
-  );
-
-  assert.throws(
-    () => validateAdmissionToken(nextTurnWithoutInvocation.admission_token, "session-b"),
-    /another ChatGPT session/
-  );
 
   revokeSessionAdmissions("session-plugin");
   assert.equal(isSessionClaimed("session-plugin"), false);
-  const afterClose = checkAdmission(
-    "session-plugin",
-    "continue",
-    "mention"
+  assert.throws(
+    () => assertSessionClaimed("session-plugin"),
+    /CADGPT_SESSION_REQUIRED/
   );
-  assert.equal(afterClose.mode, "inactive");
 });
 
-
-test("MCP transport recovery preserves admission and work authority for the same logical session", async () => {
-  const { checkAdmission, validateAdmissionToken } = await import(
+test("MCP transport recovery preserves session claim and work handle for the same logical session", async () => {
+  const { checkAdmission, assertSessionClaimed } = await import(
     "../dist/cadgpt/lib/admission.js"
   );
   const {
@@ -85,11 +62,9 @@ test("MCP transport recovery preserves admission and work authority for the same
 
   const admission = checkAdmission(sessionId, "CG", "plugin");
   assert.equal(admission.mode, "active");
-  assert.ok(admission.admission_token);
 
   const work = createWorkRegistration({
     sessionKey: sessionId,
-    admissionToken: admission.admission_token,
     ownerType: "file",
     ownerId: "recovery-test",
     executionPath: "file",
@@ -98,9 +73,7 @@ test("MCP transport recovery preserves admission and work authority for the same
   await disposeMcpServerRuntime(serverA, { preserveSessionState: true });
 
   const serverB = createMcpServer(sessionId);
-  assert.doesNotThrow(() =>
-    validateAdmissionToken(admission.admission_token, sessionId)
-  );
+  assert.doesNotThrow(() => assertSessionClaimed(sessionId));
   assert.doesNotThrow(() =>
     validateWorkHandle(work.executionId, work.authorityToken, sessionId)
   );
@@ -108,8 +81,8 @@ test("MCP transport recovery preserves admission and work authority for the same
   await disposeMcpServerRuntime(serverB);
 
   assert.throws(
-    () => validateAdmissionToken(admission.admission_token, sessionId),
-    /ADMISSION_REQUIRED/
+    () => assertSessionClaimed(sessionId),
+    /CADGPT_SESSION_REQUIRED/
   );
   assert.throws(
     () => validateWorkHandle(work.executionId, work.authorityToken, sessionId),
@@ -140,19 +113,14 @@ test("work registrations and tool leases remain isolated across sessions", async
 
   const admissionA = checkAdmission("lease-session-a", "@cadgpt do file work");
   const admissionB = checkAdmission("lease-session-b", "@cadgpt do file work");
-  assert.ok(admissionA.admission_token);
-  assert.ok(admissionB.admission_token);
-
   const workA = createWorkRegistration({
     sessionKey: "lease-session-a",
-    admissionToken: admissionA.admission_token,
     ownerType: "skill",
     ownerId: "write-lisp",
     executionPath: "file",
   });
   const workB = createWorkRegistration({
     sessionKey: "lease-session-b",
-    admissionToken: admissionB.admission_token,
     ownerType: "skill",
     ownerId: "write-lisp",
     executionPath: "file",
@@ -167,7 +135,6 @@ test("work registrations and tool leases remain isolated across sessions", async
     targetId: "same-draft",
     executionId: workA.executionId,
     authorityToken: workA.authorityToken,
-    admissionToken: admissionA.admission_token,
     sessionKey: "lease-session-a",
   });
   const leaseB = acquireToolLease({
@@ -176,7 +143,6 @@ test("work registrations and tool leases remain isolated across sessions", async
     targetId: "same-draft",
     executionId: workB.executionId,
     authorityToken: workB.authorityToken,
-    admissionToken: admissionB.admission_token,
     sessionKey: "lease-session-b",
   });
 
@@ -191,7 +157,6 @@ test("work registrations and tool leases remain isolated across sessions", async
         family: "filesystem",
         executionId: workA.executionId,
         authorityToken: workA.authorityToken,
-        admissionToken: admissionA.admission_token,
         sessionKey: "lease-session-b",
       }),
     /another ChatGPT session|NO_ACTIVE_WORK/
@@ -244,12 +209,10 @@ test("production profile blocks cad-mcp-dev work registration", async () => {
       "production-session",
       "@cadgpt improve CAD MCP"
     );
-    assert.ok(admission.admission_token);
     assert.throws(
       () =>
         createWorkRegistration({
           sessionKey: "production-session",
-          admissionToken: admission.admission_token,
           ownerType: "skill",
           ownerId: "cad-mcp-dev",
           executionPath: "file",
@@ -263,8 +226,8 @@ test("production profile blocks cad-mcp-dev work registration", async () => {
 });
 
 
-test("a new turn rotates proof authority while the session claim persists; CONTROL cannot execute work", async () => {
-  const { checkAdmission, validateAdmissionToken } = await import(
+test("session continuation and control routing do not rotate the active work handle", async () => {
+  const { checkAdmission } = await import(
     "../dist/cadgpt/lib/admission.js"
   );
   const {
@@ -275,25 +238,20 @@ test("a new turn rotates proof authority while the session claim persists; CONTR
     releaseWorkRegistration,
   } = await import("../dist/cadgpt/lib/work-registration.js");
 
-  const first = checkAdmission("rotation-session", "@cadgpt start file work");
+  const sessionKey = "continuation-session";
+  const first = checkAdmission(sessionKey, "@cadgpt start file work");
   assert.equal(first.mode, "active");
-  assert.ok(first.admission_token);
 
   const work = createWorkRegistration({
-    sessionKey: "rotation-session",
-    admissionToken: first.admission_token,
+    sessionKey,
     ownerType: "skill",
     ownerId: "write-lisp",
     executionPath: "file",
   });
 
-  const second = checkAdmission("rotation-session", "@cadgpt continue file work");
-  assert.equal(second.mode, "active");
-  assert.ok(second.admission_token);
-  assert.throws(
-    () => validateAdmissionToken(first.admission_token, "rotation-session"),
-    /ADMISSION_REQUIRED/
-  );
+  const continuation = checkAdmission(sessionKey, "continue file work");
+  assert.equal(continuation.mode, "active");
+  assert.equal(continuation.reason, "session_continuation");
 
   const lease = acquireToolLease({
     tool: "file_read",
@@ -301,54 +259,29 @@ test("a new turn rotates proof authority while the session claim persists; CONTR
     targetId: "same-target",
     executionId: work.executionId,
     authorityToken: work.authorityToken,
-    admissionToken: second.admission_token,
-    sessionKey: "rotation-session",
+    sessionKey,
   });
   assert.equal(activeToolLeaseCount(), 1);
-  await runWithToolLease(lease, async () => {
-    assert.equal(activeToolLeaseCount(), 1);
-  });
+  await runWithToolLease(lease, async () => undefined);
   assert.equal(activeToolLeaseCount(), 0);
 
-  const control = checkAdmission("rotation-session", "@cadgpt status");
+  const control = checkAdmission(sessionKey, "@cadgpt status");
   assert.equal(control.mode, "control");
-  assert.ok(control.admission_token);
-  assert.doesNotThrow(() =>
-    validateAdmissionToken(control.admission_token, "rotation-session", "control_or_active")
-  );
-  assert.throws(
-    () => validateAdmissionToken(control.admission_token, "rotation-session"),
-    /ACTIVE_ADMISSION_REQUIRED/
-  );
 
-  assert.throws(
-    () =>
-      acquireToolLease({
-        tool: "file_read",
-        family: "filesystem",
-        executionId: work.executionId,
-        authorityToken: work.authorityToken,
-        admissionToken: control.admission_token,
-        sessionKey: "rotation-session",
-      }),
-    /ACTIVE_ADMISSION_REQUIRED/
-  );
-
-  const continuation = checkAdmission("rotation-session", "continue without invoking provider");
-  assert.equal(continuation.mode, "active");
-  assert.equal(continuation.reason, "session_continuation");
-  assert.throws(
-    () => validateAdmissionToken(control.admission_token, "rotation-session", "control_or_active"),
-    /ADMISSION_REQUIRED/
-  );
-  assert.doesNotThrow(() =>
-    validateAdmissionToken(continuation.admission_token, "rotation-session")
-  );
+  const leaseAfterControl = acquireToolLease({
+    tool: "file_read",
+    family: "filesystem",
+    targetId: "same-target",
+    executionId: work.executionId,
+    authorityToken: work.authorityToken,
+    sessionKey,
+  });
+  await runWithToolLease(leaseAfterControl, async () => undefined);
 
   releaseWorkRegistration(
     work.executionId,
     work.authorityToken,
-    "rotation-session"
+    sessionKey
   );
 });
 
@@ -371,10 +304,8 @@ test("CAD candidate reservation is exclusive to its execution without starting C
   let workB;
   try {
     const admissionA = checkAdmission("candidate-a", "@cadgpt improve CAD MCP");
-    assert.ok(admissionA.admission_token);
     workA = createWorkRegistration({
       sessionKey: "candidate-a",
-      admissionToken: admissionA.admission_token,
       ownerType: "skill",
       ownerId: "cad-mcp-dev",
       executionPath: "hybrid",
@@ -389,10 +320,8 @@ test("CAD candidate reservation is exclusive to its execution without starting C
     assert.doesNotThrow(() => assertCadCandidateAccess(workA.executionId));
 
     const admissionB = checkAdmission("candidate-b", "@cadgpt run another CAD job");
-    assert.ok(admissionB.admission_token);
     workB = createWorkRegistration({
       sessionKey: "candidate-b",
-      admissionToken: admissionB.admission_token,
       ownerType: "job",
       ownerId: "job-b",
       executionPath: "cad",
@@ -427,12 +356,8 @@ test("cad-mcp-dev source tree admits only one active dev execution", async () =>
 
     const a = checkAdmission("dev-owner-a", "@cadgpt improve CAD MCP");
     const b = checkAdmission("dev-owner-b", "@cadgpt improve CAD MCP");
-    assert.ok(a.admission_token);
-    assert.ok(b.admission_token);
-
     const workA = createWorkRegistration({
       sessionKey: "dev-owner-a",
-      admissionToken: a.admission_token,
       ownerType: "skill",
       ownerId: "cad-mcp-dev",
       executionPath: "file",
@@ -442,7 +367,6 @@ test("cad-mcp-dev source tree admits only one active dev execution", async () =>
       () =>
         createWorkRegistration({
           sessionKey: "dev-owner-b",
-          admissionToken: b.admission_token,
           ownerType: "skill",
           ownerId: "cad-mcp-dev",
           executionPath: "file",
@@ -563,11 +487,8 @@ test("active ToolLease blocks explicit work replace/stop until the call finishes
 
   const sessionKey = "busy-work-session";
   const admission = checkAdmission(sessionKey, "@cadgpt run a long file operation");
-  assert.ok(admission.admission_token);
-
   const work = createWorkRegistration({
     sessionKey,
-    admissionToken: admission.admission_token,
     ownerType: "file",
     ownerId: "busy-test",
     executionPath: "file",
@@ -578,7 +499,6 @@ test("active ToolLease blocks explicit work replace/stop until the call finishes
     family: "filesystem",
     executionId: work.executionId,
     authorityToken: work.authorityToken,
-    admissionToken: admission.admission_token,
     sessionKey,
   });
 
@@ -594,7 +514,6 @@ test("active ToolLease blocks explicit work replace/stop until the call finishes
     () =>
       createWorkRegistration({
         sessionKey,
-        admissionToken: admission.admission_token,
         ownerType: "file",
         ownerId: "replacement",
         executionPath: "file",
@@ -638,11 +557,8 @@ test("cad-mcp-dev permits only one active tool lease per source execution", asyn
 
     const sessionKey = "dev-lease-serialize";
     const admission = checkAdmission(sessionKey, "@cadgpt improve CAD MCP");
-    assert.ok(admission.admission_token);
-
     const work = createWorkRegistration({
       sessionKey,
-      admissionToken: admission.admission_token,
       ownerType: "skill",
       ownerId: "cad-mcp-dev",
       executionPath: "file",
@@ -653,7 +569,6 @@ test("cad-mcp-dev permits only one active tool lease per source execution", asyn
       family: "cad-mcp-dev",
       executionId: work.executionId,
       authorityToken: work.authorityToken,
-      admissionToken: admission.admission_token,
       sessionKey,
     });
 
@@ -664,7 +579,6 @@ test("cad-mcp-dev permits only one active tool lease per source execution", asyn
           family: "cad-mcp-dev",
           executionId: work.executionId,
           authorityToken: work.authorityToken,
-          admissionToken: admission.admission_token,
           sessionKey,
         }),
       /CAD_MCP_DEV_BUSY/
@@ -740,7 +654,6 @@ test("ToolLease family authority survives lazy tool registration across work rep
   );
   const fileWork = createWorkRegistration({
     sessionKey: fileSession,
-    admissionToken: fileAdmission.admission_token,
     ownerType: "file",
     ownerId: "file-only",
     executionPath: "file",
@@ -753,7 +666,6 @@ test("ToolLease family authority survives lazy tool registration across work rep
         family: "cad",
         executionId: fileWork.executionId,
         authorityToken: fileWork.authorityToken,
-        admissionToken: fileAdmission.admission_token,
         sessionKey: fileSession,
       }),
     /EXECUTION_PATH_MISMATCH/
@@ -772,7 +684,6 @@ test("ToolLease family authority survives lazy tool registration across work rep
   );
   const cadWork = createWorkRegistration({
     sessionKey: cadSession,
-    admissionToken: cadAdmission.admission_token,
     ownerType: "direct-cad",
     ownerId: "cad-only",
     executionPath: "cad",
@@ -785,7 +696,6 @@ test("ToolLease family authority survives lazy tool registration across work rep
         family: "filesystem",
         executionId: cadWork.executionId,
         authorityToken: cadWork.authorityToken,
-        admissionToken: cadAdmission.admission_token,
         sessionKey: cadSession,
       }),
     /EXECUTION_PATH_MISMATCH/
@@ -831,13 +741,10 @@ test("cad-mcp-dev reserved owner id cannot be reached through sanitized aliases"
       "reserved-dev-alias",
       "@cadgpt improve CAD MCP"
     );
-    assert.ok(admission.admission_token);
-
     assert.throws(
       () =>
         createWorkRegistration({
           sessionKey: "reserved-dev-alias",
-          admissionToken: admission.admission_token,
           ownerType: "skill",
           ownerId: "cad mcp dev",
           executionPath: "file",
@@ -849,7 +756,6 @@ test("cad-mcp-dev reserved owner id cannot be reached through sanitized aliases"
       () =>
         createWorkRegistration({
           sessionKey: "reserved-dev-alias",
-          admissionToken: admission.admission_token,
           ownerType: "file",
           ownerId: "cad-mcp-dev",
           executionPath: "file",
