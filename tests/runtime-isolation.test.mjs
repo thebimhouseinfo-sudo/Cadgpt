@@ -21,6 +21,10 @@ test("CadGPT launch claims the MCP session without creating execution authority"
   assert.equal(bareMention.mode, "active");
   assert.equal(bareMention.reason, "explicit_cadgpt");
   assert.equal(isSessionClaimed("session-a"), true);
+  const cgAlias = checkAdmission("session-cg-alias", "@cg", "mention");
+  assert.equal(cgAlias.mode, "active");
+  assert.equal(cgAlias.reason, "explicit_cadgpt");
+  assert.equal(isSessionClaimed("session-cg-alias"), true);
 
   const continuation = checkAdmission(
     "session-a",
@@ -97,6 +101,7 @@ test("CadGPT welcome exposes the lightweight fake CLI control surface", async ()
 
   assert.equal(isBareCadGptLaunch("CG"), true);
   assert.equal(isBareCadGptLaunch("@cadgpt"), true);
+  assert.equal(isBareCadGptLaunch("@cg"), true);
   assert.equal(
     isBareCadGptLaunch("[$cg](app://asdk_app_6ab535cdbd948191afeacf6b0ad5b863)", "plugin"),
     true
