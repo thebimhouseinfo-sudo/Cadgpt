@@ -2,7 +2,6 @@
 
 import "dotenv/config";
 import express from "express";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 import {
   createSessionManager,
@@ -14,8 +13,7 @@ import {
 } from "./cadgpt/lib/path-security.js";
 import { runtimeStateSnapshot } from "./cadgpt/lib/runtime-state.js";
 import { resolveCadPrepareSessionByToken } from "./cadgpt/tools/cad-launcher.js";
-import { extractHeaderlessCadConfirmToken } from "./cadgpt/lib/headerless-recovery.js";
-import { buildLegacyDiscoverFallback } from "./cadgpt/lib/mcp-discover-compat.js";
+import { routeMcpPost } from "./cadgpt/lib/mcp-post-routing.js";
 import { activeToolLeaseCount, activeWorkCount, sweepExpiredWork } from "./cadgpt/lib/work-registration.js";
 
 const HOST = process.env.HOST || "127.0.0.1";
@@ -120,50 +118,13 @@ async function handlePost(
   res: express.Response
 ): Promise<void> {
   try {
-    const sessionId = req.headers["mcp-session-id"] as string | undefined;
-
-    const discoverFallback = buildLegacyDiscoverFallback(req.body);
-    if (discoverFallback) {
-      console.log("[MCP] server/discover -> legacy initialize fallback");
-      res.status(200).json(discoverFallback);
-      return;
-    }
-
-    const existing = sessionId ? sessions.get(sessionId) : undefined;
-
-    if (existing) {
-      await sessions.handleExisting(existing, req, res, req.body);
-      return;
-    }
-
-    if (isInitializeRequest(req.body)) {
-      await sessions.createNew(req, res, req.body);
-      return;
-    }
-
-    if (sessionId && SESSION_RECOVERY) {
-      if (await sessions.tryRecover(sessionId, req, res, req.body)) return;
-    }
-
-    if (!sessionId && SESSION_RECOVERY) {
-      const confirmationToken = extractHeaderlessCadConfirmToken(req.body);
-      const recoveryId = confirmationToken
-        ? resolveCadPrepareSessionByToken(confirmationToken)
-        : undefined;
-      if (recoveryId && (await sessions.tryRecover(recoveryId, req, res, req.body))) {
-        return;
-      }
-    }
-
-    if (sessionId) {
-      sessions.sendNotFound(res, extractRequestId(req.body));
-    } else {
-      sessions.sendBadRequest(
-        res,
-        "Mcp-Session-Id is required",
-        extractRequestId(req.body)
-      );
-    }
+    await routeMcpPost({
+      req,
+      res,
+      sessions,
+      sessionRecovery: SESSION_RECOVERY,
+      resolveCadPrepareSessionByToken,
+    });
   } catch (error) {
     console.error("[MCP] POST failed", error);
     if (!res.headersSent) {
