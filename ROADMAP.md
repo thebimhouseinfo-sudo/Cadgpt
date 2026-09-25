@@ -187,4 +187,4 @@ Stage 3: Improve / Stabilize
 Stage 4: Package / Release Prep
 ```
 
-Current focus: close authoring/library/registry integrity findings, align CI/docs, then freeze the Stage 2 real-AutoCAD validation scope.
+Current focus: close the remaining source/CI integrity findings, stabilize the local Windows installation/runtime, then prepare the Human-run Stage 2 real-AutoCAD validation checklist. Real-host readiness and Stage 2 remain pending until Human evidence is supplied.
