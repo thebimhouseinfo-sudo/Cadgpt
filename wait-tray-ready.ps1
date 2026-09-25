@@ -14,9 +14,11 @@ function Get-DotEnvValue([string]$Name) {
 }
 
 $configured = Get-DotEnvValue "CADGPT_APPDATA_ROOT"
-if (-not $configured) { $configured = "appdata" }
+if ($configured -eq "appdata") { $configured = $null }
 
-$root = if ([System.IO.Path]::IsPathRooted($configured)) {
+$root = if (-not $configured) {
+    [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA "CadGPT"))
+} elseif ([System.IO.Path]::IsPathRooted($configured)) {
     [System.IO.Path]::GetFullPath($configured)
 } else {
     [System.IO.Path]::GetFullPath((Join-Path $ScriptDir $configured))
