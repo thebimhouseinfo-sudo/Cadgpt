@@ -18,7 +18,7 @@ import {
   toolFamily,
   toolTargetId,
 } from "./lib/tool-policy.js";
-import { markFamilyLoaded } from "./lib/runtime-state.js";
+import { markFamilyLoaded, runtimeStateSnapshot } from "./lib/runtime-state.js";
 import { registerAdmissionTool } from "./tools/admission.js";
 import { registerCadGptControlTool } from "./tools/control.js";
 import { registerWorkControlTools } from "./tools/work-control.js";
@@ -214,12 +214,12 @@ export function createMcpServer(sessionKey: string): McpServer {
       capabilities: { logging: {}, tools: { listChanged: true } },
       instructions: [
         "CadGPT entry routing — highest priority: bare CadGPT plugin/icon invocation (including a connector renamed CG) or bare @cadgpt must call cadgpt_admission and return its welcome_text verbatim when present. Do not replace it with prose such as 'activated'.",
-        "Exact cadgpt/ calls cadgpt_control(surface=commands); exact cadgpt/help calls cadgpt_control(surface=help); exact cadgpt/status calls cadgpt_control(surface=status); exact cadgpt/stop calls cadgpt_control(surface=stop). Commands/help/status must not wake CAD MCP."
+        "Exact cadgpt/ calls cadgpt_control(surface=commands); exact cadgpt/help calls cadgpt_control(surface=help); exact cadgpt/status calls cadgpt_control(surface=status); exact cadgpt/stop calls cadgpt_control(surface=stop). Commands/help/status must not wake CAD MCP.",
         "CadGPT is explicit-launch, session-persistent.",
         "The user launches CadGPT once per ChatGPT/MCP session, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt.",
-        "Call cadgpt_admission with the exact current user turn. Plugin invocation defaults to invocation_source=plugin. After the session is claimed, later turns in the same MCP session remain admitted without repeating @cadgpt.",
+        "On a bare plugin/icon or bare @cadgpt launch, call cadgpt_admission once. If that launch also contains a real task, claim the session and continue directly instead of forcing the generic Welcome. After the session is claimed, do not call admission again on every turn.",
         "Never carry admission across another MCP/chat session, memory, unrelated files, paths, or AutoCAD state. Session disposal revokes the claim.",
-        "Bare @cadgpt claims the session as ACTIVE; only explicit @cadgpt help/status/stop are CONTROL commands.",
+        "Bare @cadgpt or bare CG/plugin launch makes the session READY, not WORK ACTIVE. Work becomes ACTIVE only after cadgpt_work_start.",
         "CadGPT session claim is routing state only; it is not an execution credential and has no per-turn token.",
         "Actual FILE/CAD work begins with cadgpt_work_start. The returned work_handle (execution_id + authority_token) is the only execution credential.",
         "Reuse the active work_handle for later compatible requests in the same chat. Do not call cadgpt_work_start again unless there is no active work or the owner/execution path must change.",
@@ -236,6 +236,19 @@ export function createMcpServer(sessionKey: string): McpServer {
 
   registerCadGptControlTool(server, {
     sessionKey,
+    getCadState: async () => {
+      const runtime = runtimeStateSnapshot();
+      if (!runtime.loaded_families.includes("cad")) return "SLEEPING";
+      try {
+        const { cadUpstream } = await import("./runtime/cad-upstream.js");
+        const state = cadUpstream.status() as Record<string, unknown>;
+        if (state.connected === true) return "CONNECTED";
+        const raw = typeof state.state === "string" ? state.state : "SLEEPING";
+        return raw.toUpperCase();
+      } catch {
+        return "ERROR";
+      }
+    },
     stopCurrentWork: async () => {
       const activeExecution = activeExecutionForSession(sessionKey);
       if (!activeExecution) {
