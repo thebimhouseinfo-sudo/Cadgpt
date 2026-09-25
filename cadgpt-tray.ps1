@@ -174,50 +174,54 @@ function Get-AutoCadProbeStatus {
         "AutoCAD.Application.22"
     )
 
-    foreach ($progId in $progIds) {
-        try {
-            $app = [System.Runtime.InteropServices.Marshal]::GetActiveObject($progId)
-            if (-not $app) { continue }
+    foreach ($attempt in 1..4) {
+        foreach ($progId in $progIds) {
+            try {
+                $app = [System.Runtime.InteropServices.Marshal]::GetActiveObject($progId)
+                if (-not $app) { continue }
 
-            $count = [int]$app.Documents.Count
-            $activeName = $null
-            $activeFullName = $null
-            if ($count -gt 0) {
-                try {
-                    $activeName = [string]$app.ActiveDocument.Name
-                    $activeFullName = [string]$app.ActiveDocument.FullName
-                } catch {}
-            }
+                $count = [int]$app.Documents.Count
+                $activeName = $null
+                $activeFullName = $null
+                if ($count -gt 0) {
+                    try {
+                        $activeName = [string]$app.ActiveDocument.Name
+                        $activeFullName = [string]$app.ActiveDocument.FullName
+                    } catch {}
+                }
 
-            $drawings = @()
-            for ($i = 0; $i -lt $count; $i++) {
-                try {
-                    $doc = $app.Documents.Item($i)
-                    $name = [string]$doc.Name
-                    $fullName = [string]$doc.FullName
-                    $isActive = $false
-                    if ($activeFullName) {
-                        $isActive = $fullName -eq $activeFullName
-                    } elseif ($activeName) {
-                        $isActive = $name -eq $activeName
-                    }
-                    $drawings += [pscustomobject]@{
-                        name = $name
-                        full_name = $fullName
-                        active = $isActive
-                    }
-                } catch {}
-            }
+                $drawings = @()
+                for ($i = 0; $i -lt $count; $i++) {
+                    try {
+                        $doc = $app.Documents.Item($i)
+                        $name = [string]$doc.Name
+                        $fullName = [string]$doc.FullName
+                        $isActive = $false
+                        if ($activeFullName) {
+                            $isActive = $fullName -eq $activeFullName
+                        } elseif ($activeName) {
+                            $isActive = $name -eq $activeName
+                        }
+                        $drawings += [pscustomobject]@{
+                            name = $name
+                            full_name = $fullName
+                            active = $isActive
+                        }
+                    } catch {}
+                }
 
-            return [pscustomobject]@{
-                running = $true
-                attached = $true
-                drawing_count = $count
-                active_document = $activeName
-                drawings = $drawings
-                state = "ON"
-            }
-        } catch {}
+                return [pscustomobject]@{
+                    running = $true
+                    attached = $true
+                    drawing_count = $count
+                    active_document = $activeName
+                    drawings = $drawings
+                    state = "ON"
+                }
+            } catch {}
+        }
+
+        if ($attempt -lt 4) { Start-Sleep -Milliseconds 200 }
     }
 
     return [pscustomobject]@{
@@ -363,23 +367,15 @@ if ($StatusOnly) {
         Write-Host "CAD MCP          : $(if ($health.cad_mcp.connected) { 'CONNECTED' } else { 'SLEEPING' })"
     }
     Write-Host "Secure tunnel    : $(if (Test-TunnelHealthy) { 'READY' } else { 'OFFLINE' })"
-    if ($state -and $null -ne $state.autocad_running) {
-        if (-not [bool]$state.autocad_running) {
-            Write-Host "AutoCAD          : OFF"
-        } elseif ([bool]$state.autocad_attached) {
-            Write-Host "AutoCAD          : ON - $($state.autocad_drawing_count) drawing(s)"
-        } else {
-            Write-Host "AutoCAD          : ON - COM unavailable"
-        }
+    # Status is an explicit diagnostic request, so probe AutoCAD live instead of
+    # trusting the tray's periodic snapshot, which can be up to one timer interval stale.
+    $probe = Get-AutoCadProbeStatus
+    if (-not $probe.running) {
+        Write-Host "AutoCAD          : OFF"
+    } elseif ($probe.attached) {
+        Write-Host "AutoCAD          : ON - $($probe.drawing_count) drawing(s)"
     } else {
-        $probe = Get-AutoCadProbeStatus
-        if (-not $probe.running) {
-            Write-Host "AutoCAD          : OFF"
-        } elseif ($probe.attached) {
-            Write-Host "AutoCAD          : ON - $($probe.drawing_count) drawing(s)"
-        } else {
-            Write-Host "AutoCAD          : ON - COM unavailable"
-        }
+        Write-Host "AutoCAD          : ON - COM unavailable"
     }
     exit 0
 }
