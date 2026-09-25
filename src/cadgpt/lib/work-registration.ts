@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
 
-import { validateAdmissionToken } from "./admission.js";
+import { assertSessionClaimed } from "./admission.js";
 
 export type WorkOwnerType = "skill" | "job" | "direct-cad" | "file";
 export type ExecutionPath = "file" | "cad" | "hybrid";
@@ -9,7 +9,6 @@ export type ExecutionPath = "file" | "cad" | "hybrid";
 export interface WorkRegistration {
   executionId: string;
   authorityToken: string;
-  admissionToken: string;
   sessionKey: string;
   ownerType: WorkOwnerType;
   ownerId: string;
@@ -132,13 +131,12 @@ export function isDevelopmentBuild(): boolean {
 
 export function createWorkRegistration(input: {
   sessionKey: string;
-  admissionToken: string;
   ownerType: WorkOwnerType;
   ownerId: string;
   executionPath: ExecutionPath;
 }): WorkRegistration {
   cleanup();
-  validateAdmissionToken(input.admissionToken, input.sessionKey);
+  assertSessionClaimed(input.sessionKey);
 
   const ownerId = safeId(input.ownerId);
   if (ownerId === "cad-mcp-dev" && input.ownerId.trim() !== "cad-mcp-dev") {
@@ -190,7 +188,6 @@ export function createWorkRegistration(input: {
   const work: WorkRegistration = {
     executionId,
     authorityToken: randomBytes(24).toString("base64url"),
-    admissionToken: input.admissionToken,
     sessionKey: input.sessionKey,
     ownerType: input.ownerType,
     ownerId,
@@ -251,6 +248,16 @@ export function releaseWorkRegistration(
 export function activeExecutionForSession(sessionKey: string): string | null {
   cleanup();
   return activeBySession.get(sessionKey) ?? null;
+}
+
+export function activeWorkForSession(sessionKey: string): WorkRegistration | null {
+  cleanup();
+  const executionId = activeBySession.get(sessionKey);
+  if (!executionId) return null;
+  const work = registrations.get(executionId);
+  if (!work || work.closing) return null;
+  work.lastActivityAt = new Date().toISOString();
+  return { ...work };
 }
 
 export function releaseSessionWork(sessionKey: string): string | null {
@@ -317,10 +324,9 @@ export function acquireToolLease(input: {
   targetId?: string;
   executionId?: string;
   authorityToken?: string;
-  admissionToken?: string;
   sessionKey: string;
 }): ToolLease {
-  validateAdmissionToken(input.admissionToken, input.sessionKey);
+  assertSessionClaimed(input.sessionKey);
   const work = validateWorkHandle(
     input.executionId,
     input.authorityToken,
@@ -341,9 +347,8 @@ export function acquireToolLease(input: {
     );
   }
 
-  // Work authority is session/generation scoped. Each tool invocation must carry
-  // the latest valid current-turn admission token for the same session; it does
-  // not need to equal the token that originally created the work registration.
+  // Work authority is session/generation scoped. Session claim admits CadGPT;
+  // execution_id + authority_token are the actual work credentials.
   work.callSequence += 1;
   work.lastActivityAt = new Date().toISOString();
   const targetId = safeId(input.targetId || input.family || "target");
