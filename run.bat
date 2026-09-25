@@ -47,7 +47,7 @@ goto :start
 call :preflight
 if errorlevel 1 exit /b 1
 wscript "%~dp0cadgpt-tray.vbs"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wait-tray-ready.ps1" -TimeoutSeconds 15
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wait-tray-ready.ps1" -TimeoutSeconds 75
 if errorlevel 1 exit /b 1
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1" -StatusOnly
@@ -71,7 +71,7 @@ if errorlevel 1 (
 )
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1" -StopInstalled
 wscript "%~dp0cadgpt-tray.vbs" -RestartRuntimeOnStart
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wait-tray-ready.ps1" -TimeoutSeconds 15
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wait-tray-ready.ps1" -TimeoutSeconds 75
 if errorlevel 1 exit /b 1
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1" -StatusOnly
