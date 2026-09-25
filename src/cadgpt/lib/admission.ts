@@ -26,7 +26,7 @@ export interface SessionClaim {
 const sessionClaims = new Map<string, SessionClaim>();
 
 function hasExplicitInvocation(userTurn: string): boolean {
-  return /(?:^|[^A-Za-z0-9._-])@cadgpt\b/i.test(userTurn);
+  return /(?:^|[^A-Za-z0-9._-])@(?:cadgpt|cg)\b/i.test(userTurn);
 }
 
 function isControlOnly(userTurn: string): boolean {
@@ -107,7 +107,7 @@ export function assertSessionClaimed(sessionKey: string): SessionClaim {
   const claim = touchClaim(sessionKey);
   if (!claim) {
     throw new Error(
-      "CADGPT_SESSION_REQUIRED: launch CadGPT once in this chat with the plugin/icon or @cadgpt."
+      "CADGPT_SESSION_REQUIRED: launch CadGPT once in this chat with the plugin/icon, @cadgpt, or @cg."
     );
   }
   return { ...claim };
