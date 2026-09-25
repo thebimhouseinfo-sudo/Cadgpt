@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   McpServer,
@@ -225,8 +224,7 @@ async function prepareFamilies(
   if (ownerId === "cad-mcp-dev") await loadCadMcpDevFamily(server);
 }
 
-export function createMcpServer(): McpServer {
-  const sessionKey = randomUUID();
+export function createMcpServer(sessionKey: string): McpServer {
   const server = new McpServer(
     { name: "cadgpt", version: "0.2.0" },
     {
@@ -264,16 +262,21 @@ export function createMcpServer(): McpServer {
 }
 
 
-export async function disposeMcpServerRuntime(server: McpServer): Promise<void> {
+export async function disposeMcpServerRuntime(
+  server: McpServer,
+  options: { preserveSessionState?: boolean } = {}
+): Promise<void> {
   const sessionKey = sessionKeyByServer.get(server);
   if (!sessionKey) return;
 
-  const executionIdReadyForCleanup = releaseSessionWork(sessionKey);
-  if (executionIdReadyForCleanup) {
-    await cleanupExecutionState(executionIdReadyForCleanup);
+  if (!options.preserveSessionState) {
+    const executionIdReadyForCleanup = releaseSessionWork(sessionKey);
+    if (executionIdReadyForCleanup) {
+      await cleanupExecutionState(executionIdReadyForCleanup);
+    }
+    revokeSessionAdmissions(sessionKey);
   }
 
-  revokeSessionAdmissions(sessionKey);
   loadedByServer.delete(server);
   sessionKeyByServer.delete(server);
 }
