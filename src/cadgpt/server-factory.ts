@@ -146,14 +146,12 @@ async function loadFileFamily(server: McpServer): Promise<void> {
     { registerFilesystemTools },
     { registerLispHarnessTools },
     { registerLispWorkspaceTools },
-    { registerLibraryMutationTools },
     { registerJobAuthoringTools },
     { registerUserAssetTools },
   ] = await Promise.all([
     import("./tools/filesystem.js"),
     import("./tools/lisp-harness.js"),
     import("./tools/lisp-workspace.js"),
-    import("./tools/libraries.js"),
     import("./tools/jobs.js"),
     import("./tools/user-assets.js"),
   ]);
@@ -161,7 +159,6 @@ async function loadFileFamily(server: McpServer): Promise<void> {
   registerFilesystemTools(server);
   registerLispHarnessTools(server);
   registerLispWorkspaceTools(server);
-  registerLibraryMutationTools(server);
   registerJobAuthoringTools(server);
   registerUserAssetTools(server);
 
