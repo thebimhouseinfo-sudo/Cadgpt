@@ -98,8 +98,9 @@ test("CadGPT welcome exposes the lightweight fake CLI control surface", async ()
   assert.match(CADGPT_WELCOME, /CadGPT \/ CG/);
   assert.match(CADGPT_WELCOME, /SESSION\s+READY/);
   assert.match(CADGPT_WELCOME, /CAD MCP\s+SLEEPING/);
-  assert.match(CADGPT_WELCOME, /cadgpt\/status/);
-  assert.match(CADGPT_ROOT_MENU, /cadgpt\/help/);
+  assert.match(CADGPT_WELCOME, /cg\/status/);
+  assert.match(CADGPT_ROOT_MENU, /cg\/help/);
+  assert.match(CADGPT_ROOT_MENU, /cg\/list/);
 });
 
 test("work registrations and tool leases remain isolated across sessions", async () => {
