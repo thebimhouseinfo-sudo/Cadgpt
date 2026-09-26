@@ -1353,6 +1353,13 @@ test("cad-mcp-dev reserved owner id cannot be reached through sanitized aliases"
 });
 
 
+test("checked-in environment keeps work idle timeout aligned at 30 minutes", async () => {
+  const fs = await import("node:fs/promises");
+  const envText = await fs.readFile(new URL("../.env.example", import.meta.url), "utf8");
+  assert.match(envText, /^CADGPT_WORK_IDLE_MS=1800000$/m);
+});
+
+
 test("work idle timeout defaults to 30 minutes", async () => {
   const { getWorkIdleTimeoutMs } = await import(
     "../dist/cadgpt/lib/work-registration.js"
