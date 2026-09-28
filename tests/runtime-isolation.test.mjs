@@ -244,7 +244,7 @@ test("CAD prepare survives repeated launch and MCP session churn, while remainin
   }
 });
 
-test("production MCP router recovers headerless CAD confirm after detached transport grace", async () => {
+test("production MCP router preserves CAD prepare across MCP session rotation and headerless recovery", async () => {
   const fs = await import("node:fs/promises");
   const os = await import("node:os");
   const path = await import("node:path");
@@ -374,6 +374,7 @@ test("production MCP router recovers headerless CAD confirm after detached trans
   });
 
   let sessionId;
+  let rotatedSessionId;
   try {
     const stateDir = path.join(tempRoot, "state");
     await fs.mkdir(stateDir, { recursive: true });
@@ -453,15 +454,100 @@ test("production MCP router recovers headerless CAD confirm after detached trans
     assert.equal(typeof token, "string");
     assert.equal(resolveCadPrepareSessionByToken(token), sessionId);
 
+    // Simulate the connector opening a fresh MCP transport/session for the
+    // next tool call while the ChatGPT conversation is still the same.
+    const rotatedInit = await fetch(url, {
+      method: "POST",
+      headers: baseHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 30,
+        method: "initialize",
+        params: {
+          protocolVersion: LATEST_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: "cadgpt-rotated-session", version: "0.1.0" },
+        },
+      }),
+    });
+    assert.equal(rotatedInit.ok, true);
+    rotatedSessionId = rotatedInit.headers.get("mcp-session-id");
+    assert.ok(rotatedSessionId);
+    assert.notEqual(rotatedSessionId, sessionId);
+
+    const rotatedHeaders = {
+      ...baseHeaders,
+      "mcp-session-id": rotatedSessionId,
+      "mcp-protocol-version": LATEST_PROTOCOL_VERSION,
+    };
+    const rotatedNotification = await fetch(url, {
+      method: "POST",
+      headers: rotatedHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      }),
+    });
+    assert.equal(rotatedNotification.ok, true);
+
+    const rotatedConfirmed = await fetch(url, {
+      method: "POST",
+      headers: rotatedHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 31,
+        method: "tools/call",
+        params: {
+          name: "cadgpt_cad_confirm",
+          arguments: {
+            confirmation_token: token,
+            choice_key: "Drawing1.dwg",
+          },
+        },
+      }),
+    });
+    assert.equal(rotatedConfirmed.ok, true);
+    const rotatedConfirmBody = await rotatedConfirmed.json();
+    assert.match(
+      rotatedConfirmBody.result?.structuredContent?.text ?? "",
+      /Workspace Ready/
+    );
+    assert.equal(resolveCadPrepareSessionByToken(token), undefined);
+
+    // Prepare again on the rotated session, then prove the existing
+    // headerless recovery path still works after that transport is detached.
+    const rotatedAdmission = await fetch(url, {
+      method: "POST",
+      headers: rotatedHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 32,
+        method: "tools/call",
+        params: {
+          name: "cadgpt_admission",
+          arguments: {
+            user_turn: "@cadgpt",
+            invocation_source: "mention",
+          },
+        },
+      }),
+    });
+    assert.equal(rotatedAdmission.ok, true);
+    const rotatedAdmissionBody = await rotatedAdmission.json();
+    const recoveryToken =
+      rotatedAdmissionBody.result?.structuredContent?.confirmation_token;
+    assert.equal(typeof recoveryToken, "string");
+    assert.equal(resolveCadPrepareSessionByToken(recoveryToken), rotatedSessionId);
+
     const closed = await fetch(url, {
       method: "DELETE",
-      headers: sessionHeaders,
+      headers: rotatedHeaders,
     });
     assert.equal(closed.ok, true);
 
     await new Promise((resolve) => setTimeout(resolve, 35));
-    assert.equal(sessions.get(sessionId), undefined);
-    assert.equal(resolveCadPrepareSessionByToken(token), sessionId);
+    assert.equal(sessions.get(rotatedSessionId), undefined);
+    assert.equal(resolveCadPrepareSessionByToken(recoveryToken), rotatedSessionId);
 
     const confirmed = await fetch(url, {
       method: "POST",
@@ -473,7 +559,7 @@ test("production MCP router recovers headerless CAD confirm after detached trans
         params: {
           name: "cadgpt_cad_confirm",
           arguments: {
-            confirmation_token: token,
+            confirmation_token: recoveryToken,
             choice_key: "1",
           },
         },
@@ -489,7 +575,7 @@ test("production MCP router recovers headerless CAD confirm after detached trans
       confirmBody.result?.structuredContent?.drawing?.runtime_document_id,
       "integration-doc-1"
     );
-    assert.equal(resolveCadPrepareSessionByToken(token), undefined);
+    assert.equal(resolveCadPrepareSessionByToken(recoveryToken), undefined);
 
     const unrelated = await fetch(url, {
       method: "POST",
@@ -519,6 +605,10 @@ test("production MCP router recovers headerless CAD confirm after detached trans
     if (sessionId) {
       clearCadPrepare(sessionId);
       revokeSessionAdmissions(sessionId);
+    }
+    if (rotatedSessionId) {
+      clearCadPrepare(rotatedSessionId);
+      revokeSessionAdmissions(rotatedSessionId);
     }
     await new Promise((resolve) => httpServer.close(resolve));
     if (previousRoot === undefined) delete process.env.CADGPT_APPDATA_ROOT;
