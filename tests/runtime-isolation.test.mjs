@@ -84,7 +84,7 @@ test("headerless recovery accepts only cadgpt_cad_confirm with an explicit token
   );
 });
 
-test("CAD prepare capability is session-bound, replaceable, single-use, and transactional", async () => {
+test("CAD prepare survives repeated launch and MCP session churn, while remaining single-use and transactional", async () => {
   const fs = await import("node:fs/promises");
   const os = await import("node:os");
   const path = await import("node:path");
@@ -140,13 +140,9 @@ test("CAD prepare capability is session-bound, replaceable, single-use, and tran
 
     const launchA2 = await prepareCadLaunch("prepare-session-a");
     assert.ok(launchA2.confirmation_token);
-    assert.notEqual(launchA2.confirmation_token, launchA1.confirmation_token);
+    assert.equal(launchA2.confirmation_token, launchA1.confirmation_token);
     assert.equal(
       resolveCadPrepareSessionByToken(launchA1.confirmation_token),
-      undefined
-    );
-    assert.equal(
-      resolveCadPrepareSessionByToken(launchA2.confirmation_token),
       "prepare-session-a"
     );
 
@@ -158,8 +154,11 @@ test("CAD prepare capability is session-bound, replaceable, single-use, and tran
       },
     };
 
+    // Simulate ChatGPT/OpenAI rotating the MCP transport session between the
+    // list response and the user's drawing selection. The opaque prepare token
+    // carries continuity; the user only chooses the drawing itself.
     registerCadPrepareConfirmTool(fakeServer, {
-      sessionKey: "prepare-session-a",
+      sessionKey: "prepare-session-a-rotated",
       activateWorkspace: async (drawing) => ({
         text: "CadGPT / CG — Workspace Ready",
         work_handle: { execution_id: "exec-a", authority_token: "authority-a" },
@@ -167,18 +166,9 @@ test("CAD prepare capability is session-bound, replaceable, single-use, and tran
       }),
     });
 
-    await assert.rejects(
-      () =>
-        callback({
-          confirmation_token: launchB.confirmation_token,
-          choice_key: "1",
-        }),
-      /CAD_PREPARE_REQUIRED/
-    );
-
     const ready = await callback({
       confirmation_token: launchA2.confirmation_token,
-      choice_key: "1",
+      choice_key: "Drawing1.dwg",
     });
     assert.match(ready.structuredContent.text, /Workspace Ready/);
     assert.equal(
@@ -243,8 +233,10 @@ test("CAD prepare capability is session-bound, replaceable, single-use, and tran
     );
   } finally {
     clearCadPrepare("prepare-session-a");
+    clearCadPrepare("prepare-session-a-rotated");
     clearCadPrepare("prepare-session-b");
     revokeSessionAdmissions("prepare-session-a");
+    revokeSessionAdmissions("prepare-session-a-rotated");
     revokeSessionAdmissions("prepare-session-b");
     if (previous === undefined) delete process.env.CADGPT_APPDATA_ROOT;
     else process.env.CADGPT_APPDATA_ROOT = previous;
