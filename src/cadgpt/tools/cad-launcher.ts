@@ -56,10 +56,46 @@ function cleanupPending(): void {
 
 function replacePending(sessionKey: string, pending?: PendingCadPrepare): void {
   const previous = pendingBySession.get(sessionKey);
-  if (previous) removePending(previous);
+  if (previous && previous !== pending) removePending(previous);
   if (!pending) return;
+  pending.sessionKey = sessionKey;
   pendingBySession.set(sessionKey, pending);
   pendingByToken.set(pending.token, pending);
+}
+
+function sameDrawingList(
+  left: CadPrepareDrawing[],
+  right: CadPrepareDrawing[]
+): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((item, index) => {
+    const other = right[index];
+    return Boolean(
+      other &&
+      item.key === other.key &&
+      item.name === other.name &&
+      item.full_name === other.full_name
+    );
+  });
+}
+
+function adoptPendingForSession(
+  pending: PendingCadPrepare,
+  sessionKey: string
+): PendingCadPrepare {
+  const current = pendingBySession.get(sessionKey);
+  if (current && current !== pending) removePending(current);
+
+  if (pending.sessionKey !== sessionKey) {
+    if (pendingBySession.get(pending.sessionKey) === pending) {
+      pendingBySession.delete(pending.sessionKey);
+    }
+    pending.sessionKey = sessionKey;
+  }
+
+  pendingBySession.set(sessionKey, pending);
+  pendingByToken.set(pending.token, pending);
+  return pending;
 }
 
 export function resolveCadPrepareSessionByToken(
@@ -282,6 +318,24 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
     };
   }
 
+  const existing = pendingBySession.get(sessionKey);
+  if (
+    existing &&
+    existing.state === "ready" &&
+    sameDrawingList(existing.drawings, drawings)
+  ) {
+    existing.createdAt = Date.now();
+    return {
+      mode: "cad_prepare",
+      welcome_text: renderOnlineWelcome(drawings, { stale }),
+      confirmation_token: existing.token,
+      drawings,
+      autocad_detected: true,
+      source: "tray_cache",
+      probe_age_ms: age_ms,
+    };
+  }
+
   const token = randomUUID();
   replacePending(sessionKey, {
     token,
@@ -308,7 +362,18 @@ export function beginCadPrepareConfirm(
   choiceKey: string
 ): CadPrepareDrawing {
   cleanupPending();
-  const pending = pendingBySession.get(sessionKey);
+
+  // The MCP transport/session id may rotate between the list response and the
+  // user's drawing selection. The opaque prepare token identifies that
+  // selection state and may rebind it to the current logical tool session.
+  let pending = pendingBySession.get(sessionKey);
+  if (!pending || pending.token !== confirmationToken) {
+    const tokenPending = pendingByToken.get(confirmationToken);
+    if (tokenPending) {
+      pending = adoptPendingForSession(tokenPending, sessionKey);
+    }
+  }
+
   if (
     !pending ||
     pending.token !== confirmationToken ||
@@ -320,22 +385,33 @@ export function beginCadPrepareConfirm(
     );
   }
 
-  const key = choiceKey.trim();
-  if (!key || key.includes(",") || /\s/.test(key)) {
+  const selection = choiceKey.trim();
+  if (!selection) {
     throw new Error(
-      "CAD_SINGLE_DRAWING_REQUIRED: choose exactly one drawing number for this work."
+      "CAD_SINGLE_DRAWING_REQUIRED: choose exactly one drawing from the current list."
     );
   }
 
-  const selected = pending.drawings.find((drawing) => drawing.key === key);
-  if (!selected) {
+  let matches = pending.drawings.filter((drawing) => drawing.key === selection);
+  if (!matches.length) {
+    const needle = selection.toLowerCase();
+    matches = pending.drawings.filter(
+      (drawing) =>
+        drawing.name.toLowerCase() === needle ||
+        drawing.full_name.toLowerCase() === needle
+    );
+  }
+
+  if (matches.length !== 1) {
     throw new Error(
-      "CAD_WORKSPACE_INVALID_SELECTION: choose one drawing number from the current cg/list result."
+      matches.length > 1
+        ? "CAD_WORKSPACE_AMBIGUOUS_SELECTION: choose the drawing number or full path from the current list."
+        : "CAD_WORKSPACE_INVALID_SELECTION: choose one drawing number, name, or full path from the current cg/list result."
     );
   }
 
   pending.state = "in_flight";
-  return selected;
+  return matches[0];
 }
 
 export function commitCadPrepareConfirm(
@@ -391,7 +467,7 @@ export function registerCadPrepareConfirmTool(
     {
       title: "Confirm CadGPT Drawing Workspace",
       description:
-        "Register exactly one tray-cached drawing as the CadGPT workspace. This transition starts full CAD MCP, verifies the drawing live, binds one DrawingContext, and creates/reuses work authority.",
+        "Start the CadGPT workspace from exactly one drawing previously shown in the tray-backed list. The user only needs to choose that drawing by number, name, or full path; confirmation_token is internal continuity state across MCP transport churn. This transition starts full CAD MCP, verifies the drawing live, binds one DrawingContext, and creates/reuses work authority.",
       inputSchema: {
         confirmation_token: z.string().min(1),
         choice_key: z.string().min(1),
