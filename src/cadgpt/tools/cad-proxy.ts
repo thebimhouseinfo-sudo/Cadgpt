@@ -219,6 +219,14 @@ export function hasCadProxySurface(server: McpServer): boolean {
   return proxyRegistry.has(server);
 }
 
+export function cadProxySurfaceSnapshot(server: McpServer): {
+  count: number;
+  tools: string[];
+} {
+  const tools = [...(proxyRegistry.get(server)?.keys() ?? [])].sort();
+  return { count: tools.length, tools };
+}
+
 function registryFor(server: McpServer): Map<string, RegisteredTool> {
   let registry = proxyRegistry.get(server);
   if (!registry) {
