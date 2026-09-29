@@ -222,9 +222,7 @@ jobs:
             $afterAdmission = Invoke-Mcp "tools/list" @{}
             $afterAdmissionNames = @($afterAdmission.result.tools | ForEach-Object { $_.name } | Sort-Object)
             $initialSorted = @($initialNames | Sort-Object)
-            if (($afterAdmissionNames -join "
-") -ne ($initialSorted -join "
-")) {
+            if (@(Compare-Object -ReferenceObject $initialSorted -DifferenceObject $afterAdmissionNames).Count -ne 0) {
               throw "MCP tool definitions changed after admission; production surface must remain stable"
             }
 
@@ -252,9 +250,7 @@ jobs:
 
             $afterWork = Invoke-Mcp "tools/list" @{}
             $names = @($afterWork.result.tools | ForEach-Object { $_.name } | Sort-Object)
-            if (($names -join "
-") -ne ($initialSorted -join "
-")) {
+            if (@(Compare-Object -ReferenceObject $initialSorted -DifferenceObject $names).Count -ne 0) {
               throw "MCP tool definitions changed after work start; lazy authority/runtime must not mutate ChatGPT tool surface"
             }
             if ($health.cad_mcp.connected -eq $true) { throw "FILE-only work woke CAD MCP unexpectedly" }
