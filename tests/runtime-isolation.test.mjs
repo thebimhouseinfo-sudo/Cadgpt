@@ -2264,3 +2264,178 @@ test("cg/mcp remains unavailable in production and starts standalone dev work on
     else process.env.CADGPT_BUILD_PROFILE = previous;
   }
 });
+
+
+test("same OpenAI conversation survives MCP transport rotation without explicit resume while unrelated conversation stays isolated", async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const express = (await import("express")).default;
+  const { LATEST_PROTOCOL_VERSION } = await import("@modelcontextprotocol/sdk/types.js");
+  const { createSessionManager } = await import("../dist/cadgpt/lib/mcp-session-manager.js");
+  const { routeMcpPost } = await import("../dist/cadgpt/lib/mcp-post-routing.js");
+  const { resolveCadPrepareSessionByToken } = await import("../dist/cadgpt/tools/cad-launcher.js");
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-logical-session-"));
+  const previousRoot = process.env.CADGPT_APPDATA_ROOT;
+  process.env.CADGPT_APPDATA_ROOT = tempRoot;
+
+  const app = express();
+  app.use(express.json());
+  const route = "/mcp/logical-session";
+  const httpServer = app.listen(0, "127.0.0.1");
+  await new Promise((resolve, reject) => {
+    if (httpServer.listening) return resolve();
+    httpServer.once("listening", resolve);
+    httpServer.once("error", reject);
+  });
+  const address = httpServer.address();
+  assert.ok(address && typeof address === "object");
+  const port = address.port;
+
+  const sessions = createSessionManager(port, {
+    sessionTtlMs: 60_000,
+    cleanupMs: 60_000,
+  });
+  sessions.startCleanup();
+
+  app.post(route, async (req, res) => {
+    try {
+      await routeMcpPost({
+        req,
+        res,
+        sessions,
+        sessionRecovery: true,
+        resolveCadPrepareSessionByToken,
+      });
+    } catch (error) {
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: "2.0",
+          error: {
+            code: -32603,
+            message: error instanceof Error ? error.message : String(error),
+          },
+          id: req.body?.id ?? null,
+        });
+      }
+    }
+  });
+
+  const url = `http://127.0.0.1:${port}${route}`;
+  const baseHeaders = {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+  };
+
+  async function initialize(id, openaiSession) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        ...baseHeaders,
+        "x-openai-session": openaiSession,
+        "x-openai-subject": "same-account",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "initialize",
+        params: {
+          protocolVersion: LATEST_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: "logical-session-test", version: "0.1.0" },
+        },
+      }),
+    });
+    assert.equal(response.ok, true);
+    const sessionId = response.headers.get("mcp-session-id");
+    assert.ok(sessionId);
+    const headers = {
+      ...baseHeaders,
+      "mcp-session-id": sessionId,
+      "mcp-protocol-version": LATEST_PROTOCOL_VERSION,
+      "x-openai-session": openaiSession,
+      "x-openai-subject": "same-account",
+    };
+    const initialized = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      }),
+    });
+    assert.equal(initialized.ok, true);
+    return { sessionId, headers };
+  }
+
+  async function tool(headers, id, name, args = {}) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: { name, arguments: args },
+      }),
+    });
+    assert.equal(response.ok, true);
+    return response.json();
+  }
+
+  let a;
+  let b;
+  let c;
+  try {
+    a = await initialize(1000, "chat-A");
+    const admission = await tool(a.headers, 1001, "cadgpt_admission", {
+      user_turn: "@cadgpt",
+      invocation_source: "mention",
+    });
+    assert.equal(admission.result?.structuredContent?.claimed, true);
+
+    b = await initialize(1010, "chat-A");
+    assert.notEqual(a.sessionId, b.sessionId);
+
+    const cj = await tool(b.headers, 1011, "cadgpt_control", { surface: "cj" });
+    assert.equal(
+      cj.result?.structuredContent?.continuation_policy?.start_new_work,
+      true
+    );
+
+    const started = await tool(b.headers, 1012, "cadgpt_work_start", {
+      owner_type: "job",
+      owner_id: "tbh",
+      execution_path: "file",
+    });
+    assert.equal(started.result?.structuredContent?.ok, true);
+    assert.equal(
+      started.result?.structuredContent?.data?.work_handle?.owner_id,
+      "tbh"
+    );
+
+    const status = await tool(b.headers, 1013, "cadgpt_work_status", {});
+    assert.equal(status.result?.structuredContent?.data?.active, true);
+
+    c = await initialize(1020, "chat-C");
+    const foreignStatus = await tool(c.headers, 1021, "cadgpt_work_status", {});
+    assert.equal(foreignStatus.result?.structuredContent?.data?.active, false);
+
+    const foreignCj = await tool(c.headers, 1022, "cadgpt_control", { surface: "cj" });
+    assert.equal(
+      foreignCj.result?.structuredContent?.continuation_policy?.start_new_work,
+      true
+    );
+
+    const stopped = await tool(b.headers, 1014, "cadgpt_control", { surface: "stop" });
+    assert.equal(stopped.result?.structuredContent?.stopped, true);
+  } finally {
+    sessions.stopCleanup();
+    await sessions.closeAll("logical session integration cleanup");
+    await new Promise((resolve) => httpServer.close(resolve));
+    if (previousRoot === undefined) delete process.env.CADGPT_APPDATA_ROOT;
+    else process.env.CADGPT_APPDATA_ROOT = previousRoot;
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
