@@ -271,6 +271,10 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
   const { revokeSessionAdmissions } = await import(
     "../dist/cadgpt/lib/admission.js"
   );
+  const {
+    createWorkRegistration,
+    releaseSessionWork,
+  } = await import("../dist/cadgpt/lib/work-registration.js");
 
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-router-"));
   const previousRoot = process.env.CADGPT_APPDATA_ROOT;
@@ -316,17 +320,25 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
 
     registerCadPrepareConfirmTool(server, {
       sessionKey,
-      activateWorkspace: async (drawing) => ({
-        text: "CadGPT / CG — Workspace Ready",
-        work_handle: {
-          execution_id: "integration-exec",
-          authority_token: "integration-authority",
-        },
-        drawing: {
-          ...drawing,
-          runtime_document_id: "integration-doc-1",
-        },
-      }),
+      activateWorkspace: async (drawing) => {
+        const work = createWorkRegistration({
+          sessionKey,
+          ownerType: "direct-cad",
+          ownerId: "integration-workspace",
+          executionPath: "hybrid",
+        });
+        return {
+          text: "CadGPT / CG — Workspace Ready",
+          work_handle: {
+            execution_id: work.executionId,
+            authority_token: work.authorityToken,
+          },
+          drawing: {
+            ...drawing,
+            runtime_document_id: "integration-doc-1",
+          },
+        };
+      },
     });
 
     return server;
@@ -607,6 +619,7 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
       revokeSessionAdmissions(sessionId);
     }
     if (rotatedSessionId) {
+      releaseSessionWork(rotatedSessionId);
       clearCadPrepare(rotatedSessionId);
       revokeSessionAdmissions(rotatedSessionId);
     }
