@@ -11,12 +11,14 @@ import {
   createMcpServer,
   disposeLogicalSessionState,
   disposeMcpServerRuntime,
+  rehydrateLogicalSessionServer,
 } from "../server-factory.js";
 import {
   continuityFingerprint,
   logContinuityDiagnostic,
   logContinuityRequest,
 } from "./continuity-diagnostics.js";
+import { logicalConversationKeyFromRequest } from "./logical-conversation.js";
 
 const DEFAULT_SESSION_TTL_MS = Number(process.env.MCP_SESSION_TTL_MS || 86_400_000);
 const DEFAULT_CLEANUP_MS = Number(process.env.MCP_SESSION_CLEANUP_MS || 300_000);
@@ -25,6 +27,7 @@ const DEFAULT_DELETE_GRACE_MS = Number(process.env.MCP_SESSION_DELETE_GRACE_MS |
 export interface McpSession {
   transport: StreamableHTTPServerTransport;
   server: McpServer;
+  logicalSessionKey: string;
   lastAccessedAt: number;
 }
 
@@ -106,10 +109,8 @@ export function createSessionManager(
   const deleteGraceMs = options.deleteGraceMs ?? DEFAULT_DELETE_GRACE_MS;
   const sessions = new Map<string, McpSession>();
   const pending = new Map<string, McpSession>();
-  // A transport can be logically closed by the client while the CadGPT
-  // session/work should remain recoverable for a short grace window. Never
-  // leave a terminated transport in the active session map.
   const detached = new Map<string, McpSession>();
+  const transportLogical = new Map<string, string>();
   const graceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const opChains = new Map<string, Promise<void>>();
   const recoveryFlights = new Map<string, Promise<McpSession | undefined>>();
@@ -122,55 +123,62 @@ export function createSessionManager(
     graceTimers.delete(id);
   }
 
+  function touchTransport(id: string): void {
+    clearGrace(id);
+    const now = Date.now();
+    const session = sessions.get(id) ?? pending.get(id) ?? detached.get(id);
+    const logicalKey = session?.logicalSessionKey ?? transportLogical.get(id);
+    if (logicalKey) logicalLastAccess.set(logicalKey, now);
+    if (session) session.lastAccessedAt = now;
+  }
+
+  function logicalHasTransport(logicalKey: string, exceptId?: string): boolean {
+    for (const [id, key] of transportLogical) {
+      if (id !== exceptId && key === logicalKey) return true;
+    }
+    return false;
+  }
+
   function finalizeDetached(id: string, reason: string): void {
     const old = detached.get(id);
     if (!old) return;
     detached.delete(id);
-    void disposeMcpServerRuntime(old.server, {
-      preserveSessionState: true,
-    }).catch(() => undefined);
+    void disposeMcpServerRuntime(old.server, { preserveSessionState: true }).catch(() => undefined);
     void old.transport.close().catch(() => undefined);
     console.log(`[MCP] Detached transport finalized (${reason}): ${id}`);
   }
 
-  function touch(id: string): void {
-    // Transport activity refreshes the logical CadGPT session, while the
-    // transport itself may still be replaced independently.
-    clearGrace(id);
-    const now = Date.now();
-    logicalLastAccess.set(id, now);
-    const session = sessions.get(id);
-    if (session) session.lastAccessedAt = now;
-  }
-
-  function remove(
+  function removeTransport(
     id: string,
     reason: string,
     expectedTransport?: StreamableHTTPServerTransport,
-    options: { preserveLogicalState?: boolean } = {}
+    preserveLogicalState = true
   ): void {
-    const current = sessions.get(id) ?? pending.get(id);
+    const current = sessions.get(id) ?? pending.get(id) ?? detached.get(id);
     if (expectedTransport && current?.transport !== expectedTransport) return;
     clearGrace(id);
     sessions.delete(id);
     pending.delete(id);
+    detached.delete(id);
     opChains.delete(id);
-    if (!options.preserveLogicalState) logicalLastAccess.delete(id);
+    const logicalKey = current?.logicalSessionKey ?? transportLogical.get(id);
+    transportLogical.delete(id);
+
     if (current) {
-      void disposeMcpServerRuntime(current.server, {
-        preserveSessionState: options.preserveLogicalState === true,
-      }).catch(() => undefined);
+      void disposeMcpServerRuntime(current.server, { preserveSessionState: true }).catch(() => undefined);
       void current.transport.close().catch(() => undefined);
-    } else if (!options.preserveLogicalState) {
-      void disposeLogicalSessionState(id).catch(() => undefined);
     }
-    console.log(
-      `[MCP] ${options.preserveLogicalState ? "Transport" : "Session"} removed (${reason}): ${id}`
-    );
+
+    if (!preserveLogicalState && logicalKey && !logicalHasTransport(logicalKey)) {
+      logicalLastAccess.delete(logicalKey);
+      void disposeLogicalSessionState(logicalKey).catch(() => undefined);
+    }
+
+    console.log(`[MCP] Transport removed (${reason}): ${id}`);
     logContinuityDiagnostic("session_removed", {
       transport_session: continuityFingerprint(id),
       reason,
-      preserve_logical_state: options.preserveLogicalState === true,
+      preserve_logical_state: preserveLogicalState,
     });
   }
 
@@ -185,11 +193,17 @@ export function createSessionManager(
     }
   }
 
-  async function build(preferredId?: string): Promise<McpSession> {
-    const logicalSessionId = preferredId ?? randomUUID();
-    const server = createServer(logicalSessionId);
+  async function build(
+    preferredTransportId?: string,
+    preferredLogicalKey?: string
+  ): Promise<McpSession> {
+    const transportId = preferredTransportId ?? randomUUID();
+    const logicalSessionKey = preferredLogicalKey ?? `transport:${transportId}`;
+    const server = createServer(logicalSessionKey);
+    await rehydrateLogicalSessionServer(server, logicalSessionKey);
+
     const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => logicalSessionId,
+      sessionIdGenerator: () => transportId,
       enableJsonResponse: true,
       onsessioninitialized: (id) => {
         const previous = sessions.get(id);
@@ -197,43 +211,36 @@ export function createSessionManager(
         const replacement: McpSession = {
           server,
           transport,
+          logicalSessionKey,
           lastAccessedAt: Date.now(),
         };
         sessions.set(id, replacement);
         pending.delete(id);
-        logicalLastAccess.set(id, Date.now());
+        transportLogical.set(id, logicalSessionKey);
+        logicalLastAccess.set(logicalSessionKey, Date.now());
         clearGrace(id);
 
         if (detachedPrevious && detachedPrevious.transport !== transport) {
           detached.delete(id);
-          // Recovery keeps admission/work authority for the same logical
-          // session, but the terminated server/transport object can go away.
-          void disposeMcpServerRuntime(detachedPrevious.server, {
-            preserveSessionState: true,
-          }).catch(() => undefined);
+          void disposeMcpServerRuntime(detachedPrevious.server, { preserveSessionState: true }).catch(() => undefined);
         }
-
         if (previous && previous.transport !== transport) {
-          void disposeMcpServerRuntime(previous.server, {
-            preserveSessionState: true,
-          }).catch(() => undefined);
+          void disposeMcpServerRuntime(previous.server, { preserveSessionState: true }).catch(() => undefined);
           void previous.transport.close().catch(() => undefined);
         }
+
         console.log(`[MCP] Session initialized: ${id}`);
         logContinuityDiagnostic("session_initialized", {
           transport_session: continuityFingerprint(id),
+          logical_session: continuityFingerprint(logicalSessionKey),
           replaced_existing_transport: Boolean(previous),
           recovered_detached_transport: Boolean(detachedPrevious),
         });
       },
       onsessionclosed: (id) => {
         if (!id) return;
-        // MCP SDK marks this transport terminated as part of close/DELETE.
-        // Remove it from the active map immediately so the next POST takes the
-        // recovery path instead of being sent back into a dead transport.
         const active = sessions.get(id) ?? pending.get(id);
         if (!active || active.transport !== transport) return;
-
         sessions.delete(id);
         pending.delete(id);
         opChains.delete(id);
@@ -241,32 +248,27 @@ export function createSessionManager(
         clearGrace(id);
 
         const timer = setTimeout(() => {
-          if (!sessions.has(id)) {
-            finalizeDetached(id, "client close grace expired");
-          } else {
-            detached.delete(id);
-          }
+          if (!sessions.has(id)) finalizeDetached(id, "client close grace expired");
+          else detached.delete(id);
           graceTimers.delete(id);
         }, deleteGraceMs);
         timer.unref?.();
         graceTimers.set(id, timer);
-        console.log(`[MCP] Transport terminated; logical session detached for recovery: ${id}`);
+
+        console.log(`[MCP] Transport terminated; logical session preserved: ${id}`);
         logContinuityDiagnostic("transport_detached", {
           transport_session: continuityFingerprint(id),
+          logical_session: continuityFingerprint(logicalSessionKey),
         });
       },
     });
+
     transport.onerror = (error) => console.warn("[MCP] transport error:", error.message);
-    transport.onclose = () => {
-      const id = transport.sessionId;
-      if (id && sessions.get(id)?.transport === transport) {
-        console.log(`[MCP] Transport closed; preserving session for grace/recovery: ${id}`);
-      }
-    };
     await server.connect(transport);
     return {
       server,
       transport,
+      logicalSessionKey,
       lastAccessedAt: Date.now(),
     };
   }
@@ -304,7 +306,7 @@ export function createSessionManager(
   ): Promise<McpSession | undefined> {
     const already = sessions.get(id);
     if (already) {
-      touch(id);
+      touchTransport(id);
       return already;
     }
 
@@ -313,35 +315,31 @@ export function createSessionManager(
 
     let flight!: Promise<McpSession | undefined>;
     flight = (async () => {
-      const replacement = await build(id);
+      const logicalKey = transportLogical.get(id) ?? detached.get(id)?.logicalSessionKey ?? `transport:${id}`;
+      const replacement = await build(id, logicalKey);
       pending.set(id, replacement);
+      transportLogical.set(id, logicalKey);
       try {
         if (!(await warmup(id, route, protocolVersion))) {
-          remove(id, "recovery warmup failed", replacement.transport, {
-            preserveLogicalState: true,
-          });
+          removeTransport(id, "recovery warmup failed", replacement.transport, true);
           return undefined;
         }
         const recovered = sessions.get(id);
         if (!recovered || recovered.transport !== replacement.transport) {
-          // Do not delete a different session that may have won a race.
           pending.delete(id);
-          void disposeMcpServerRuntime(replacement.server, {
-            preserveSessionState: true,
-          }).catch(() => undefined);
+          void disposeMcpServerRuntime(replacement.server, { preserveSessionState: true }).catch(() => undefined);
           void replacement.transport.close().catch(() => undefined);
           return sessions.get(id);
         }
-        touch(id);
+        touchTransport(id);
         console.log(`[MCP] Session recovered: ${id}`);
         logContinuityDiagnostic("session_recovered", {
           transport_session: continuityFingerprint(id),
+          logical_session: continuityFingerprint(logicalKey),
         });
         return recovered;
       } catch (error) {
-        remove(id, "recovery exception", replacement.transport, {
-          preserveLogicalState: true,
-        });
+        removeTransport(id, "recovery exception", replacement.transport, true);
         throw error;
       } finally {
         if (recoveryFlights.get(id) === flight) recoveryFlights.delete(id);
@@ -349,6 +347,16 @@ export function createSessionManager(
     })();
     recoveryFlights.set(id, flight);
     return flight;
+  }
+
+  async function expireLogical(logicalKey: string): Promise<void> {
+    const ids = [...transportLogical.entries()]
+      .filter(([, key]) => key === logicalKey)
+      .map(([id]) => id);
+    for (const id of ids) removeTransport(id, "logical TTL expired", undefined, true);
+    logicalLastAccess.delete(logicalKey);
+    await disposeLogicalSessionState(logicalKey).catch(() => undefined);
+    console.log("[MCP] Logical session expired");
   }
 
   return {
@@ -375,24 +383,32 @@ export function createSessionManager(
     async createNew(req, res, body) {
       logContinuityRequest(req, "session_manager_create_new");
       const headerId = req.headers["mcp-session-id"] as string | undefined;
-      const session = (headerId && pending.get(headerId)) || (await build());
+      const connectorLogicalKey = logicalConversationKeyFromRequest(req);
+      const existingPending = headerId ? pending.get(headerId) : undefined;
+      const session =
+        existingPending ??
+        (await build(
+          headerId || undefined,
+          connectorLogicalKey || undefined
+        ));
+      const transportId = headerId || session.transport.sessionId;
       if (headerId) pending.delete(headerId);
-      const id = headerId || session.transport.sessionId;
+      if (transportId) transportLogical.set(transportId, session.logicalSessionKey);
+
       const run = async () => {
         await session.transport.handleRequest(req, res, body);
         const active = session.transport.sessionId;
-        if (active) touch(active);
+        if (active) touchTransport(active);
       };
-      if (id) await enqueue(id, run);
+      if (transportId) await enqueue(transportId, run);
       else await run();
     },
 
     async handleExisting(session, req, res, body) {
       logContinuityRequest(req, "session_manager_handle_existing");
       const id = session.transport.sessionId || (req.headers["mcp-session-id"] as string | undefined);
-      if (id) touch(id);
+      if (id) touchTransport(id);
       const run = async () => session.transport.handleRequest(req, res, body);
-      // A long-lived GET stream must not block POST tool calls for the session.
       if (id && req.method !== "GET") await enqueue(id, run);
       else await run();
     },
@@ -402,12 +418,7 @@ export function createSessionManager(
         recovery_target: continuityFingerprint(id),
       });
       if (isInitializeRequest(body)) return false;
-      if (
-        !logicalLastAccess.has(id) &&
-        !sessions.has(id) &&
-        !pending.has(id) &&
-        !detached.has(id)
-      ) {
+      if (!transportLogical.has(id) && !sessions.has(id) && !pending.has(id) && !detached.has(id)) {
         return false;
       }
       const protocol = negotiateProtocol(req.headers["mcp-protocol-version"] as string | undefined);
@@ -416,7 +427,7 @@ export function createSessionManager(
       if (!recovered) return false;
       const patched = patchSessionHeaders(req, id, protocol);
       await enqueue(id, async () => recovered.transport.handleRequest(patched, res, body));
-      touch(id);
+      touchTransport(id);
       return true;
     },
 
@@ -424,27 +435,9 @@ export function createSessionManager(
       if (cleanupTimer) return;
       cleanupTimer = setInterval(() => {
         const now = Date.now();
-        for (const [id, lastAccessedAt] of logicalLastAccess) {
+        for (const [logicalKey, lastAccessedAt] of logicalLastAccess) {
           if (now - lastAccessedAt <= sessionTtlMs) continue;
-
-          const active = sessions.get(id) ?? pending.get(id);
-          if (active) {
-            remove(id, "logical TTL expired", active.transport);
-            continue;
-          }
-
-          const old = detached.get(id);
-          if (old) {
-            detached.delete(id);
-            clearGrace(id);
-            logicalLastAccess.delete(id);
-            void disposeMcpServerRuntime(old.server).catch(() => undefined);
-            void old.transport.close().catch(() => undefined);
-          } else {
-            logicalLastAccess.delete(id);
-            void disposeLogicalSessionState(id).catch(() => undefined);
-          }
-          console.log(`[MCP] Logical session expired: ${id}`);
+          void expireLogical(logicalKey);
         }
       }, cleanupMs);
       cleanupTimer.unref?.();
@@ -465,18 +458,19 @@ export function createSessionManager(
       for (const [id, session] of sessions) all.set(`session:${id}`, session);
       for (const [id, session] of pending) all.set(`pending:${id}`, session);
       for (const [id, session] of detached) all.set(`detached:${id}`, session);
+      const logicalIds = [...new Set([...logicalLastAccess.keys(), ...transportLogical.values()])];
 
-      const logicalIds = [...logicalLastAccess.keys()];
       sessions.clear();
       pending.clear();
       detached.clear();
+      transportLogical.clear();
       opChains.clear();
       recoveryFlights.clear();
       logicalLastAccess.clear();
 
       await Promise.all(
         [...all.values()].map(async (session) => {
-          await disposeMcpServerRuntime(session.server).catch((error) => {
+          await disposeMcpServerRuntime(session.server, { preserveSessionState: true }).catch((error) => {
             console.error("[MCP] Session runtime cleanup failed during shutdown", error);
           });
           await session.transport.close().catch(() => undefined);
