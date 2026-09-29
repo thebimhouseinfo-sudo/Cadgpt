@@ -214,6 +214,32 @@ async function prepareFamilies(
   if (ownerId === "cad-mcp-dev") await loadCadMcpDevFamily(server);
 }
 
+export async function rehydrateServerForLogicalSession(
+  server: McpServer,
+  sessionKey: string
+): Promise<void> {
+  const work = activeWorkForSession(sessionKey);
+  if (work) {
+    await prepareFamilies(
+      server,
+      work.executionPath,
+      work.ownerId,
+      work.executionId
+    );
+    if (work.capabilities.includes("cad-mcp-dev")) {
+      await loadCadMcpDevFamily(server);
+    }
+    return;
+  }
+
+  try {
+    assertSessionClaimed(sessionKey);
+    await loadDiscoveryFamily(server);
+  } catch {
+    // A fresh unrelated conversation remains on the slim control surface.
+  }
+}
+
 export function createMcpServer(sessionKey: string): McpServer {
   const server = new McpServer(
     { name: "cadgpt", version: "0.2.0" },
