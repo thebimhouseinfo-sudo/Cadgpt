@@ -2393,7 +2393,10 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
       user_turn: "@cadgpt",
       invocation_source: "mention",
     });
-    assert.equal(admission.result?.structuredContent?.claimed, true);
+    assert.equal(
+      admission.result?.structuredContent?.data?.claimed,
+      true
+    );
 
     b = await initialize(1010, "chat-A");
     assert.notEqual(a.sessionId, b.sessionId);
@@ -2429,7 +2432,7 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
     );
 
     const stopped = await tool(b.headers, 1014, "cadgpt_control", { surface: "stop" });
-    assert.equal(stopped.result?.structuredContent?.stopped, true);
+    assert.match(stopped.result?.structuredContent?.text ?? "", /WORK\s+IDLE/);
   } finally {
     sessions.stopCleanup();
     await sessions.closeAll("logical session integration cleanup");
