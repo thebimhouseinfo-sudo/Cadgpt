@@ -2422,10 +2422,28 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
     assert.equal(status.result?.structuredContent?.data?.active, true);
 
     c = await initialize(1020, "chat-C");
-    const foreignStatus = await tool(c.headers, 1021, "cadgpt_work_status", {});
+    const foreignBeforeAdmission = await tool(
+      c.headers,
+      1021,
+      "cadgpt_work_status",
+      {}
+    );
+    assert.equal(foreignBeforeAdmission.result?.isError, true);
+    assert.match(
+      foreignBeforeAdmission.result?.structuredContent?.data?.error ?? "",
+      /CADGPT_SESSION_REQUIRED/
+    );
+
+    const admissionC = await tool(c.headers, 1022, "cadgpt_admission", {
+      user_turn: "@cadgpt start separate test",
+      invocation_source: "mention",
+    });
+    assert.equal(admissionC.result?.structuredContent?.data?.claimed, true);
+
+    const foreignStatus = await tool(c.headers, 1023, "cadgpt_work_status", {});
     assert.equal(foreignStatus.result?.structuredContent?.data?.active, false);
 
-    const foreignCj = await tool(c.headers, 1022, "cadgpt_control", { surface: "cj" });
+    const foreignCj = await tool(c.headers, 1024, "cadgpt_control", { surface: "cj" });
     assert.equal(
       foreignCj.result?.structuredContent?.continuation_policy?.start_new_work,
       true
