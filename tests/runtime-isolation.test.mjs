@@ -2407,6 +2407,7 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
       .sort();
     for (const required of [
       "cad__cad_list_layers",
+      "cad_invoke_manifest_tool",
       "job_run_direct",
       "job_draft_validate",
       "job_promote_draft",
