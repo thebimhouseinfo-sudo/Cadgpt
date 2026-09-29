@@ -198,7 +198,7 @@ export function createSessionManager(
     preferredLogicalKey?: string
   ): Promise<McpSession> {
     const transportId = preferredTransportId ?? randomUUID();
-    const logicalSessionKey = preferredLogicalKey ?? `transport:${transportId}`;
+    const logicalSessionKey = preferredLogicalKey ?? transportId;
     const server = createServer(logicalSessionKey);
     await rehydrateLogicalSessionServer(server, logicalSessionKey);
 
@@ -315,7 +315,7 @@ export function createSessionManager(
 
     let flight!: Promise<McpSession | undefined>;
     flight = (async () => {
-      const logicalKey = transportLogical.get(id) ?? detached.get(id)?.logicalSessionKey ?? `transport:${id}`;
+      const logicalKey = transportLogical.get(id) ?? detached.get(id)?.logicalSessionKey ?? id;
       const replacement = await build(id, logicalKey);
       pending.set(id, replacement);
       transportLogical.set(id, logicalKey);
