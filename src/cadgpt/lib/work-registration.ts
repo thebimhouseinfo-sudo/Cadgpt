@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
 
-import { assertSessionClaimed } from "./admission.js";
+import { adoptSessionAdmission, assertSessionClaimed } from "./admission.js";
 
 export type WorkOwnerType = "skill" | "job" | "direct-cad" | "file";
 export type ExecutionPath = "file" | "cad" | "hybrid";
@@ -205,6 +205,64 @@ export function createWorkRegistration(input: {
   };
   registrations.set(executionId, work);
   activeBySession.set(input.sessionKey, executionId);
+  return { ...work };
+}
+
+export function adoptWorkSession(
+  executionId: string | undefined,
+  authorityToken: string | undefined,
+  targetSessionKey: string
+): WorkRegistration {
+  cleanup();
+  if (!executionId || !authorityToken) {
+    throw new Error("NO_ACTIVE_WORK: execution_id and authority_token are required.");
+  }
+
+  const work = registrations.get(executionId);
+  if (
+    !work ||
+    work.closing === true ||
+    work.authorityToken !== authorityToken ||
+    work.driverEpoch !== DRIVER_EPOCH
+  ) {
+    throw new Error(
+      "NO_ACTIVE_WORK: work handle is stale, invalid, or unavailable for continuation."
+    );
+  }
+
+  if (work.sessionKey === targetSessionKey) {
+    assertSessionClaimed(targetSessionKey);
+    work.lastActivityAt = new Date().toISOString();
+    return { ...work };
+  }
+
+  if (hasActiveLeaseForWork(work.executionId)) {
+    throw new Error(
+      "WORK_BUSY: cannot move CadGPT work to a replacement MCP session while a ToolLease is active."
+    );
+  }
+
+  const targetActiveId = activeBySession.get(targetSessionKey);
+  if (targetActiveId && targetActiveId !== work.executionId) {
+    throw new Error(
+      "WORK_SESSION_CONFLICT: replacement MCP session already owns different active CadGPT work."
+    );
+  }
+
+  const sourceSessionKey = work.sessionKey;
+  adoptSessionAdmission(sourceSessionKey, targetSessionKey);
+
+  if (activeBySession.get(sourceSessionKey) === work.executionId) {
+    activeBySession.delete(sourceSessionKey);
+  }
+  work.sessionKey = targetSessionKey;
+  work.lastActivityAt = new Date().toISOString();
+  activeBySession.set(targetSessionKey, work.executionId);
+  generationBySession.set(
+    targetSessionKey,
+    Math.max(generationBySession.get(targetSessionKey) || 0, work.generation)
+  );
+
   return { ...work };
 }
 
