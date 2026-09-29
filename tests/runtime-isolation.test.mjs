@@ -2612,7 +2612,11 @@ test("direct Python Job drafts validate and promote through the controlled Job l
     const validate = callbacks.get("job_draft_validate");
     assert.equal(typeof validate, "function");
     const valid = await validate({ path: directDraft });
-    assert.equal(valid.structuredContent?.data?.valid, true);
+    assert.equal(
+      valid.structuredContent?.data?.valid,
+      true,
+      JSON.stringify(valid)
+    );
     assert.equal(valid.structuredContent?.data?.execution_mode, "direct");
 
     const invalidDraft = path.join(
