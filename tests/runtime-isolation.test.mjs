@@ -2553,13 +2553,13 @@ test("direct Python Job drafts validate and promote through the controlled Job l
   const fs = await import("node:fs/promises");
   const os = await import("node:os");
   const path = await import("node:path");
-  const { registerJobAuthoringTools } = await import("../dist/cadgpt/tools/jobs.js");
 
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-direct-job-"));
   const previousRoot = process.env.CADGPT_APPDATA_ROOT;
   const previousPython = process.env.CAD_MCP_PYTHON;
   process.env.CADGPT_APPDATA_ROOT = tempRoot;
   process.env.CAD_MCP_PYTHON = "python";
+  const { registerJobAuthoringTools } = await import("../dist/cadgpt/tools/jobs.js");
 
   const callbacks = new Map();
   const fakeServer = {
