@@ -331,6 +331,12 @@ export function registerJobDiscoveryTools(server: McpServer): void {
 }
 
 function directJobPython(): string {
+  const configured = (process.env.CAD_MCP_PYTHON || "").trim();
+  if (configured) {
+    return path.isAbsolute(configured)
+      ? configured
+      : path.resolve(getRepoRoot(), configured);
+  }
   return path.join(
     getRepoRoot(),
     ".venv-cad",
