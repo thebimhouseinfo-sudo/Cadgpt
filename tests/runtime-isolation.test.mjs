@@ -1,6 +1,59 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+test("continuity diagnostics fingerprint metadata without logging secrets or tool arguments", async () => {
+  const {
+    continuityFingerprint,
+    continuityHeaderFingerprints,
+    summarizeMcpBody,
+  } = await import("../dist/cadgpt/lib/continuity-diagnostics.js");
+
+  const headers = {
+    authorization: "Bearer raw-secret",
+    cookie: "session=raw-cookie",
+    "x-api-key": "raw-api-key",
+    "mcp-session-id": "transport-a",
+    "x-openai-conversation-id": "conversation-a",
+    "x-request-id": "request-a",
+  };
+
+  const fingerprints = continuityHeaderFingerprints(headers);
+  assert.equal("authorization" in fingerprints, false);
+  assert.equal("cookie" in fingerprints, false);
+  assert.equal("x-api-key" in fingerprints, false);
+  assert.equal(typeof fingerprints["mcp-session-id"], "string");
+  assert.equal(typeof fingerprints["x-openai-conversation-id"], "string");
+  assert.notEqual(fingerprints["x-openai-conversation-id"], "conversation-a");
+  assert.equal(
+    fingerprints["x-openai-conversation-id"],
+    continuityFingerprint("conversation-a")
+  );
+  assert.notEqual(
+    continuityFingerprint("conversation-a"),
+    continuityFingerprint("conversation-b")
+  );
+
+  const summary = summarizeMcpBody({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: {
+      name: "cadgpt_admission",
+      arguments: {
+        user_turn: "@cadgpt private user content",
+        confirmation_token: "raw-confirmation-secret",
+      },
+    },
+  });
+  assert.deepEqual(summary, {
+    rpc_method: "tools/call",
+    tool_name: "cadgpt_admission",
+  });
+  const serialized = JSON.stringify(summary);
+  assert.doesNotMatch(serialized, /private user content/);
+  assert.doesNotMatch(serialized, /raw-confirmation-secret/);
+});
+
 test("CadGPT launch claims the MCP session without creating execution authority", async () => {
   const {
     checkAdmission,
