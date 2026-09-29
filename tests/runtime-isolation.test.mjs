@@ -2389,6 +2389,53 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
   let c;
   try {
     a = await initialize(1000, "chat-A");
+
+    const initialListResponse = await fetch(url, {
+      method: "POST",
+      headers: a.headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1000.5,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+    assert.equal(initialListResponse.ok, true);
+    const initialListBody = await initialListResponse.json();
+    const initialNames = (initialListBody.result?.tools ?? [])
+      .map((item) => item.name)
+      .sort();
+    for (const required of [
+      "cad__cad_list_layers",
+      "job_run_direct",
+      "job_draft_validate",
+      "job_promote_draft",
+      "lisp_scaffold",
+      "library_import",
+      "asset_import",
+      "file_create",
+    ]) {
+      assert.equal(
+        initialNames.includes(required),
+        true,
+        `stable MCP surface is missing ${required}`
+      );
+    }
+    const { cadUpstream } = await import("../dist/cadgpt/runtime/cad-upstream.js");
+    assert.equal(cadUpstream.status().phase, "sleeping");
+
+    const preAdmissionCad = await tool(
+      a.headers,
+      1000.6,
+      "cad__cad_list_layers",
+      {}
+    );
+    assert.equal(preAdmissionCad.result?.isError, true);
+    assert.match(
+      preAdmissionCad.result?.structuredContent?.data?.error ?? "",
+      /CADGPT_SESSION_REQUIRED|NO_ACTIVE_WORK/
+    );
+
     const admission = await tool(a.headers, 1001, "cadgpt_admission", {
       user_turn: "@cadgpt start test work",
       invocation_source: "mention",
@@ -2435,9 +2482,18 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
     });
     assert.equal(listResponse.ok, true);
     const listBody = await listResponse.json();
-    const names = (listBody.result?.tools ?? []).map((item) => item.name);
+    const names = (listBody.result?.tools ?? [])
+      .map((item) => item.name)
+      .sort();
+    assert.deepEqual(
+      names,
+      initialNames,
+      "MCP tool definitions must remain stable across admission, work start, and transport rotation"
+    );
     assert.equal(names.includes("cad_status"), true);
     assert.equal(names.includes("cad__cad_list_layers"), true);
+    assert.equal(names.includes("job_draft_validate"), true);
+    assert.equal(names.includes("job_promote_draft"), true);
 
     const cj = await tool(b.headers, 1012, "cadgpt_control", { surface: "cj" });
     assert.equal(
