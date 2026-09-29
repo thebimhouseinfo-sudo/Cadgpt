@@ -205,11 +205,12 @@ async function validateDirectJobSource(
   target: string
 ): Promise<{ valid: boolean; diagnostics: string[]; steps: number }> {
   const python = directJobPython();
-  const pythonStat = await fs.stat(python).catch(() => null);
-  if (!pythonStat?.isFile()) {
+  try {
+    await assertDirectJobPythonReady(python);
+  } catch (error) {
     return {
       valid: false,
-      diagnostics: ["CadGPT Python runtime is not ready. Run setup.bat first."],
+      diagnostics: [error instanceof Error ? error.message : String(error)],
       steps: 1,
     };
   }
@@ -347,6 +348,23 @@ function directJobPython(): string {
   );
 }
 
+function directJobPythonIsPathLike(python: string): boolean {
+  return (
+    path.isAbsolute(python) ||
+    python.includes("/") ||
+    python.includes("\\")
+  );
+}
+
+async function assertDirectJobPythonReady(python: string): Promise<void> {
+  if (!directJobPythonIsPathLike(python)) return;
+  const stat = await fs.stat(python).catch(() => null);
+  if (!stat?.isFile()) {
+    throw new Error("CadGPT Python runtime is not ready. Run setup.bat first.");
+  }
+}
+
+
 export function registerJobAuthoringTools(server: McpServer): void {
   server.registerTool(
     "job_run_direct",
@@ -369,10 +387,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
         }
         const script = await resolveRegisteredAssetPath("job", entry.library_id, relative);
         const python = directJobPython();
-        const pythonStat = await fs.stat(python).catch(() => null);
-        if (!pythonStat?.isFile()) {
-          throw new Error("CadGPT Python runtime is not ready. Run setup.bat first.");
-        }
+        await assertDirectJobPythonReady(python);
 
         const lease = currentToolLease();
         const drawings = getBoundDrawingsForExecution(lease.workId);
