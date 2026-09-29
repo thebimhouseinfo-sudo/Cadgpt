@@ -17,6 +17,7 @@ import { currentToolLease } from "../lib/work-registration.js";
 import { getBoundDrawingsForExecution } from "../session/drawing-binding.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
+import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import { resolveRegisteredAssetPath } from "./user-assets.js";
 
 const execFileAsync = promisify(execFile);
@@ -108,10 +109,25 @@ function safeRelativeRegisteredJob(value: string): string {
   return normalized;
 }
 
+type JobExecutionMode = "reasoning" | "direct";
+
+function jobExecutionModeForPath(value: string): JobExecutionMode {
+  return path.extname(value).toLowerCase() === ".py" ? "direct" : "reasoning";
+}
+
 function safeRelativeJob(value: string): string {
   const normalized = value.replaceAll("\\", "/").replace(/^\/+/, "");
-  if (!normalized || normalized.split("/").includes("..") || path.isAbsolute(normalized) || path.basename(normalized).toLowerCase() !== "job.md") {
-    throw new Error("relative_path must be a safe JOB.md path inside the managed Job library");
+  const ext = path.extname(normalized).toLowerCase();
+  const invalid =
+    !normalized ||
+    normalized.split("/").includes("..") ||
+    path.isAbsolute(normalized) ||
+    ![".md", ".py"].includes(ext);
+  if (invalid) {
+    throw new Error("relative_path must be a safe .md or .py path inside the managed Job library");
+  }
+  if (ext === ".md" && path.basename(normalized).toLowerCase() !== "job.md") {
+    throw new Error("Reasoning Job relative_path must end in JOB.md");
   }
   return normalized;
 }
@@ -134,18 +150,30 @@ function draftPathFor(libraryId: string, relativePath: string): string {
   return path.resolve(getJobDraftRoot(), libraryId, safeRelativeJob(relativePath));
 }
 
-function assertDraftVirtualPath(value: string): void {
-  if (path.isAbsolute(value)) {
-    const target = path.resolve(value);
-    if (!isPathInside(target, getJobDraftRoot()) || path.basename(target).toLowerCase() !== "job.md") {
-      throw new Error("Draft path must be an absolute JOB.md path under the approved Job draft root");
+function assertDraftVirtualPath(value: string): JobExecutionMode {
+  const target = path.isAbsolute(value)
+    ? path.resolve(value)
+    : path.resolve(
+        getJobDraftRoot(),
+        value.replaceAll("\\", "/").replace(/^appdata\/workspace\/job-draft\//i, "")
+      );
+  if (!isPathInside(target, getJobDraftRoot())) {
+    throw new Error("Job draft path must stay under the approved Job draft root");
+  }
+  const ext = path.extname(target).toLowerCase();
+  if (![".md", ".py"].includes(ext)) {
+    throw new Error("Job draft must be a reasoning JOB.md or a direct .py script");
+  }
+  if (ext === ".md" && path.basename(target).toLowerCase() !== "job.md") {
+    throw new Error("Reasoning Job draft path must end in JOB.md");
+  }
+  if (!path.isAbsolute(value)) {
+    const normalized = value.replaceAll("\\", "/").toLowerCase();
+    if (!normalized.startsWith("appdata/workspace/job-draft/")) {
+      throw new Error("Relative Job draft paths must be under appdata/workspace/job-draft/**");
     }
-    return;
   }
-  const normalized = value.replaceAll("\\", "/").toLowerCase();
-  if (!normalized.startsWith("appdata/workspace/job-draft/") || path.basename(normalized) !== "job.md") {
-    throw new Error("Draft path must point to JOB.md under appdata/workspace/job-draft/**");
-  }
+  return ext === ".py" ? "direct" : "reasoning";
 }
 
 function validateJobSource(content: string): { valid: boolean; diagnostics: string[]; steps: number } {
@@ -170,6 +198,63 @@ function validateJobSource(content: string): { valid: boolean; diagnostics: stri
   }
 
   return { valid: diagnostics.length === 0, diagnostics, steps: matches.length };
+}
+
+
+async function validateDirectJobSource(
+  target: string
+): Promise<{ valid: boolean; diagnostics: string[]; steps: number }> {
+  const python = directJobPython();
+  const pythonStat = await fs.stat(python).catch(() => null);
+  if (!pythonStat?.isFile()) {
+    return {
+      valid: false,
+      diagnostics: ["CadGPT Python runtime is not ready. Run setup.bat first."],
+      steps: 1,
+    };
+  }
+
+  const probe = [
+    "import ast, pathlib, sys",
+    "p = pathlib.Path(sys.argv[1])",
+    "ast.parse(p.read_text(encoding='utf-8'), filename=str(p))",
+  ].join("; ");
+
+  try {
+    await execFileAsync(python, ["-c", probe, target], {
+      windowsHide: true,
+      timeout: 30_000,
+      maxBuffer: 512 * 1024,
+    });
+    return { valid: true, diagnostics: [], steps: 1 };
+  } catch (error) {
+    const message =
+      error && typeof error === "object" && "stderr" in error
+        ? String((error as { stderr?: unknown }).stderr || error)
+        : String(error);
+    return {
+      valid: false,
+      diagnostics: [`Direct Python Job syntax validation failed: ${message.trim()}`],
+      steps: 1,
+    };
+  }
+}
+
+async function validateJobDraft(
+  target: string,
+  content: string
+): Promise<{
+  valid: boolean;
+  diagnostics: string[];
+  steps: number;
+  execution_mode: JobExecutionMode;
+}> {
+  const execution_mode = jobExecutionModeForPath(target);
+  const validation =
+    execution_mode === "direct"
+      ? await validateDirectJobSource(target)
+      : validateJobSource(content);
+  return { ...validation, execution_mode };
 }
 
 async function assertManagedLibraryExists(libraryId: string): Promise<void> {
