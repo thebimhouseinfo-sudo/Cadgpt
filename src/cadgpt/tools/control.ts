@@ -2,7 +2,11 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { isSessionClaimed } from "../lib/admission.js";
-import { workStatus } from "../lib/work-registration.js";
+import {
+  activeWorkForSession,
+  isDevelopmentBuild,
+  workStatus,
+} from "../lib/work-registration.js";
 import {
   CADGPT_HELP,
   CADGPT_ROOT_MENU,
@@ -103,6 +107,11 @@ export function registerCadGptControlTool(
           .object({
             existing_work_action: z.string(),
             start_new_work: z.boolean(),
+            owner_type: z.string().optional(),
+            owner_id: z.string().optional(),
+            execution_path: z.string().optional(),
+            enable_capability: z.string().optional(),
+            development_only: z.boolean().optional(),
           })
           .optional(),
       },
@@ -161,14 +170,73 @@ export function registerCadGptControlTool(
         ].join("\n");
       }
 
-      const continuationPolicy =
+      const activeWork =
         surface === "cl" || surface === "cj" || surface === "mcp"
-          ? {
-              existing_work_action:
-                "If this conversation already has a private work_handle (for example from Workspace Ready), call cadgpt_work_resume with that handle before authoring tools. Reuse the existing HYBRID workspace; do not call cadgpt_work_start to create a replacement work.",
-              start_new_work: false,
-            }
-          : undefined;
+          ? activeWorkForSession(options.sessionKey)
+          : null;
+      let continuationPolicy:
+        | {
+            existing_work_action: string;
+            start_new_work: boolean;
+            owner_type?: string;
+            owner_id?: string;
+            execution_path?: string;
+            enable_capability?: string;
+            development_only?: boolean;
+          }
+        | undefined;
+
+      if (surface === "cl" || surface === "cj") {
+        if (activeWork && (activeWork.executionPath === "file" || activeWork.executionPath === "hybrid")) {
+          continuationPolicy = {
+            existing_work_action:
+              "Reuse the current work_handle. If MCP transport/session changed, resume that handle first; do not replace an existing HYBRID drawing workspace for Lisp/Job authoring.",
+            start_new_work: false,
+          };
+        } else {
+          continuationPolicy = {
+            existing_work_action:
+              "No compatible FILE/HYBRID work is active. Start independent FILE work, then use the authoring tools. A drawing workspace is not required.",
+            start_new_work: true,
+            owner_type: "file",
+            owner_id: surface === "cl" ? "lisp-authoring" : "job-authoring",
+            execution_path: "file",
+          };
+        }
+      } else if (surface === "mcp") {
+        if (!isDevelopmentBuild()) {
+          continuationPolicy = {
+            existing_work_action:
+              "CAD MCP self-improve is development-only and should be used only when a CAD MCP tool is missing, broken, or explicitly being improved.",
+            start_new_work: false,
+            development_only: true,
+          };
+        } else if (
+          activeWork &&
+          (activeWork.executionPath === "file" || activeWork.executionPath === "hybrid")
+        ) {
+          continuationPolicy = {
+            existing_work_action:
+              "Reuse the current work_handle and explicitly enable cad-mcp-dev on that execution. Do not replace an existing drawing workspace.",
+            start_new_work: false,
+            owner_type: "skill",
+            owner_id: "cad-mcp-dev",
+            execution_path: activeWork.executionPath,
+            enable_capability: "cad-mcp-dev",
+            development_only: true,
+          };
+        } else {
+          continuationPolicy = {
+            existing_work_action:
+              "No compatible work is active. Start standalone cad-mcp-dev FILE work. A drawing workspace is optional and only needed for live CAD validation.",
+            start_new_work: true,
+            owner_type: "skill",
+            owner_id: "cad-mcp-dev",
+            execution_path: "file",
+            development_only: true,
+          };
+        }
+      }
 
       return {
         content: [{ type: "text" as const, text }],
