@@ -104,6 +104,7 @@ export function createSessionManager(
   options: SessionManagerOptions = {}
 ): SessionManager {
   const createServer = options.createServer ?? createMcpServer;
+  const usesDefaultServerFactory = options.createServer === undefined;
   const sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
   const cleanupMs = options.cleanupMs ?? DEFAULT_CLEANUP_MS;
   const deleteGraceMs = options.deleteGraceMs ?? DEFAULT_DELETE_GRACE_MS;
@@ -200,7 +201,9 @@ export function createSessionManager(
     const transportId = preferredTransportId ?? randomUUID();
     const logicalSessionKey = preferredLogicalKey ?? transportId;
     const server = createServer(logicalSessionKey);
-    await rehydrateServerForLogicalSession(server, logicalSessionKey);
+    if (usesDefaultServerFactory) {
+      await rehydrateServerForLogicalSession(server, logicalSessionKey);
+    }
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => transportId,
