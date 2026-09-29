@@ -63,6 +63,16 @@ exit /b %ERRORLEVEL%
 call :preflight
 if errorlevel 1 exit /b 1
 echo.
+echo Refreshing stable CAD tool manifest before restart...
+set "CADGPT_MANIFEST_PYTHON=python"
+if exist ".venv-cad\Scripts\python.exe" set "CADGPT_MANIFEST_PYTHON=.venv-cad\Scripts\python.exe"
+"%CADGPT_MANIFEST_PYTHON%" "scripts\generate-cad-tool-manifest.py"
+if errorlevel 1 (
+  echo [ERROR] CAD tool manifest generation failed. Existing runtime was not restarted.
+  exit /b 1
+)
+
+echo.
 echo Rebuilding CadGPT source before restart...
 call npm run build
 if errorlevel 1 (
