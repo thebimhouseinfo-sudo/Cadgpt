@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { assertSessionClaimed } from "../lib/admission.js";
+import {
+  adoptSessionAdmission,
+  assertSessionClaimed,
+} from "../lib/admission.js";
 import { getTrayStatePath } from "../lib/appdata.js";
 
 export interface CadPrepareDrawing {
@@ -474,6 +477,11 @@ export function registerCadPrepareConfirmTool(
       },
     },
     async ({ confirmation_token, choice_key }) => {
+      const preparedSession = resolveCadPrepareSessionByToken(confirmation_token);
+      if (preparedSession && preparedSession !== options.sessionKey) {
+        adoptSessionAdmission(preparedSession, options.sessionKey);
+      }
+
       const drawing = beginCadPrepareConfirm(
         options.sessionKey,
         confirmation_token,
