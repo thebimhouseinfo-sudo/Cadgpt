@@ -1623,7 +1623,7 @@ test("CAD document runtime identity excludes CAD-MCP-process-local COM identity"
   assert.match(runtimeBlock, /acad-hwnd:/);
   assert.match(runtimeBlock, /doc-hwnd:/);
   assert.doesNotMatch(runtimeBlock, /_oleobj_/);
-  assert.doesNotMatch(runtimeBlock, /id\(doc\)/);
+  assert.doesNotMatch(runtimeBlock, /return f"py:/);
   assert.match(runtimeBlock, /cannot establish a reconnect-stable drawing identity/);
 });
 
