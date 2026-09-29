@@ -11,8 +11,8 @@ import {
   createMcpServer,
   disposeLogicalSessionState,
   disposeMcpServerRuntime,
-  rehydrateLogicalSessionServer,
 } from "../server-factory.js";
+import { rehydrateLogicalSessionServer } from "./logical-session-rehydrate.js";
 import {
   continuityFingerprint,
   logContinuityDiagnostic,
