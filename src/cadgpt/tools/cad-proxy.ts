@@ -871,6 +871,64 @@ export function registerCadProxyTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "cad_invoke_manifest_tool",
+    {
+      title: "Invoke Current CAD Manifest Tool",
+      description:
+        "Stable fallback gateway for a public CAD MCP tool that exists in the current generated manifest but is not present as a named ChatGPT tool in this conversation (for example a newly-developed candidate tool). Prefer the named cad__* proxy when available. Internal upstream primitives are never callable through this gateway.",
+      inputSchema: {
+        tool_name: z
+          .string()
+          .min(1)
+          .describe("Raw CAD MCP manifest tool name, e.g. cad_list_layers; cad__ prefix is also accepted"),
+        arguments: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .default({})
+          .describe("Arguments for the manifest tool, excluding drawing_id"),
+        drawing_id: z
+          .string()
+          .optional()
+          .describe("Execution-scoped drawing_id. Required when more than one drawing is bound."),
+      },
+    },
+    async ({ tool_name, arguments: toolArgs, drawing_id }) => {
+      try {
+        const rawName = tool_name.startsWith("cad__")
+          ? tool_name.slice("cad__".length)
+          : tool_name;
+        const manifestTool = loadManifest().tools.find(
+          (item) => item.name === rawName
+        );
+        if (!manifestTool || INTERNAL_UPSTREAM_TOOLS.has(rawName)) {
+          throw new Error(
+            `CAD_MANIFEST_TOOL_NOT_PUBLIC: '${tool_name}' is absent from the current public CAD manifest surface.`
+          );
+        }
+
+        await ensureCadRuntimeActive();
+        const binding = resolveDrawingContext(drawing_id);
+        return await withCadHostLock(binding.host, async () => {
+          await activateDrawingContext(binding);
+          const result = (await cadUpstream.callTool(
+            rawName,
+            toolArgs ?? {}
+          )) as any;
+          if (!isToolErrorResult(result)) {
+            recordCadCandidateSuccess(
+              currentToolLease().workId,
+              `cad__${rawName}`
+            );
+          }
+          return result;
+        });
+      } catch (error) {
+        return toolError("cad_invoke_manifest_tool", error);
+      }
+    }
+  );
+
+  server.registerTool(
     "cad_refresh_tools",
     {
       title: "Verify CAD Runtime Tool Manifest",
