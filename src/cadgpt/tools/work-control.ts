@@ -24,7 +24,7 @@ export function registerWorkControlTools(
       executionPath: ExecutionPath,
       ownerId: string,
       executionId: string
-    ) => Promise<void>;
+    ) => Promise<Record<string, unknown> | void>;
   }
 ): void {
   server.registerTool(
@@ -60,7 +60,7 @@ export function registerWorkControlTools(
             continuation_authority_token,
             options.sessionKey
           );
-          await options.prepareFamilies(
+          let toolSurface = await options.prepareFamilies(
             resumed.executionPath,
             resumed.ownerId,
             resumed.executionId
@@ -85,7 +85,7 @@ export function registerWorkControlTools(
               options.sessionKey,
               "cad-mcp-dev"
             );
-            await options.prepareFamilies(
+            toolSurface = await options.prepareFamilies(
               continued.executionPath,
               "cad-mcp-dev",
               continued.executionId
@@ -106,9 +106,13 @@ export function registerWorkControlTools(
               job_id: continued.jobId,
               execution_path: continued.executionPath,
               capabilities: continued.capabilities,
+              work_capabilities: continued.capabilities,
               driver_epoch: continued.driverEpoch,
               generation: continued.generation,
             },
+            ...(toolSurface ? { tool_surface: toolSurface } : {}),
+            note:
+              "work_capabilities are execution privilege flags, not the MCP tool list. Use tool_surface / tools-list to inspect exposed tools.",
           });
         }
 
@@ -121,7 +125,7 @@ export function registerWorkControlTools(
           existing.ownerId === owner_id.trim() &&
           existing.executionPath === execution_path
         ) {
-          await options.prepareFamilies(
+          const toolSurface = await options.prepareFamilies(
             existing.executionPath,
             existing.ownerId,
             existing.executionId
@@ -136,9 +140,13 @@ export function registerWorkControlTools(
               job_id: existing.jobId,
               execution_path: existing.executionPath,
               capabilities: existing.capabilities,
+              work_capabilities: existing.capabilities,
               driver_epoch: existing.driverEpoch,
               generation: existing.generation,
             },
+            ...(toolSurface ? { tool_surface: toolSurface } : {}),
+            note:
+              "work_capabilities are execution privilege flags, not the MCP tool list. Use tool_surface / tools-list to inspect exposed tools.",
           });
         }
 
@@ -154,8 +162,13 @@ export function registerWorkControlTools(
           ? await cleanupExecutionState(previousExecution)
           : null;
 
+        let toolSurface: Record<string, unknown> | void;
         try {
-          await options.prepareFamilies(work.executionPath, work.ownerId, work.executionId);
+          toolSurface = await options.prepareFamilies(
+            work.executionPath,
+            work.ownerId,
+            work.executionId
+          );
         } catch (error) {
           const cleanupId = releaseSessionWork(options.sessionKey);
           if (cleanupId) await cleanupExecutionState(cleanupId);
@@ -172,9 +185,13 @@ export function registerWorkControlTools(
             job_id: work.jobId,
             execution_path: work.executionPath,
             capabilities: work.capabilities,
+            work_capabilities: work.capabilities,
             driver_epoch: work.driverEpoch,
             generation: work.generation,
           },
+          ...(toolSurface ? { tool_surface: toolSurface } : {}),
+          note:
+            "work_capabilities are execution privilege flags, not the MCP tool list. Use tool_surface / tools-list to inspect exposed tools.",
           ...(previousCleanup ? { previous_cleanup: previousCleanup } : {}),
         });
       } catch (error) {
