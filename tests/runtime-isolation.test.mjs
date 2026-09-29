@@ -2398,9 +2398,6 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
       true
     );
 
-    b = await initialize(1010, "chat-A");
-    assert.notEqual(a.sessionId, b.sessionId);
-
     const started = await tool(a.headers, 1002, "cadgpt_work_start", {
       owner_type: "direct-cad",
       owner_id: "drawing-workspace",
@@ -2422,6 +2419,9 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
     assert.ok(
       started.result?.structuredContent?.data?.tool_surface?.cad_proxy_tool_count > 0
     );
+
+    b = await initialize(1010, "chat-A");
+    assert.notEqual(a.sessionId, b.sessionId);
 
     const listResponse = await fetch(url, {
       method: "POST",
