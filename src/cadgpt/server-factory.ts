@@ -199,7 +199,7 @@ async function prepareFamilies(
   executionPath: ExecutionPath,
   ownerId: string,
   executionId: string
-): Promise<void> {
+): Promise<Record<string, unknown>> {
   if (executionPath === "file" || executionPath === "hybrid") await loadFileFamily(server);
   if (executionPath === "cad" || executionPath === "hybrid") {
     const [{ assertCadCandidateAccess }, { assertCadDevSourceAccess }] =
@@ -212,6 +212,18 @@ async function prepareFamilies(
     await loadCadFamily(server);
   }
   if (ownerId === "cad-mcp-dev") await loadCadMcpDevFamily(server);
+
+  const snapshot: Record<string, unknown> = {
+    ...runtimeStateSnapshot(),
+    execution_path: executionPath,
+  };
+  if (executionPath === "cad" || executionPath === "hybrid") {
+    const { cadProxySurfaceSnapshot } = await import("./tools/cad-proxy.js");
+    const cad = cadProxySurfaceSnapshot(server);
+    snapshot.cad_proxy_tool_count = cad.count;
+    snapshot.cad_proxy_tools = cad.tools;
+  }
+  return snapshot;
 }
 
 export async function rehydrateServerForLogicalSession(
