@@ -40,9 +40,20 @@ A step must **not** directly edit permanent `appdata/libraries/**` content with 
 - **Tool** = concrete execution mechanism, for example CAD MCP query, CAD MCP command execution, or managed file read/edit
 - **Harness** = quality gate used by a Skill or Job validation process
 
+## Job execution modes
+
+CadGPT has two Job source modes:
+
+- **Reasoning Job (`.md`)** — uses the canonical structured workflow contract and `REASONING_HARNESS.md`.
+- **Direct Job (`.py`)** — a reviewed deterministic Python entrypoint dispatched directly by `job_run_direct` with no model planning between its internal operations.
+
+Both modes use the same managed draft → validate → real test → user acceptance → promote lifecycle. A Direct Job is not exempt from evidence, drawing-targeting, or promotion rules.
+
+When a Direct Job runs with one bound drawing, CadGPT serializes the child process under that drawing host lock and provides exact target identity through `CADGPT_DRAWING_ID`, `CADGPT_DRAWING_NAME`, `CADGPT_DRAWING_PATH`, `CADGPT_DRAWING_HOST`, and `CADGPT_DRAWING_RUNTIME_IDENTITY`. Direct Job code must use that explicit identity and must not guess or inherit AutoCAD `ActiveDocument`.
+
 ## Required Job Structure
 
-Every Job must define identity, goal, preconditions, ordered steps, per-step tool/executor scope, success criteria, failure handling, outputs/postconditions, and final validation.
+Reasoning Jobs must define identity, goal, preconditions, ordered steps, per-step tool/executor scope, success criteria, failure handling, outputs/postconditions, and final validation. Direct Jobs encode their workflow in Python, but still require an explicit goal, controlled inputs, deterministic target handling, failure behavior, and real final validation before promotion.
 
 Each step should define:
 
@@ -141,7 +152,12 @@ Permanent Job promotion is allowed only after:
 
 Every Job must define final validation against the actual drawing/result. Command dispatch alone is not success.
 
-A structurally valid Markdown file is still only a draft until its intended workflow has been tested and the final result verified.
+`job_draft_validate` validates the source according to its mode:
+
+- reasoning `JOB.md`: canonical workflow structure;
+- direct `.py`: Python syntax using the configured CadGPT Python runtime.
+
+Passing source validation does not prove runtime behavior. A valid `.md` or `.py` file is still only a draft until its intended workflow has been tested and the final result verified.
 
 ## Failure Rules
 
@@ -159,10 +175,11 @@ Jobs fail explicitly rather than silently guessing:
 A concrete reusable Job normally lives under one managed library:
 
 ```text
-appdata/libraries/jobs/<library-id>/<job-name>/JOB.md
+Reasoning: appdata/libraries/jobs/<library-id>/<job-name>/JOB.md
+Direct:    appdata/libraries/jobs/<library-id>/<job-name>/<job-name>.py
 ```
 
-Supporting reusable data may live beside `JOB.md` when that data belongs to the Job contract. Runtime/test evidence belongs under managed data/run locations rather than being silently mixed into the permanent Job definition.
+Supporting reusable data may live beside the Job entrypoint when that data belongs to the Job contract. Runtime/test evidence belongs under managed data/run locations rather than being silently mixed into the permanent Job definition.
 
 Reusable AutoLISP belongs to a managed Lisp Library, not inside the Job folder.
 
