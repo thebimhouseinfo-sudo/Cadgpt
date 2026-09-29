@@ -630,6 +630,70 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
   }
 });
 
+test("CAD document-list parser accepts FastMCP 1.2.x flattened TextContent", async () => {
+  const { normalizeDocuments } = await import(
+    "../dist/cadgpt/session/drawing-binding.js"
+  );
+
+  const one = normalizeDocuments({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          name: "Drawing1.dwg",
+          full_name: "C:\\Drawing1.dwg",
+          runtime_document_id: "doc-1",
+          host: "autocad",
+        }),
+      },
+    ],
+    isError: false,
+  });
+  assert.equal(one.length, 1);
+  assert.equal(one[0].name, "Drawing1.dwg");
+  assert.equal(one[0].runtime_document_id, "doc-1");
+
+  const two = normalizeDocuments({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          name: "A.dwg",
+          full_name: "C:\\A.dwg",
+          runtime_document_id: "doc-a",
+        }),
+      },
+      {
+        type: "text",
+        text: JSON.stringify({
+          name: "B.dwg",
+          full_name: "C:\\B.dwg",
+          runtime_document_id: "doc-b",
+        }),
+      },
+    ],
+    isError: false,
+  });
+  assert.deepEqual(
+    two.map((item) => item.runtime_document_id),
+    ["doc-a", "doc-b"]
+  );
+
+  const wrapped = normalizeDocuments({
+    structuredContent: {
+      documents: [
+        {
+          name: "Wrapped.dwg",
+          full_name: "C:\\Wrapped.dwg",
+          runtime_document_id: "doc-wrapped",
+        },
+      ],
+    },
+  });
+  assert.equal(wrapped.length, 1);
+  assert.equal(wrapped[0].runtime_document_id, "doc-wrapped");
+});
+
 test("MCP transport recovery preserves session claim and work handle for the same logical session", async () => {
   const { checkAdmission, assertSessionClaimed } = await import(
     "../dist/cadgpt/lib/admission.js"
