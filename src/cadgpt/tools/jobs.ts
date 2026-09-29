@@ -333,9 +333,11 @@ export function registerJobDiscoveryTools(server: McpServer): void {
 function directJobPython(): string {
   const configured = (process.env.CAD_MCP_PYTHON || "").trim();
   if (configured) {
-    return path.isAbsolute(configured)
-      ? configured
-      : path.resolve(getRepoRoot(), configured);
+    if (path.isAbsolute(configured)) return configured;
+    if (configured.includes("/") || configured.includes("\\")) {
+      return path.resolve(getRepoRoot(), configured);
+    }
+    return configured;
   }
   return path.join(
     getRepoRoot(),
