@@ -194,7 +194,7 @@ jobs:
               "cadgpt_control","cadgpt_admission","cadgpt_work_start","cadgpt_work_status","cadgpt_work_stop",
               "library_list","library_import","registry_list","job_list","job_get","job_run_direct","job_checkout","job_draft_validate","job_promote_draft",
               "file_roots","file_create","file_edit","lisp_scaffold","lisp_checkout","asset_import","asset_export",
-              "drawing_list","cad_status","cad__cad_list_layers"
+              "drawing_list","cad_status","cad__cad_list_layers","cad_invoke_manifest_tool"
             )) {
               if ($initialNames -notcontains $required) { throw "Stable MCP surface missing tool at initialize: $required" }
             }
