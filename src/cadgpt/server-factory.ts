@@ -306,7 +306,12 @@ export function createMcpServer(sessionKey: string): McpServer {
       });
 
       try {
-        await prepareFamilies(server, "hybrid", "drawing-workspace", work.executionId);
+        const toolSurface = await prepareFamilies(
+          server,
+          "hybrid",
+          "drawing-workspace",
+          work.executionId
+        );
         const { cadUpstream } = await import("./runtime/cad-upstream.js");
         await cadUpstream.activate();
 
@@ -352,8 +357,13 @@ export function createMcpServer(sessionKey: string): McpServer {
             owner_type: work.ownerType,
             owner_id: work.ownerId,
             execution_path: work.executionPath,
+            capabilities: work.capabilities,
+            work_capabilities: work.capabilities,
             generation: work.generation,
           },
+          tool_surface: toolSurface,
+          note:
+            "work_capabilities are execution privilege flags, not the MCP tool list. tool_surface reports the exposed families/proxies.",
           drawing: bound,
         };
       } catch (error) {
