@@ -99,6 +99,12 @@ export function registerCadGptControlTool(
       },
       outputSchema: {
         text: z.string(),
+        continuation_policy: z
+          .object({
+            existing_work_action: z.string(),
+            start_new_work: z.boolean(),
+          })
+          .optional(),
       },
     },
     async ({ surface }) => {
@@ -155,9 +161,23 @@ export function registerCadGptControlTool(
         ].join("\n");
       }
 
+      const continuationPolicy =
+        surface === "cl" || surface === "cj" || surface === "mcp"
+          ? {
+              existing_work_action:
+                "If this conversation already has a private work_handle (for example from Workspace Ready), call cadgpt_work_resume with that handle before authoring tools. Reuse the existing HYBRID workspace; do not call cadgpt_work_start to create a replacement work.",
+              start_new_work: false,
+            }
+          : undefined;
+
       return {
         content: [{ type: "text" as const, text }],
-        structuredContent: { text },
+        structuredContent: {
+          text,
+          ...(continuationPolicy
+            ? { continuation_policy: continuationPolicy }
+            : {}),
+        },
       };
     }
   );
