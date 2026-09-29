@@ -31,11 +31,11 @@ def runtime_document_id(doc) -> str:
     identities here because those are client-process-local and would falsely
     stale a still-open drawing after reconnect.
 
-    A document window handle normally changes when that document is closed and
-    reopened. Pairing it with the AutoCAD application window handle also makes
-    an AutoCAD process restart a different identity. If AutoCAD cannot expose a
-    document HWND, fail closed instead of silently falling back to a
-    process-local identity.
+    The document window handle is the host-side discriminator for an open MDI
+    document, and the application window handle scopes it to one AutoCAD host
+    lifetime. Close/reopen behavior remains part of real-host acceptance. If
+    either handle is unavailable, fail closed instead of silently falling back
+    to a process-local identity.
     """
     doc_hwnd = _window_handle(doc)
     if doc_hwnd is None:
@@ -55,9 +55,11 @@ def runtime_document_id(doc) -> str:
             app = None
 
     app_hwnd = _window_handle(app) if app is not None else None
-    if app_hwnd is not None:
-        return f"acad-hwnd:{app_hwnd}:doc-hwnd:{doc_hwnd}"
-    return f"doc-hwnd:{doc_hwnd}"
+    if app_hwnd is None:
+        raise RuntimeError(
+            "AutoCAD application HWND is unavailable; CadGPT cannot scope the drawing identity to one AutoCAD host lifetime."
+        )
+    return f"acad-hwnd:{app_hwnd}:doc-hwnd:{doc_hwnd}"
 
 
 def get_document(
