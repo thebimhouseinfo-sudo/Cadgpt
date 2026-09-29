@@ -13,6 +13,7 @@ import {
   releaseSessionWork,
   runWithToolLease,
   setWorkExpirationHandler,
+  isDevelopmentBuild,
   type ExecutionPath,
 } from "./lib/work-registration.js";
 import {
@@ -24,6 +25,17 @@ import { markFamilyLoaded, runtimeStateSnapshot } from "./lib/runtime-state.js";
 import { registerAdmissionTool } from "./tools/admission.js";
 import { registerCadGptControlTool } from "./tools/control.js";
 import { registerWorkControlTools } from "./tools/work-control.js";
+import { registerLibraryDiscoveryTools, registerLibraryMutationTools } from "./tools/libraries.js";
+import { registerJobDiscoveryTools, registerJobAuthoringTools } from "./tools/jobs.js";
+import { registerSkillTools } from "./tools/skills.js";
+import { registerCapabilityRegistryTools } from "./tools/registry.js";
+import { registerFilesystemTools } from "./tools/filesystem.js";
+import { registerLispHarnessTools } from "./tools/lisp-harness.js";
+import { registerLispWorkspaceTools } from "./tools/lisp-workspace.js";
+import { registerUserAssetTools } from "./tools/user-assets.js";
+import { registerCadProxyTools, syncCadBusinessProxies } from "./tools/cad-proxy.js";
+import { registerObservatorTools } from "./tools/observator.js";
+import { registerCadMcpDevTools } from "./tools/cad-mcp-dev.js";
 import {
   prepareCadLaunch,
   registerCadPrepareConfirmTool,
@@ -32,6 +44,7 @@ import {
 import { cleanupExecutionState } from "./runtime/execution-cleanup.js";
 
 const loadedByServer = new WeakMap<McpServer, Set<string>>();
+const registeredSurfaceByServer = new WeakMap<McpServer, Set<string>>();
 const sessionKeyByServer = new WeakMap<McpServer, string>();
 
 setWorkExpirationHandler(async (executionId) => {
@@ -112,27 +125,52 @@ function configureToolRegistration(server: McpServer, sessionKey: string): void 
   }) as typeof server.registerTool;
 }
 
+function registeredSurface(server: McpServer): Set<string> {
+  let registered = registeredSurfaceByServer.get(server);
+  if (!registered) {
+    registered = new Set<string>();
+    registeredSurfaceByServer.set(server, registered);
+  }
+  return registered;
+}
+
+function registerStableProductionSurface(server: McpServer): void {
+  const registered = registeredSurface(server);
+  if (registered.has("production")) return;
+
+  // Register the complete production MCP surface before ChatGPT performs
+  // its first tools/list import. Authority wrappers still prevent use before
+  // admission/work, and CAD upstream remains sleeping until a CAD tool call.
+  registerLibraryDiscoveryTools(server);
+  registerLibraryMutationTools(server);
+  registerJobDiscoveryTools(server);
+  registerJobAuthoringTools(server);
+  registerSkillTools(server);
+  registerCapabilityRegistryTools(server);
+  registerFilesystemTools(server);
+  registerLispHarnessTools(server);
+  registerLispWorkspaceTools(server);
+  registerUserAssetTools(server);
+  registerCadProxyTools(server);
+  registerObservatorTools(server);
+
+  if (isDevelopmentBuild()) {
+    registerCadMcpDevTools(server);
+    registered.add("cad-mcp-dev");
+  }
+
+  registered.add("production");
+  registered.add("discovery");
+  registered.add("file");
+  registered.add("cad");
+}
+
 async function loadDiscoveryFamily(server: McpServer): Promise<void> {
   const loaded = serverFamilies(server);
   if (loaded.has("discovery")) return;
-
-  const [
-    { registerLibraryDiscoveryTools },
-    { registerJobDiscoveryTools },
-    { registerSkillTools },
-    { registerCapabilityRegistryTools },
-  ] = await Promise.all([
-    import("./tools/libraries.js"),
-    import("./tools/jobs.js"),
-    import("./tools/skills.js"),
-    import("./tools/registry.js"),
-  ]);
-
-  registerLibraryDiscoveryTools(server);
-  registerJobDiscoveryTools(server);
-  registerSkillTools(server);
-  registerCapabilityRegistryTools(server);
-
+  if (!registeredSurface(server).has("discovery")) {
+    throw new Error("TOOL_SURFACE_NOT_READY: discovery tools were not registered at MCP initialization.");
+  }
   loaded.add("discovery");
   markFamilyLoaded("discovery");
 }
@@ -140,47 +178,23 @@ async function loadDiscoveryFamily(server: McpServer): Promise<void> {
 async function loadFileFamily(server: McpServer): Promise<void> {
   const loaded = serverFamilies(server);
   if (loaded.has("file")) return;
-
+  if (!registeredSurface(server).has("file")) {
+    throw new Error("TOOL_SURFACE_NOT_READY: file tools were not registered at MCP initialization.");
+  }
   await loadDiscoveryFamily(server);
-  const [
-    { registerFilesystemTools },
-    { registerLispHarnessTools },
-    { registerLispWorkspaceTools },
-    { registerJobAuthoringTools },
-    { registerUserAssetTools },
-  ] = await Promise.all([
-    import("./tools/filesystem.js"),
-    import("./tools/lisp-harness.js"),
-    import("./tools/lisp-workspace.js"),
-    import("./tools/jobs.js"),
-    import("./tools/user-assets.js"),
-  ]);
-
-  registerFilesystemTools(server);
-  registerLispHarnessTools(server);
-  registerLispWorkspaceTools(server);
-  registerJobAuthoringTools(server);
-  registerUserAssetTools(server);
-
   loaded.add("file");
   markFamilyLoaded("file");
 }
 
 async function loadCadFamily(server: McpServer): Promise<void> {
   const loaded = serverFamilies(server);
-  if (loaded.has("cad")) {
-    const { syncCadBusinessProxies } = await import("./tools/cad-proxy.js");
-    syncCadBusinessProxies(server);
-    return;
+  if (!registeredSurface(server).has("cad")) {
+    throw new Error("TOOL_SURFACE_NOT_READY: CAD tools were not registered at MCP initialization.");
   }
-
-  const [{ registerCadProxyTools }, { registerObservatorTools }] = await Promise.all([
-    import("./tools/cad-proxy.js"),
-    import("./tools/observator.js"),
-  ]);
-  registerCadProxyTools(server);
-  registerObservatorTools(server);
-
+  // Manifest-backed proxy definitions are already present. Re-sync only to
+  // reflect a regenerated manifest while keeping the outer MCP surface stable.
+  syncCadBusinessProxies(server);
+  if (loaded.has("cad")) return;
   loaded.add("cad");
   markFamilyLoaded("cad");
 }
@@ -188,8 +202,9 @@ async function loadCadFamily(server: McpServer): Promise<void> {
 async function loadCadMcpDevFamily(server: McpServer): Promise<void> {
   const loaded = serverFamilies(server);
   if (loaded.has("cad-mcp-dev")) return;
-  const { registerCadMcpDevTools } = await import("./tools/cad-mcp-dev.js");
-  registerCadMcpDevTools(server);
+  if (!isDevelopmentBuild() || !registeredSurface(server).has("cad-mcp-dev")) {
+    throw new Error("DEVELOPMENT_ONLY: cad-mcp-dev is unavailable in production builds.");
+  }
   loaded.add("cad-mcp-dev");
   markFamilyLoaded("cad-mcp-dev");
 }
@@ -288,6 +303,7 @@ export function createMcpServer(sessionKey: string): McpServer {
 
   sessionKeyByServer.set(server, sessionKey);
   configureToolRegistration(server, sessionKey);
+  registerStableProductionSurface(server);
 
   registerCadPrepareConfirmTool(server, {
     sessionKey,
@@ -469,5 +485,6 @@ export async function disposeMcpServerRuntime(
   }
 
   loadedByServer.delete(server);
+  registeredSurfaceByServer.delete(server);
   sessionKeyByServer.delete(server);
 }
