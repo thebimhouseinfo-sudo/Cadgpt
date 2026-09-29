@@ -381,17 +381,23 @@ export function registerJobAuthoringTools(server: McpServer): void {
                 CADGPT_DRAWING_ID: drawing.drawing_id,
                 CADGPT_DRAWING_NAME: drawing.name,
                 CADGPT_DRAWING_PATH: drawing.full_name || drawing.name,
+                CADGPT_DRAWING_HOST: drawing.host,
+                CADGPT_DRAWING_RUNTIME_IDENTITY: drawing.runtime_document_identity,
               }
             : {}),
         };
 
-        const result = await execFileAsync(python, [script, ...args], {
-          cwd: path.dirname(script),
-          env,
-          windowsHide: true,
-          timeout: 5 * 60 * 1000,
-          maxBuffer: 4 * 1024 * 1024,
-        });
+        const execute = () =>
+          execFileAsync(python, [script, ...args], {
+            cwd: path.dirname(script),
+            env,
+            windowsHide: true,
+            timeout: 5 * 60 * 1000,
+            maxBuffer: 4 * 1024 * 1024,
+          });
+        const result = drawing
+          ? await withCadHostLock(drawing.host, execute)
+          : await execute();
 
         return toolResult("job_run_direct", {
           id: entry.id,
@@ -415,10 +421,10 @@ export function registerJobAuthoringTools(server: McpServer): void {
     "job_checkout",
     {
       title: "Checkout Managed Job for jobcreate",
-      description: "Copy one registered managed Job into an explicit absolute JOB.md draft path. Existing drafts require hash-confirmed overwrite.",
+      description: "Copy one registered managed Job (.md reasoning or .py direct) into an explicit absolute draft path under the Job draft root. Existing drafts require hash-confirmed overwrite.",
       inputSchema: {
         registry_id: z.string().min(1),
-        draft_path: z.string().min(1).describe("Absolute JOB.md path under the approved Job draft root"),
+        draft_path: z.string().min(1).describe("Absolute .md or .py path under the approved Job draft root; extension must match the registered Job"),
         overwrite_existing: z.boolean().optional().default(false),
         expected_sha256: z.string().length(64).optional(),
       },
@@ -435,8 +441,12 @@ export function registerJobAuthoringTools(server: McpServer): void {
           forCreate: true,
           label: "Job draft",
         });
-        if (path.basename(draft).toLowerCase() !== "job.md") {
-          throw new Error("Job checkout draft_path must end in JOB.md");
+        const draftMode = assertDraftVirtualPath(draft);
+        const sourceMode = jobExecutionModeForPath(source);
+        if (draftMode !== sourceMode) {
+          throw new Error(
+            `JOB_DRAFT_MODE_MISMATCH: registered Job is ${sourceMode} but draft path is ${draftMode}.`
+          );
         }
 
         return await withFileMutationLocks([draft], async () => {
@@ -456,16 +466,17 @@ export function registerJobAuthoringTools(server: McpServer): void {
           }
 
           await atomicWrite(draft, content);
-          const validation = validateJobSource(content);
+          const validation = await validateJobDraft(draft, content);
           return toolResult("job_checkout", {
-          registry_id: entry.id,
-          library_id: entry.library_id,
-          source_path: toCadgptPath(source),
-          draft_path: draft,
-          draft_display_path: toCadgptPath(draft),
-          source_contract_valid: validation.valid,
-          diagnostics: validation.diagnostics,
-          managed_source_unchanged: true,
+            registry_id: entry.id,
+            library_id: entry.library_id,
+            execution_mode: validation.execution_mode,
+            source_path: toCadgptPath(source),
+            draft_path: draft,
+            draft_display_path: toCadgptPath(draft),
+            source_contract_valid: validation.valid,
+            diagnostics: validation.diagnostics,
+            managed_source_unchanged: true,
           });
         });
       } catch (error) {
@@ -478,7 +489,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     "job_draft_validate",
     {
       title: "Validate Job Workspace Draft",
-      description: "Validate the canonical structural Job contract for a JOB.md draft. Absolute draft paths returned by job_checkout are accepted.",
+      description: "Validate a Job workspace draft. Reasoning JOB.md uses the canonical workflow contract; direct .py uses Python syntax validation. Absolute draft paths returned by job_checkout are accepted.",
       inputSchema: { path: z.string().min(1) },
     },
     async ({ path: input }) => {
@@ -486,7 +497,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
         assertDraftVirtualPath(input);
         const target = await resolveAllowedPath(input);
         const content = await fs.readFile(target, "utf8");
-        const validation = validateJobSource(content);
+        const validation = await validateJobDraft(target, content);
         return toolResult(
           "job_draft_validate",
           { path: toCadgptPath(target), ...validation, rules: "knowledge/jobs/JOB_RULES.md" },
@@ -521,16 +532,24 @@ export function registerJobAuthoringTools(server: McpServer): void {
         if (!path.isAbsolute(draft_path)) {
           throw new Error("ABSOLUTE_PATH_REQUIRED: job_promote_draft draft_path must be absolute");
         }
-        assertDraftVirtualPath(draft_path);
+        const draftMode = assertDraftVirtualPath(draft_path);
         await assertManagedLibraryExists(library_id);
         if (!user_accepted) throw new Error("Job promotion requires explicit user acceptance");
 
         const draft = await resolveAllowedPath(draft_path);
         const content = await fs.readFile(draft, "utf8");
-        const validation = validateJobSource(content);
-        if (!validation.valid) throw new Error(`Job draft contract failed: ${validation.diagnostics.join(" ")}`);
+        const validation = await validateJobDraft(draft, content);
+        if (!validation.valid) {
+          throw new Error(`Job draft contract failed: ${validation.diagnostics.join(" ")}`);
+        }
 
         const normalizedRelative = safeRelativeJob(relative_path);
+        const targetMode = jobExecutionModeForPath(normalizedRelative);
+        if (draftMode !== targetMode) {
+          throw new Error(
+            `JOB_PROMOTION_MODE_MISMATCH: draft is ${draftMode} but managed target is ${targetMode}.`
+          );
+        }
         const expectedPermanent = managedJobPath(library_id, normalizedRelative);
         const permanent = await resolveAbsoluteMutationPath(target_path, {
           allowedRoots: [path.resolve(getJobLibrariesRoot(), library_id)],
@@ -586,6 +605,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
           summary: metadata.summary,
           status: metadata.status,
           risk: metadata.risk,
+          execution_mode: validation.execution_mode,
           semantic_status: "curated",
           last_test_evidence: test_evidence,
           last_validation_evidence: final_validation_evidence,
@@ -635,6 +655,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
           managed_absolute_path: permanent,
           library_id,
           registry_id: metadata.id,
+          execution_mode: validation.execution_mode,
           steps: validation.steps,
           registry_updated: true,
           rollback_safe: true,
