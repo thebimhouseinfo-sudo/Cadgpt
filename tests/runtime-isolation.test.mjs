@@ -1525,3 +1525,104 @@ test("work idle timeout defaults to 30 minutes", async () => {
   );
   assert.equal(getWorkIdleTimeoutMs(), 30 * 60 * 1000);
 });
+
+
+test("work resume moves one authenticated work generation to a replacement MCP session", async () => {
+  const {
+    checkAdmission,
+    assertSessionClaimed,
+    revokeSessionAdmissions,
+  } = await import("../dist/cadgpt/lib/admission.js");
+  const {
+    activeWorkForSession,
+    createWorkRegistration,
+    releaseSessionWork,
+    validateWorkHandle,
+  } = await import("../dist/cadgpt/lib/work-registration.js");
+  const { registerWorkControlTools } = await import(
+    "../dist/cadgpt/tools/work-control.js"
+  );
+  const { toolAuthority } = await import("../dist/cadgpt/lib/tool-policy.js");
+
+  const sourceSession = "resume-source-session";
+  const targetSession = "resume-target-session";
+  checkAdmission(sourceSession, "@cadgpt", "mention");
+
+  const work = createWorkRegistration({
+    sessionKey: sourceSession,
+    ownerType: "direct-cad",
+    ownerId: "drawing-workspace",
+    executionPath: "hybrid",
+  });
+
+  const callbacks = new Map();
+  const prepared = [];
+  const fakeServer = {
+    registerTool(name, _config, callback) {
+      callbacks.set(name, callback);
+    },
+  };
+
+  registerWorkControlTools(fakeServer, {
+    sessionKey: targetSession,
+    prepareFamilies: async (executionPath, ownerId, executionId) => {
+      prepared.push({ executionPath, ownerId, executionId });
+    },
+  });
+
+  assert.equal(toolAuthority("cadgpt_work_resume"), "control");
+  const resume = callbacks.get("cadgpt_work_resume");
+  assert.equal(typeof resume, "function");
+
+  const result = await resume({
+    execution_id: work.executionId,
+    authority_token: work.authorityToken,
+  });
+  assert.equal(result.structuredContent?.resumed, true);
+  assert.equal(prepared.length, 1);
+  assert.deepEqual(prepared[0], {
+    executionPath: "hybrid",
+    ownerId: "drawing-workspace",
+    executionId: work.executionId,
+  });
+
+  assert.equal(activeWorkForSession(sourceSession), null);
+  assert.equal(activeWorkForSession(targetSession)?.executionId, work.executionId);
+  assert.doesNotThrow(() => assertSessionClaimed(targetSession));
+  assert.doesNotThrow(() =>
+    validateWorkHandle(work.executionId, work.authorityToken, targetSession)
+  );
+  assert.throws(
+    () => validateWorkHandle(work.executionId, work.authorityToken, sourceSession),
+    /NO_ACTIVE_WORK/
+  );
+
+  const forged = await resume({
+    execution_id: work.executionId,
+    authority_token: "forged-token",
+  });
+  assert.equal(forged.isError, true);
+
+  releaseSessionWork(targetSession);
+  revokeSessionAdmissions(sourceSession);
+  revokeSessionAdmissions(targetSession);
+});
+
+test("CAD document runtime identity excludes CAD-MCP-process-local COM identity", async () => {
+  const fs = await import("node:fs/promises");
+  const source = await fs.readFile(
+    new URL("../runtimes/cad-mcp/connection/session.py", import.meta.url),
+    "utf8"
+  );
+
+  const runtimeStart = source.indexOf("def runtime_document_id(doc)");
+  const runtimeEnd = source.indexOf("\n\ndef get_document(", runtimeStart);
+  assert.ok(runtimeStart >= 0 && runtimeEnd > runtimeStart);
+  const runtimeBlock = source.slice(runtimeStart, runtimeEnd);
+
+  assert.match(runtimeBlock, /acad-hwnd:/);
+  assert.match(runtimeBlock, /doc-hwnd:/);
+  assert.doesNotMatch(runtimeBlock, /_oleobj_/);
+  assert.doesNotMatch(runtimeBlock, /id\(doc\)/);
+  assert.match(runtimeBlock, /cannot establish a reconnect-stable drawing identity/);
+});
