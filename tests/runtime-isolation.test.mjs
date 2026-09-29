@@ -2401,25 +2401,56 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
     b = await initialize(1010, "chat-A");
     assert.notEqual(a.sessionId, b.sessionId);
 
-    const cj = await tool(b.headers, 1011, "cadgpt_control", { surface: "cj" });
-    assert.equal(
-      cj.result?.structuredContent?.continuation_policy?.start_new_work,
-      true
-    );
-
-    const started = await tool(b.headers, 1012, "cadgpt_work_start", {
-      owner_type: "job",
-      owner_id: "tbh",
-      execution_path: "file",
+    const started = await tool(a.headers, 1002, "cadgpt_work_start", {
+      owner_type: "direct-cad",
+      owner_id: "drawing-workspace",
+      execution_path: "hybrid",
     });
     assert.equal(started.result?.structuredContent?.ok, true);
     assert.equal(
       started.result?.structuredContent?.data?.work_handle?.owner_id,
-      "tbh"
+      "drawing-workspace"
+    );
+    assert.deepEqual(
+      started.result?.structuredContent?.data?.work_handle?.work_capabilities,
+      []
+    );
+    assert.equal(
+      started.result?.structuredContent?.data?.tool_surface?.execution_path,
+      "hybrid"
+    );
+    assert.ok(
+      started.result?.structuredContent?.data?.tool_surface?.cad_proxy_tool_count > 0
+    );
+
+    const listResponse = await fetch(url, {
+      method: "POST",
+      headers: b.headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1011,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+    assert.equal(listResponse.ok, true);
+    const listBody = await listResponse.json();
+    const names = (listBody.result?.tools ?? []).map((item) => item.name);
+    assert.equal(names.includes("cad_status"), true);
+    assert.equal(names.includes("cad__cad_list_layers"), true);
+
+    const cj = await tool(b.headers, 1012, "cadgpt_control", { surface: "cj" });
+    assert.equal(
+      cj.result?.structuredContent?.continuation_policy?.start_new_work,
+      false
     );
 
     const status = await tool(b.headers, 1013, "cadgpt_work_status", {});
     assert.equal(status.result?.structuredContent?.data?.active, true);
+    assert.equal(
+      status.result?.structuredContent?.data?.execution_path,
+      "hybrid"
+    );
 
     c = await initialize(1020, "chat-C");
     const foreignBeforeAdmission = await tool(
