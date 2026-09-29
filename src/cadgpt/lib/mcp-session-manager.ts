@@ -12,6 +12,11 @@ import {
   disposeLogicalSessionState,
   disposeMcpServerRuntime,
 } from "../server-factory.js";
+import {
+  continuityFingerprint,
+  logContinuityDiagnostic,
+  logContinuityRequest,
+} from "./continuity-diagnostics.js";
 
 const DEFAULT_SESSION_TTL_MS = Number(process.env.MCP_SESSION_TTL_MS || 86_400_000);
 const DEFAULT_CLEANUP_MS = Number(process.env.MCP_SESSION_CLEANUP_MS || 300_000);
@@ -162,6 +167,11 @@ export function createSessionManager(
     console.log(
       `[MCP] ${options.preserveLogicalState ? "Transport" : "Session"} removed (${reason}): ${id}`
     );
+    logContinuityDiagnostic("session_removed", {
+      transport_session: continuityFingerprint(id),
+      reason,
+      preserve_logical_state: options.preserveLogicalState === true,
+    });
   }
 
   async function enqueue(id: string, fn: () => Promise<void>): Promise<void> {
@@ -210,6 +220,11 @@ export function createSessionManager(
           void previous.transport.close().catch(() => undefined);
         }
         console.log(`[MCP] Session initialized: ${id}`);
+        logContinuityDiagnostic("session_initialized", {
+          transport_session: continuityFingerprint(id),
+          replaced_existing_transport: Boolean(previous),
+          recovered_detached_transport: Boolean(detachedPrevious),
+        });
       },
       onsessionclosed: (id) => {
         if (!id) return;
@@ -236,6 +251,9 @@ export function createSessionManager(
         timer.unref?.();
         graceTimers.set(id, timer);
         console.log(`[MCP] Transport terminated; logical session detached for recovery: ${id}`);
+        logContinuityDiagnostic("transport_detached", {
+          transport_session: continuityFingerprint(id),
+        });
       },
     });
     transport.onerror = (error) => console.warn("[MCP] transport error:", error.message);
@@ -316,6 +334,9 @@ export function createSessionManager(
         }
         touch(id);
         console.log(`[MCP] Session recovered: ${id}`);
+        logContinuityDiagnostic("session_recovered", {
+          transport_session: continuityFingerprint(id),
+        });
         return recovered;
       } catch (error) {
         remove(id, "recovery exception", replacement.transport, {
@@ -352,6 +373,7 @@ export function createSessionManager(
     },
 
     async createNew(req, res, body) {
+      logContinuityRequest(req, "session_manager_create_new");
       const headerId = req.headers["mcp-session-id"] as string | undefined;
       const session = (headerId && pending.get(headerId)) || (await build());
       if (headerId) pending.delete(headerId);
@@ -366,6 +388,7 @@ export function createSessionManager(
     },
 
     async handleExisting(session, req, res, body) {
+      logContinuityRequest(req, "session_manager_handle_existing");
       const id = session.transport.sessionId || (req.headers["mcp-session-id"] as string | undefined);
       if (id) touch(id);
       const run = async () => session.transport.handleRequest(req, res, body);
@@ -375,6 +398,9 @@ export function createSessionManager(
     },
 
     async tryRecover(id, req, res, body) {
+      logContinuityRequest(req, "session_manager_try_recover", {
+        recovery_target: continuityFingerprint(id),
+      });
       if (isInitializeRequest(body)) return false;
       if (
         !logicalLastAccess.has(id) &&
