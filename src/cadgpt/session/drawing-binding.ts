@@ -34,7 +34,43 @@ function extractPayload(raw: unknown): unknown {
   }
 }
 
-function normalizeDocuments(raw: unknown): Array<Record<string, unknown>> {
+export function normalizeDocuments(raw: unknown): Array<Record<string, unknown>> {
+  if (raw && typeof raw === "object") {
+    const result = raw as {
+      structuredContent?: unknown;
+      content?: Array<{ type?: string; text?: string }>;
+    };
+
+    // Python MCP 1.2.x FastMCP flattens a list return value into one
+    // TextContent item per list element. Preserve every JSON object instead of
+    // taking only the first content item. A single open drawing therefore still
+    // normalizes to a one-element array.
+    if (Array.isArray(result.content)) {
+      const textItems = result.content.filter(
+        (item): item is { type?: string; text: string } =>
+          item?.type === "text" && typeof item.text === "string"
+      );
+      if (textItems.length) {
+        const parsed = textItems.map((item) => {
+          try {
+            return JSON.parse(item.text);
+          } catch {
+            return undefined;
+          }
+        });
+        if (
+          parsed.length === textItems.length &&
+          parsed.every(
+            (item): item is Record<string, unknown> =>
+              !!item && typeof item === "object" && !Array.isArray(item)
+          )
+        ) {
+          return parsed;
+        }
+      }
+    }
+  }
+
   const payload = extractPayload(raw);
   if (Array.isArray(payload)) {
     return payload.filter(
