@@ -1847,7 +1847,7 @@ test("production MCP work resume restores lazy CAD tools after session rotation"
     const beforeBody = await beforeList.json();
     const beforeNames = (beforeBody.result?.tools ?? []).map((tool) => tool.name);
     assert.equal(beforeNames.includes("cadgpt_work_resume"), true);
-    assert.equal(beforeNames.includes("cad_status"), false);
+    assert.equal(beforeNames.includes("cad_status"), true);
 
     const resumed = await fetch(url, {
       method: "POST",
@@ -2395,7 +2395,7 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
       headers: a.headers,
       body: JSON.stringify({
         jsonrpc: "2.0",
-        id: 1000.5,
+        id: "initial-tools-list",
         method: "tools/list",
         params: {},
       }),
