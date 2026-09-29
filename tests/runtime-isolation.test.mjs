@@ -2031,6 +2031,7 @@ test("cad-mcp-dev is demand-driven and can attach to hybrid work without replaci
       acquireToolLease,
       createWorkRegistration,
       releaseSessionWork,
+      runWithToolLease,
     } = await import("../dist/cadgpt/lib/work-registration.js");
     const { registerWorkControlTools } = await import(
       "../dist/cadgpt/tools/work-control.js"
@@ -2129,6 +2130,7 @@ test("cad-mcp-dev is demand-driven and can attach to hybrid work without replaci
     });
     assert.equal(lease.workId, work.executionId);
     assert.equal(lease.ownerId, "drawing-workspace");
+    await runWithToolLease(lease, async () => undefined);
 
     releaseSessionWork(sessionKey);
     revokeSessionAdmissions(sessionKey);
