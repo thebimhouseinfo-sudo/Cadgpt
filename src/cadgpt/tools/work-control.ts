@@ -6,6 +6,7 @@ import {
   activeWorkForSession,
   adoptWorkSession,
   createWorkRegistration,
+  enableWorkCapability,
   releaseSessionWork,
   workStatus,
   type ExecutionPath,
@@ -72,19 +73,41 @@ export function registerWorkControlTools(
               `EXECUTION_PATH_MISMATCH: existing work is '${resumed.executionPath}' and cannot satisfy requested '${execution_path}'.`
             );
           }
+
+          let continued = resumed;
+          const enablingCadMcpDev =
+            owner_type === "skill" &&
+            owner_id.trim() === "cad-mcp-dev";
+          if (enablingCadMcpDev) {
+            continued = enableWorkCapability(
+              resumed.executionId,
+              resumed.authorityToken,
+              options.sessionKey,
+              "cad-mcp-dev"
+            );
+            await options.prepareFamilies(
+              continued.executionPath,
+              "cad-mcp-dev",
+              continued.executionId
+            );
+          }
+
           return toolResult("cadgpt_work_start", {
             reused: true,
             resumed: true,
-            reason: "conversation_work_continuation",
+            reason: enablingCadMcpDev
+              ? "conversation_work_dev_capability_enabled"
+              : "conversation_work_continuation",
             work_handle: {
-              execution_id: resumed.executionId,
-              authority_token: resumed.authorityToken,
-              owner_type: resumed.ownerType,
-              owner_id: resumed.ownerId,
-              job_id: resumed.jobId,
-              execution_path: resumed.executionPath,
-              driver_epoch: resumed.driverEpoch,
-              generation: resumed.generation,
+              execution_id: continued.executionId,
+              authority_token: continued.authorityToken,
+              owner_type: continued.ownerType,
+              owner_id: continued.ownerId,
+              job_id: continued.jobId,
+              execution_path: continued.executionPath,
+              capabilities: continued.capabilities,
+              driver_epoch: continued.driverEpoch,
+              generation: continued.generation,
             },
           });
         }
@@ -112,6 +135,7 @@ export function registerWorkControlTools(
               owner_id: existing.ownerId,
               job_id: existing.jobId,
               execution_path: existing.executionPath,
+              capabilities: existing.capabilities,
               driver_epoch: existing.driverEpoch,
               generation: existing.generation,
             },
@@ -147,6 +171,7 @@ export function registerWorkControlTools(
             owner_id: work.ownerId,
             job_id: work.jobId,
             execution_path: work.executionPath,
+            capabilities: work.capabilities,
             driver_epoch: work.driverEpoch,
             generation: work.generation,
           },
@@ -190,6 +215,7 @@ export function registerWorkControlTools(
             owner_id: work.ownerId,
             job_id: work.jobId,
             execution_path: work.executionPath,
+            capabilities: work.capabilities,
             driver_epoch: work.driverEpoch,
             generation: work.generation,
           },
