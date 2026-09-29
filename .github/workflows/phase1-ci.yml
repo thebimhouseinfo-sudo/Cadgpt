@@ -190,10 +190,15 @@ jobs:
 
             $initial = Invoke-Mcp "tools/list" @{}
             $initialNames = @($initial.result.tools | ForEach-Object { $_.name })
-            foreach ($required in @("cadgpt_control","cadgpt_admission","cadgpt_work_start","cadgpt_work_status","cadgpt_work_stop")) {
-              if ($initialNames -notcontains $required) { throw "Missing slim control tool: $required" }
+            foreach ($required in @(
+              "cadgpt_control","cadgpt_admission","cadgpt_work_start","cadgpt_work_status","cadgpt_work_stop",
+              "library_list","library_import","registry_list","job_list","job_get","job_run_direct","job_checkout","job_draft_validate","job_promote_draft",
+              "file_roots","file_create","file_edit","lisp_scaffold","lisp_checkout","asset_import","asset_export",
+              "drawing_list","cad_status","cad__cad_list_layers"
+            )) {
+              if ($initialNames -notcontains $required) { throw "Stable MCP surface missing tool at initialize: $required" }
             }
-            if ($initialNames -contains "file_roots" -or $initialNames -contains "drawing_list") { throw "Execution tools leaked into pre-admission surface" }
+            if ($health.cad_mcp.connected -eq $true) { throw "Stable tool registration woke CAD MCP at idle" }
 
             $inactive = Invoke-Tool "cadgpt_admission" @{ user_turn="inspect this drawing"; invocation_source="mention" }
             if ($inactive.result.structuredContent.data.mode -ne "inactive") { throw "Unclaimed session should remain inactive before explicit CadGPT launch" }
@@ -215,12 +220,12 @@ jobs:
             if ($continued.result.structuredContent.data.reason -ne "session_continuation") { throw "Claimed session did not continue without repeated @cadgpt" }
 
             $afterAdmission = Invoke-Mcp "tools/list" @{}
-            $afterAdmissionNames = @($afterAdmission.result.tools | ForEach-Object { $_.name })
-            foreach ($required in @("library_list","registry_list","job_list","job_get","skill_list","skill_get")) {
-              if ($afterAdmissionNames -notcontains $required) { throw "Discovery family missing after admission: $required" }
-            }
-            foreach ($forbidden in @("file_roots","file_create","file_edit","asset_import","asset_export","asset_register_external","job_checkout","job_run_direct","job_draft_validate","job_promote_draft","lisp_checkout","drawing_list")) {
-              if ($afterAdmissionNames -contains $forbidden) { throw "Execution/mutation tool leaked into admission-only discovery surface: $forbidden" }
+            $afterAdmissionNames = @($afterAdmission.result.tools | ForEach-Object { $_.name } | Sort-Object)
+            $initialSorted = @($initialNames | Sort-Object)
+            if (($afterAdmissionNames -join "
+") -ne ($initialSorted -join "
+")) {
+              throw "MCP tool definitions changed after admission; production surface must remain stable"
             }
 
             $work = Invoke-Tool "cadgpt_work_start" @{ owner_type="skill"; owner_id="write-lisp"; execution_path="file" }
@@ -246,11 +251,13 @@ jobs:
             if ([string]$reused.result.structuredContent.data.work_handle.execution_id -ne [string]$handle.execution_id) { throw "Reused work changed execution id" }
 
             $afterWork = Invoke-Mcp "tools/list" @{}
-            $names = @($afterWork.result.tools | ForEach-Object { $_.name })
-            foreach ($required in @("file_roots","file_read","file_search","asset_import","asset_export","asset_register_external","lisp_scaffold","lisp_checkout","lisp_validate","job_run_direct")) {
-              if ($names -notcontains $required) { throw "FILE work tool missing after work start: $required" }
+            $names = @($afterWork.result.tools | ForEach-Object { $_.name } | Sort-Object)
+            if (($names -join "
+") -ne ($initialSorted -join "
+")) {
+              throw "MCP tool definitions changed after work start; lazy authority/runtime must not mutate ChatGPT tool surface"
             }
-            if ($names -contains "drawing_list") { throw "CAD family loaded during FILE-only work" }
+            if ($health.cad_mcp.connected -eq $true) { throw "FILE-only work woke CAD MCP unexpectedly" }
 
             $roots = Invoke-Work "file_roots"
             $rootNames = @($roots.result.structuredContent.data.roots)
@@ -273,7 +280,7 @@ jobs:
             $relativeCreate = Invoke-Work "file_create" @{ path="appdata/workspace/reject.txt"; content="reject" }
             if ($relativeCreate.result.isError -ne $true -or $relativeCreate.result.structuredContent.data.error -notmatch "ABSOLUTE_PATH_REQUIRED") { throw "Relative file mutation was not rejected" }
 
-            Write-Host "Session + reusable work + lazy family + managed sandbox smoke passed"
+            Write-Host "Stable tool surface + session/work authority + lazy runtime + managed sandbox smoke passed"
           }
           finally {
             if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
