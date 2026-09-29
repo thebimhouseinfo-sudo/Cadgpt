@@ -113,6 +113,38 @@ export function assertSessionClaimed(sessionKey: string): SessionClaim {
   return { ...claim };
 }
 
+export function adoptSessionAdmission(
+  sourceSessionKey: string,
+  targetSessionKey: string
+): SessionClaim {
+  if (sourceSessionKey === targetSessionKey) {
+    return assertSessionClaimed(targetSessionKey);
+  }
+
+  const source = touchClaim(sourceSessionKey);
+  if (!source) {
+    throw new Error(
+      "CADGPT_SESSION_REQUIRED: launch CadGPT once in this chat with the plugin/icon, @cadgpt, or @cg."
+    );
+  }
+
+  const now = Date.now();
+  const existingTarget = sessionClaims.get(targetSessionKey);
+  const adopted: SessionClaim = existingTarget
+    ? {
+        ...existingTarget,
+        lastAccessedAt: now,
+      }
+    : {
+        ...source,
+        sessionKey: targetSessionKey,
+        lastAccessedAt: now,
+      };
+
+  sessionClaims.set(targetSessionKey, adopted);
+  return { ...adopted };
+}
+
 export function revokeSessionAdmissions(sessionKey: string): void {
   sessionClaims.delete(sessionKey);
 }
