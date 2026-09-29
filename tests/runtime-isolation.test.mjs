@@ -1578,7 +1578,7 @@ test("work resume moves one authenticated work generation to a replacement MCP s
     execution_id: work.executionId,
     authority_token: work.authorityToken,
   });
-  assert.equal(result.structuredContent?.resumed, true);
+  assert.equal(result.structuredContent?.data?.resumed, true);
   assert.equal(prepared.length, 1);
   assert.deepEqual(prepared[0], {
     executionPath: "hybrid",
@@ -1616,7 +1616,7 @@ test("CAD document runtime identity excludes CAD-MCP-process-local COM identity"
   );
 
   const runtimeStart = source.indexOf("def runtime_document_id(doc)");
-  const runtimeEnd = source.indexOf("\n\ndef get_document(", runtimeStart);
+  const runtimeEnd = source.indexOf("def get_document(", runtimeStart);
   assert.ok(runtimeStart >= 0 && runtimeEnd > runtimeStart);
   const runtimeBlock = source.slice(runtimeStart, runtimeEnd);
 
