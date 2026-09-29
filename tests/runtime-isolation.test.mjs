@@ -2426,7 +2426,7 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
 
     const preAdmissionCad = await tool(
       a.headers,
-      1000.6,
+      "pre-admission-cad",
       "cad__cad_list_layers",
       {}
     );
