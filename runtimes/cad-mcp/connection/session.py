@@ -12,45 +12,52 @@ def iter_documents():
     return get_acad_app().Documents
 
 
-def runtime_document_id(doc) -> str:
-    """Return an identity scoped to this open AutoCAD document lifetime.
-
-    Prefer a composite of the MDI window handle and COM identity. HWND values
-    can be reused by Windows after a tab/document closes, while a COM identity
-    can also be represented by a fresh Python wrapper. Combining both gives the
-    outer CadGPT binding a stronger lifetime check than file name/path or either
-    component alone.
-    """
-    hwnd = None
-    com_identity = None
-
-    try:
-        value = int(getattr(doc, "HWND"))
-        if value:
-            hwnd = value
-    except Exception:
-        pass
-
-    ole = getattr(doc, "_oleobj_", None)
-    if ole is not None:
+def _window_handle(obj) -> int | None:
+    for name in ("HWND", "HWND32"):
         try:
-            com_identity = str(int(ole))
+            value = int(getattr(obj, name))
+            if value:
+                return value
         except Exception:
-            try:
-                com_identity = repr(ole)
-            except Exception:
-                com_identity = None
+            continue
+    return None
 
-    if hwnd is not None and com_identity:
-        return f"hwnd:{hwnd}:com:{com_identity}"
-    if com_identity:
-        return f"com:{com_identity}"
-    if hwnd is not None:
-        return f"hwnd:{hwnd}"
 
-    # Last-resort process-local identity. This is intentionally not persisted
-    # across CAD MCP process restarts.
-    return f"py:{id(doc)}"
+def runtime_document_id(doc) -> str:
+    """Return a host-owned identity for the current open document lifetime.
+
+    AutoCAD owns the application/document window handles, so they survive a
+    CadGPT Python MCP subprocess reconnect. Do not include Python/COM wrapper
+    identities here because those are client-process-local and would falsely
+    stale a still-open drawing after reconnect.
+
+    A document window handle normally changes when that document is closed and
+    reopened. Pairing it with the AutoCAD application window handle also makes
+    an AutoCAD process restart a different identity. If AutoCAD cannot expose a
+    document HWND, fail closed instead of silently falling back to a
+    process-local identity.
+    """
+    doc_hwnd = _window_handle(doc)
+    if doc_hwnd is None:
+        raise RuntimeError(
+            "AutoCAD document HWND is unavailable; CadGPT cannot establish a reconnect-stable drawing identity."
+        )
+
+    app = None
+    try:
+        app = getattr(doc, "Application")
+    except Exception:
+        app = None
+    if app is None:
+        try:
+            app = get_acad_app()
+        except Exception:
+            app = None
+
+    app_hwnd = _window_handle(app) if app is not None else None
+    if app_hwnd is not None:
+        return f"acad-hwnd:{app_hwnd}:doc-hwnd:{doc_hwnd}"
+    return f"doc-hwnd:{doc_hwnd}"
 
 
 def get_document(
