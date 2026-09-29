@@ -1860,3 +1860,115 @@ test("production MCP work resume restores lazy CAD tools after session rotation"
     await fs.rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+
+test("work_start and work_status can resume an existing hybrid workspace after session rotation", async () => {
+  const { checkAdmission, revokeSessionAdmissions } = await import(
+    "../dist/cadgpt/lib/admission.js"
+  );
+  const {
+    createWorkRegistration,
+    activeWorkForSession,
+    releaseSessionWork,
+  } = await import("../dist/cadgpt/lib/work-registration.js");
+  const { registerWorkControlTools } = await import(
+    "../dist/cadgpt/tools/work-control.js"
+  );
+
+  const sourceSession = "continuation-start-source";
+  const targetSession = "continuation-start-target";
+  checkAdmission(sourceSession, "@cadgpt", "mention");
+  const work = createWorkRegistration({
+    sessionKey: sourceSession,
+    ownerType: "direct-cad",
+    ownerId: "drawing-workspace",
+    executionPath: "hybrid",
+  });
+
+  const callbacks = new Map();
+  const prepared = [];
+  const fakeServer = {
+    registerTool(name, _config, callback) {
+      callbacks.set(name, callback);
+    },
+  };
+  registerWorkControlTools(fakeServer, {
+    sessionKey: targetSession,
+    prepareFamilies: async (executionPath, ownerId, executionId) => {
+      prepared.push({ executionPath, ownerId, executionId });
+    },
+  });
+
+  const start = callbacks.get("cadgpt_work_start");
+  const startResult = await start({
+    owner_type: "job",
+    owner_id: "tbh",
+    execution_path: "file",
+    continuation_execution_id: work.executionId,
+    continuation_authority_token: work.authorityToken,
+  });
+  assert.equal(startResult.structuredContent?.data?.reused, true);
+  assert.equal(startResult.structuredContent?.data?.resumed, true);
+  assert.equal(
+    startResult.structuredContent?.data?.work_handle?.execution_id,
+    work.executionId
+  );
+  assert.equal(
+    startResult.structuredContent?.data?.work_handle?.owner_id,
+    "drawing-workspace"
+  );
+  assert.equal(activeWorkForSession(sourceSession), null);
+  assert.equal(activeWorkForSession(targetSession)?.executionId, work.executionId);
+  assert.equal(prepared.length, 1);
+
+  const status = callbacks.get("cadgpt_work_status");
+  const statusResult = await status({
+    continuation_execution_id: work.executionId,
+    continuation_authority_token: work.authorityToken,
+  });
+  assert.equal(statusResult.structuredContent?.data?.active, true);
+  assert.equal(
+    statusResult.structuredContent?.data?.execution_id,
+    work.executionId
+  );
+
+  releaseSessionWork(targetSession);
+  revokeSessionAdmissions(sourceSession);
+  revokeSessionAdmissions(targetSession);
+});
+
+test("cg/cj advertises reuse of an existing workspace instead of starting new work", async () => {
+  const { registerCadGptControlTool } = await import(
+    "../dist/cadgpt/tools/control.js"
+  );
+
+  const callbacks = new Map();
+  const fakeServer = {
+    registerTool(name, _config, callback) {
+      callbacks.set(name, callback);
+    },
+  };
+
+  registerCadGptControlTool(fakeServer, {
+    sessionKey: "cg-cj-continuation",
+    getCadState: async () => "SLEEPING",
+    launchCadWorkspace: async () => "list",
+    listJobs: async () => "jobs",
+    stopCurrentWork: async () => ({ stopped: false, pending: false }),
+  });
+
+  const control = callbacks.get("cadgpt_control");
+  const result = await control({ surface: "cj" });
+  assert.equal(
+    result.structuredContent?.continuation_policy?.start_new_work,
+    false
+  );
+  assert.match(
+    result.structuredContent?.continuation_policy?.existing_work_action ?? "",
+    /cadgpt_work_resume/
+  );
+  assert.match(
+    result.structuredContent?.continuation_policy?.existing_work_action ?? "",
+    /HYBRID/
+  );
+});
