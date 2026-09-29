@@ -11,8 +11,8 @@ import {
   createMcpServer,
   disposeLogicalSessionState,
   disposeMcpServerRuntime,
+  rehydrateServerForLogicalSession,
 } from "../server-factory.js";
-import { rehydrateLogicalSessionServer } from "./logical-session-rehydrate.js";
 import {
   continuityFingerprint,
   logContinuityDiagnostic,
@@ -200,7 +200,7 @@ export function createSessionManager(
     const transportId = preferredTransportId ?? randomUUID();
     const logicalSessionKey = preferredLogicalKey ?? transportId;
     const server = createServer(logicalSessionKey);
-    await rehydrateLogicalSessionServer(server, logicalSessionKey);
+    await rehydrateServerForLogicalSession(server, logicalSessionKey);
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => transportId,
