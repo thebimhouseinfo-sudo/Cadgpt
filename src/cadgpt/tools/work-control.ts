@@ -31,15 +31,64 @@ export function registerWorkControlTools(
     {
       title: "Start or Reuse CadGPT Work",
       description:
-        "Start execution only after this chat has launched CadGPT. If compatible work is already active in this session, reuse its work_handle instead of creating a new generation.",
+        "Start execution only when there is no compatible existing work. If this conversation already has a work_handle but the connector replaced the MCP session, pass continuation_execution_id + continuation_authority_token so CadGPT resumes that exact work first. A bound HYBRID drawing workspace should be reused for later Job/Lisp authoring and CAD queries instead of starting a new work generation.",
       inputSchema: {
         owner_type: z.enum(["skill", "job", "direct-cad", "file"]),
         owner_id: z.string().min(1).max(160),
         execution_path: z.enum(["file", "cad", "hybrid"]),
+        continuation_execution_id: z.string().min(1).optional(),
+        continuation_authority_token: z.string().min(1).optional(),
       },
     },
-    async ({ owner_type, owner_id, execution_path }) => {
+    async ({
+      owner_type,
+      owner_id,
+      execution_path,
+      continuation_execution_id,
+      continuation_authority_token,
+    }) => {
       try {
+        if (continuation_execution_id || continuation_authority_token) {
+          if (!continuation_execution_id || !continuation_authority_token) {
+            throw new Error(
+              "WORK_CONTINUATION_HANDLE_REQUIRED: both continuation_execution_id and continuation_authority_token are required."
+            );
+          }
+          const resumed = adoptWorkSession(
+            continuation_execution_id,
+            continuation_authority_token,
+            options.sessionKey
+          );
+          await options.prepareFamilies(
+            resumed.executionPath,
+            resumed.ownerId,
+            resumed.executionId
+          );
+          const requestedCompatible =
+            resumed.executionPath === "hybrid" ||
+            resumed.executionPath === execution_path;
+          if (!requestedCompatible) {
+            throw new Error(
+              `EXECUTION_PATH_MISMATCH: existing work is '${resumed.executionPath}' and cannot satisfy requested '${execution_path}'.`
+            );
+          }
+          return toolResult("cadgpt_work_start", {
+            reused: true,
+            resumed: true,
+            reason: "conversation_work_continuation",
+            work_handle: {
+              execution_id: resumed.executionId,
+              authority_token: resumed.authorityToken,
+              owner_type: resumed.ownerType,
+              owner_id: resumed.ownerId,
+              job_id: resumed.jobId,
+              execution_path: resumed.executionPath,
+              driver_epoch: resumed.driverEpoch,
+              generation: resumed.generation,
+            },
+          });
+        }
+
         assertSessionClaimed(options.sessionKey);
 
         const existing = activeWorkForSession(options.sessionKey);
@@ -156,11 +205,31 @@ export function registerWorkControlTools(
     {
       title: "CadGPT Work Status",
       description:
-        "Internal session-scoped work status. No admission token or work handle is required and no CAD runtime is started.",
-      inputSchema: {},
+        "Return work status for the current conversation. If this conversation already has a work_handle but the connector replaced the MCP session, pass continuation_execution_id + continuation_authority_token and CadGPT will resume that exact work before returning status.",
+      inputSchema: {
+        continuation_execution_id: z.string().min(1).optional(),
+        continuation_authority_token: z.string().min(1).optional(),
+      },
     },
-    async () => {
+    async ({ continuation_execution_id, continuation_authority_token }) => {
       try {
+        if (continuation_execution_id || continuation_authority_token) {
+          if (!continuation_execution_id || !continuation_authority_token) {
+            throw new Error(
+              "WORK_CONTINUATION_HANDLE_REQUIRED: both continuation_execution_id and continuation_authority_token are required."
+            );
+          }
+          const resumed = adoptWorkSession(
+            continuation_execution_id,
+            continuation_authority_token,
+            options.sessionKey
+          );
+          await options.prepareFamilies(
+            resumed.executionPath,
+            resumed.ownerId,
+            resumed.executionId
+          );
+        }
         assertSessionClaimed(options.sessionKey);
         return toolResult(
           "cadgpt_work_status",
