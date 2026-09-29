@@ -2390,7 +2390,7 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
   try {
     a = await initialize(1000, "chat-A");
     const admission = await tool(a.headers, 1001, "cadgpt_admission", {
-      user_turn: "@cadgpt",
+      user_turn: "@cadgpt start test work",
       invocation_source: "mention",
     });
     assert.equal(
