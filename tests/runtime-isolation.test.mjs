@@ -1626,3 +1626,237 @@ test("CAD document runtime identity excludes CAD-MCP-process-local COM identity"
   assert.doesNotMatch(runtimeBlock, /id\(doc\)/);
   assert.match(runtimeBlock, /cannot establish a reconnect-stable drawing identity/);
 });
+
+
+test("production MCP work resume restores lazy CAD tools after session rotation", async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const express = (await import("express")).default;
+  const { LATEST_PROTOCOL_VERSION } = await import(
+    "@modelcontextprotocol/sdk/types.js"
+  );
+  const { createSessionManager } = await import(
+    "../dist/cadgpt/lib/mcp-session-manager.js"
+  );
+  const { routeMcpPost } = await import(
+    "../dist/cadgpt/lib/mcp-post-routing.js"
+  );
+  const { resolveCadPrepareSessionByToken } = await import(
+    "../dist/cadgpt/tools/cad-launcher.js"
+  );
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-work-resume-"));
+  const previousRoot = process.env.CADGPT_APPDATA_ROOT;
+  process.env.CADGPT_APPDATA_ROOT = tempRoot;
+
+  const app = express();
+  app.use(express.json());
+  const route = "/mcp/work-resume";
+  const httpServer = app.listen(0, "127.0.0.1");
+  await new Promise((resolve, reject) => {
+    if (httpServer.listening) return resolve();
+    httpServer.once("listening", resolve);
+    httpServer.once("error", reject);
+  });
+  const address = httpServer.address();
+  assert.ok(address && typeof address === "object");
+  const port = address.port;
+  const sessions = createSessionManager(port, {
+    sessionTtlMs: 60_000,
+    cleanupMs: 60_000,
+  });
+  sessions.startCleanup();
+
+  app.post(route, async (req, res) => {
+    try {
+      await routeMcpPost({
+        req,
+        res,
+        sessions,
+        sessionRecovery: true,
+        resolveCadPrepareSessionByToken,
+      });
+    } catch (error) {
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: "2.0",
+          error: {
+            code: -32603,
+            message: error instanceof Error ? error.message : String(error),
+          },
+          id: req.body?.id ?? null,
+        });
+      }
+    }
+  });
+
+  const url = `http://127.0.0.1:${port}${route}`;
+  const baseHeaders = {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+  };
+
+  async function initialize(id) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: baseHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "initialize",
+        params: {
+          protocolVersion: LATEST_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: "cadgpt-work-resume-test", version: "0.1.0" },
+        },
+      }),
+    });
+    assert.equal(response.ok, true);
+    const sessionId = response.headers.get("mcp-session-id");
+    assert.ok(sessionId);
+    const headers = {
+      ...baseHeaders,
+      "mcp-session-id": sessionId,
+      "mcp-protocol-version": LATEST_PROTOCOL_VERSION,
+    };
+    const initialized = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      }),
+    });
+    assert.equal(initialized.ok, true);
+    return { sessionId, headers };
+  }
+
+  let first;
+  let second;
+  try {
+    first = await initialize(100);
+
+    const admission = await fetch(url, {
+      method: "POST",
+      headers: first.headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 101,
+        method: "tools/call",
+        params: {
+          name: "cadgpt_admission",
+          arguments: {
+            user_turn: "@cadgpt start CAD work",
+            invocation_source: "mention",
+          },
+        },
+      }),
+    });
+    assert.equal(admission.ok, true);
+
+    const started = await fetch(url, {
+      method: "POST",
+      headers: first.headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 102,
+        method: "tools/call",
+        params: {
+          name: "cadgpt_work_start",
+          arguments: {
+            owner_type: "direct-cad",
+            owner_id: "drawing-workspace",
+            execution_path: "hybrid",
+          },
+        },
+      }),
+    });
+    assert.equal(started.ok, true);
+    const startedBody = await started.json();
+    const work = startedBody.result?.structuredContent?.data?.work_handle;
+    assert.equal(typeof work?.execution_id, "string");
+    assert.equal(typeof work?.authority_token, "string");
+
+    second = await initialize(200);
+
+    const beforeList = await fetch(url, {
+      method: "POST",
+      headers: second.headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 201,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+    assert.equal(beforeList.ok, true);
+    const beforeBody = await beforeList.json();
+    const beforeNames = (beforeBody.result?.tools ?? []).map((tool) => tool.name);
+    assert.equal(beforeNames.includes("cadgpt_work_resume"), true);
+    assert.equal(beforeNames.includes("cad_status"), false);
+
+    const resumed = await fetch(url, {
+      method: "POST",
+      headers: second.headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 202,
+        method: "tools/call",
+        params: {
+          name: "cadgpt_work_resume",
+          arguments: {
+            execution_id: work.execution_id,
+            authority_token: work.authority_token,
+          },
+        },
+      }),
+    });
+    assert.equal(resumed.ok, true);
+    const resumedBody = await resumed.json();
+    assert.equal(resumedBody.result?.structuredContent?.data?.resumed, true);
+
+    const afterList = await fetch(url, {
+      method: "POST",
+      headers: second.headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 203,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+    assert.equal(afterList.ok, true);
+    const afterBody = await afterList.json();
+    const afterNames = (afterBody.result?.tools ?? []).map((tool) => tool.name);
+    assert.equal(afterNames.includes("cad_status"), true);
+
+    const cadStatus = await fetch(url, {
+      method: "POST",
+      headers: second.headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 204,
+        method: "tools/call",
+        params: {
+          name: "cad_status",
+          arguments: {
+            execution_id: work.execution_id,
+            authority_token: work.authority_token,
+          },
+        },
+      }),
+    });
+    assert.equal(cadStatus.ok, true);
+    const statusBody = await cadStatus.json();
+    assert.equal(statusBody.result?.structuredContent?.ok, true);
+    assert.equal(statusBody.result?.structuredContent?.data?.phase, "sleeping");
+  } finally {
+    sessions.stopCleanup();
+    await sessions.closeAll("work resume integration cleanup");
+    await new Promise((resolve) => httpServer.close(resolve));
+    if (previousRoot === undefined) delete process.env.CADGPT_APPDATA_ROOT;
+    else process.env.CADGPT_APPDATA_ROOT = previousRoot;
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
