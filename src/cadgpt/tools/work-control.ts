@@ -4,6 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   activeExecutionForSession,
   activeWorkForSession,
+  adoptWorkSession,
   createWorkRegistration,
   releaseSessionWork,
   workStatus,
@@ -104,6 +105,48 @@ export function registerWorkControlTools(
         });
       } catch (error) {
         return toolError("cadgpt_work_start", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "cadgpt_work_resume",
+    {
+      title: "Resume CadGPT Work",
+      description:
+        "Internal continuation handshake for MCP transport/session rotation. Rebind a valid existing work_handle to this replacement MCP session, restore the required lazy tool families, and continue the same work without creating a new generation.",
+      inputSchema: {
+        execution_id: z.string().min(1),
+        authority_token: z.string().min(1),
+      },
+    },
+    async ({ execution_id, authority_token }) => {
+      try {
+        const work = adoptWorkSession(
+          execution_id,
+          authority_token,
+          options.sessionKey
+        );
+        await options.prepareFamilies(
+          work.executionPath,
+          work.ownerId,
+          work.executionId
+        );
+        return toolResult("cadgpt_work_resume", {
+          resumed: true,
+          work_handle: {
+            execution_id: work.executionId,
+            authority_token: work.authorityToken,
+            owner_type: work.ownerType,
+            owner_id: work.ownerId,
+            job_id: work.jobId,
+            execution_path: work.executionPath,
+            driver_epoch: work.driverEpoch,
+            generation: work.generation,
+          },
+        });
+      } catch (error) {
+        return toolError("cadgpt_work_resume", error);
       }
     }
   );
