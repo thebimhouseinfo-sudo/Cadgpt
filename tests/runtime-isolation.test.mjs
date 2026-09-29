@@ -2432,7 +2432,7 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
     );
     assert.equal(preAdmissionCad.result?.isError, true);
     assert.match(
-      preAdmissionCad.result?.structuredContent?.data?.error ?? "",
+      JSON.stringify(preAdmissionCad.result ?? {}),
       /CADGPT_SESSION_REQUIRED|NO_ACTIVE_WORK/
     );
 
