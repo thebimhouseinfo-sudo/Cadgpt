@@ -143,10 +143,11 @@ Implementation begins only after the planning approval gate.
 New Job:
 
 ```text
-<absolute appdata/workspace/job-draft>/<library-id>/<job-name>/JOB.md
+Reasoning: <absolute appdata/workspace/job-draft>/<library-id>/<job-name>/JOB.md
+Direct:    <absolute appdata/workspace/job-draft>/<library-id>/<job-name>/<job-name>.py
 ```
 
-Resolve the exact absolute path first, then create the new draft with generic workspace file tools only after J3 approval.
+Choose the mode explicitly from the approved plan. Use reasoning `.md` when the workflow requires model reasoning between stages. Use direct `.py` when the user wants a deterministic script dispatched without model planning. Resolve the exact absolute path first, then create the new draft with generic workspace file tools only after J3 approval.
 
 Existing Job refinement:
 
@@ -165,7 +166,9 @@ Do not copy/edit the permanent managed Job directly. The managed reusable Job re
 
 The draft must satisfy `knowledge/jobs/JOB_RULES.md` and the `jobcreate` harness.
 
-Every step must retain its agreed semantic purpose, explicit tool/executor scope, outputs/postconditions, success criteria and failure behavior.
+For reasoning `.md`, every step must retain its agreed semantic purpose, explicit tool/executor scope, outputs/postconditions, success criteria and failure behavior.
+
+For direct `.py`, keep the script deterministic, use explicit inputs, fail loudly, and when a drawing is bound target only the exact `CADGPT_DRAWING_*` identity supplied by CadGPT. Do not guess `ActiveDocument` or scan for a convenient drawing.
 
 Do not broaden tool access merely because a tool is available.
 
@@ -175,7 +178,7 @@ Run:
 job_draft_validate
 ```
 
-before real execution. A structurally invalid draft does not proceed to promotion.
+before real execution. It validates reasoning structure for `.md` and Python syntax for `.py`. A source-valid draft does not proceed to promotion until its real execution path is tested.
 
 #### B3. Implement missing capabilities only when required
 
@@ -225,7 +228,8 @@ Do not promote a Job with known failing or untested required paths.
 A reusable Job may be promoted to:
 
 ```text
-appdata/libraries/jobs/<library-id>/<job-name>/JOB.md
+Reasoning: appdata/libraries/jobs/<library-id>/<job-name>/JOB.md
+Direct:    appdata/libraries/jobs/<library-id>/<job-name>/<job-name>.py
 ```
 
 only when:
