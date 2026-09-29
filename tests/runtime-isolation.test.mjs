@@ -1937,11 +1937,19 @@ test("work_start and work_status can resume an existing hybrid workspace after s
   revokeSessionAdmissions(targetSession);
 });
 
-test("cg/cj advertises reuse of an existing workspace instead of starting new work", async () => {
+test("cg/cl and cg/cj are state-aware with and without a hybrid workspace", async () => {
+  const { checkAdmission, revokeSessionAdmissions } = await import(
+    "../dist/cadgpt/lib/admission.js"
+  );
+  const {
+    createWorkRegistration,
+    releaseSessionWork,
+  } = await import("../dist/cadgpt/lib/work-registration.js");
   const { registerCadGptControlTool } = await import(
     "../dist/cadgpt/tools/control.js"
   );
 
+  const sessionKey = "cg-authoring-state-matrix";
   const callbacks = new Map();
   const fakeServer = {
     registerTool(name, _config, callback) {
@@ -1950,7 +1958,7 @@ test("cg/cj advertises reuse of an existing workspace instead of starting new wo
   };
 
   registerCadGptControlTool(fakeServer, {
-    sessionKey: "cg-cj-continuation",
+    sessionKey,
     getCadState: async () => "SLEEPING",
     launchCadWorkspace: async () => "list",
     listJobs: async () => "jobs",
@@ -1958,17 +1966,246 @@ test("cg/cj advertises reuse of an existing workspace instead of starting new wo
   });
 
   const control = callbacks.get("cadgpt_control");
-  const result = await control({ surface: "cj" });
+
+  const noWorkCl = await control({ surface: "cl" });
   assert.equal(
-    result.structuredContent?.continuation_policy?.start_new_work,
+    noWorkCl.structuredContent?.continuation_policy?.start_new_work,
+    true
+  );
+  assert.equal(
+    noWorkCl.structuredContent?.continuation_policy?.owner_id,
+    "lisp-authoring"
+  );
+  assert.equal(
+    noWorkCl.structuredContent?.continuation_policy?.execution_path,
+    "file"
+  );
+
+  const noWorkCj = await control({ surface: "cj" });
+  assert.equal(
+    noWorkCj.structuredContent?.continuation_policy?.start_new_work,
+    true
+  );
+  assert.equal(
+    noWorkCj.structuredContent?.continuation_policy?.owner_id,
+    "job-authoring"
+  );
+
+  checkAdmission(sessionKey, "@cadgpt", "mention");
+  const work = createWorkRegistration({
+    sessionKey,
+    ownerType: "direct-cad",
+    ownerId: "drawing-workspace",
+    executionPath: "hybrid",
+  });
+
+  const withWorkspaceCl = await control({ surface: "cl" });
+  assert.equal(
+    withWorkspaceCl.structuredContent?.continuation_policy?.start_new_work,
     false
   );
   assert.match(
-    result.structuredContent?.continuation_policy?.existing_work_action ?? "",
-    /cadgpt_work_resume/
+    withWorkspaceCl.structuredContent?.continuation_policy?.existing_work_action ?? "",
+    /Reuse the current work_handle/
   );
-  assert.match(
-    result.structuredContent?.continuation_policy?.existing_work_action ?? "",
-    /HYBRID/
+
+  const withWorkspaceCj = await control({ surface: "cj" });
+  assert.equal(
+    withWorkspaceCj.structuredContent?.continuation_policy?.start_new_work,
+    false
   );
+
+  releaseSessionWork(sessionKey);
+  revokeSessionAdmissions(sessionKey);
+});
+
+test("cad-mcp-dev is demand-driven and can attach to hybrid work without replacing it", async () => {
+  const previous = process.env.CADGPT_BUILD_PROFILE;
+  process.env.CADGPT_BUILD_PROFILE = "development";
+  try {
+    const { checkAdmission, revokeSessionAdmissions } = await import(
+      "../dist/cadgpt/lib/admission.js"
+    );
+    const {
+      activeWorkForSession,
+      acquireToolLease,
+      createWorkRegistration,
+      releaseSessionWork,
+    } = await import("../dist/cadgpt/lib/work-registration.js");
+    const { registerWorkControlTools } = await import(
+      "../dist/cadgpt/tools/work-control.js"
+    );
+    const { registerCadGptControlTool } = await import(
+      "../dist/cadgpt/tools/control.js"
+    );
+
+    const sessionKey = "hybrid-demand-dev";
+    checkAdmission(sessionKey, "@cadgpt", "mention");
+    const work = createWorkRegistration({
+      sessionKey,
+      ownerType: "direct-cad",
+      ownerId: "drawing-workspace",
+      executionPath: "hybrid",
+    });
+
+    const controlCallbacks = new Map();
+    const fakeControlServer = {
+      registerTool(name, _config, callback) {
+        controlCallbacks.set(name, callback);
+      },
+    };
+    registerCadGptControlTool(fakeControlServer, {
+      sessionKey,
+      getCadState: async () => "SLEEPING",
+      launchCadWorkspace: async () => "list",
+      listJobs: async () => "jobs",
+      stopCurrentWork: async () => ({ stopped: false, pending: false }),
+    });
+
+    const mcpPolicy = await controlCallbacks.get("cadgpt_control")({
+      surface: "mcp",
+    });
+    assert.equal(
+      mcpPolicy.structuredContent?.continuation_policy?.start_new_work,
+      false
+    );
+    assert.equal(
+      mcpPolicy.structuredContent?.continuation_policy?.enable_capability,
+      "cad-mcp-dev"
+    );
+
+    const workCallbacks = new Map();
+    const prepared = [];
+    const fakeWorkServer = {
+      registerTool(name, _config, callback) {
+        workCallbacks.set(name, callback);
+      },
+    };
+    registerWorkControlTools(fakeWorkServer, {
+      sessionKey,
+      prepareFamilies: async (executionPath, ownerId, executionId) => {
+        prepared.push({ executionPath, ownerId, executionId });
+      },
+    });
+
+    const start = workCallbacks.get("cadgpt_work_start");
+    const result = await start({
+      owner_type: "skill",
+      owner_id: "cad-mcp-dev",
+      execution_path: "hybrid",
+      continuation_execution_id: work.executionId,
+      continuation_authority_token: work.authorityToken,
+    });
+
+    assert.equal(result.structuredContent?.data?.reused, true);
+    assert.equal(
+      result.structuredContent?.data?.reason,
+      "conversation_work_dev_capability_enabled"
+    );
+    assert.equal(
+      result.structuredContent?.data?.work_handle?.execution_id,
+      work.executionId
+    );
+    assert.equal(
+      result.structuredContent?.data?.work_handle?.owner_id,
+      "drawing-workspace"
+    );
+    assert.deepEqual(
+      result.structuredContent?.data?.work_handle?.capabilities,
+      ["cad-mcp-dev"]
+    );
+    assert.equal(
+      activeWorkForSession(sessionKey)?.executionId,
+      work.executionId
+    );
+    assert.equal(prepared.at(-1)?.ownerId, "cad-mcp-dev");
+
+    const lease = acquireToolLease({
+      tool: "cad_mcp_dev_read",
+      family: "cad-mcp-dev",
+      executionId: work.executionId,
+      authorityToken: work.authorityToken,
+      sessionKey,
+    });
+    assert.equal(lease.workId, work.executionId);
+    assert.equal(lease.ownerId, "drawing-workspace");
+
+    releaseSessionWork(sessionKey);
+    revokeSessionAdmissions(sessionKey);
+  } finally {
+    if (previous === undefined) delete process.env.CADGPT_BUILD_PROFILE;
+    else process.env.CADGPT_BUILD_PROFILE = previous;
+  }
+});
+
+test("cg/mcp remains unavailable in production and starts standalone dev work only in development", async () => {
+  const { registerCadGptControlTool } = await import(
+    "../dist/cadgpt/tools/control.js"
+  );
+
+  const previous = process.env.CADGPT_BUILD_PROFILE;
+  try {
+    process.env.CADGPT_BUILD_PROFILE = "production";
+    const productionCallbacks = new Map();
+    registerCadGptControlTool(
+      {
+        registerTool(name, _config, callback) {
+          productionCallbacks.set(name, callback);
+        },
+      },
+      {
+        sessionKey: "mcp-production-policy",
+        getCadState: async () => "SLEEPING",
+        launchCadWorkspace: async () => "list",
+        listJobs: async () => "jobs",
+        stopCurrentWork: async () => ({ stopped: false, pending: false }),
+      }
+    );
+    const production = await productionCallbacks.get("cadgpt_control")({
+      surface: "mcp",
+    });
+    assert.equal(
+      production.structuredContent?.continuation_policy?.start_new_work,
+      false
+    );
+    assert.equal(
+      production.structuredContent?.continuation_policy?.development_only,
+      true
+    );
+
+    process.env.CADGPT_BUILD_PROFILE = "development";
+    const developmentCallbacks = new Map();
+    registerCadGptControlTool(
+      {
+        registerTool(name, _config, callback) {
+          developmentCallbacks.set(name, callback);
+        },
+      },
+      {
+        sessionKey: "mcp-development-policy",
+        getCadState: async () => "SLEEPING",
+        launchCadWorkspace: async () => "list",
+        listJobs: async () => "jobs",
+        stopCurrentWork: async () => ({ stopped: false, pending: false }),
+      }
+    );
+    const development = await developmentCallbacks.get("cadgpt_control")({
+      surface: "mcp",
+    });
+    assert.equal(
+      development.structuredContent?.continuation_policy?.start_new_work,
+      true
+    );
+    assert.equal(
+      development.structuredContent?.continuation_policy?.owner_id,
+      "cad-mcp-dev"
+    );
+    assert.equal(
+      development.structuredContent?.continuation_policy?.execution_path,
+      "file"
+    );
+  } finally {
+    if (previous === undefined) delete process.env.CADGPT_BUILD_PROFILE;
+    else process.env.CADGPT_BUILD_PROFILE = previous;
+  }
 });
