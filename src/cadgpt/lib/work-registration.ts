@@ -176,7 +176,8 @@ export function createWorkRegistration(input: {
     ownerId === "cad-mcp-dev" &&
     [...registrations.values()].some(
       (work) =>
-        work.ownerId === "cad-mcp-dev" &&
+        (work.ownerId === "cad-mcp-dev" ||
+          work.capabilities.includes("cad-mcp-dev")) &&
         work.sessionKey !== input.sessionKey
     )
   ) {
@@ -215,7 +216,7 @@ export function createWorkRegistration(input: {
   };
   registrations.set(executionId, work);
   activeBySession.set(input.sessionKey, executionId);
-  return { ...work };
+  return { ...work, capabilities: [...work.capabilities] };
 }
 
 export function enableWorkCapability(
@@ -280,7 +281,7 @@ export function adoptWorkSession(
   if (work.sessionKey === targetSessionKey) {
     assertSessionClaimed(targetSessionKey);
     work.lastActivityAt = new Date().toISOString();
-    return { ...work };
+    return { ...work, capabilities: [...work.capabilities] };
   }
 
   if (hasActiveLeaseForWork(work.executionId)) {
@@ -310,7 +311,7 @@ export function adoptWorkSession(
     Math.max(generationBySession.get(targetSessionKey) || 0, work.generation)
   );
 
-  return { ...work };
+  return { ...work, capabilities: [...work.capabilities] };
 }
 
 export function validateWorkHandle(
@@ -351,7 +352,7 @@ export function releaseWorkRegistration(
   }
   registrations.delete(work.executionId);
   if (activeBySession.get(sessionKey) === work.executionId) activeBySession.delete(sessionKey);
-  return { ...work };
+  return { ...work, capabilities: [...work.capabilities] };
 }
 
 export function activeExecutionForSession(sessionKey: string): string | null {
@@ -366,7 +367,7 @@ export function activeWorkForSession(sessionKey: string): WorkRegistration | nul
   const work = registrations.get(executionId);
   if (!work || work.closing) return null;
   work.lastActivityAt = new Date().toISOString();
-  return { ...work };
+  return { ...work, capabilities: [...work.capabilities] };
 }
 
 export function releaseSessionWork(sessionKey: string): string | null {
