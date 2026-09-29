@@ -2433,7 +2433,7 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
     assert.equal(preAdmissionCad.result?.isError, true);
     assert.match(
       JSON.stringify(preAdmissionCad.result ?? {}),
-      /CADGPT_SESSION_REQUIRED|NO_ACTIVE_WORK/
+      /execution_id|authority_token|CADGPT_SESSION_REQUIRED|NO_ACTIVE_WORK/
     );
 
     const admission = await tool(a.headers, 1001, "cadgpt_admission", {
