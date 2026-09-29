@@ -15,6 +15,7 @@ import { runtimeStateSnapshot } from "./cadgpt/lib/runtime-state.js";
 import { resolveCadPrepareSessionByToken } from "./cadgpt/tools/cad-launcher.js";
 import { routeMcpPost } from "./cadgpt/lib/mcp-post-routing.js";
 import { activeToolLeaseCount, activeWorkCount, sweepExpiredWork } from "./cadgpt/lib/work-registration.js";
+import { continuityDiagnosticsPath } from "./cadgpt/lib/continuity-diagnostics.js";
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
@@ -187,6 +188,7 @@ const server = app.listen(PORT, HOST, () => {
   );
   console.log("FILE/CAD:   lazy-loaded only after admitted work registration");
   console.log("CAD MCP:    activated only on actual CAD tool demand");
+  console.log(`Continuity: ${continuityDiagnosticsPath()}`);
   console.log("");
 });
 
