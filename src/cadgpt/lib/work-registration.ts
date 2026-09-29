@@ -14,6 +14,7 @@ export interface WorkRegistration {
   ownerId: string;
   jobId?: string;
   executionPath: ExecutionPath;
+  capabilities: string[];
   driverEpoch: number;
   generation: number;
   callSequence: number;
@@ -95,10 +96,18 @@ function assertFamilyAllowedForWork(
     );
   }
 
-  if (family === "cad-mcp-dev" && work.ownerId !== "cad-mcp-dev") {
-    throw new Error(
-      "CAD_MCP_DEV_REQUIRED: cad-mcp-dev tools require owner_id=cad-mcp-dev."
-    );
+  if (family === "cad-mcp-dev") {
+    if (!isDevelopmentBuild()) {
+      throw new Error("DEVELOPMENT_ONLY: cad-mcp-dev is unavailable in production builds.");
+    }
+    if (
+      work.ownerId !== "cad-mcp-dev" &&
+      !work.capabilities.includes("cad-mcp-dev")
+    ) {
+      throw new Error(
+        "CAD_MCP_DEV_REQUIRED: explicitly enable cad-mcp-dev for this work before using CAD MCP development tools."
+      );
+    }
   }
 }
 
@@ -197,6 +206,7 @@ export function createWorkRegistration(input: {
     ownerId,
     ...(input.ownerType === "job" ? { jobId: ownerId } : {}),
     executionPath: input.executionPath,
+    capabilities: ownerId === "cad-mcp-dev" ? ["cad-mcp-dev"] : [],
     driverEpoch: DRIVER_EPOCH,
     generation,
     callSequence: 0,
@@ -206,6 +216,43 @@ export function createWorkRegistration(input: {
   registrations.set(executionId, work);
   activeBySession.set(input.sessionKey, executionId);
   return { ...work };
+}
+
+export function enableWorkCapability(
+  executionId: string | undefined,
+  authorityToken: string | undefined,
+  sessionKey: string,
+  capability: "cad-mcp-dev"
+): WorkRegistration {
+  const work = validateWorkHandle(executionId, authorityToken, sessionKey);
+  if (capability !== "cad-mcp-dev") {
+    throw new Error(`UNSUPPORTED_WORK_CAPABILITY: ${capability}`);
+  }
+  if (!isDevelopmentBuild()) {
+    throw new Error("DEVELOPMENT_ONLY: cad-mcp-dev is unavailable in production builds.");
+  }
+  if (work.executionPath !== "file" && work.executionPath !== "hybrid") {
+    throw new Error(
+      "CAD_MCP_DEV_PATH: cad-mcp-dev capability requires FILE or HYBRID work."
+    );
+  }
+  const otherDevOwner = [...registrations.values()].find(
+    (candidate) =>
+      candidate.executionId !== work.executionId &&
+      !candidate.closing &&
+      (candidate.ownerId === "cad-mcp-dev" ||
+        candidate.capabilities.includes("cad-mcp-dev"))
+  );
+  if (otherDevOwner) {
+    throw new Error(
+      "CAD_MCP_DEV_BUSY: another CadGPT execution owns the mutable CAD MCP source tree."
+    );
+  }
+  if (!work.capabilities.includes(capability)) {
+    work.capabilities.push(capability);
+  }
+  work.lastActivityAt = new Date().toISOString();
+  return { ...work, capabilities: [...work.capabilities] };
 }
 
 export function adoptWorkSession(
@@ -361,6 +408,7 @@ export function workStatus(
       owner_type: active.ownerType,
       owner_id: active.ownerId,
       execution_path: active.executionPath,
+      capabilities: [...active.capabilities],
       generation: active.generation,
       last_activity_at: active.lastActivityAt,
       idle_timeout_ms: WORK_IDLE_MS,
@@ -374,6 +422,7 @@ export function workStatus(
     owner_type: active.ownerType,
     owner_id: active.ownerId,
     execution_path: active.executionPath,
+    capabilities: [...active.capabilities],
     generation: active.generation,
     last_activity_at: active.lastActivityAt,
     idle_timeout_ms: WORK_IDLE_MS,
