@@ -92,6 +92,7 @@ async function readTrayCadSnapshot(): Promise<{
   age_ms: number | null;
 }> {
   const statePath = getTrayStatePath();
+  let lastError: unknown;
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -104,13 +105,18 @@ async function readTrayCadSnapshot(): Promise<{
         ? Math.max(0, Date.now() - probeAt)
         : null;
       return { snapshot, age_ms: ageMs };
-    } catch {
+    } catch (error) {
+      lastError = error;
       if (attempt < 2) {
         await new Promise((resolve) => setTimeout(resolve, 40));
       }
     }
   }
 
+  console.warn(
+    "[CadGPT] tray snapshot unavailable after 3 attempts:",
+    lastError instanceof Error ? lastError.message : String(lastError ?? "unknown error")
+  );
   return { snapshot: null, age_ms: null };
 }
 
