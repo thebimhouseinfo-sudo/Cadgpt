@@ -7,6 +7,7 @@ import {
 } from "./mcp-session-manager.js";
 import { buildLegacyDiscoverFallback } from "./mcp-discover-compat.js";
 import { extractHeaderlessCadConfirmToken } from "./headerless-recovery.js";
+import { logicalConversationKeyFromRequest } from "./logical-conversation.js";
 import {
   continuityFingerprint,
   logContinuityRequest,
@@ -60,18 +61,41 @@ export async function routeMcpPost(options: {
 
   if (!sessionId && sessionRecovery) {
     const confirmationToken = extractHeaderlessCadConfirmToken(req.body);
-    const recoveryId = confirmationToken
+    const pendingLogicalKey = confirmationToken
       ? resolveCadPrepareSessionByToken(confirmationToken)
       : undefined;
-    if (recoveryId) {
-      const recovered = await sessions.tryRecover(recoveryId, req, res, req.body);
+    if (pendingLogicalKey) {
+      const requestLogicalKey = logicalConversationKeyFromRequest(req);
+      if (!requestLogicalKey || requestLogicalKey !== pendingLogicalKey) {
+        logContinuityRequest(req, "route_cad_confirmation_identity_rejected", {
+          pending_logical_session: continuityFingerprint(pendingLogicalKey),
+          presented_logical_session: continuityFingerprint(
+            requestLogicalKey ?? undefined
+          ),
+        });
+        sessions.sendBadRequest(
+          res,
+          "CadGPT confirmation does not belong to this connector conversation.",
+          extractRequestId(req.body)
+        );
+        return;
+      }
+
+      const recovered = await sessions.recoverLogical(
+        pendingLogicalKey,
+        req,
+        res,
+        req.body
+      );
       logContinuityRequest(
         req,
         recovered
           ? "route_recovered_by_cad_confirmation"
           : "route_cad_confirmation_recovery_miss",
         {
-          recovered_session: continuityFingerprint(recoveryId),
+          recovered_logical_session: continuityFingerprint(
+            pendingLogicalKey
+          ),
         }
       );
       if (recovered) return;
