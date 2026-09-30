@@ -13,10 +13,12 @@ function firstHeader(
 export function logicalConversationKeyFromRequest(
   req: Request
 ): string | null {
-  const raw = firstHeader(req.headers["x-openai-session"]);
-  if (!raw || !raw.trim()) return null;
+  const subject = firstHeader(req.headers["x-openai-subject"])?.trim();
+  const session = firstHeader(req.headers["x-openai-session"])?.trim();
+  if (!subject || !session) return null;
+
   const digest = createHmac("sha256", LOGICAL_KEY_SECRET)
-    .update(raw.trim(), "utf8")
+    .update(JSON.stringify([subject, session]), "utf8")
     .digest("hex");
   return `openai-session:${digest}`;
 }
