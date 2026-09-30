@@ -86,12 +86,14 @@ async function loopbackPost(
   route: string,
   body: unknown,
   sessionId: string,
-  protocolVersion?: string
+  protocolVersion?: string,
+  connectorHeaders: Record<string, string> = {}
 ): Promise<boolean> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
     "mcp-session-id": sessionId,
+    ...connectorHeaders,
   };
   if (protocolVersion) headers["mcp-protocol-version"] = protocolVersion;
   const response = await fetch(`http://127.0.0.1:${port}${route}`, {
@@ -285,7 +287,26 @@ export function createSessionManager(
     };
   }
 
-  async function warmup(id: string, route: string, protocolVersion: string): Promise<boolean> {
+  async function warmup(
+    id: string,
+    route: string,
+    protocolVersion: string,
+    sourceReq: Request
+  ): Promise<boolean> {
+    const subject = sourceReq.headers["x-openai-subject"];
+    const openaiSession = sourceReq.headers["x-openai-session"];
+    const connectorHeaders: Record<string, string> = {};
+    if (typeof subject === "string") {
+      connectorHeaders["x-openai-subject"] = subject;
+    } else if (Array.isArray(subject) && subject[0]) {
+      connectorHeaders["x-openai-subject"] = subject[0];
+    }
+    if (typeof openaiSession === "string") {
+      connectorHeaders["x-openai-session"] = openaiSession;
+    } else if (Array.isArray(openaiSession) && openaiSession[0]) {
+      connectorHeaders["x-openai-session"] = openaiSession[0];
+    }
+
     const initialized = await loopbackPost(
       port,
       route,
@@ -299,7 +320,9 @@ export function createSessionManager(
           clientInfo: { name: "cadgpt-session-recovery", version: "0.1.0" },
         },
       },
-      id
+      id,
+      undefined,
+      connectorHeaders
     );
     if (!initialized) return false;
     return loopbackPost(
@@ -307,14 +330,16 @@ export function createSessionManager(
       route,
       { jsonrpc: "2.0", method: "notifications/initialized" },
       id,
-      protocolVersion
+      protocolVersion,
+      connectorHeaders
     );
   }
 
   async function ensureRecovered(
     id: string,
     route: string,
-    protocolVersion: string
+    protocolVersion: string,
+    sourceReq: Request
   ): Promise<McpSession | undefined> {
     const already = sessions.get(id);
     if (already) {
@@ -337,7 +362,7 @@ export function createSessionManager(
       transportLogical.set(id, logicalKey);
       transportIdentityBound.set(id, connectorIdentityBound);
       try {
-        if (!(await warmup(id, route, protocolVersion))) {
+        if (!(await warmup(id, route, protocolVersion, sourceReq))) {
           removeTransport(id, "recovery warmup failed", replacement.transport, true);
           return undefined;
         }
@@ -488,7 +513,7 @@ export function createSessionManager(
       }
       const protocol = negotiateProtocol(req.headers["mcp-protocol-version"] as string | undefined);
       const route = req.path || "/mcp";
-      const recovered = await ensureRecovered(id, route, protocol);
+      const recovered = await ensureRecovered(id, route, protocol, req);
       if (!recovered) return false;
       const patched = patchSessionHeaders(req, id, protocol);
       await enqueue(id, async () => recovered.transport.handleRequest(patched, res, body));
@@ -548,7 +573,8 @@ export function createSessionManager(
         const recovered = await ensureRecovered(
           candidate.id,
           route,
-          protocol
+          protocol,
+          req
         );
         if (!recovered) continue;
         const patched = patchSessionHeaders(
