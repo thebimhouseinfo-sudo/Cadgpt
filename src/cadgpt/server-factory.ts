@@ -33,7 +33,7 @@ import { registerFilesystemTools } from "./tools/filesystem.js";
 import { registerLispHarnessTools } from "./tools/lisp-harness.js";
 import { registerLispWorkspaceTools } from "./tools/lisp-workspace.js";
 import { registerUserAssetTools } from "./tools/user-assets.js";
-import { registerCadProxyTools, syncCadBusinessProxies } from "./tools/cad-proxy.js";
+import { registerCadProxyTools } from "./tools/cad-proxy.js";
 import { registerObservatorTools } from "./tools/observator.js";
 import { registerCadMcpDevTools } from "./tools/cad-mcp-dev.js";
 import {
@@ -191,9 +191,10 @@ async function loadCadFamily(server: McpServer): Promise<void> {
   if (!registeredSurface(server).has("cad")) {
     throw new Error("TOOL_SURFACE_NOT_READY: CAD tools were not registered at MCP initialization.");
   }
-  // Manifest-backed proxy definitions are already present. Re-sync only to
-  // reflect a regenerated manifest while keeping the outer MCP surface stable.
-  syncCadBusinessProxies(server);
+  // Named CAD proxies are an immutable snapshot of the manifest at MCP
+  // initialization. Do not mutate tools/list after ChatGPT imported it.
+  // Newly-developed/changed manifest tools in this conversation are exercised
+  // through cad_invoke_manifest_tool and become named proxies after restart.
   if (loaded.has("cad")) return;
   loaded.add("cad");
   markFamilyLoaded("cad");
