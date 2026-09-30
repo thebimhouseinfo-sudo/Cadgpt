@@ -101,10 +101,11 @@ test("CadGPT launch claims the MCP session without creating execution authority"
   );
 });
 
-test("headerless recovery accepts only cadgpt_cad_confirm with an explicit token", async () => {
-  const { extractHeaderlessCadConfirmToken } = await import(
-    "../dist/cadgpt/lib/headerless-recovery.js"
-  );
+test("headerless recovery detects cadgpt_cad_confirm and treats token as optional", async () => {
+  const {
+    extractHeaderlessCadConfirmToken,
+    isHeaderlessCadConfirmCall,
+  } = await import("../dist/cadgpt/lib/headerless-recovery.js");
 
   assert.equal(
     extractHeaderlessCadConfirmToken({
@@ -118,16 +119,25 @@ test("headerless recovery accepts only cadgpt_cad_confirm with an explicit token
     }),
     "token-a"
   );
-  assert.equal(
-    extractHeaderlessCadConfirmToken({
-      method: "tools/call",
-      params: {
-        name: "cadgpt_work_start",
-        arguments: { confirmation_token: "token-a" },
-      },
-    }),
-    undefined
-  );
+  const choiceOnly = {
+    method: "tools/call",
+    params: {
+      name: "cadgpt_cad_confirm",
+      arguments: { choice_key: "1" },
+    },
+  };
+  assert.equal(isHeaderlessCadConfirmCall(choiceOnly), true);
+  assert.equal(extractHeaderlessCadConfirmToken(choiceOnly), undefined);
+
+  const unrelatedTool = {
+    method: "tools/call",
+    params: {
+      name: "cadgpt_work_start",
+      arguments: { confirmation_token: "token-a" },
+    },
+  };
+  assert.equal(isHeaderlessCadConfirmCall(unrelatedTool), false);
+  assert.equal(extractHeaderlessCadConfirmToken(unrelatedTool), undefined);
   assert.equal(
     extractHeaderlessCadConfirmToken({
       method: "notifications/initialized",
@@ -207,11 +217,10 @@ test("CAD prepare survives repeated launch and MCP session churn, while remainin
       },
     };
 
-    // Simulate ChatGPT/OpenAI rotating the MCP transport session between the
-    // list response and the user's drawing selection. The opaque prepare token
-    // carries continuity; the user only chooses the drawing itself.
+    // The transport may rotate, but the server factory now reuses the verified
+    // logical conversation key. The user/model does not carry the token.
     registerCadPrepareConfirmTool(fakeServer, {
-      sessionKey: "prepare-session-a-rotated",
+      sessionKey: "prepare-session-a",
       activateWorkspace: async (drawing) => ({
         text: "CadGPT / CG — Workspace Ready",
         work_handle: { execution_id: "exec-a", authority_token: "authority-a" },
@@ -220,7 +229,6 @@ test("CAD prepare survives repeated launch and MCP session churn, while remainin
     });
 
     const ready = await callback({
-      confirmation_token: launchA2.confirmation_token,
       choice_key: "Drawing1.dwg",
     });
     assert.match(ready.structuredContent.text, /Workspace Ready/);
@@ -231,7 +239,6 @@ test("CAD prepare survives repeated launch and MCP session churn, while remainin
     await assert.rejects(
       () =>
         callback({
-          confirmation_token: launchA2.confirmation_token,
           choice_key: "1",
         }),
       /CAD_PREPARE_REQUIRED/
@@ -286,7 +293,6 @@ test("CAD prepare survives repeated launch and MCP session churn, while remainin
     );
   } finally {
     clearCadPrepare("prepare-session-a");
-    clearCadPrepare("prepare-session-a-rotated");
     clearCadPrepare("prepare-session-b");
     revokeSessionAdmissions("prepare-session-a");
     revokeSessionAdmissions("prepare-session-a-rotated");
@@ -646,6 +652,30 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
       }),
     });
     assert.equal(wrongConversation.status, 400);
+    assert.equal(
+      resolveCadPrepareSessionByToken(recoveryToken),
+      logicalSessionKey
+    );
+
+    const wrongConversationChoiceOnly = await fetch(url, {
+      method: "POST",
+      headers: {
+        ...chatAHeaders,
+        "x-openai-session": "chat-C",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 34,
+        method: "tools/call",
+        params: {
+          name: "cadgpt_cad_confirm",
+          arguments: {
+            choice_key: "1",
+          },
+        },
+      }),
+    });
+    assert.equal(wrongConversationChoiceOnly.status, 400);
     assert.equal(
       resolveCadPrepareSessionByToken(recoveryToken),
       logicalSessionKey
