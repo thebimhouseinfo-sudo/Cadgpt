@@ -573,13 +573,25 @@ export function registerJobAuthoringTools(server: McpServer): void {
             `JOB_PROMOTION_MODE_MISMATCH: draft is ${draftMode} but managed target is ${targetMode}.`
           );
         }
-        const expectedPermanent = managedJobPath(library_id, normalizedRelative);
+        const expectedPermanent = managedJobPath(
+          library_id,
+          normalizedRelative
+        );
+        const libraryRoot = path.resolve(getJobLibrariesRoot(), library_id);
+        const canonicalExpected = await resolveAbsoluteMutationPath(
+          expectedPermanent,
+          {
+            allowedRoots: [libraryRoot],
+            forCreate: true,
+            label: "managed Job library",
+          }
+        );
         const permanent = await resolveAbsoluteMutationPath(target_path, {
-          allowedRoots: [path.resolve(getJobLibrariesRoot(), library_id)],
+          allowedRoots: [libraryRoot],
           forCreate: true,
           label: "managed Job library",
         });
-        if (path.relative(expectedPermanent, permanent) !== "") {
+        if (path.relative(canonicalExpected, permanent) !== "") {
           throw new Error(
             `TARGET_PATH_MISMATCH: target_path must exactly match managed Job target ${expectedPermanent}`
           );
