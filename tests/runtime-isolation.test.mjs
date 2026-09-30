@@ -966,6 +966,15 @@ test("CAD document-list parser accepts FastMCP 1.2.x flattened TextContent", asy
     ["doc-a", "doc-b"]
   );
 
+  assert.throws(
+    () =>
+      normalizeDocuments({
+        content: [{ type: "text", text: "not-json" }],
+        unexpected: true,
+      }),
+    /unexpected document-list payload.*shape=object\(keys=content,unexpected\)/i
+  );
+
   const wrapped = normalizeDocuments({
     structuredContent: {
       documents: [
@@ -1080,6 +1089,57 @@ test("CadGPT welcome exposes the lightweight fake CLI control surface", async ()
   assert.match(CADGPT_ROOT_MENU, /cg\/mcp/);
   assert.match(CADGPT_ROOT_MENU, /cg\/help/);
   assert.match(CADGPT_ROOT_MENU, /cg\/list/);
+});
+
+test("CAD upstream captures child stderr and returns failed initial activation to sleeping", async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-upstream-fail-"));
+  const fakeEntry = path.join(tempRoot, "fake-cad-mcp.mjs");
+  await fs.writeFile(
+    fakeEntry,
+    'process.stderr.write("cad-python-boom\\n"); setTimeout(() => process.exit(2), 20);',
+    "utf8"
+  );
+
+  const previousPython = process.env.CAD_MCP_PYTHON;
+  const previousEntry = process.env.CAD_MCP_ENTRY;
+  const previousTimeout = process.env.CAD_MCP_CONNECT_TIMEOUT_MS;
+  process.env.CAD_MCP_PYTHON = process.execPath;
+  process.env.CAD_MCP_ENTRY = fakeEntry;
+  process.env.CAD_MCP_CONNECT_TIMEOUT_MS = "1500";
+
+  let cadUpstream;
+  try {
+    const moduleUrl =
+      pathToFileURL(path.resolve("dist/cadgpt/runtime/cad-upstream.js")).href +
+      `?failure=${Date.now()}`;
+    ({ cadUpstream } = await import(moduleUrl));
+
+    let failure;
+    try {
+      await cadUpstream.activate();
+    } catch (error) {
+      failure = error;
+    }
+
+    assert.ok(failure);
+    assert.match(String(failure?.message ?? failure), /cad-python-boom/);
+    assert.equal(cadUpstream.status().phase, "sleeping");
+    assert.match(cadUpstream.status().last_error ?? "", /cad-python-boom/);
+  } finally {
+    if (cadUpstream) await cadUpstream.deactivate().catch(() => undefined);
+    if (previousPython === undefined) delete process.env.CAD_MCP_PYTHON;
+    else process.env.CAD_MCP_PYTHON = previousPython;
+    if (previousEntry === undefined) delete process.env.CAD_MCP_ENTRY;
+    else process.env.CAD_MCP_ENTRY = previousEntry;
+    if (previousTimeout === undefined) delete process.env.CAD_MCP_CONNECT_TIMEOUT_MS;
+    else process.env.CAD_MCP_CONNECT_TIMEOUT_MS = previousTimeout;
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("tray JSON parser tolerates Windows PowerShell UTF-8 BOM", async () => {
