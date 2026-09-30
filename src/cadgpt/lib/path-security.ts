@@ -109,25 +109,76 @@ export async function resolveAllowedPath(
     ? path.resolve(trimmed)
     : resolveVirtualPath(trimmed);
 
-  assertInsideRoots(candidate, getAllowedRoots(), "readable AppData");
+  const readableRoots = getAllowedRoots();
+  const writableRoots = getWritableRoots();
+
+  // First enforce lexical scope so a request cannot escape before any
+  // filesystem canonicalization. Then compare canonical identities so Windows
+  // junctions / DOS aliases / symlinks cannot false-reject a legitimate
+  // managed path (or false-accept an escaped one).
+  assertInsideRoots(candidate, readableRoots, "readable AppData");
   if (options.forWrite || options.forCreate) {
-    assertInsideRoots(candidate, getWritableRoots(), "generic writable AppData");
+    assertInsideRoots(candidate, writableRoots, "generic writable AppData");
   }
+
+  const canonicalReadableRoots = await Promise.all(
+    readableRoots.map((root) => canonicalizeAllowedRoot(root))
+  );
+  const canonicalWritableRoots =
+    options.forWrite || options.forCreate
+      ? await Promise.all(
+          writableRoots.map((root) => canonicalizeAllowedRoot(root))
+        )
+      : [];
 
   if (!options.forCreate) {
     const real = await fs.realpath(candidate);
-    assertInsideRoots(real, getAllowedRoots(), "readable AppData");
+    assertInsideRoots(real, canonicalReadableRoots, "readable AppData");
     if (options.forWrite) {
-      assertInsideRoots(real, getWritableRoots(), "generic writable AppData");
+      assertInsideRoots(real, canonicalWritableRoots, "generic writable AppData");
     }
     return real;
   }
 
+  try {
+    await fs.lstat(candidate);
+    const realExisting = await fs.realpath(candidate);
+    assertInsideRoots(
+      realExisting,
+      canonicalReadableRoots,
+      "readable AppData"
+    );
+    assertInsideRoots(
+      realExisting,
+      canonicalWritableRoots,
+      "generic writable AppData"
+    );
+    return realExisting;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
   const parent = await nearestExistingParent(path.dirname(candidate));
   const realParent = await fs.realpath(parent);
-  assertInsideRoots(realParent, getAllowedRoots(), "readable AppData");
-  assertInsideRoots(realParent, getWritableRoots(), "generic writable AppData");
-  return candidate;
+  assertInsideRoots(realParent, canonicalReadableRoots, "readable AppData");
+  assertInsideRoots(
+    realParent,
+    canonicalWritableRoots,
+    "generic writable AppData"
+  );
+  const relativeTail = path.relative(parent, candidate);
+  const resolvedCandidate = path.resolve(realParent, relativeTail);
+  assertInsideRoots(
+    resolvedCandidate,
+    canonicalReadableRoots,
+    "readable AppData"
+  );
+  assertInsideRoots(
+    resolvedCandidate,
+    canonicalWritableRoots,
+    "generic writable AppData"
+  );
+  return resolvedCandidate;
 }
 
 /**
