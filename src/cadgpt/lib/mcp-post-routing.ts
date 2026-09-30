@@ -6,7 +6,10 @@ import {
   type SessionManager,
 } from "./mcp-session-manager.js";
 import { buildLegacyDiscoverFallback } from "./mcp-discover-compat.js";
-import { extractHeaderlessCadConfirmToken } from "./headerless-recovery.js";
+import {
+  extractHeaderlessCadConfirmToken,
+  isHeaderlessCadConfirmCall,
+} from "./headerless-recovery.js";
 import { logicalConversationKeyFromRequest } from "./logical-conversation.js";
 import {
   continuityFingerprint,
@@ -71,19 +74,39 @@ export async function routeMcpPost(options: {
     if (recovered) return;
   }
 
-  if (!sessionId && sessionRecovery) {
+  if (
+    !sessionId &&
+    sessionRecovery &&
+    isHeaderlessCadConfirmCall(req.body)
+  ) {
+    const requestLogicalKey = logicalConversationKeyFromRequest(req);
+    if (!requestLogicalKey) {
+      logContinuityRequest(req, "route_cad_confirmation_identity_missing");
+      sessions.sendBadRequest(
+        res,
+        "CadGPT confirmation requires the connector conversation identity.",
+        extractRequestId(req.body)
+      );
+      return;
+    }
+
     const confirmationToken = extractHeaderlessCadConfirmToken(req.body);
-    const pendingLogicalKey = confirmationToken
-      ? resolveCadPrepareSessionByToken(confirmationToken)
-      : undefined;
-    if (pendingLogicalKey) {
-      const requestLogicalKey = logicalConversationKeyFromRequest(req);
-      if (!requestLogicalKey || requestLogicalKey !== pendingLogicalKey) {
+    if (confirmationToken) {
+      const pendingLogicalKey =
+        resolveCadPrepareSessionByToken(confirmationToken);
+      if (!pendingLogicalKey) {
+        logContinuityRequest(req, "route_cad_confirmation_token_unresolved");
+        sessions.sendBadRequest(
+          res,
+          "CadGPT workspace selection is missing or stale. Use cg/list and select one drawing again.",
+          extractRequestId(req.body)
+        );
+        return;
+      }
+      if (requestLogicalKey !== pendingLogicalKey) {
         logContinuityRequest(req, "route_cad_confirmation_identity_rejected", {
           pending_logical_session: continuityFingerprint(pendingLogicalKey),
-          presented_logical_session: continuityFingerprint(
-            requestLogicalKey ?? undefined
-          ),
+          presented_logical_session: continuityFingerprint(requestLogicalKey),
         });
         sessions.sendBadRequest(
           res,
@@ -92,28 +115,25 @@ export async function routeMcpPost(options: {
         );
         return;
       }
-
-      const recovered = await sessions.recoverLogical(
-        pendingLogicalKey,
-        req,
-        res,
-        req.body
-      );
-      logContinuityRequest(
-        req,
-        recovered
-          ? "route_recovered_by_cad_confirmation"
-          : "route_cad_confirmation_recovery_miss",
-        {
-          recovered_logical_session: continuityFingerprint(
-            pendingLogicalKey
-          ),
-        }
-      );
-      if (recovered) return;
-    } else if (confirmationToken) {
-      logContinuityRequest(req, "route_cad_confirmation_token_unresolved");
     }
+
+    const recovered = await sessions.recoverLogical(
+      requestLogicalKey,
+      req,
+      res,
+      req.body
+    );
+    logContinuityRequest(
+      req,
+      recovered
+        ? "route_recovered_by_cad_confirmation"
+        : "route_cad_confirmation_recovery_miss",
+      {
+        recovered_logical_session: continuityFingerprint(requestLogicalKey),
+        token_present: Boolean(confirmationToken),
+      }
+    );
+    if (recovered) return;
   }
 
   if (sessionId) {
