@@ -54,6 +54,18 @@ export async function routeMcpPost(options: {
   }
 
   if (sessionId && sessionRecovery) {
+    if (!sessions.matchesTransportIdentity(sessionId, req)) {
+      logContinuityRequest(req, "route_transport_identity_rejected", {
+        transport_session: continuityFingerprint(sessionId),
+      });
+      sessions.sendBadRequest(
+        res,
+        "CadGPT connector conversation identity is missing or does not match this MCP transport.",
+        extractRequestId(req.body)
+      );
+      return;
+    }
+
     const recovered = await sessions.tryRecover(sessionId, req, res, req.body);
     logContinuityRequest(req, recovered ? "route_recovered_transport" : "route_transport_recovery_miss");
     if (recovered) return;
