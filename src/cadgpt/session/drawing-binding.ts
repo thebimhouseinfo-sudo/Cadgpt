@@ -87,7 +87,19 @@ export function normalizeDocuments(raw: unknown): Array<Record<string, unknown>>
       }
     }
   }
-  throw new Error("CAD MCP returned an unexpected document-list payload");
+  const shape =
+    raw === null
+      ? "null"
+      : Array.isArray(raw)
+        ? `array(length=${raw.length})`
+        : typeof raw === "object"
+          ? `object(keys=${Object.keys(raw as Record<string, unknown>)
+              .sort()
+              .join(",")})`
+          : typeof raw;
+  throw new Error(
+    `CAD MCP returned an unexpected document-list payload; shape=${shape}`
+  );
 }
 
 function itemRuntimeId(item: Record<string, unknown>): string {
