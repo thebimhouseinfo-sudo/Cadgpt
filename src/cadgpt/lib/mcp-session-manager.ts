@@ -28,6 +28,7 @@ export interface McpSession {
   transport: StreamableHTTPServerTransport;
   server: McpServer;
   logicalSessionKey: string;
+  connectorIdentityBound: boolean;
   lastAccessedAt: number;
 }
 
@@ -44,6 +45,7 @@ export interface SessionManager {
   createNew(req: Request, res: Response, body: unknown): Promise<void>;
   handleExisting(session: McpSession, req: Request, res: Response, body?: unknown): Promise<void>;
   tryRecover(id: string, req: Request, res: Response, body: unknown): Promise<boolean>;
+  recoverLogical(logicalKey: string, req: Request, res: Response, body: unknown): Promise<boolean>;
   sendNotFound(res: Response, requestId?: string | number | null): void;
   sendBadRequest(res: Response, message: string, requestId?: string | number | null): void;
   startCleanup(): void;
@@ -112,6 +114,7 @@ export function createSessionManager(
   const pending = new Map<string, McpSession>();
   const detached = new Map<string, McpSession>();
   const transportLogical = new Map<string, string>();
+  const transportIdentityBound = new Map<string, boolean>();
   const graceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const opChains = new Map<string, Promise<void>>();
   const recoveryFlights = new Map<string, Promise<McpSession | undefined>>();
@@ -164,6 +167,7 @@ export function createSessionManager(
     opChains.delete(id);
     const logicalKey = current?.logicalSessionKey ?? transportLogical.get(id);
     transportLogical.delete(id);
+    transportIdentityBound.delete(id);
 
     if (current) {
       void disposeMcpServerRuntime(current.server, { preserveSessionState: true }).catch(() => undefined);
@@ -196,7 +200,8 @@ export function createSessionManager(
 
   async function build(
     preferredTransportId?: string,
-    preferredLogicalKey?: string
+    preferredLogicalKey?: string,
+    connectorIdentityBound = false
   ): Promise<McpSession> {
     const transportId = preferredTransportId ?? randomUUID();
     const logicalSessionKey = preferredLogicalKey ?? transportId;
@@ -215,11 +220,13 @@ export function createSessionManager(
           server,
           transport,
           logicalSessionKey,
+          connectorIdentityBound,
           lastAccessedAt: Date.now(),
         };
         sessions.set(id, replacement);
         pending.delete(id);
         transportLogical.set(id, logicalSessionKey);
+        transportIdentityBound.set(id, connectorIdentityBound);
         logicalLastAccess.set(logicalSessionKey, Date.now());
         clearGrace(id);
 
@@ -272,6 +279,7 @@ export function createSessionManager(
       server,
       transport,
       logicalSessionKey,
+      connectorIdentityBound,
       lastAccessedAt: Date.now(),
     };
   }
@@ -319,9 +327,14 @@ export function createSessionManager(
     let flight!: Promise<McpSession | undefined>;
     flight = (async () => {
       const logicalKey = transportLogical.get(id) ?? detached.get(id)?.logicalSessionKey ?? id;
-      const replacement = await build(id, logicalKey);
+      const connectorIdentityBound =
+        transportIdentityBound.get(id) ??
+        detached.get(id)?.connectorIdentityBound ??
+        false;
+      const replacement = await build(id, logicalKey, connectorIdentityBound);
       pending.set(id, replacement);
       transportLogical.set(id, logicalKey);
+      transportIdentityBound.set(id, connectorIdentityBound);
       try {
         if (!(await warmup(id, route, protocolVersion))) {
           removeTransport(id, "recovery warmup failed", replacement.transport, true);
@@ -392,11 +405,18 @@ export function createSessionManager(
         existingPending ??
         (await build(
           headerId || undefined,
-          connectorLogicalKey || undefined
+          connectorLogicalKey || undefined,
+          connectorLogicalKey !== null
         ));
       const transportId = headerId || session.transport.sessionId;
       if (headerId) pending.delete(headerId);
-      if (transportId) transportLogical.set(transportId, session.logicalSessionKey);
+      if (transportId) {
+        transportLogical.set(transportId, session.logicalSessionKey);
+        transportIdentityBound.set(
+          transportId,
+          session.connectorIdentityBound
+        );
+      }
 
       const run = async () => {
         await session.transport.handleRequest(req, res, body);
@@ -409,6 +429,24 @@ export function createSessionManager(
 
     async handleExisting(session, req, res, body) {
       logContinuityRequest(req, "session_manager_handle_existing");
+      if (session.connectorIdentityBound) {
+        const requestLogicalKey = logicalConversationKeyFromRequest(req);
+        if (!requestLogicalKey || requestLogicalKey !== session.logicalSessionKey) {
+          logContinuityRequest(req, "session_manager_identity_rejected", {
+            expected_logical_session: continuityFingerprint(session.logicalSessionKey),
+            presented_logical_session: continuityFingerprint(requestLogicalKey),
+          });
+          res.status(400).json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32000,
+              message: "CadGPT connector conversation identity is missing or does not match this MCP transport.",
+            },
+            id: extractRequestId(body),
+          });
+          return;
+        }
+      }
       const id = session.transport.sessionId || (req.headers["mcp-session-id"] as string | undefined);
       if (id) touchTransport(id);
       const run = async () => session.transport.handleRequest(req, res, body);
@@ -432,6 +470,76 @@ export function createSessionManager(
       await enqueue(id, async () => recovered.transport.handleRequest(patched, res, body));
       touchTransport(id);
       return true;
+    },
+
+    async recoverLogical(logicalKey, req, res, body) {
+      logContinuityRequest(req, "session_manager_recover_logical", {
+        recovery_target: continuityFingerprint(logicalKey),
+      });
+      if (isInitializeRequest(body)) return false;
+
+      const requestLogicalKey = logicalConversationKeyFromRequest(req);
+      if (!requestLogicalKey || requestLogicalKey !== logicalKey) {
+        logContinuityRequest(req, "session_manager_logical_identity_rejected", {
+          expected_logical_session: continuityFingerprint(logicalKey),
+          presented_logical_session: continuityFingerprint(requestLogicalKey),
+        });
+        return false;
+      }
+
+      const candidates = [...transportLogical.entries()]
+        .filter(
+          ([id, key]) =>
+            key === logicalKey &&
+            transportIdentityBound.get(id) === true
+        )
+        .map(([id]) => {
+          const session =
+            sessions.get(id) ?? pending.get(id) ?? detached.get(id);
+          const rank = sessions.has(id)
+            ? 3
+            : pending.has(id)
+              ? 2
+              : detached.has(id)
+                ? 1
+                : 0;
+          return {
+            id,
+            rank,
+            lastAccessedAt: session?.lastAccessedAt ?? 0,
+          };
+        })
+        .sort(
+          (left, right) =>
+            right.rank - left.rank ||
+            right.lastAccessedAt - left.lastAccessedAt
+        );
+
+      const protocol = negotiateProtocol(
+        req.headers["mcp-protocol-version"] as string | undefined
+      );
+      const route = req.path || "/mcp";
+
+      for (const candidate of candidates) {
+        const recovered = await ensureRecovered(
+          candidate.id,
+          route,
+          protocol
+        );
+        if (!recovered) continue;
+        const patched = patchSessionHeaders(
+          req,
+          candidate.id,
+          protocol
+        );
+        await enqueue(candidate.id, async () =>
+          recovered.transport.handleRequest(patched, res, body)
+        );
+        touchTransport(candidate.id);
+        return true;
+      }
+
+      return false;
     },
 
     startCleanup() {
@@ -467,6 +575,7 @@ export function createSessionManager(
       pending.clear();
       detached.clear();
       transportLogical.clear();
+      transportIdentityBound.clear();
       opChains.clear();
       recoveryFlights.clear();
       logicalLastAccess.clear();
