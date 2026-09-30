@@ -627,6 +627,31 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
     assert.equal(sessions.get(rotatedSessionId), undefined);
     assert.equal(resolveCadPrepareSessionByToken(recoveryToken), logicalSessionKey);
 
+    const wrongConversation = await fetch(url, {
+      method: "POST",
+      headers: {
+        ...chatAHeaders,
+        "x-openai-session": "chat-C",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 33,
+        method: "tools/call",
+        params: {
+          name: "cadgpt_cad_confirm",
+          arguments: {
+            confirmation_token: recoveryToken,
+            choice_key: "1",
+          },
+        },
+      }),
+    });
+    assert.equal(wrongConversation.status, 400);
+    assert.equal(
+      resolveCadPrepareSessionByToken(recoveryToken),
+      logicalSessionKey
+    );
+
     const confirmed = await fetch(url, {
       method: "POST",
       headers: chatAHeaders,
@@ -764,6 +789,21 @@ test("existing MCP transport rejects conflicting OpenAI conversation identity", 
     assert.equal(initialized.ok, true);
     const sessionId = initialized.headers.get("mcp-session-id");
     assert.ok(sessionId);
+
+    const missingIdentity = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "mcp-session-id": sessionId,
+        "mcp-protocol-version": LATEST_PROTOCOL_VERSION,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      }),
+    });
+    assert.equal(missingIdentity.status, 400);
 
     const conflicting = await fetch(url, {
       method: "POST",
