@@ -44,6 +44,7 @@ export interface SessionManager {
   count(): number;
   createNew(req: Request, res: Response, body: unknown): Promise<void>;
   handleExisting(session: McpSession, req: Request, res: Response, body?: unknown): Promise<void>;
+  matchesTransportIdentity(id: string, req: Request): boolean;
   tryRecover(id: string, req: Request, res: Response, body: unknown): Promise<boolean>;
   recoverLogical(logicalKey: string, req: Request, res: Response, body: unknown): Promise<boolean>;
   sendNotFound(res: Response, requestId?: string | number | null): void;
@@ -365,6 +366,21 @@ export function createSessionManager(
     return flight;
   }
 
+  function matchesTransportIdentity(id: string, req: Request): boolean {
+    if (transportIdentityBound.get(id) !== true) return true;
+    const expectedLogicalKey =
+      transportLogical.get(id) ??
+      sessions.get(id)?.logicalSessionKey ??
+      pending.get(id)?.logicalSessionKey ??
+      detached.get(id)?.logicalSessionKey;
+    const requestLogicalKey = logicalConversationKeyFromRequest(req);
+    return Boolean(
+      expectedLogicalKey &&
+      requestLogicalKey &&
+      requestLogicalKey === expectedLogicalKey
+    );
+  }
+
   async function expireLogical(logicalKey: string): Promise<void> {
     const ids = [...transportLogical.entries()]
       .filter(([, key]) => key === logicalKey)
@@ -429,9 +445,14 @@ export function createSessionManager(
 
     async handleExisting(session, req, res, body) {
       logContinuityRequest(req, "session_manager_handle_existing");
-      if (session.connectorIdentityBound) {
+      const existingId =
+        session.transport.sessionId ||
+        (req.headers["mcp-session-id"] as string | undefined);
+      if (
+        session.connectorIdentityBound &&
+        (!existingId || !matchesTransportIdentity(existingId, req))
+      ) {
         const requestLogicalKey = logicalConversationKeyFromRequest(req);
-        if (!requestLogicalKey || requestLogicalKey !== session.logicalSessionKey) {
           logContinuityRequest(req, "session_manager_identity_rejected", {
             expected_logical_session: continuityFingerprint(session.logicalSessionKey),
             presented_logical_session: continuityFingerprint(requestLogicalKey ?? undefined),
@@ -444,14 +465,17 @@ export function createSessionManager(
             },
             id: extractRequestId(body),
           });
-          return;
-        }
+        return;
       }
-      const id = session.transport.sessionId || (req.headers["mcp-session-id"] as string | undefined);
+      const id = existingId;
       if (id) touchTransport(id);
       const run = async () => session.transport.handleRequest(req, res, body);
       if (id && req.method !== "GET") await enqueue(id, run);
       else await run();
+    },
+
+    matchesTransportIdentity(id, req) {
+      return matchesTransportIdentity(id, req);
     },
 
     async tryRecover(id, req, res, body) {
