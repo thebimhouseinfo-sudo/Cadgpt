@@ -578,7 +578,6 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
         params: {
           name: "cadgpt_cad_confirm",
           arguments: {
-            confirmation_token: token,
             choice_key: "Drawing1.dwg",
           },
         },
@@ -662,7 +661,6 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
         params: {
           name: "cadgpt_cad_confirm",
           arguments: {
-            confirmation_token: recoveryToken,
             choice_key: "1",
           },
         },
