@@ -440,6 +440,7 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
 
   let sessionId;
   let rotatedSessionId;
+  let logicalSessionKey;
   try {
     const stateDir = path.join(tempRoot, "state");
     await fs.mkdir(stateDir, { recursive: true });
@@ -462,10 +463,15 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
     };
+    const chatAHeaders = {
+      ...baseHeaders,
+      "x-openai-subject": "same-account",
+      "x-openai-session": "chat-A",
+    };
 
     const initialized = await fetch(url, {
       method: "POST",
-      headers: baseHeaders,
+      headers: chatAHeaders,
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
@@ -482,7 +488,7 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
     assert.ok(sessionId);
 
     const sessionHeaders = {
-      ...baseHeaders,
+      ...chatAHeaders,
       "mcp-session-id": sessionId,
       "mcp-protocol-version": LATEST_PROTOCOL_VERSION,
     };
@@ -517,13 +523,16 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
     const admissionBody = await admission.json();
     const token = admissionBody.result?.structuredContent?.confirmation_token;
     assert.equal(typeof token, "string");
-    assert.equal(resolveCadPrepareSessionByToken(token), sessionId);
+    logicalSessionKey = sessions.get(sessionId)?.logicalSessionKey;
+    assert.equal(typeof logicalSessionKey, "string");
+    assert.notEqual(logicalSessionKey, sessionId);
+    assert.equal(resolveCadPrepareSessionByToken(token), logicalSessionKey);
 
     // Simulate the connector opening a fresh MCP transport/session for the
     // next tool call while the ChatGPT conversation is still the same.
     const rotatedInit = await fetch(url, {
       method: "POST",
-      headers: baseHeaders,
+      headers: chatAHeaders,
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 30,
@@ -539,9 +548,13 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
     rotatedSessionId = rotatedInit.headers.get("mcp-session-id");
     assert.ok(rotatedSessionId);
     assert.notEqual(rotatedSessionId, sessionId);
+    assert.equal(
+      sessions.get(rotatedSessionId)?.logicalSessionKey,
+      logicalSessionKey
+    );
 
     const rotatedHeaders = {
-      ...baseHeaders,
+      ...chatAHeaders,
       "mcp-session-id": rotatedSessionId,
       "mcp-protocol-version": LATEST_PROTOCOL_VERSION,
     };
@@ -602,7 +615,7 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
     const recoveryToken =
       rotatedAdmissionBody.result?.structuredContent?.confirmation_token;
     assert.equal(typeof recoveryToken, "string");
-    assert.equal(resolveCadPrepareSessionByToken(recoveryToken), rotatedSessionId);
+    assert.equal(resolveCadPrepareSessionByToken(recoveryToken), logicalSessionKey);
 
     const closed = await fetch(url, {
       method: "DELETE",
@@ -612,11 +625,11 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
 
     await new Promise((resolve) => setTimeout(resolve, 35));
     assert.equal(sessions.get(rotatedSessionId), undefined);
-    assert.equal(resolveCadPrepareSessionByToken(recoveryToken), rotatedSessionId);
+    assert.equal(resolveCadPrepareSessionByToken(recoveryToken), logicalSessionKey);
 
     const confirmed = await fetch(url, {
       method: "POST",
-      headers: baseHeaders,
+      headers: chatAHeaders,
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 3,
@@ -644,7 +657,7 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
 
     const unrelated = await fetch(url, {
       method: "POST",
-      headers: baseHeaders,
+      headers: chatAHeaders,
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 4,
@@ -667,19 +680,109 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
   } finally {
     sessions.stopCleanup();
     await sessions.closeAll("integration test cleanup");
-    if (sessionId) {
-      clearCadPrepare(sessionId);
-      revokeSessionAdmissions(sessionId);
-    }
-    if (rotatedSessionId) {
-      releaseSessionWork(rotatedSessionId);
-      clearCadPrepare(rotatedSessionId);
-      revokeSessionAdmissions(rotatedSessionId);
+    if (logicalSessionKey) {
+      releaseSessionWork(logicalSessionKey);
+      clearCadPrepare(logicalSessionKey);
+      revokeSessionAdmissions(logicalSessionKey);
     }
     await new Promise((resolve) => httpServer.close(resolve));
     if (previousRoot === undefined) delete process.env.CADGPT_APPDATA_ROOT;
     else process.env.CADGPT_APPDATA_ROOT = previousRoot;
     await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+
+test("existing MCP transport rejects conflicting OpenAI conversation identity", async () => {
+  const express = (await import("express")).default;
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const { LATEST_PROTOCOL_VERSION } = await import(
+    "@modelcontextprotocol/sdk/types.js"
+  );
+  const { createSessionManager } = await import(
+    "../dist/cadgpt/lib/mcp-session-manager.js"
+  );
+  const { routeMcpPost } = await import(
+    "../dist/cadgpt/lib/mcp-post-routing.js"
+  );
+
+  const app = express();
+  app.use(express.json());
+  const httpServer = app.listen(0, "127.0.0.1");
+  await new Promise((resolve, reject) => {
+    if (httpServer.listening) return resolve();
+    httpServer.once("listening", resolve);
+    httpServer.once("error", reject);
+  });
+  const address = httpServer.address();
+  assert.ok(address && typeof address === "object");
+  const port = address.port;
+  const route = "/mcp/identity-conflict";
+
+  const sessions = createSessionManager(port, {
+    createServer: () =>
+      new McpServer(
+        { name: "cadgpt-identity-test", version: "0.1.0" },
+        { capabilities: { tools: {} } }
+      ),
+    cleanupMs: 10,
+    sessionTtlMs: 60_000,
+  });
+
+  app.post(route, async (req, res) => {
+    await routeMcpPost({
+      req,
+      res,
+      sessions,
+      sessionRecovery: true,
+      resolveCadPrepareSessionByToken: () => undefined,
+    });
+  });
+
+  try {
+    const url = `http://127.0.0.1:${port}${route}`;
+    const initHeaders = {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "x-openai-subject": "same-account",
+      "x-openai-session": "chat-A",
+    };
+    const initialized = await fetch(url, {
+      method: "POST",
+      headers: initHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: LATEST_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: "cadgpt-identity-test", version: "0.1.0" },
+        },
+      }),
+    });
+    assert.equal(initialized.ok, true);
+    const sessionId = initialized.headers.get("mcp-session-id");
+    assert.ok(sessionId);
+
+    const conflicting = await fetch(url, {
+      method: "POST",
+      headers: {
+        ...initHeaders,
+        "mcp-session-id": sessionId,
+        "mcp-protocol-version": LATEST_PROTOCOL_VERSION,
+        "x-openai-session": "chat-C",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      }),
+    });
+    assert.equal(conflicting.status, 400);
+  } finally {
+    sessions.stopCleanup();
+    await sessions.closeAll("identity conflict test cleanup");
+    await new Promise((resolve) => httpServer.close(resolve));
   }
 });
 
