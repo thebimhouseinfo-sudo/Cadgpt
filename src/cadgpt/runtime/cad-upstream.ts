@@ -18,6 +18,32 @@ export interface CadUpstreamStatus {
   entry: string;
 }
 
+const STDERR_TAIL_MAX = 16 * 1024;
+
+function appendStderrTail(current: string, chunk: unknown): string {
+  const text =
+    typeof chunk === "string"
+      ? chunk
+      : Buffer.isBuffer(chunk)
+        ? chunk.toString("utf8")
+        : String(chunk ?? "");
+  const next = current + text;
+  return next.length <= STDERR_TAIL_MAX
+    ? next
+    : next.slice(next.length - STDERR_TAIL_MAX);
+}
+
+function enrichCadError(error: unknown, stderrTail: string): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  const stderr = stderrTail.trim();
+  if (!stderr || message.includes(stderr)) {
+    return error instanceof Error ? error : new Error(message);
+  }
+  return new Error(`${message}\nCAD MCP stderr:\n${stderr}`, {
+    cause: error instanceof Error ? error : undefined,
+  });
+}
+
 class CadUpstream {
   private phase: CadUpstreamPhase = "sleeping";
   private client: Client | null = null;
@@ -64,6 +90,7 @@ class CadUpstream {
       this.lastError = null;
       return [...this.tools];
     } catch (error) {
+      this.phase = "sleeping";
       this.rememberError(error);
       await this.shutdown();
       throw error;
@@ -92,6 +119,17 @@ class CadUpstream {
         cwd: getRepoRoot(),
         stderr: "pipe",
       });
+      let stderrTail = "";
+      const stderr = transport.stderr;
+      stderr?.on("data", (chunk) => {
+        stderrTail = appendStderrTail(stderrTail, chunk);
+        const text = Buffer.isBuffer(chunk)
+          ? chunk.toString("utf8")
+          : String(chunk ?? "");
+        if (text.trim()) {
+          console.error("[CAD MCP stderr]", text.trimEnd());
+        }
+      });
 
       const timeoutMs = Math.max(1000, Number(process.env.CAD_MCP_CONNECT_TIMEOUT_MS || 15000));
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -110,8 +148,9 @@ class CadUpstream {
         console.log(`[CAD MCP] connected; ${this.tools.length} tool(s) discovered`);
       } catch (error) {
         await transport.close().catch(() => undefined);
-        this.rememberError(error);
-        throw error;
+        const enriched = enrichCadError(error, stderrTail);
+        this.rememberError(enriched);
+        throw enriched;
       } finally {
         if (timer) clearTimeout(timer);
       }
