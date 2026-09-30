@@ -434,7 +434,7 @@ export function createSessionManager(
         if (!requestLogicalKey || requestLogicalKey !== session.logicalSessionKey) {
           logContinuityRequest(req, "session_manager_identity_rejected", {
             expected_logical_session: continuityFingerprint(session.logicalSessionKey),
-            presented_logical_session: continuityFingerprint(requestLogicalKey),
+            presented_logical_session: continuityFingerprint(requestLogicalKey ?? undefined),
           });
           res.status(400).json({
             jsonrpc: "2.0",
@@ -482,7 +482,7 @@ export function createSessionManager(
       if (!requestLogicalKey || requestLogicalKey !== logicalKey) {
         logContinuityRequest(req, "session_manager_logical_identity_rejected", {
           expected_logical_session: continuityFingerprint(logicalKey),
-          presented_logical_session: continuityFingerprint(requestLogicalKey),
+          presented_logical_session: continuityFingerprint(requestLogicalKey ?? undefined),
         });
         return false;
       }
