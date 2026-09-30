@@ -3,10 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import {
-  adoptSessionAdmission,
-  assertSessionClaimed,
-} from "../lib/admission.js";
+import { assertSessionClaimed } from "../lib/admission.js";
 import { getTrayStatePath } from "../lib/appdata.js";
 
 export interface CadPrepareDrawing {
@@ -80,25 +77,6 @@ function sameDrawingList(
       item.full_name === other.full_name
     );
   });
-}
-
-function adoptPendingForSession(
-  pending: PendingCadPrepare,
-  sessionKey: string
-): PendingCadPrepare {
-  const current = pendingBySession.get(sessionKey);
-  if (current && current !== pending) removePending(current);
-
-  if (pending.sessionKey !== sessionKey) {
-    if (pendingBySession.get(pending.sessionKey) === pending) {
-      pendingBySession.delete(pending.sessionKey);
-    }
-    pending.sessionKey = sessionKey;
-  }
-
-  pendingBySession.set(sessionKey, pending);
-  pendingByToken.set(pending.token, pending);
-  return pending;
 }
 
 export function resolveCadPrepareSessionByToken(
@@ -361,26 +339,29 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
 
 export function beginCadPrepareConfirm(
   sessionKey: string,
-  confirmationToken: string,
+  confirmationToken: string | undefined,
   choiceKey: string
-): CadPrepareDrawing {
+): { drawing: CadPrepareDrawing; confirmationToken: string } {
   cleanupPending();
 
-  // The MCP transport/session id may rotate between the list response and the
-  // user's drawing selection. The opaque prepare token identifies that
-  // selection state and may rebind it to the current logical tool session.
   let pending = pendingBySession.get(sessionKey);
-  if (!pending || pending.token !== confirmationToken) {
-    const tokenPending = pendingByToken.get(confirmationToken);
-    if (tokenPending) {
-      pending = adoptPendingForSession(tokenPending, sessionKey);
+  const suppliedToken = confirmationToken?.trim();
+
+  if (suppliedToken) {
+    const tokenPending = pendingByToken.get(suppliedToken);
+    if (!tokenPending || tokenPending.sessionKey !== sessionKey) {
+      pending = undefined;
+    } else {
+      pending = tokenPending;
     }
   }
 
+  const effectiveToken = suppliedToken || pending?.token;
   if (
     !pending ||
-    pending.token !== confirmationToken ||
-    pendingByToken.get(confirmationToken) !== pending ||
+    !effectiveToken ||
+    pending.token !== effectiveToken ||
+    pendingByToken.get(effectiveToken) !== pending ||
     pending.state !== "ready"
   ) {
     throw new Error(
@@ -414,7 +395,10 @@ export function beginCadPrepareConfirm(
   }
 
   pending.state = "in_flight";
-  return matches[0];
+  return {
+    drawing: matches[0],
+    confirmationToken: effectiveToken,
+  };
 }
 
 export function commitCadPrepareConfirm(
@@ -472,24 +456,28 @@ export function registerCadPrepareConfirmTool(
       description:
         "Start the CadGPT workspace from exactly one drawing previously shown in the tray-backed list. The user only needs to choose that drawing by number, name, or full path; confirmation_token is internal continuity state across MCP transport churn. This transition starts full CAD MCP, verifies the drawing live, binds one DrawingContext, and creates/reuses work authority.",
       inputSchema: {
-        confirmation_token: z.string().min(1),
+        confirmation_token: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Optional backward-compatible internal continuity token. Normal user flow supplies only choice_key."
+          ),
         choice_key: z.string().min(1),
       },
     },
     async ({ confirmation_token, choice_key }) => {
-      const preparedSession = resolveCadPrepareSessionByToken(confirmation_token);
-      if (preparedSession && preparedSession !== options.sessionKey) {
-        adoptSessionAdmission(preparedSession, options.sessionKey);
-      }
-
-      const drawing = beginCadPrepareConfirm(
+      const prepared = beginCadPrepareConfirm(
         options.sessionKey,
         confirmation_token,
         choice_key
       );
       try {
-        const activated = await options.activateWorkspace(drawing);
-        commitCadPrepareConfirm(options.sessionKey, confirmation_token);
+        const activated = await options.activateWorkspace(prepared.drawing);
+        commitCadPrepareConfirm(
+          options.sessionKey,
+          prepared.confirmationToken
+        );
         return {
           content: [{ type: "text" as const, text: activated.text }],
           structuredContent: {
@@ -499,7 +487,10 @@ export function registerCadPrepareConfirmTool(
           },
         };
       } catch (error) {
-        rollbackCadPrepareConfirm(options.sessionKey, confirmation_token);
+        rollbackCadPrepareConfirm(
+          options.sessionKey,
+          prepared.confirmationToken
+        );
         throw error;
       }
     }
