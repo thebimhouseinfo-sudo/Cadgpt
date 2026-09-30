@@ -750,6 +750,7 @@ test("existing MCP transport rejects conflicting OpenAI conversation identity", 
         { name: "cadgpt-identity-test", version: "0.1.0" },
         { capabilities: { tools: {} } }
       ),
+    deleteGraceMs: 10,
     cleanupMs: 10,
     sessionTtlMs: 60_000,
   });
@@ -762,6 +763,17 @@ test("existing MCP transport rejects conflicting OpenAI conversation identity", 
       sessionRecovery: true,
       resolveCadPrepareSessionByToken: () => undefined,
     });
+  });
+
+  app.delete(route, async (req, res) => {
+    const sessionId = req.headers["mcp-session-id"];
+    const session =
+      typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
+    if (!session) {
+      sessions.sendNotFound(res, req.body?.id ?? null);
+      return;
+    }
+    await sessions.handleExisting(session, req, res, req.body);
   });
 
   try {
@@ -819,6 +831,58 @@ test("existing MCP transport rejects conflicting OpenAI conversation identity", 
       }),
     });
     assert.equal(conflicting.status, 400);
+
+    const boundHeaders = {
+      ...initHeaders,
+      "mcp-session-id": sessionId,
+      "mcp-protocol-version": LATEST_PROTOCOL_VERSION,
+    };
+    const closed = await fetch(url, {
+      method: "DELETE",
+      headers: boundHeaders,
+    });
+    assert.equal(closed.ok, true);
+
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    assert.equal(sessions.get(sessionId), undefined);
+
+    const staleConflict = await fetch(url, {
+      method: "POST",
+      headers: {
+        ...boundHeaders,
+        "x-openai-session": "chat-C",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      }),
+    });
+    assert.equal(staleConflict.status, 400);
+
+    const staleMissing = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "mcp-session-id": sessionId,
+        "mcp-protocol-version": LATEST_PROTOCOL_VERSION,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      }),
+    });
+    assert.equal(staleMissing.status, 400);
+
+    const recovered = await fetch(url, {
+      method: "POST",
+      headers: boundHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      }),
+    });
+    assert.equal(recovered.ok, true);
   } finally {
     sessions.stopCleanup();
     await sessions.closeAll("identity conflict test cleanup");
