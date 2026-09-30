@@ -295,7 +295,6 @@ test("CAD prepare survives repeated launch and MCP session churn, while remainin
     clearCadPrepare("prepare-session-a");
     clearCadPrepare("prepare-session-b");
     revokeSessionAdmissions("prepare-session-a");
-    revokeSessionAdmissions("prepare-session-a-rotated");
     revokeSessionAdmissions("prepare-session-b");
     if (previous === undefined) delete process.env.CADGPT_APPDATA_ROOT;
     else process.env.CADGPT_APPDATA_ROOT = previous;
