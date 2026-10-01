@@ -30,8 +30,8 @@ test("curated CAD working knowledge is loaded into MCP instructions", async () =
     path.join(repoRoot, "knowledge", "cad", "WORKING_KNOWLEDGE.md"),
     "utf8"
   );
-  const lessons = await fs.readFile(
-    path.join(repoRoot, "knowledge", "cad", "LESSONS_LOG.md"),
+  const errorLog = await fs.readFile(
+    path.join(repoRoot, "knowledge", "cad", "ERROR_LOG.md"),
     "utf8"
   );
 
@@ -40,6 +40,6 @@ test("curated CAD working knowledge is loaded into MCP instructions", async () =
   assert.match(source, /CADGPT CURATED WORKING KNOWLEDGE/);
   assert.match(knowledge, /Intent routing inside an active CAD workspace/);
   assert.match(knowledge, /Perform the requested work through CadGPT CAD tools/);
-  assert.match(lessons, /raw evidence/i);
-  assert.match(lessons, /do not change ChatGPT behavior automatically/i);
+  assert.match(errorLog, /raw product evidence/i);
+  assert.match(errorLog, /do not change ChatGPT behavior automatically/i);
 });
