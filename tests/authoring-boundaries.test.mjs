@@ -139,7 +139,7 @@ test("server upgrade block stages successor instead of releasing FILE work first
   const start = serverSource.indexOf(
     "upgradeToHybrid: async (previousExecutionId, authorityToken, drawingSelector) => {"
   );
-  const end = serverSource.indexOf("\n  });\n\n  return server;", start);
+  const end = serverSource.indexOf("\n\n  return server;", start);
   assert.ok(start >= 0 && end > start);
   const block = serverSource.slice(start, end);
   assert.match(block, /createSuccessorWorkRegistration/);
