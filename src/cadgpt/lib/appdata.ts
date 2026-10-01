@@ -22,7 +22,9 @@ export type AppDataArea =
  * CADGPT_APPDATA_ROOT may override this for development/tests.
  *
  * The historical relative value "appdata" is treated as unset so old source
- * checkouts automatically stop using the repository as user AppData.
+ * checkouts automatically migrate to the per-user default. Any configured path
+ * resolving inside <repo>/appdata is rejected so normal/dev/test flows cannot
+ * recreate the removed repository-local data tree.
  */
 export function getAppDataRoot(): string {
   const configuredRaw = (process.env.CADGPT_APPDATA_ROOT || "").trim();
@@ -30,9 +32,22 @@ export function getAppDataRoot(): string {
     configuredRaw.toLowerCase() === "appdata" ? "" : configuredRaw;
 
   if (configured) {
-    return path.isAbsolute(configured)
+    const resolved = path.isAbsolute(configured)
       ? path.resolve(configured)
       : path.resolve(REPO_ROOT, configured);
+    const forbiddenRepoAppData = path.resolve(REPO_ROOT, "appdata");
+    const relativeToForbidden = path.relative(forbiddenRepoAppData, resolved);
+    if (
+      resolved === forbiddenRepoAppData ||
+      (relativeToForbidden &&
+        !relativeToForbidden.startsWith("..") &&
+        !path.isAbsolute(relativeToForbidden))
+    ) {
+      throw new Error(
+        "CADGPT_APPDATA_ROOT_REPO_LOCAL_FORBIDDEN: repository-root appdata is not a valid CadGPT data root. Use %LOCALAPPDATA%\\CadGPT or an explicit external dev/test path."
+      );
+    }
+    return resolved;
   }
 
   if (process.platform === "win32") {
