@@ -98,6 +98,33 @@ test("permanent tbhloader is fail-fast and resolves children from CadGPT load co
   assert.doesNotMatch(source, /tbhloader\.lsp/i);
 });
 
+test("permanent tbhloader child list exactly matches registered toolkit components", async () => {
+  const { listBundledLispEntries } = await import(
+    "../dist/cadgpt/lib/bundled-assets.js"
+  );
+  const source = await fs.readFile(
+    path.join(
+      repoRoot,
+      "resources",
+      "cad",
+      "internal-lisp",
+      "tbh-toolkit",
+      "tbhloader.lsp"
+    ),
+    "utf8"
+  );
+
+  const listed = [...source.matchAll(/^  "([^"]+\.lsp)"\s*$/gim)]
+    .map((match) => match[1].replaceAll("\\\\", "/"))
+    .sort((a, b) => a.localeCompare(b));
+  const expected = (await listBundledLispEntries())
+    .filter((entry) => entry.library_id === "tbh-toolkit")
+    .map((entry) => entry.relative_path)
+    .sort((a, b) => a.localeCompare(b));
+
+  assert.deepEqual(listed, expected);
+});
+
 test("CAD verified loader publishes and clears the source directory around load", async () => {
   const source = await fs.readFile(
     path.join(repoRoot, "runtimes", "cad-mcp", "services", "lisp_service.py"),
