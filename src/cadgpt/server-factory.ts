@@ -12,6 +12,8 @@ import {
   createWorkRegistration,
   createSuccessorWorkRegistration,
   commitSuccessorWorkRegistration,
+  clearSessionWorkStopBarrier,
+  markSessionWorkStopped,
   releaseWorkRegistration,
   releaseSessionWork,
   runWithToolLease,
@@ -46,6 +48,7 @@ import {
   clearCadPrepare,
 } from "./tools/cad-launcher.js";
 import { cleanupExecutionState } from "./runtime/execution-cleanup.js";
+import { withCadHostLock } from "./runtime/cad-scheduler.js";
 
 const loadedByServer = new WeakMap<McpServer, Set<string>>();
 const registeredSurfaceByServer = new WeakMap<McpServer, Set<string>>();
@@ -320,6 +323,7 @@ export function createMcpServer(sessionKey: string): McpServer {
         if (cleanupId) await cleanupExecutionState(cleanupId);
       }
 
+      clearSessionWorkStopBarrier(sessionKey);
       const work = createWorkRegistration({
         sessionKey,
         ownerType: "direct-cad",
@@ -335,13 +339,14 @@ export function createMcpServer(sessionKey: string): McpServer {
           work.executionId
         );
         const { cadUpstream } = await import("./runtime/cad-upstream.js");
-        await cadUpstream.activate();
-
         const { bindDrawingForExecution } = await import(
           "./session/drawing-binding.js"
         );
         const selector = drawing.full_name || drawing.name;
-        const bound = await bindDrawingForExecution(work.executionId, selector);
+        const bound = await withCadHostLock("autocad", async () => {
+          await cadUpstream.activate();
+          return bindDrawingForExecution(work.executionId, selector);
+        });
 
         const { listRegisteredJobs } = await import("./tools/jobs.js");
         const jobs = await listRegisteredJobs();
@@ -433,6 +438,7 @@ export function createMcpServer(sessionKey: string): McpServer {
       return lines.join("\n");
     },
     stopCurrentWork: async () => {
+      markSessionWorkStopped(sessionKey);
       const activeExecution = activeExecutionForSession(sessionKey);
       if (!activeExecution) {
         return { stopped: false, pending: false };
@@ -452,6 +458,7 @@ export function createMcpServer(sessionKey: string): McpServer {
     onActive: async ({ bareLaunch }) => {
       await loadDiscoveryFamily(server);
       if (!bareLaunch) return;
+      clearSessionWorkStopBarrier(sessionKey);
       const launch = await prepareCadLaunch(sessionKey);
       return {
         launch_mode: launch.mode,
