@@ -112,6 +112,15 @@ export function registerCadGptControlTool(
             execution_path: z.string().optional(),
             enable_capability: z.string().optional(),
             development_only: z.boolean().optional(),
+            active_work_handle: z
+              .object({
+                execution_id: z.string(),
+                authority_token: z.string(),
+                execution_path: z.string(),
+                owner_id: z.string(),
+              })
+              .optional()
+              .describe("Present when start_new_work=false and work is already active. Use these credentials directly for all file/job/lisp/cad tool calls."),
           })
           .optional(),
       },
@@ -183,6 +192,12 @@ export function registerCadGptControlTool(
             execution_path?: string;
             enable_capability?: string;
             development_only?: boolean;
+            active_work_handle?: {
+              execution_id: string;
+              authority_token: string;
+              execution_path: string;
+              owner_id: string;
+            };
           }
         | undefined;
 
@@ -190,13 +205,19 @@ export function registerCadGptControlTool(
         if (activeWork && (activeWork.executionPath === "file" || activeWork.executionPath === "hybrid")) {
           continuationPolicy = {
             existing_work_action:
-              "Reuse the current work_handle. If MCP transport/session changed, resume that handle first; do not replace an existing HYBRID drawing workspace for Lisp/Job authoring.",
+              "Reuse the current work_handle: compatible work is already active. Use the active_work_handle credentials (execution_id + authority_token) directly for all file/job/lisp tool calls. Do not call cadgpt_work_start again. Do not replace an existing HYBRID drawing workspace for Lisp/Job authoring.",
             start_new_work: false,
+            active_work_handle: {
+              execution_id: activeWork.executionId,
+              authority_token: activeWork.authorityToken,
+              execution_path: activeWork.executionPath,
+              owner_id: activeWork.ownerId,
+            },
           };
         } else {
           continuationPolicy = {
             existing_work_action:
-              "No compatible FILE/HYBRID work is active. Start independent FILE work, then use the authoring tools. A drawing workspace is not required.",
+              "No compatible FILE/HYBRID work is active. Call cadgpt_work_start(owner_type=file, owner_id=job-authoring or lisp-authoring, execution_path=file) to get execution_id + authority_token, then use those for all authoring tool calls.",
             start_new_work: true,
             owner_type: "file",
             owner_id: surface === "cl" ? "lisp-authoring" : "job-authoring",

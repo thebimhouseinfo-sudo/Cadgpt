@@ -10,9 +10,11 @@ import {
   activeWorkForSession,
   acquireToolLease,
   createWorkRegistration,
+  enableWorkCapability,
   releaseSessionWork,
   runWithToolLease,
   setWorkExpirationHandler,
+  validateWorkHandle,
   isDevelopmentBuild,
   type ExecutionPath,
 } from "./lib/work-registration.js";
@@ -73,11 +75,11 @@ function configureToolRegistration(server: McpServer, sessionKey: string): void 
             execution_id: z
               .string()
               .min(1)
-              .describe("execution_id returned by cadgpt_work_start"),
+              .describe("execution_id from work_handle returned by cadgpt_cad_confirm (drawing workspace) or cadgpt_work_start (file/job work)"),
             authority_token: z
               .string()
               .min(1)
-              .describe("opaque authority_token returned by cadgpt_work_start"),
+              .describe("authority_token from work_handle returned by cadgpt_cad_confirm (drawing workspace) or cadgpt_work_start (file/job work)"),
           }
         : {};
 
@@ -280,9 +282,10 @@ export function createMcpServer(sessionKey: string): McpServer {
         "The user launches CadGPT once per ChatGPT conversation, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt or @cg. The connector may replace its underlying MCP transport/session without requiring the user to launch again.",
         "On a bare plugin/icon or bare @cadgpt or @cg launch, call cadgpt_admission once. If that launch also contains a real task, claim the session and continue directly instead of forcing the generic Welcome. After the session is claimed, do not call admission again on every turn.",
         "Never carry admission or work authority into another ChatGPT conversation, memory, unrelated files, paths, or AutoCAD state. CadGPT binds replacement MCP transports to the connector-provided logical ChatGPT conversation identity; unrelated conversations remain isolated.",
-        "Bare @cadgpt or bare CG/plugin launch makes the session READY, not WORK ACTIVE. Work becomes ACTIVE only after cadgpt_work_start.",
+        "Bare @cadgpt or bare CG/plugin launch makes the session READY, not WORK ACTIVE. Work becomes ACTIVE only after cadgpt_work_start or cadgpt_cad_confirm.",
         "CadGPT session claim is routing state only; it is not an execution credential and has no per-turn token.",
-        "Actual FILE/CAD work begins with cadgpt_work_start. The returned work_handle (execution_id + authority_token) is the only execution credential. Lisp/Job authoring, register, import and export are FILE work and do not require a drawing workspace.",
+        "Actual FILE/CAD work begins with cadgpt_work_start (for file/job/lisp work) or cadgpt_cad_confirm (for drawing workspace). The returned work_handle (execution_id + authority_token) is the only execution credential. Lisp/Job authoring, register, import and export are FILE work and do not require a drawing workspace.",
+        "CRITICAL — CAD tools after workspace ready: When cadgpt_cad_confirm returns cad_tools_ready=true, ALL tools listed in cad_proxy_tools (e.g. cad__cad_list_layers, cad__cad_list_entities, etc.) are immediately callable. Pass execution_id and authority_token from work_handle as required parameters in EVERY cad__* and drawing_* tool call. The empty work_capabilities array is normal for a drawing workspace and does NOT mean tools are unavailable — it is an internal privilege flag unrelated to the MCP tool surface.",
         "Reuse the active work_handle for later compatible requests in the same chat. Do not call cadgpt_work_start again unless there is no active work or the owner/execution path must change.",
         "If the connector replaces the MCP transport/session inside the same ChatGPT conversation, continue normal work on the replacement transport. CadGPT rehydrates the required lazy tool families from logical conversation state; do not create a new work generation merely because transport identity changed.",
         "Normal same-conversation MCP transport rotation must not require a model-visible resume step. cadgpt_work_resume and continuation fields remain compatibility/recovery tools for explicit handle recovery, not prerequisites for ordinary cg/*, Job/Lisp, or CAD continuation.",
@@ -366,6 +369,9 @@ export function createMcpServer(sessionKey: string): McpServer {
           "```",
         ];
 
+        const { cadProxySurfaceSnapshot } = await import("./tools/cad-proxy.js");
+        const cadSurface = cadProxySurfaceSnapshot(server);
+
         return {
           text: lines.join("\n"),
           work_handle: {
@@ -379,8 +385,11 @@ export function createMcpServer(sessionKey: string): McpServer {
             generation: work.generation,
           },
           tool_surface: toolSurface,
+          cad_tools_ready: true,
+          cad_proxy_tool_count: cadSurface.count,
+          cad_proxy_tools: cadSurface.tools,
           note:
-            "work_capabilities are execution privilege flags, not the MCP tool list. tool_surface reports the exposed families/proxies.",
+            "work_capabilities are execution privilege flags (empty for standard CAD workspace), not the MCP tool list. All cad__* proxy tools listed in cad_proxy_tools are immediately callable using the work_handle (execution_id + authority_token). tool_surface reports the exposed tool families.",
           drawing: bound,
         };
       } catch (error) {
@@ -457,6 +466,95 @@ export function createMcpServer(sessionKey: string): McpServer {
     sessionKey,
     prepareFamilies: (executionPath, ownerId, executionId) =>
       prepareFamilies(server, executionPath, ownerId, executionId),
+    upgradeToHybrid: async (previousExecutionId, authorityToken, drawingSelector) => {
+      const previousWork = validateWorkHandle(
+        previousExecutionId,
+        authorityToken,
+        sessionKey
+      );
+
+      const cleanupId = releaseSessionWork(sessionKey);
+      if (cleanupId) await cleanupExecutionState(cleanupId);
+
+      let work = createWorkRegistration({
+        sessionKey,
+        ownerType: previousWork.ownerType,
+        ownerId: previousWork.ownerId,
+        executionPath: "hybrid",
+      });
+
+      if (previousWork.capabilities.includes("cad-mcp-dev")) {
+        work = enableWorkCapability(
+          work.executionId,
+          work.authorityToken,
+          sessionKey,
+          "cad-mcp-dev"
+        );
+      }
+
+      try {
+        const toolSurface = await prepareFamilies(
+          server,
+          "hybrid",
+          work.ownerId,
+          work.executionId
+        );
+        const { cadUpstream } = await import("./runtime/cad-upstream.js");
+        await cadUpstream.activate();
+
+        const { bindDrawingForExecution, listOpenDrawings } = await import(
+          "./session/drawing-binding.js"
+        );
+        let targetSelector = drawingSelector?.trim();
+        if (
+          !targetSelector ||
+          targetSelector.toUpperCase() === "CURRENT" ||
+          targetSelector.toUpperCase() === "ACTIVE"
+        ) {
+          const openDocs = await listOpenDrawings();
+          if (openDocs.length === 0) {
+            throw new Error(
+              "NO_OPEN_DRAWINGS: AutoCAD has no open drawings to bind. Please open or create a drawing in AutoCAD first."
+            );
+          }
+          const activeDoc =
+            openDocs.find((d) => d.active === true || d.is_active === true) ||
+            openDocs[0];
+          targetSelector = String(activeDoc.full_name || activeDoc.name);
+        }
+
+        const bound = await bindDrawingForExecution(
+          work.executionId,
+          targetSelector
+        );
+        const { cadProxySurfaceSnapshot } = await import("./tools/cad-proxy.js");
+        const cadSurface = cadProxySurfaceSnapshot(server);
+
+        return {
+          work_handle: {
+            execution_id: work.executionId,
+            authority_token: work.authorityToken,
+            owner_type: work.ownerType,
+            owner_id: work.ownerId,
+            job_id: work.jobId,
+            execution_path: work.executionPath,
+            capabilities: work.capabilities,
+            work_capabilities: work.capabilities,
+            driver_epoch: work.driverEpoch,
+            generation: work.generation,
+          },
+          drawing: bound as unknown as Record<string, unknown>,
+          tool_surface: toolSurface as Record<string, unknown>,
+          cad_tools_ready: true,
+          cad_proxy_tool_count: cadSurface.count,
+          cad_proxy_tools: cadSurface.tools,
+        };
+      } catch (error) {
+        const cleanupId = releaseSessionWork(sessionKey);
+        if (cleanupId) await cleanupExecutionState(cleanupId);
+        throw error;
+      }
+    },
   });
 
   return server;

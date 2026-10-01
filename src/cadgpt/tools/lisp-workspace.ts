@@ -79,8 +79,14 @@ async function loadRegistry(): Promise<UserRegistry> {
 
 async function assertManagedLibraryExists(libraryId: string): Promise<void> {
   const manifest = await readJson<{ libraries?: Array<Record<string, unknown>> }>(getUserLibrariesManifestPath(), { libraries: [] });
-  const match = (manifest.libraries ?? []).find((item) => item.kind === "lisp" && item.id === libraryId && item.enabled !== false);
-  if (!match) throw new Error(`Enabled managed Lisp library not found in libraries.json: ${libraryId}`);
+  const lispLibraries = (manifest.libraries ?? []).filter((item) => item.kind === "lisp" && item.enabled !== false);
+  const match = lispLibraries.find((item) => item.id === libraryId);
+  if (!match) {
+    const available = lispLibraries.map((item) => String(item.id)).join(", ") || "(none)";
+    throw new Error(
+      `MANAGED_LIBRARY_NOT_FOUND: Enabled managed Lisp library '${libraryId}' not found in libraries.json. Available libraries: [${available}]. You must register/import the library first via library_import or choose an existing library.`
+    );
+  }
 }
 
 function safeRelativeLisp(value: string): string {

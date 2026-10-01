@@ -8,7 +8,7 @@ import { getAllowedRoots, getWritableRoots, resolveAbsoluteMutationPath, resolve
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
-const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv"]);
+const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".py"]);
 
 function sha256(content: string | Buffer): string {
   return createHash("sha256").update(content).digest("hex");

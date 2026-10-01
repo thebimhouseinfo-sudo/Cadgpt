@@ -34,6 +34,14 @@ export interface LispValidationResult {
   };
 }
 
+async function readJson<T>(target: string, fallback: T): Promise<T> {
+  try {
+    return JSON.parse(await fs.readFile(target, "utf8")) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 const COMMON_LISP_ONLY_FORMS = [
   "let", "let*", "flet", "labels", "macrolet", "defmacro", "defpackage", "in-package",
   "defclass", "defgeneric", "defmethod", "loop", "dolist", "dotimes", "do", "do*", "setf",
@@ -331,7 +339,7 @@ export function registerLispHarnessTools(server: McpServer): void {
     "lisp_scaffold",
     {
       title: "Create Canonical AutoLISP Scaffold",
-      description: "Create CadGPT's canonical AutoLISP scaffold. Default profile is CadGPT; target_library_id=tbh-toolkit is the deliberate TBH header exception.",
+      description: "Create CadGPT's canonical AutoLISP scaffold. Default profile is CadGPT; target_library_id=tbh-toolkit is the deliberate TBH header exception. Returns content AND a ready-to-use suggested_draft_path; pass that path directly to file_create.",
       inputSchema: {
         file_name: z.string().regex(/^[^\\/]+\.lsp$/i),
         module: z.string().min(1).max(120),
@@ -344,14 +352,35 @@ export function registerLispHarnessTools(server: McpServer): void {
     },
     async ({ file_name, module, command, description, target_library_id, mutating, uses_com }) => {
       try {
+        const { getLispDraftRoot } = await import("../lib/appdata.js");
         const profile = profileForLibrary(target_library_id);
         const content = makeScaffold({ profile, fileName: file_name, module, command, description, mutating, usesCom: uses_com });
+        const draftRoot = getLispDraftRoot();
+        const suggestedDraftPath = path.join(draftRoot, file_name);
+
+        let libraryStatus: { registered: boolean; library_id: string; note: string } | undefined;
+        if (target_library_id) {
+          const { getUserLibrariesManifestPath } = await import("../lib/appdata.js");
+          const manifest = await readJson<{ libraries?: Array<Record<string, unknown>> }>(getUserLibrariesManifestPath(), { libraries: [] });
+          const found = (manifest.libraries ?? []).some((item: Record<string, unknown>) => item.kind === "lisp" && item.id === target_library_id && item.enabled !== false);
+          libraryStatus = {
+            registered: found,
+            library_id: target_library_id,
+            note: found
+              ? `Target library '${target_library_id}' exists and is ready for promotion.`
+              : `Target library '${target_library_id}' is not yet in libraries.json. You will need to register it via library_import before calling lisp_promote_draft.`,
+          };
+        }
+
         return toolResult("lisp_scaffold", {
           file_name,
           command: command.toUpperCase(),
           authoring_profile: profile,
           content,
-          next: "Create the working file with file_create using an absolute path under the approved Lisp draft root, implement it with absolute-path mutations, then run lisp_draft_validate before CAD load/testing.",
+          draft_root: draftRoot,
+          suggested_draft_path: suggestedDraftPath,
+          ...(libraryStatus ? { library_status: libraryStatus } : {}),
+          next: "Call file_create with path=suggested_draft_path and the content above. Then implement, run lisp_draft_validate, and test with CAD tools.",
         });
       } catch (error) {
         return toolError("lisp_scaffold", error);

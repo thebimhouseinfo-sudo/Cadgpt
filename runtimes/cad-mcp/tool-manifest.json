@@ -1,0 +1,723 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "name": "acad_create_blank_test_document",
+      "description": "Create a new unsaved blank drawing for isolated CadGPT testing.\n\nThis low-level tool is consumed by the outer `drawing_create_test` tool\nand is not intended to be exposed directly to ChatGPT.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "acad_get_active_document",
+      "description": "Return AutoCAD's currently active drawing. Discovery only; not CadGPT binding.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "acad_list_open_documents",
+      "description": "List all open AutoCAD drawings and mark AutoCAD's current active tab. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "acad_set_active_document",
+      "description": "Activate an open drawing and optionally require its lifetime runtime ID.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "document_name": {
+            "type": "string",
+            "default": ""
+          },
+          "runtime_document_id": {
+            "type": "string",
+            "default": ""
+          }
+        }
+      }
+    },
+    {
+      "name": "cad_copy_entities",
+      "description": "Copy explicit entities and return the newly created handles.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "displacement": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "handles",
+          "displacement"
+        ]
+      }
+    },
+    {
+      "name": "cad_create_layer",
+      "description": "Create a named layer in the bound drawing. Does not create geometry.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "color_aci": {
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "cad_execute_delete_preview",
+      "description": "Delete the exact entity snapshot represented by a one-shot preview token.\n\nThe token expires, is tied to the previewed drawing, and is consumed\nbefore deletion starts. If execution is uncertain or interrupted, do not\nretry the same token; preview again and verify current drawing state.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ]
+      }
+    },
+    {
+      "name": "cad_get_block",
+      "description": "Get one block reference by handle, including attribute values.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handle": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "handle"
+        ]
+      }
+    },
+    {
+      "name": "cad_get_current_layer",
+      "description": "Return the current layer of the CadGPT-bound drawing. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "cad_get_entity",
+      "description": "Get one supported entity by AutoCAD handle from the bound drawing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "include_paper_space": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "required": [
+          "handle"
+        ]
+      }
+    },
+    {
+      "name": "cad_host_status",
+      "description": "Return AutoCAD host/version/document diagnostics. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "cad_inventory_layer_objects",
+      "description": "Return structured entity counts grouped by layer and AutoCAD object type.\n\nUse this instead of visual inspection for cleanup/mapping decisions when\nlayer/object evidence is sufficient. The CadGPT proxy enforces the bound\ndrawing before this call.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "include_block_definitions": {
+            "type": "boolean",
+            "default": true
+          },
+          "include_xref_definitions": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cad_list_block_definitions",
+      "description": "List named block definitions and attribute definitions. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "cad_list_blocks",
+      "description": "List block references in the CadGPT-bound drawing. Read-only.\n\nOptional filter fields: layer, handle and limit. The tool is always\nrestricted to block references regardless of any supplied type filter.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "type": "object",
+            "nullable": true
+          }
+        }
+      }
+    },
+    {
+      "name": "cad_list_entities",
+      "description": "List supported entities in the CadGPT-bound drawing. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "type": "object",
+            "nullable": true
+          },
+          "include_paper_space": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cad_list_layers",
+      "description": "List layers and basic state for the CadGPT-bound drawing. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "cad_load_lisp_file",
+      "description": "Load and verify one sandboxed `.lsp` file.\n\nAccepted inputs are the CadGPT virtual Lisp namespaces or canonical\nabsolute paths that resolve inside those same approved roots:\n`resources/cad/**`, `appdata/libraries/lisp/**`,\n`appdata/workspace/lisp-draft/**`, and\n`appdata/runtime/dynamic-lisp/**`. External user source folders and\nabsolute paths outside those roots are rejected.\n\nThe tool waits for an AutoCAD load sentinel and returns `loaded`, error\nevidence, and command-log tail when available. `loaded: false` blocks\ncommand execution and must be debugged before handoff.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    },
+    {
+      "name": "cad_mirror_entities",
+      "description": "Mirror explicit entities while always preserving source entities.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "point1": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "point2": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "handles",
+          "point1",
+          "point2"
+        ]
+      }
+    },
+    {
+      "name": "cad_move_entities",
+      "description": "Move existing entities by a displacement vector. No new geometry is created.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "displacement": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "handles",
+          "displacement"
+        ]
+      }
+    },
+    {
+      "name": "cad_observation_capture_cancel",
+      "description": "Stop capture and discard collected handles without finalization.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "cad_observation_capture_finish",
+      "description": "Stop capture and return surviving top-level candidate headers.\n\nFinalization resolves only handles observed since capture start, drops\nerased/undone/nested/block-definition objects, and returns identity +\nobject type. It never performs a full-drawing scan.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "include_paper_space": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "name": "cad_observation_capture_start",
+      "description": "Start lightweight ObjectAdded capture on the bound drawing.\n\nThe capture phase stores only handles for newly appended drawing\nobjects. It does not enumerate the drawing or read full properties.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "cad_observation_capture_status",
+      "description": "Return lightweight status for the current Observation capture.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "cad_preview_delete_entities",
+      "description": "Preview a non-empty entity filter and return a short-lived delete token.\n\nThis tool never deletes geometry. The returned token captures the exact\nhandle snapshot and drawing identity. Inspect the preview before calling\ncad_execute_delete_preview.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "type": "object"
+          },
+          "include_paper_space": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "filter"
+        ]
+      }
+    },
+    {
+      "name": "cad_read_entity_properties",
+      "description": "Read all discoverable direct properties for one or many entities.\n\nThis tool is read-only and entity-generic. It does not traverse block\ndefinitions, nested entities, or child COM objects.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include_paper_space": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "required": [
+          "handles"
+        ]
+      }
+    },
+    {
+      "name": "cad_rename_layer",
+      "description": "Rename a layer without changing entity geometry.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "old_name": {
+            "type": "string"
+          },
+          "new_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "old_name",
+          "new_name"
+        ]
+      }
+    },
+    {
+      "name": "cad_rotate_entities",
+      "description": "Rotate existing entities around a base point; angle is radians.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "base_point": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "angle": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "handles",
+          "base_point",
+          "angle"
+        ]
+      }
+    },
+    {
+      "name": "cad_run_lisp_command",
+      "description": "Queue a named AutoLISP/AutoCAD command on the CadGPT-bound drawing.\n\nThis is intentionally not a raw command-string tool. Command names are\nrestricted to identifier characters and arguments to scalar strings or\nnumbers. Use only after `cad_load_lisp_file` reports `loaded: true`.\nInteractive Lisp commands should normally be handed to the user after a\nverified load instead of inventing prompt input. Automated commands must\nbe verified with structured CAD postconditions.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ]
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "nullable": true
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "cad_scale_entities",
+      "description": "Scale existing entities about a base point by a positive factor.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "base_point": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "scale_factor": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "handles",
+          "base_point",
+          "scale_factor"
+        ]
+      }
+    },
+    {
+      "name": "cad_set_current_layer",
+      "description": "Set the current layer of the bound drawing. Reversible state change.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "cad_set_entity_color",
+      "description": "Set entity color by ACI; 0=ByBlock, 256=ByLayer.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "color_aci": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "handles",
+          "color_aci"
+        ]
+      }
+    },
+    {
+      "name": "cad_set_entity_layer",
+      "description": "Move specific entities to an existing layer by handle.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "layer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "handles",
+          "layer"
+        ]
+      }
+    },
+    {
+      "name": "cad_set_entity_linetype",
+      "description": "Set entity linetype to ByLayer/ByBlock or a loaded linetype.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "linetype": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "handles",
+          "linetype"
+        ]
+      }
+    },
+    {
+      "name": "cad_set_entity_visibility",
+      "description": "Show or hide specific entities without deleting them.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "visible": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "handles",
+          "visible"
+        ]
+      }
+    },
+    {
+      "name": "cad_set_layer_color",
+      "description": "Set a layer AutoCAD Color Index (1-255).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "color_aci": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "color_aci"
+        ]
+      }
+    },
+    {
+      "name": "cad_set_layer_freeze",
+      "description": "Freeze or thaw a layer in the bound drawing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "frozen": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "frozen"
+        ]
+      }
+    },
+    {
+      "name": "cad_set_layer_lock",
+      "description": "Lock or unlock a layer in the bound drawing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "locked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "locked"
+        ]
+      }
+    },
+    {
+      "name": "cad_set_layer_on",
+      "description": "Turn a layer on or off in the bound drawing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "on": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "on"
+        ]
+      }
+    },
+    {
+      "name": "cad_update_arc",
+      "description": "Update Arc center/radius/angles by handle. Angles are radians.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "center": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "nullable": true
+          },
+          "radius": {
+            "type": "number",
+            "nullable": true
+          },
+          "start_angle": {
+            "type": "number",
+            "nullable": true
+          },
+          "end_angle": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "handle"
+        ]
+      }
+    },
+    {
+      "name": "cad_update_line",
+      "description": "Update Line endpoints by handle. At least one endpoint is required.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "start_point": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "nullable": true
+          },
+          "end_point": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "nullable": true
+          }
+        },
+        "required": [
+          "handle"
+        ]
+      }
+    }
+  ]
+}

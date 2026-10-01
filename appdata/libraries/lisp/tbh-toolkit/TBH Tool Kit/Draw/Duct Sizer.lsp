@@ -1,0 +1,190 @@
+;;; =============================================================================
+;;; TBH-HEADER-START
+;;;
+;;; File        : Duct Sizer.lsp
+;;; Module      : Draw
+;;; Command     : DSIZER
+;;; Description : Analyzes and sizes ducts based on airflow requirements.
+;;;
+;;; 
+;;; Usage       :
+;;; 1. Run command.
+;;; 2. Enter Airflow.
+;;; 3. Select target duct to size according to standard tabular velocities.
+;;; TBH-HEADER-END
+;;; =============================================================================
+(defun c:DSIZER (/ dcl_id status dcl_path loop_dialog)
+  (vl-load-com)
+  
+  ;; --- 1. Generate DCL File Automatically ---
+  (setq dcl_path (make_dcl_dsizer))
+
+  ;; --- 2. Dialog Loop ---
+  (setq loop_dialog t)
+  (while loop_dialog
+    (setq dcl_id (load_dialog dcl_path))
+    (if (not (new_dialog "DuctSizer" dcl_id)) (progn (princ "\n❌ Error: Cannot load DCL.") (exit)))
+    
+    ;; Initialize default values
+    (set_tile "eb_airflow" "")
+    (set_tile "eb_velocity" "")
+    (set_tile "eb_ploss" "1.0")
+    (set_tile "eb_height" "")
+    (set_tile "txt_res_1" "READY TO CALCULATE")
+    (set_tile "txt_res_2" "")
+    (set_tile "txt_res_3" "")
+    (set_tile "txt_res_4" "")
+    (set_tile "txt_res_5" "")
+    (set_tile "txt_res_warn" "")
+
+    ;; Action for Calculate Button
+    (action_tile "btn_calc" "(do_manual_calculate)")
+
+    ;; Action for Close Button
+    (action_tile "cancel" "(setq loop_dialog nil) (done_dialog 0)")
+    
+    (setq status (start_dialog))
+    (unload_dialog dcl_id)
+  )
+  (princ "\n--- DSIZER Closed ---")
+  (princ)
+)
+
+;; ===============================
+;; CALCULATION & UPDATE UI
+;; ===============================
+(defun do_manual_calculate (/ airflow velocity_limit ploss_limit duct_height 
+                             q_m3s air_rho dynamic_visc roughness dh_m v_calc p_calc 
+                             final_dh w_mm re f ratio)
+  
+  (setq airflow (atof (get_tile "eb_airflow"))
+        velocity_limit (atof (get_tile "eb_velocity"))
+        ploss_limit (atof (get_tile "eb_ploss"))
+        duct_height (atof (get_tile "eb_height")))
+  
+  (cond 
+    ((<= airflow 0) (alert "Error: Air Flow must be greater than 0!"))
+    ((<= velocity_limit 0) (alert "Error: Air Velocity must be greater than 0!"))
+    (t 
+      ;; --- Core Calculation Logic ---
+      (setq q_m3s (/ airflow 1000.0)
+            air_rho 1.2
+            dynamic_visc 0.0000181
+            roughness 0.00009)
+
+      (setq dh_m (sqrt (/ (* 4.0 q_m3s) (* pi velocity_limit))))
+      (setq dh_m (/ (round_to_5 (* dh_m 1000.0)) 1000.0))
+
+      (setq v_calc (/ (* 4.0 q_m3s) (* pi (expt dh_m 2))))
+      (setq p_calc (calc_p_drop dh_m v_calc air_rho roughness))
+
+      (while (or (> v_calc velocity_limit) (> p_calc ploss_limit))
+        (setq dh_m (+ dh_m 0.005)) 
+        (setq v_calc (/ (* 4.0 q_m3s) (* pi (expt dh_m 2))))
+        (setq p_calc (calc_p_drop dh_m v_calc air_rho roughness))
+      )
+
+      (setq final_dh (* dh_m 1000.0))
+
+      ;; --- Update Results ---
+      (if (<= duct_height 0)
+          (progn ;; Circular
+            (setq re (/ (* air_rho v_calc dh_m) dynamic_visc))
+            (setq f (calc_friction_factor re roughness dh_m))
+            (set_tile "txt_res_1" "TYPE: CIRCULAR DUCT")
+            (set_tile "txt_res_2" (strcat "DIAMETER: " (rtos final_dh 2 0) " mm"))
+            (set_tile "txt_res_3" (strcat "VELOCITY: " (rtos v_calc 2 2) " m/s"))
+            (set_tile "txt_res_4" (strcat "PRESS. LOSS: " (rtos p_calc 2 4) " Pa/m"))
+            (set_tile "txt_res_5" (strcat "FRICTION: " (rtos f 2 4)))
+            (set_tile "txt_res_warn" "")
+          )
+          (progn ;; Rectangular
+            (setq w_mm (/ (* final_dh (+ duct_height final_dh)) (* 2.0 duct_height)))
+            (setq w_mm (round_to_5 w_mm))
+            (setq dh_m (/ (/ (* 2.0 w_mm duct_height) (+ w_mm duct_height)) 1000.0))
+            (setq v_calc (/ q_m3s (/ (* w_mm duct_height) 1000000.0)))
+            (setq p_calc (calc_p_drop dh_m v_calc air_rho roughness))
+            (setq ratio (/ (max w_mm duct_height) (min w_mm duct_height)))
+
+            (set_tile "txt_res_1" "TYPE: RECTANGULAR DUCT")
+            (set_tile "txt_res_2" (strcat "SIZE: " (rtos w_mm 2 0) " x " (rtos duct_height 2 0) " mm"))
+            (set_tile "txt_res_3" (strcat "VELOCITY: " (rtos v_calc 2 2) " m/s"))
+            (set_tile "txt_res_4" (strcat "PRESS. LOSS: " (rtos p_calc 2 4) " Pa/m"))
+            (set_tile "txt_res_5" (strcat "RATIO: 1 : " (rtos ratio 2 1)))
+            
+            (cond 
+              ((> ratio 6) (set_tile "txt_res_warn" "!! WARNING: RATIO > 1:6 !!"))
+              ((> ratio 4) (set_tile "txt_res_warn" "!! WARNING: RATIO > 1:4 !!"))
+              (t (set_tile "txt_res_warn" ""))
+            )
+          )
+      )
+    )
+  )
+)
+
+;; ===============================
+;; GENERATE DCL (Compact UI)
+;; ===============================
+(defun make_dcl_dsizer (/ f_path f)
+  (setq f_path (strcat (getvar "TEMPPREFIX") "DuctSizer_AutoGenerated.dcl"))
+  (setq f (open f_path "w"))
+  (write-line "DuctSizer : dialog {" f)
+  (write-line "    label = \"DUCT SIZING CALCULATOR\";" f)
+  (write-line "    : column {" f)
+  (write-line "        width = 50;" f) ;; Reduce overall width
+  (write-line "        : boxed_column {" f)
+  (write-line "            label = \"INPUTS\";" f)
+  (write-line "            : edit_box { label = \"Air Flow (L/s)      :\"; key = \"eb_airflow\"; edit_width = 10; }" f)
+  (write-line "            : edit_box { label = \"Velocity (m/s)      :\"; key = \"eb_velocity\"; edit_width = 10; }" f)
+  (write-line "            : edit_box { label = \"Press. Loss (Pa/m)  :\"; key = \"eb_ploss\"; edit_width = 10; }" f)
+  (write-line "            : edit_box { label = \"Duct Height (mm)    :\"; key = \"eb_height\"; edit_width = 10; }" f)
+  (write-line "        }" f)
+  (write-line "        : boxed_column {" f)
+  (write-line "            label = \"RESULTS\";" f)
+  (write-line "            : column { alignment = centered;" f)
+  (write-line "                : text { key = \"txt_res_1\"; }" f)
+  (write-line "                : text { key = \"txt_res_2\"; }" f)
+  (write-line "                : text { key = \"txt_res_3\"; }" f)
+  (write-line "                : text { key = \"txt_res_4\"; }" f)
+  (write-line "                : text { key = \"txt_res_5\"; }" f)
+  (write-line "                : text { key = \"txt_res_warn\"; color = red; }" f)
+  (write-line "            }" f)
+  (write-line "        }" f)
+  (write-line "    }" f)
+  (write-line "    : row {" f)
+  (write-line "        alignment = centered;" f)
+  (write-line "        : button { label = \"Calculate\"; key = \"btn_calc\"; width = 15; fixed_width = true; }" f)
+  (write-line "        : button { label = \"Close\"; key = \"cancel\"; width = 15; fixed_width = true; is_cancel = true; }" f)
+  (write-line "    }" f)
+  (write-line "}" f)
+  (close f)
+  f_path
+)
+
+;; --- Helper Functions ---
+(defun calc_friction_factor (re ks dh / f new_f err)
+  (cond
+    ((< re 2000) (/ 64.0 re))
+    ((>= re 4000)
+     (setq f 0.02 err 1.0)
+     (while (> err 0.00001)
+       (setq new_f (/ 1.0 (expt (* -2.0 (log10 (+ (/ ks (* 3.7 dh)) (/ 2.51 (* Re (sqrt f)))))) 2)))
+       (setq err (abs (- new_f f)))
+       (setq f new_f)
+     )
+     f)
+    (t (/ 0.3164 (expt re 0.25)))
+  )
+)
+
+(defun calc_p_drop (dh v rho ks / f)
+  (setq f (calc_friction_factor (/ (* rho v dh) 0.0000181) ks dh))
+  (* f (/ 1.0 dh) rho (/ (expt v 2) 2.0))
+)
+
+(defun round_to_5 (val) (* (fix (+ (/ val 5.0) 0.5)) 5.0))
+(defun log10 (x) (/ (log x) (log 10.0)))
+
+(princ "\n--- Duct Sizer loaded. Type DSIZER to start. ---")
+(princ)

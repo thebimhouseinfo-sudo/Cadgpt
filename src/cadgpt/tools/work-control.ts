@@ -25,6 +25,18 @@ export function registerWorkControlTools(
       ownerId: string,
       executionId: string
     ) => Promise<Record<string, unknown> | void>;
+    upgradeToHybrid: (
+      previousExecutionId: string,
+      authorityToken: string,
+      drawingSelector?: string
+    ) => Promise<{
+      work_handle: Record<string, unknown>;
+      drawing: Record<string, unknown>;
+      cad_tools_ready: boolean;
+      cad_proxy_tool_count: number;
+      cad_proxy_tools: string[];
+      tool_surface?: Record<string, unknown>;
+    }>;
   }
 ): void {
   server.registerTool(
@@ -39,6 +51,28 @@ export function registerWorkControlTools(
         execution_path: z.enum(["file", "cad", "hybrid"]),
         continuation_execution_id: z.string().min(1).optional(),
         continuation_authority_token: z.string().min(1).optional(),
+      },
+      outputSchema: {
+        ok: z.boolean(),
+        tool: z.string(),
+        summary: z.string(),
+        data: z
+          .object({
+            reused: z.boolean().optional(),
+            work_handle: z
+              .object({
+                execution_id: z.string().describe("Pass to every file/job/lisp/cad tool as execution_id"),
+                authority_token: z.string().describe("Pass to every file/job/lisp/cad tool as authority_token"),
+                owner_type: z.string().optional(),
+                owner_id: z.string().optional(),
+                execution_path: z.string().optional(),
+                generation: z.number().optional(),
+              })
+              .passthrough()
+              .describe("Use execution_id + authority_token for ALL subsequent file_*, job_*, lisp_*, cad__*, drawing_* tool calls."),
+            note: z.string().optional(),
+          })
+          .passthrough(),
       },
     },
     async ({
@@ -112,7 +146,7 @@ export function registerWorkControlTools(
             },
             ...(toolSurface ? { tool_surface: toolSurface } : {}),
             note:
-              "work_capabilities are execution privilege flags, not the MCP tool list. Use tool_surface / tools-list to inspect exposed tools.",
+              "IMPORTANT: Use work_handle.execution_id + work_handle.authority_token as required parameters for every file_*, job_*, lisp_*, cad__*, drawing_* tool call. work_capabilities are internal privilege flags unrelated to tool availability.",
           });
         }
 
@@ -146,7 +180,7 @@ export function registerWorkControlTools(
             },
             ...(toolSurface ? { tool_surface: toolSurface } : {}),
             note:
-              "work_capabilities are execution privilege flags, not the MCP tool list. Use tool_surface / tools-list to inspect exposed tools.",
+              "IMPORTANT: Use work_handle.execution_id + work_handle.authority_token as required parameters for every file_*, job_*, lisp_*, cad__*, drawing_* tool call. work_capabilities are internal privilege flags unrelated to tool availability.",
           });
         }
 
@@ -191,7 +225,7 @@ export function registerWorkControlTools(
           },
           ...(toolSurface ? { tool_surface: toolSurface } : {}),
           note:
-            "work_capabilities are execution privilege flags, not the MCP tool list. Use tool_surface / tools-list to inspect exposed tools.",
+            "IMPORTANT: Use work_handle.execution_id + work_handle.authority_token as required parameters for every file_*, job_*, lisp_*, cad__*, drawing_* tool call. work_capabilities are internal privilege flags unrelated to tool availability.",
           ...(previousCleanup ? { previous_cleanup: previousCleanup } : {}),
         });
       } catch (error) {
@@ -321,6 +355,84 @@ export function registerWorkControlTools(
         });
       } catch (error) {
         return toolError("cadgpt_work_stop", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "cadgpt_work_upgrade",
+    {
+      title: "Upgrade CadGPT Work to Hybrid (CAD + Files)",
+      description:
+        "Upgrade an active FILE work to HYBRID work (successor work registration) when drawing access / CAD testing is needed. Supersedes the previous execution_id and authority_token, connects CAD MCP, binds the selected drawing, and returns a new work_handle with cad__* proxy tools enabled. GPT MUST use the new execution_id + authority_token from the returned work_handle for all subsequent calls.",
+      inputSchema: {
+        execution_id: z
+          .string()
+          .min(1)
+          .describe("The execution_id of the current active work to upgrade."),
+        authority_token: z
+          .string()
+          .min(1)
+          .describe("The authority_token of the current active work."),
+        drawing_selector: z
+          .string()
+          .optional()
+          .describe(
+            "Drawing name or full path to bind. If omitted or set to 'CURRENT', binds the active open drawing in AutoCAD."
+          ),
+      },
+      outputSchema: {
+        ok: z.boolean(),
+        tool: z.string(),
+        summary: z.string(),
+        data: z
+          .object({
+            upgraded: z.boolean().optional(),
+            work_handle: z
+              .object({
+                execution_id: z
+                  .string()
+                  .describe("NEW execution_id to pass to every tool."),
+                authority_token: z
+                  .string()
+                  .describe("NEW authority_token to pass to every tool."),
+                owner_type: z.string().optional(),
+                owner_id: z.string().optional(),
+                execution_path: z.string().optional(),
+                generation: z.number().optional(),
+              })
+              .passthrough()
+              .describe(
+                "Pass this NEW execution_id and authority_token to every subsequent tool call."
+              ),
+            drawing: z.record(z.string(), z.unknown()),
+            cad_tools_ready: z.boolean().optional(),
+            cad_proxy_tool_count: z.number().int().optional(),
+            cad_proxy_tools: z.array(z.string()).optional(),
+            note: z.string().optional(),
+          })
+          .passthrough(),
+      },
+    },
+    async ({ execution_id, authority_token, drawing_selector }) => {
+      try {
+        const result = await options.upgradeToHybrid(
+          execution_id,
+          authority_token,
+          drawing_selector
+        );
+        return toolResult("cadgpt_work_upgrade", {
+          upgraded: true,
+          work_handle: result.work_handle,
+          drawing: result.drawing,
+          cad_tools_ready: result.cad_tools_ready,
+          cad_proxy_tool_count: result.cad_proxy_tool_count,
+          cad_proxy_tools: result.cad_proxy_tools,
+          note:
+            "IMPORTANT: Work upgraded to HYBRID. The old execution_id and authority_token are invalidated. You MUST use the new work_handle.execution_id and work_handle.authority_token for all subsequent tool calls (file_*, job_*, lisp_*, cad__*, drawing_*).",
+        });
+      } catch (error) {
+        return toolError("cadgpt_work_upgrade", error);
       }
     }
   );

@@ -452,7 +452,7 @@ export function registerCadPrepareConfirmTool(
     sessionKey: string;
     activateWorkspace: (
       drawing: CadPrepareDrawing
-    ) => Promise<{ text: string; work_handle: Record<string, unknown>; drawing: unknown }>;
+    ) => Promise<{ text: string; work_handle: Record<string, unknown>; drawing: unknown; cad_tools_ready?: boolean; cad_proxy_tool_count?: number; cad_proxy_tools?: string[] }>;
   }
 ): void {
   server.registerTool(
@@ -460,7 +460,7 @@ export function registerCadPrepareConfirmTool(
     {
       title: "Confirm CadGPT Drawing Workspace",
       description:
-        "Start the CadGPT workspace from exactly one drawing previously shown in the tray-backed list. The user only needs to choose that drawing by number, name, or full path; confirmation_token is internal continuity state across MCP transport churn. This transition starts full CAD MCP, verifies the drawing live, binds one DrawingContext, and creates/reuses work authority.",
+        "Start the CadGPT workspace from exactly one drawing previously shown in the tray-backed list. The user only needs to choose that drawing by number, name, or full path; confirmation_token is internal continuity state across MCP transport churn. This transition starts full CAD MCP, verifies the drawing live, binds one DrawingContext, and creates/reuses work authority. On success, use the returned work_handle (execution_id + authority_token) for ALL subsequent cad__* and drawing_* tool calls.",
       inputSchema: {
         confirmation_token: z
           .string()
@@ -470,6 +470,28 @@ export function registerCadPrepareConfirmTool(
             "Optional backward-compatible internal continuity token. Normal user flow supplies only choice_key."
           ),
         choice_key: z.string().min(1),
+      },
+      outputSchema: {
+        text: z.string(),
+        cad_tools_ready: z.boolean().describe("True when CAD MCP is connected and all cad__* proxy tools are callable with the returned work_handle."),
+        cad_proxy_tool_count: z.number().int().describe("Number of cad__* proxy tools available for this session."),
+        cad_proxy_tools: z.array(z.string()).describe("List of all cad__* tool names immediately callable with execution_id + authority_token."),
+        work_handle: z
+          .object({
+            execution_id: z
+              .string()
+              .describe("Required for every cad__* and drawing_* tool call."),
+            authority_token: z
+              .string()
+              .describe("Required for every cad__* and drawing_* tool call."),
+            owner_type: z.string().optional(),
+            owner_id: z.string().optional(),
+            execution_path: z.string().optional(),
+            generation: z.number().optional(),
+          })
+          .passthrough()
+          .describe("Pass execution_id and authority_token to every cad__* tool call."),
+        drawing: z.record(z.string(), z.unknown()),
       },
     },
     async ({ confirmation_token, choice_key }) => {
@@ -489,6 +511,9 @@ export function registerCadPrepareConfirmTool(
           structuredContent: {
             text: activated.text,
             work_handle: activated.work_handle,
+            cad_tools_ready: activated.cad_tools_ready ?? false,
+            cad_proxy_tool_count: activated.cad_proxy_tool_count ?? 0,
+            cad_proxy_tools: activated.cad_proxy_tools ?? [],
             drawing: activated.drawing,
           },
         };
@@ -502,3 +527,4 @@ export function registerCadPrepareConfirmTool(
     }
   );
 }
+

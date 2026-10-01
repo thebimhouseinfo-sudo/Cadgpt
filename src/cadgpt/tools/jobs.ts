@@ -260,8 +260,14 @@ async function validateJobDraft(
 
 async function assertManagedLibraryExists(libraryId: string): Promise<void> {
   const manifest = await readJson<{ libraries?: Array<Record<string, unknown>> }>(getUserLibrariesManifestPath(), { libraries: [] });
-  const match = (manifest.libraries ?? []).find((item) => item.kind === "job" && item.id === libraryId && item.enabled !== false);
-  if (!match) throw new Error(`Enabled managed Job library not found in libraries.json: ${libraryId}`);
+  const jobLibraries = (manifest.libraries ?? []).filter((item) => item.kind === "job" && item.enabled !== false);
+  const match = jobLibraries.find((item) => item.id === libraryId);
+  if (!match) {
+    const available = jobLibraries.map((item) => String(item.id)).join(", ") || "(none)";
+    throw new Error(
+      `MANAGED_LIBRARY_NOT_FOUND: Enabled managed Job library '${libraryId}' not found in libraries.json. Available libraries: [${available}]. You must register/import the library first via library_import or choose an existing library.`
+    );
+  }
 }
 
 export function registerJobDiscoveryTools(server: McpServer): void {
@@ -436,6 +442,82 @@ export function registerJobAuthoringTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError("job_run_direct", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "job_draft_new",
+    {
+      title: "Create New Job Draft",
+      description:
+        "Create a new blank Job draft file (.py for direct Jobs, JOB.md for reasoning Jobs) under the Job draft root. Use this when authoring a brand-new Job from scratch. For editing an existing registered Job use job_checkout instead.",
+      inputSchema: {
+        draft_path: z
+          .string()
+          .min(1)
+          .describe(
+            "Absolute .py or JOB.md path under the approved Job draft root (appdata/workspace/job-draft/**). .py = direct Job; JOB.md = reasoning Job."
+          ),
+        content: z.string().describe("Initial file content. For .py: valid Python source. For JOB.md: Job contract markdown."),
+        overwrite: z.boolean().optional().default(false).describe("Allow overwriting an existing draft."),
+      },
+    },
+    async ({ draft_path, content, overwrite }) => {
+      try {
+        const executionMode = assertDraftVirtualPath(draft_path);
+        const target = await resolveAbsoluteMutationPath(draft_path, {
+          allowedRoots: [getJobDraftRoot()],
+          forCreate: true,
+          label: "Job draft",
+        });
+
+        return await withFileMutationLocks([target], async () => {
+          let previousContent: string | null = null;
+          try {
+            previousContent = await fs.readFile(target, "utf8");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
+          if (previousContent !== null && !overwrite) {
+            throw new Error(
+              `JOB_DRAFT_EXISTS: draft already exists at ${target}. Pass overwrite=true to replace it.`
+            );
+          }
+
+          await atomicWrite(target, content);
+          const validation = await validateJobDraft(target, content);
+          console.log(`[AUDIT] job_draft_new ${target} execution_mode=${executionMode}`);
+
+          const relFromDraftRoot = path.relative(getJobDraftRoot(), target).replaceAll("\\", "/");
+          const segments = relFromDraftRoot.split("/");
+          let libraryStatus: { registered: boolean; library_id: string; note: string } | undefined;
+          if (segments.length > 1 && segments[0]) {
+            const potentialLibId = segments[0];
+            const manifest = await readJson<{ libraries?: Array<Record<string, unknown>> }>(getUserLibrariesManifestPath(), { libraries: [] });
+            const found = (manifest.libraries ?? []).some((item) => item.kind === "job" && item.id === potentialLibId && item.enabled !== false);
+            libraryStatus = {
+              registered: found,
+              library_id: potentialLibId,
+              note: found
+                ? `Target library '${potentialLibId}' exists and is ready for eventual promotion.`
+                : `Target library '${potentialLibId}' is not yet in libraries.json. You can continue drafting and testing, but before promoting with job_promote_draft you will need to register it via library_import.`,
+            };
+          }
+
+          return toolResult("job_draft_new", {
+            draft_path: target,
+            draft_display_path: toCadgptPath(target),
+            execution_mode: executionMode,
+            bytes: Buffer.byteLength(content),
+            validation_passed: validation.valid,
+            diagnostics: validation.diagnostics,
+            ...(libraryStatus ? { library_status: libraryStatus } : {}),
+            note: "Use job_draft_validate to re-validate, then job_promote_draft to register.",
+          });
+        });
+      } catch (error) {
+        return toolError("job_draft_new", error);
       }
     }
   );
