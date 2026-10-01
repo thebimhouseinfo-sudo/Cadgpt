@@ -154,7 +154,8 @@ async function discoverLispCommands(virtualPath: string): Promise<string[]> {
 
 export async function loadVerifiedLispForCurrentWork(
   lispPath: string,
-  drawingId?: string
+  drawingId?: string,
+  ownedCommands?: string[]
 ): Promise<{
   loaded: boolean;
   commands: string[];
@@ -163,7 +164,9 @@ export async function loadVerifiedLispForCurrentWork(
 }> {
   await ensureCadRuntimeActive();
   const binding = resolveDrawingContext(drawingId);
-  const commands = await discoverLispCommands(lispPath);
+  const commands = ownedCommands
+    ? [...new Set(ownedCommands.map((command) => command.toUpperCase()))].sort()
+    : await discoverLispCommands(lispPath);
 
   return withCadHostLock(binding.host, async () => {
     await activateDrawingContext(binding);
