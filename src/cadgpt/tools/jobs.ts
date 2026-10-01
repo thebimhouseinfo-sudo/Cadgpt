@@ -370,6 +370,65 @@ async function assertDirectJobPythonReady(python: string): Promise<void> {
   }
 }
 
+async function executeDirectJobScript(
+  script: string,
+  args: string[],
+  jobId: string
+): Promise<Record<string, unknown>> {
+  const python = directJobPython();
+  await assertDirectJobPythonReady(python);
+
+  const lease = currentToolLease();
+  const drawings = getBoundDrawingsForExecution(lease.workId);
+  if (drawings.length > 1) {
+    throw new Error("DIRECT_JOB_DRAWING_AMBIGUOUS: one work may bind only one drawing.");
+  }
+  const drawing = drawings[0];
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    CADGPT_EXECUTION_ID: lease.workId,
+    CADGPT_JOB_ID: jobId,
+    CADGPT_REPO_ROOT: getRepoRoot(),
+    CADGPT_BUNDLED_LISP_ROOT: path.join(
+      getRepoRoot(),
+      "appdata",
+      "libraries",
+      "lisp"
+    ),
+    ...(drawing
+      ? {
+          CADGPT_DRAWING_ID: drawing.drawing_id,
+          CADGPT_DRAWING_NAME: drawing.name,
+          CADGPT_DRAWING_PATH: drawing.full_name || drawing.name,
+          CADGPT_DRAWING_HOST: drawing.host,
+          CADGPT_DRAWING_RUNTIME_IDENTITY: drawing.runtime_document_identity,
+        }
+      : {}),
+  };
+
+  const execute = () =>
+    execFileAsync(python, [script, ...args], {
+      cwd: path.dirname(script),
+      env,
+      windowsHide: true,
+      timeout: 5 * 60 * 1000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+  const result = drawing
+    ? await withCadHostLock(drawing.host, execute)
+    : await execute();
+
+  return {
+    script,
+    execution_mode: "direct",
+    exit_code: 0,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    drawing: drawing
+      ? { drawing_id: drawing.drawing_id, name: drawing.name, full_name: drawing.full_name }
+      : null,
+  };
+}
 
 export function registerJobAuthoringTools(server: McpServer): void {
   server.registerTool(
@@ -392,56 +451,78 @@ export function registerJobAuthoringTools(server: McpServer): void {
           throw new Error("REASONING_JOB_REQUIRED: Markdown Jobs must run through the reasoning Job harness.");
         }
         const script = await resolveRegisteredAssetPath("job", entry.library_id, relative);
-        const python = directJobPython();
-        await assertDirectJobPythonReady(python);
-
-        const lease = currentToolLease();
-        const drawings = getBoundDrawingsForExecution(lease.workId);
-        if (drawings.length > 1) {
-          throw new Error("DIRECT_JOB_DRAWING_AMBIGUOUS: one work may bind only one drawing.");
-        }
-        const drawing = drawings[0];
-        const env: NodeJS.ProcessEnv = {
-          ...process.env,
-          CADGPT_EXECUTION_ID: lease.workId,
-          CADGPT_JOB_ID: entry.id,
-          ...(drawing
-            ? {
-                CADGPT_DRAWING_ID: drawing.drawing_id,
-                CADGPT_DRAWING_NAME: drawing.name,
-                CADGPT_DRAWING_PATH: drawing.full_name || drawing.name,
-                CADGPT_DRAWING_HOST: drawing.host,
-                CADGPT_DRAWING_RUNTIME_IDENTITY: drawing.runtime_document_identity,
-              }
-            : {}),
-        };
-
-        const execute = () =>
-          execFileAsync(python, [script, ...args], {
-            cwd: path.dirname(script),
-            env,
-            windowsHide: true,
-            timeout: 5 * 60 * 1000,
-            maxBuffer: 4 * 1024 * 1024,
-          });
-        const result = drawing
-          ? await withCadHostLock(drawing.host, execute)
-          : await execute();
+        const executed = await executeDirectJobScript(script, args, entry.id);
 
         return toolResult("job_run_direct", {
           id: entry.id,
           title: entry.title,
-          script,
-          execution_mode: "direct",
-          exit_code: 0,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          drawing: drawing
-            ? { drawing_id: drawing.drawing_id, name: drawing.name, full_name: drawing.full_name }
-            : null,
+          ...executed,
         });
       } catch (error) {
         return toolError("job_run_direct", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "job_run_direct_draft",
+    {
+      title: "Run Direct Python Job Draft",
+      description:
+        "Run the exact validated .py Job draft before promotion. The draft must stay under appdata/workspace/job-draft/** and expected_sha256 must match the bytes returned by job_draft_validate.",
+      inputSchema: {
+        draft_path: z
+          .string()
+          .min(1)
+          .describe("Absolute .py path under the approved Job draft root."),
+        expected_sha256: z
+          .string()
+          .length(64)
+          .describe("Exact sha256 returned by job_draft_validate for the draft being tested."),
+        args: z.array(z.string()).max(50).optional().default([]),
+      },
+    },
+    async ({ draft_path, expected_sha256, args }) => {
+      try {
+        if (!path.isAbsolute(draft_path)) {
+          throw new Error(
+            "ABSOLUTE_PATH_REQUIRED: job_run_direct_draft draft_path must be absolute"
+          );
+        }
+        const mode = assertDraftVirtualPath(draft_path);
+        if (mode !== "direct") {
+          throw new Error(
+            "DIRECT_JOB_DRAFT_REQUIRED: job_run_direct_draft accepts only .py drafts."
+          );
+        }
+        const target = await resolveAllowedPath(draft_path);
+        const content = await fs.readFile(target, "utf8");
+        const currentHash = sha256(content);
+        if (currentHash !== expected_sha256) {
+          throw new Error(
+            `RESOURCE_CONFLICT: Job draft changed after validation; expected ${expected_sha256}, current ${currentHash}`
+          );
+        }
+        const validation = await validateJobDraft(target, content);
+        if (!validation.valid) {
+          throw new Error(
+            `JOB_DRAFT_INVALID: ${validation.diagnostics.join(" ")}`
+          );
+        }
+        const executed = await executeDirectJobScript(
+          target,
+          args,
+          `draft:${path.basename(target)}`
+        );
+        return toolResult("job_run_direct_draft", {
+          draft_path: target,
+          draft_display_path: toCadgptPath(target),
+          sha256: currentHash,
+          validation_passed: true,
+          ...executed,
+        });
+      } catch (error) {
+        return toolError("job_run_direct_draft", error);
       }
     }
   );
@@ -459,11 +540,17 @@ export function registerJobAuthoringTools(server: McpServer): void {
           .describe(
             "Absolute .py or JOB.md path under the approved Job draft root (appdata/workspace/job-draft/**). .py = direct Job; JOB.md = reasoning Job."
           ),
+        target_library_id: z
+          .string()
+          .regex(/^[a-z0-9][a-z0-9._-]{0,79}$/i)
+          .optional()
+          .describe("Optional explicit target Job library id; otherwise inferred from the first draft-root path segment."),
         content: z.string().describe("Initial file content. For .py: valid Python source. For JOB.md: Job contract markdown."),
-        overwrite: z.boolean().optional().default(false).describe("Allow overwriting an existing draft."),
+        overwrite: z.boolean().optional().default(false).describe("Allow replacing an existing draft only with expected_sha256 conflict protection."),
+        expected_sha256: z.string().length(64).optional().describe("Required with overwrite=true when a draft already exists."),
       },
     },
-    async ({ draft_path, content, overwrite }) => {
+    async ({ draft_path, target_library_id, content, overwrite, expected_sha256 }) => {
       try {
         const executionMode = assertDraftVirtualPath(draft_path);
         const target = await resolveAbsoluteMutationPath(draft_path, {
@@ -479,21 +566,32 @@ export function registerJobAuthoringTools(server: McpServer): void {
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
           }
-          if (previousContent !== null && !overwrite) {
-            throw new Error(
-              `JOB_DRAFT_EXISTS: draft already exists at ${target}. Pass overwrite=true to replace it.`
-            );
+          if (previousContent !== null) {
+            if (!overwrite) {
+              throw new Error(
+                `JOB_DRAFT_EXISTS: draft already exists at ${target}. Pass overwrite=true with expected_sha256 to replace it.`
+              );
+            }
+            const currentHash = sha256(previousContent);
+            if (!expected_sha256 || expected_sha256 !== currentHash) {
+              throw new Error(
+                `RESOURCE_CONFLICT: existing Job draft changed or expected_sha256 was not supplied; current sha256=${currentHash}`
+              );
+            }
           }
 
           await atomicWrite(target, content);
           const validation = await validateJobDraft(target, content);
           console.log(`[AUDIT] job_draft_new ${target} execution_mode=${executionMode}`);
 
-          const relFromDraftRoot = path.relative(getJobDraftRoot(), target).replaceAll("\\", "/");
+          const lexicalDraft = path.resolve(draft_path);
+          const relFromDraftRoot = path
+            .relative(path.resolve(getJobDraftRoot()), lexicalDraft)
+            .replaceAll("\\", "/");
           const segments = relFromDraftRoot.split("/");
           let libraryStatus: { registered: boolean; library_id: string; note: string } | undefined;
-          if (segments.length > 1 && segments[0]) {
-            const potentialLibId = segments[0];
+          const potentialLibId = target_library_id || (segments.length > 1 ? segments[0] : "");
+          if (potentialLibId) {
             const manifest = await readJson<{ libraries?: Array<Record<string, unknown>> }>(getUserLibrariesManifestPath(), { libraries: [] });
             const found = (manifest.libraries ?? []).some((item) => item.kind === "job" && item.id === potentialLibId && item.enabled !== false);
             libraryStatus = {
@@ -605,7 +703,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
         const validation = await validateJobDraft(target, content);
         return toolResult(
           "job_draft_validate",
-          { path: toCadgptPath(target), ...validation, rules: "knowledge/jobs/JOB_RULES.md" },
+          { path: toCadgptPath(target), sha256: sha256(content), ...validation, rules: "knowledge/jobs/JOB_RULES.md" },
           validation.valid ? "Job draft validation passed" : "Job draft validation failed"
         );
       } catch (error) {

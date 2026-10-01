@@ -6,6 +6,7 @@ const CONTROL_TOOLS = new Set([
   "cadgpt_work_resume",
   "cadgpt_work_status",
   "cadgpt_work_stop",
+  "cadgpt_work_upgrade",
 ]);
 
 const DISCOVERY_TOOLS = new Set([
