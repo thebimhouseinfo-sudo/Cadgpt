@@ -28,7 +28,7 @@ export function registerWorkControlTools(
     upgradeToHybrid: (
       previousExecutionId: string,
       authorityToken: string,
-      drawingSelector?: string
+      drawingSelector: string
     ) => Promise<{
       work_handle: Record<string, unknown>;
       drawing: Record<string, unknown>;
@@ -376,9 +376,9 @@ export function registerWorkControlTools(
           .describe("The authority_token of the current active work."),
         drawing_selector: z
           .string()
-          .optional()
+          .min(1)
           .describe(
-            "Drawing name or full path to bind. If omitted or set to 'CURRENT', binds the active open drawing in AutoCAD."
+            "Explicit exact open drawing name/full path to bind, or CREATE_TEST to create and bind an isolated unsaved test drawing. Never defaults to ActiveDocument or the first open drawing."
           ),
       },
       outputSchema: {
@@ -416,10 +416,16 @@ export function registerWorkControlTools(
     },
     async ({ execution_id, authority_token, drawing_selector }) => {
       try {
+        const selector = drawing_selector.trim();
+        if (!selector) {
+          throw new Error(
+            "DRAWING_SELECTION_REQUIRED: choose an exact open drawing name/full path, or CREATE_TEST."
+          );
+        }
         const result = await options.upgradeToHybrid(
           execution_id,
           authority_token,
-          drawing_selector
+          selector
         );
         return toolResult("cadgpt_work_upgrade", {
           upgraded: true,

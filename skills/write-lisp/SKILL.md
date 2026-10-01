@@ -13,7 +13,8 @@ CadGPT owns the authoring workflow, not the user's original library folder.
 ## Storage
 
 ```text
-appdata/libraries/lisp/**              managed reusable Lisp Libraries
+resources/cad/internal-lisp/**         repo-bundled/internal read-only Lisp (including TBH Tool Kit)
+appdata/libraries/lisp/**              user-created/imported managed Lisp Libraries
 appdata/workspace/lisp-draft/**        write-lisp working copies
 appdata/runtime/dynamic-lisp/**        temporary AI-derived variants
 appdata/data/runs/**                    generated evidence/reports
@@ -24,7 +25,7 @@ User-selected external folders are accessible only through `library_import`, whi
 
 ## Registry/discovery
 
-Use `registry_list` / `registry_get` before reading source. User Registry Lisp entries identify managed code with:
+Use `registry_list` / `registry_get` before reading source. Internal Registry exposes repo-bundled/install Lisp such as TBH Tool Kit; User Registry exposes only user-created/imported managed Lisp. Internal bundled Lisp is loaded from its returned `load_path` under `resources/cad/internal-lisp/**` and is not a User AppData library. User Registry Lisp entries identify managed code with:
 
 ```text
 library_id + relative_path
@@ -36,9 +37,9 @@ Import/index must not rewrite source, headers or descriptions. Registry metadata
 
 CadGPT does **not** analyze user libraries to invent a style template.
 
-- default new/edited Lisp profile: `cadgpt`
-- explicit exception: `library_id=tbh-toolkit` → `tbh`
-- imported/unmodified validation: `syntax`
+- default user-created/edited Lisp profile: `cadgpt`
+- repo-bundled `tbh-toolkit` is Internal Registry/install content and is not a normal user promotion target
+- imported/unmodified user Lisp validation: `syntax`
 
 Canonical authored headers keep clear metadata fields: File, Module, Command, Description, Inputs, Effects, Interaction, Risk, Dependencies, Notes, Revision.
 
@@ -108,7 +109,7 @@ Preserve public commands and working behavior unless the requested contract chan
 
 ### 4. New Lisp: scaffold into workspace
 
-Call `lisp_scaffold`. It uses CadGPT header by default; pass `target_library_id="tbh-toolkit"` only when the intended target is TBH Toolkit.
+Call `lisp_scaffold` for a new **user-owned** Lisp draft. Do not use `target_library_id="tbh-toolkit"` for ordinary user authoring: TBH Tool Kit is bundled Internal Registry/install content, not user AppData.
 
 Create/edit the result using absolute paths under `appdata/workspace/lisp-draft/**`. Use `file_create` / `file_edit` only with the absolute path returned/resolved for that draft; `file_edit` also requires the latest SHA-256 from `file_read`.
 
@@ -138,7 +139,7 @@ A failed static gate blocks CAD load.
 
 ### 6. Test drawing approval — mandatory
 
-After static validation passes, use an already-explicit user choice if one exists. Otherwise ask whether to create a new test drawing or use the currently bound drawing.
+After static validation passes, use an already-explicit user choice if one exists. If the current work_handle is FILE-only, call `cadgpt_work_upgrade` with the exact approved drawing name/full path or `drawing_selector="CREATE_TEST"`; then use only the returned HYBRID credentials. Never default to ActiveDocument/first-open drawing. Otherwise ask whether to create a new test drawing or use the currently bound drawing.
 
 Never silently test on a project drawing. If `drawing_create_test` fails, do not fall back to a project drawing.
 

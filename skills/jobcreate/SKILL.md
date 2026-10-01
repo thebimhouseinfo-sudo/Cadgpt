@@ -147,7 +147,7 @@ Reasoning: <absolute appdata/workspace/job-draft>/<library-id>/<job-name>/JOB.md
 Direct:    <absolute appdata/workspace/job-draft>/<library-id>/<job-name>/<job-name>.py
 ```
 
-Choose the mode explicitly from the approved plan. Use reasoning `.md` when the workflow requires model reasoning between stages. Use direct `.py` when the user wants a deterministic script dispatched without model planning. Resolve the exact absolute path first, then create the new draft with generic workspace file tools only after J3 approval.
+Choose the mode explicitly from the approved plan. Use reasoning `.md` when the workflow requires model reasoning between stages. Use direct `.py` when the user wants a deterministic script dispatched without model planning. Resolve the exact absolute path first, then create the new draft with `job_draft_new` only after J3 approval. Generic file tools are for subsequent draft reads/edits, not a substitute for the new-draft primitive.
 
 Existing Job refinement:
 
@@ -178,7 +178,7 @@ Run:
 job_draft_validate
 ```
 
-before real execution. It validates reasoning structure for `.md` and Python syntax for `.py`. A source-valid draft does not proceed to promotion until its real execution path is tested.
+before real execution. It validates reasoning structure for `.md` and Python syntax for `.py`, and returns the exact draft SHA-256. For a direct `.py` draft, execute the pre-promotion test with `job_run_direct_draft(draft_path, expected_sha256=<that hash>)`; never promote a direct Job that was only syntax-checked. A source-valid draft does not proceed to promotion until its real execution path is tested.
 
 #### B3. Implement missing capabilities only when required
 
@@ -191,6 +191,8 @@ If a planned step requires a capability that does not exist:
 After a called Skill completes its own gate, return to the interrupted Job step.
 
 #### B4. Real execution/test — mandatory
+
+If the current work_handle is FILE-only and the approved test needs AutoCAD, call `cadgpt_work_upgrade` with that FILE handle plus the exact user-approved drawing name/full path, or `drawing_selector="CREATE_TEST"` for an isolated blank test drawing. The returned HYBRID handle supersedes the FILE handle; use only the new credentials afterward. Never call `drawing_*` or `cad__*` with a FILE handle and never default to ActiveDocument/first-open drawing.
 
 A Job is not proven by reading its Markdown or dispatching commands. The workflow must be exercised against an explicitly approved test context.
 

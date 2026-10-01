@@ -284,7 +284,7 @@ export function createMcpServer(sessionKey: string): McpServer {
         "Never carry admission or work authority into another ChatGPT conversation, memory, unrelated files, paths, or AutoCAD state. CadGPT binds replacement MCP transports to the connector-provided logical ChatGPT conversation identity; unrelated conversations remain isolated.",
         "Bare @cadgpt or bare CG/plugin launch makes the session READY, not WORK ACTIVE. Work becomes ACTIVE only after cadgpt_work_start or cadgpt_cad_confirm.",
         "CadGPT session claim is routing state only; it is not an execution credential and has no per-turn token.",
-        "Actual FILE/CAD work begins with cadgpt_work_start (for file/job/lisp work) or cadgpt_cad_confirm (for drawing workspace). The returned work_handle (execution_id + authority_token) is the only execution credential. Lisp/Job authoring, register, import and export are FILE work and do not require a drawing workspace.",
+        "Actual work begins with cadgpt_work_start (for file/job/lisp work) or cadgpt_cad_confirm (for a user-selected drawing workspace). FILE work that later needs CAD testing must transition through cadgpt_work_upgrade with an explicit drawing selector or CREATE_TEST. The returned work_handle (execution_id + authority_token) is the only execution credential; after upgrade the old handle is stale. Lisp/Job authoring, register, import and export are FILE work until a real CAD test is requested.",
         "CRITICAL — CAD tools after workspace ready: When cadgpt_cad_confirm returns cad_tools_ready=true, ALL tools listed in cad_proxy_tools (e.g. cad__cad_list_layers, cad__cad_list_entities, etc.) are immediately callable. Pass execution_id and authority_token from work_handle as required parameters in EVERY cad__* and drawing_* tool call. The empty work_capabilities array is normal for a drawing workspace and does NOT mean tools are unavailable — it is an internal privilege flag unrelated to the MCP tool surface.",
         "Reuse the active work_handle for later compatible requests in the same chat. Do not call cadgpt_work_start again unless there is no active work or the owner/execution path must change.",
         "If the connector replaces the MCP transport/session inside the same ChatGPT conversation, continue normal work on the replacement transport. CadGPT rehydrates the required lazy tool families from logical conversation state; do not create a new work generation merely because transport identity changed.",
@@ -293,10 +293,10 @@ export function createMcpServer(sessionKey: string): McpServer {
         "cg/mcp is demand-driven development fallback, not a normal workspace command. Use it only when a CAD MCP tool is missing/broken or the user explicitly requests MCP improvement. In a development build with no compatible work, start standalone cad-mcp-dev FILE work. If a FILE/HYBRID work already exists, keep the same execution and explicitly enable the cad-mcp-dev capability through cadgpt_work_start continuation; never replace an existing drawing workspace. In production builds cad-mcp-dev remains unavailable.",
         "Bare launch always renders the three-section CadGPT Welcome from tray state. If AutoCAD is offline, keep WORK IDLE and tell the user to open AutoCAD/a drawing then use cg/list.",
         "If the tray cache reports AutoCAD, list open drawings with no active-drawing marker and ask the user to choose exactly one drawing. The fake CLI is not live-updating; cg/list refreshes from the newest tray snapshot. PREPARE does not start CAD MCP, has no WorkRegistration, and cannot mutate CAD.",
-        "After the user chooses one listed drawing, call cadgpt_cad_confirm with the private confirmation_token and exactly one choice_key. The choice may be the displayed number, drawing name, or full path. Multi-drawing selection is forbidden. This transition replaces any prior work, starts full CAD MCP, verifies the selected drawing live, binds exactly one DrawingContext, and returns Workspace Ready.",
+        "After the user chooses one listed drawing, call cadgpt_cad_confirm with exactly one choice_key. The confirmation capability is server-side continuity state; normal user/model flow does not need to supply or manage a token. The choice may be the displayed number, drawing name, or full path. Multi-drawing selection is forbidden. This transition replaces any prior work, starts full CAD MCP, verifies the selected drawing live, binds exactly one DrawingContext, and returns Workspace Ready.",
         "A workspace choice is the user's direct drawing selection; no extra nomination or confirmation step exists. Do not treat bare 'xác nhận' as a drawing choice and never default to all drawings. Reuse the private confirmation_token internally; never ask the user to copy or manage it. Repeated admission/list calls with an unchanged drawing list must preserve the same pending selection state.",
         "Hard invariant: 1 work = 1 drawing. For later compatible requests, reuse the active work_handle. cg/list may prepare a replacement workspace; selecting a new drawing releases the prior work before registering the new one.",
-        "CadGPT has two execution paths: FILE and CAD. CAD MCP is activated only on actual CAD demand. User-managed Lisp/Job data lives in the real per-user AppData; repo-shipped Lisp/Job resources are system/read-only and are never copied into user AppData automatically.",
+        "CadGPT has FILE, CAD and HYBRID execution paths. FILE is user authoring/data-only; CAD is CAD-only; HYBRID is the controlled successor when FILE authoring must continue while performing a real CAD test. CAD MCP activates only on actual CAD demand. User-created/imported Lisp/Job lives in real per-user AppData. Repo-bundled TBH Tool Kit is Internal Registry/install content under resources/cad/internal-lisp/** and is never resolved through user AppData.",
         "Registered Job behavior is extension-driven: .py is a direct Job and must be dispatched with job_run_direct without model planning; .md is a reasoning Job. For .md Jobs follow knowledge/jobs/REASONING_HARNESS.md: execute read-only observations first, then PLAN -> REVIEW -> REVISE if needed -> EXEC -> READBACK -> NEXT per reasoning/mutation stage. Re-plan/review later stages from the new drawing state instead of assuming an upfront whole-workflow plan remains valid. Internal review does not pause for user confirmation; defer uncertain items when safe, continue the workflow, and report unresolved items at the end.",
         "Never assume AutoCAD ActiveDocument is the target; use explicit drawing contexts.",
         "All file mutations require absolute canonical target paths and allowed-root verification. Relative/CWD-authorized mutation is forbidden.",
@@ -472,6 +472,77 @@ export function createMcpServer(sessionKey: string): McpServer {
         authorityToken,
         sessionKey
       );
+      if (previousWork.executionPath !== "file") {
+        throw new Error(
+          `WORK_UPGRADE_REQUIRES_FILE: current work is '${previousWork.executionPath}'. Reuse an existing HYBRID handle instead of upgrading again.`
+        );
+      }
+
+      const requestedSelector = drawingSelector.trim();
+      if (!requestedSelector) {
+        throw new Error(
+          "DRAWING_SELECTION_REQUIRED: choose an exact open drawing name/full path, or CREATE_TEST."
+        );
+      }
+
+      // Preflight CAD and the requested drawing while the FILE work is still
+      // authoritative. A CAD startup/selection failure therefore leaves the
+      // authoring work intact instead of destroying it first.
+      const { cadUpstream } = await import("./runtime/cad-upstream.js");
+      await cadUpstream.activate();
+      const { bindDrawingForExecution, listOpenDrawings } = await import(
+        "./session/drawing-binding.js"
+      );
+
+      let targetSelector = requestedSelector;
+      if (requestedSelector.toUpperCase() === "CREATE_TEST") {
+        const { withCadHostLock } = await import("./runtime/cad-scheduler.js");
+        await withCadHostLock("autocad", async () => {
+          const created = await cadUpstream.callTool(
+            "acad_create_blank_test_document",
+            {}
+          );
+          if (
+            created &&
+            typeof created === "object" &&
+            (created as { isError?: boolean }).isError
+          ) {
+            throw new Error("CAD MCP could not create a blank test drawing");
+          }
+        });
+        const openDocs = await listOpenDrawings();
+        const active = openDocs.filter(
+          (item) => item.active === true || item.is_active === true
+        );
+        if (active.length !== 1) {
+          throw new Error(
+            "TEST_DRAWING_AMBIGUOUS: could not resolve the newly-created active test drawing uniquely."
+          );
+        }
+        targetSelector = String(active[0].full_name || active[0].name || "");
+        if (!targetSelector) {
+          throw new Error("New test drawing has no usable identity");
+        }
+      } else {
+        const openDocs = await listOpenDrawings();
+        const needle = requestedSelector.toLowerCase();
+        const matches = openDocs.filter((item) => {
+          const name = String(item.name ?? "").toLowerCase();
+          const fullName = String(item.full_name ?? "").toLowerCase();
+          return name === needle || fullName === needle;
+        });
+        if (matches.length === 0) {
+          throw new Error(
+            `OPEN_DRAWING_NOT_FOUND: no open drawing matches '${requestedSelector}'. Use an exact name/full path or CREATE_TEST.`
+          );
+        }
+        if (matches.length > 1) {
+          throw new Error(
+            `DRAWING_IDENTITY_AMBIGUOUS: more than one open drawing matches '${requestedSelector}'. Use the exact full path.`
+          );
+        }
+        targetSelector = String(matches[0].full_name || matches[0].name || "");
+      }
 
       const cleanupId = releaseSessionWork(sessionKey);
       if (cleanupId) await cleanupExecutionState(cleanupId);
@@ -499,29 +570,6 @@ export function createMcpServer(sessionKey: string): McpServer {
           work.ownerId,
           work.executionId
         );
-        const { cadUpstream } = await import("./runtime/cad-upstream.js");
-        await cadUpstream.activate();
-
-        const { bindDrawingForExecution, listOpenDrawings } = await import(
-          "./session/drawing-binding.js"
-        );
-        let targetSelector = drawingSelector?.trim();
-        if (
-          !targetSelector ||
-          targetSelector.toUpperCase() === "CURRENT" ||
-          targetSelector.toUpperCase() === "ACTIVE"
-        ) {
-          const openDocs = await listOpenDrawings();
-          if (openDocs.length === 0) {
-            throw new Error(
-              "NO_OPEN_DRAWINGS: AutoCAD has no open drawings to bind. Please open or create a drawing in AutoCAD first."
-            );
-          }
-          const activeDoc =
-            openDocs.find((d) => d.active === true || d.is_active === true) ||
-            openDocs[0];
-          targetSelector = String(activeDoc.full_name || activeDoc.name);
-        }
 
         const bound = await bindDrawingForExecution(
           work.executionId,
