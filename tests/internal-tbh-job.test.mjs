@@ -43,7 +43,22 @@ test("official tbh Job is internal, direct, and discoverable", async () => {
   assert.equal(registryEntry?.executor, "builtin:tbh-toolkit-loader");
 });
 
-test("tbh executor loads the bundled toolkit deterministically through the verified loader", async () => {
+test("tbh batch loader source loads every child Lisp and fails fast", async () => {
+  const { renderTbhToolkitLoaderSource } = await import(
+    "../dist/cadgpt/tools/jobs.js"
+  );
+  const source = renderTbhToolkitLoaderSource([
+    "C:\\CadGPT\\a.lsp",
+    "C:\\CadGPT\\nested\\b.lsp",
+  ]);
+  assert.match(source, /C:\/CadGPT\/a\.lsp/);
+  assert.match(source, /C:\/CadGPT\/nested\/b\.lsp/);
+  assert.match(source, /vl-catch-all-apply 'load/);
+  assert.match(source, /TBH child load failed:/);
+  assert.match(source, /\(error/);
+});
+
+test("tbh executor performs exactly one verified batch load while owning all child commands", async () => {
   const { getInternalJob } = await import("../dist/cadgpt/lib/internal-jobs.js");
   const { listBundledLispEntries } = await import(
     "../dist/cadgpt/lib/bundled-assets.js"
@@ -55,76 +70,97 @@ test("tbh executor loads the bundled toolkit deterministically through the verif
   const tbh = getInternalJob("tbh");
   assert.ok(tbh);
 
-  const expected = (await listBundledLispEntries())
+  const entries = (await listBundledLispEntries())
     .filter((entry) => entry.library_id === "tbh-toolkit")
-    .map((entry) => entry.load_path)
-    .sort((a, b) => a.localeCompare(b));
+    .sort((a, b) => a.load_path.localeCompare(b.load_path));
+  const expectedFiles = entries.map((entry) => entry.load_path);
+  const expectedCommands = [
+    ...new Set(entries.flatMap((entry) => entry.commands)),
+  ].sort();
 
-  assert.ok(expected.length > 0);
+  assert.ok(expectedFiles.length > 0);
   assert.ok(
-    expected.every((item) =>
+    expectedFiles.every((item) =>
       item.startsWith("resources/cad/internal-lisp/tbh-toolkit/")
     )
   );
 
-  const seen = [];
-  const result = await executeInternalDirectJob(tbh, [], async (loadPath) => {
-    seen.push(loadPath);
-    return {
-      loaded: true,
-      commands: [`CMD_${seen.length}`],
-      drawing_id: "drawing-fixture",
-      raw: { loaded: true },
-    };
-  });
+  const calls = [];
+  const batch = {
+    loader_path: "C:/Temp/CadGPT/tbh-load-all-fixture.lsp",
+    files: expectedFiles,
+    commands: expectedCommands,
+  };
 
-  assert.deepEqual(seen, expected);
-  assert.equal(result.loaded_count, expected.length);
-  assert.equal(result.drawing_id, "drawing-fixture");
-  assert.equal(result.registry, "internal");
-  assert.equal(result.execution_mode, "direct");
-  assert.equal(result.command_count, expected.length);
+  const result = await executeInternalDirectJob(
+    tbh,
+    [],
+    async (loadPath, drawingId, ownedCommands) => {
+      calls.push({ loadPath, drawingId, ownedCommands });
+      return {
+        loaded: true,
+        commands: ownedCommands ?? [],
+        drawing_id: "drawing-fixture",
+        raw: { loaded: true },
+      };
+    },
+    async () => batch
+  );
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].loadPath, batch.loader_path);
+  assert.equal(calls[0].drawingId, undefined);
+  assert.deepEqual(calls[0].ownedCommands, expectedCommands);
+  assert.equal(result.loader_calls, 1);
+  assert.equal(result.loaded_count, expectedFiles.length);
+  assert.deepEqual(result.loaded_files, expectedFiles);
+  assert.equal(result.command_count, expectedCommands.length);
+  assert.deepEqual(result.commands, expectedCommands);
 });
 
-test("tbh executor stops at the first verified load failure", async () => {
+test("tbh executor reports one failed batch load and does not retry child files through CAD MCP", async () => {
   const { getInternalJob } = await import("../dist/cadgpt/lib/internal-jobs.js");
-  const { listBundledLispEntries } = await import(
-    "../dist/cadgpt/lib/bundled-assets.js"
-  );
   const { executeInternalDirectJob } = await import(
     "../dist/cadgpt/tools/jobs.js"
   );
 
   const tbh = getInternalJob("tbh");
   assert.ok(tbh);
-  const expected = (await listBundledLispEntries())
-    .filter((entry) => entry.library_id === "tbh-toolkit")
-    .map((entry) => entry.load_path)
-    .sort((a, b) => a.localeCompare(b));
+  let calls = 0;
+  const failingChild =
+    "resources/cad/internal-lisp/tbh-toolkit/TBH Tool Kit/Draw/Create/FlexConn.lsp";
 
-  const seen = [];
   await assert.rejects(
     () =>
-      executeInternalDirectJob(tbh, [], async (loadPath) => {
-        seen.push(loadPath);
-        const loaded = seen.length < 3;
-        return {
-          loaded,
-          commands: [],
-          drawing_id: "drawing-fixture",
-          raw: loaded
-            ? { loaded: true }
-            : { loaded: false, error: "fixture failure" },
-        };
-      }),
+      executeInternalDirectJob(
+        tbh,
+        [],
+        async () => {
+          calls += 1;
+          return {
+            loaded: false,
+            commands: [],
+            drawing_id: "drawing-fixture",
+            raw: {
+              loaded: false,
+              error: `TBH child load failed: ${failingChild}`,
+            },
+          };
+        },
+        async () => ({
+          loader_path: "C:/Temp/CadGPT/tbh-load-all-fixture.lsp",
+          files: [failingChild],
+          commands: ["FLEXCONN"],
+        })
+      ),
     (error) => {
       const message = String(error);
       assert.equal(message.includes("TBH_TOOLKIT_LOAD_FAILED"), true);
-      assert.equal(message.includes(expected[2]), true);
+      assert.equal(message.includes(failingChild), true);
       return true;
     }
   );
-  assert.deepEqual(seen, expected.slice(0, 3));
+  assert.equal(calls, 1);
 });
 
 test("tbh internal direct Job rejects positional args", async () => {
@@ -135,9 +171,17 @@ test("tbh internal direct Job rejects positional args", async () => {
   const tbh = getInternalJob("tbh");
   assert.ok(tbh);
   await assert.rejects(
-    () => executeInternalDirectJob(tbh, ["unexpected"], async () => {
-      throw new Error("loader should not be called");
-    }),
+    () =>
+      executeInternalDirectJob(
+        tbh,
+        ["unexpected"],
+        async () => {
+          throw new Error("loader should not be called");
+        },
+        async () => {
+          throw new Error("batch builder should not be called");
+        }
+      ),
     /INTERNAL_JOB_ARGS_UNSUPPORTED/
   );
 });
