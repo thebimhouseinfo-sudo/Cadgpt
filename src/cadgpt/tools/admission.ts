@@ -53,7 +53,7 @@ export function registerAdmissionTool(
             : decision.mode === "control"
               ? "Route the exact CadGPT control command through cadgpt_control. CONTROL never starts FILE/CAD work."
               : welcome
-                ? "Return welcome_text verbatim. If launch_mode is cad_prepare, preserve confirmation_token privately and wait for the user's workspace confirmation before calling cadgpt_cad_confirm."
+                ? "Return welcome_text verbatim. If launch_mode is auto_bind, the sole drawing is already bound: reuse the returned work_handle for CAD calls. If launch_mode is cad_prepare, preserve confirmation_token privately and wait for the user's workspace confirmation before calling cadgpt_cad_confirm."
                 : "CadGPT session is ready. If the user requested real FILE/CAD work, start or reuse a compatible work_handle; otherwise continue conversationally.",
       };
 
@@ -69,6 +69,20 @@ export function registerAdmissionTool(
               ? { confirmation_token: launch.confirmation_token }
               : {}),
             ...(launch?.drawings ? { drawings: launch.drawings } : {}),
+            ...(launch?.auto_bound ? { auto_bound: true } : {}),
+            ...(launch?.work_handle
+              ? { work_handle: launch.work_handle }
+              : {}),
+            ...(launch?.drawing ? { drawing: launch.drawing } : {}),
+            ...(typeof launch?.cad_tools_ready === "boolean"
+              ? { cad_tools_ready: launch.cad_tools_ready }
+              : {}),
+            ...(typeof launch?.cad_proxy_tool_count === "number"
+              ? { cad_proxy_tool_count: launch.cad_proxy_tool_count }
+              : {}),
+            ...(Array.isArray(launch?.cad_proxy_tools)
+              ? { cad_proxy_tools: launch.cad_proxy_tools }
+              : {}),
           },
         };
       }
