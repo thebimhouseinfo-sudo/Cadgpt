@@ -4,6 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { isSessionClaimed } from "../lib/admission.js";
 import {
   activeWorkForSession,
+  clearSessionWorkStopBarrier,
   isDevelopmentBuild,
   workStatus,
 } from "../lib/work-registration.js";
@@ -127,6 +128,21 @@ export function registerCadGptControlTool(
     },
     async ({ surface }) => {
       let text: string;
+
+      if (
+        surface === "list" ||
+        surface === "cl" ||
+        surface === "cj" ||
+        surface === "mcp" ||
+        surface === "rl" ||
+        surface === "rj" ||
+        surface === "il" ||
+        surface === "el" ||
+        surface === "ij" ||
+        surface === "ej"
+      ) {
+        clearSessionWorkStopBarrier(options.sessionKey);
+      }
 
       if (surface === "commands") {
         text = CADGPT_ROOT_MENU;
