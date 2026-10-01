@@ -7,7 +7,14 @@ import { getUserCapabilitiesPath } from "../lib/appdata.js";
 import { getRepoRoot } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { isDevelopmentBuild } from "../lib/work-registration.js";
-import { listBundledLispEntries, resolveBundledLispPath } from "../lib/bundled-assets.js";
+import {
+  listBundledLispEntries,
+  resolveBundledLispPath,
+} from "../lib/bundled-assets.js";
+import {
+  isInternalJobId,
+  listInternalJobs,
+} from "../lib/internal-jobs.js";
 import { resolveRegisteredAssetPath } from "./user-assets.js";
 
 interface ToolManifestEntry {
@@ -218,15 +225,30 @@ async function loadUserEntries(): Promise<Array<Record<string, unknown>>> {
   try {
     const parsed = JSON.parse(await fs.readFile(getUserCapabilitiesPath(), "utf8")) as { entries?: Array<Record<string, unknown>> };
     if (!Array.isArray(parsed.entries)) throw new Error("User Registry is missing entries[]");
+    const visibleEntries = parsed.entries.filter(
+      (entry) =>
+        !(
+          entry.kind === "job" &&
+          isInternalJobId(String(entry.id || ""))
+        )
+    );
     const seen = new Set<string>();
-    for (const entry of parsed.entries) {
-      if (entry.kind !== "lisp" && entry.kind !== "job") throw new Error(`User Registry may contain only lisp/job entries: ${String(entry.id || "<unknown>")}`);
+    for (const entry of visibleEntries) {
+      if (entry.kind !== "lisp" && entry.kind !== "job")
+        throw new Error(
+          `User Registry may contain only lisp/job entries: ${String(
+            entry.id || "<unknown>"
+          )}`
+        );
       const id = String(entry.id || "").trim().toLowerCase();
       if (!id) throw new Error("User Registry capability has an empty id");
-      if (seen.has(id)) throw new Error(`User Registry contains duplicate capability id: ${String(entry.id)}`);
+      if (seen.has(id))
+        throw new Error(
+          `User Registry contains duplicate capability id: ${String(entry.id)}`
+        );
       seen.add(id);
     }
-    return parsed.entries.map((entry) => {
+    return visibleEntries.map((entry) => {
       const effective: Record<string, unknown> = { ...entry, registry: "user" };
       if (entry.kind === "lisp" && entry.semantic_status !== "curated" && entry.ai_mode === "dynamic") {
         effective.review_blocked_ai_mode = "dynamic";
@@ -249,8 +271,12 @@ async function loadEffectiveRegistry(): Promise<Array<Record<string, unknown>>> 
     loadUserEntries(),
   ]);
   const bundled = bundledLisp as unknown as Array<Record<string, unknown>>;
-  return [...tools, ...skills, ...bundled, ...users].sort((a, b) =>
-    `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`)
+  const internalJobs = listInternalJobs() as unknown as Array<
+    Record<string, unknown>
+  >;
+  return [...tools, ...skills, ...bundled, ...internalJobs, ...users].sort(
+    (a, b) =>
+      `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`)
   );
 }
 
@@ -263,7 +289,7 @@ export function registerCapabilityRegistryTools(server: McpServer): void {
     "registry_list",
     {
       title: "List CadGPT Effective Capability Registry",
-      description: "List the lightweight effective registry: internal MCP tools/system skills/bundled read-only Lisp plus user Lisp/Jobs. User Registry cannot overwrite internal resources.",
+      description: "List the lightweight effective registry: internal MCP tools/system skills/bundled read-only Lisp/official Jobs plus user Lisp/Jobs. User Registry cannot overwrite internal resources.",
       inputSchema: {
         kind: z.enum(["tool", "skill", "lisp", "job"]).optional(),
         registry: z.enum(["internal", "user"]).optional(),
@@ -288,7 +314,10 @@ export function registerCapabilityRegistryTools(server: McpServer): void {
           count: selected.length,
           total_matches: entries.length,
           entries: selected,
-          ownership: { internal: ["tool", "skill", "lisp"], user: ["lisp", "job"] },
+          ownership: {
+            internal: ["tool", "skill", "lisp", "job"],
+            user: ["lisp", "job"],
+          },
         });
       } catch (error) {
         return toolError("registry_list", error);
