@@ -627,7 +627,6 @@ export function createMcpServer(sessionKey: string): McpServer {
         throw error;
       }
     },
-    },
   });
 
   return server;
