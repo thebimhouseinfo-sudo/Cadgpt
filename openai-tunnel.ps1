@@ -293,7 +293,16 @@ function Start-TemporarySlimMcp {
         throw "Node.js is not available to start the temporary CadGPT slim MCP."
     }
 
-    $tempLogDir = Join-Path $ScriptDir "appdata\logs"
+    $appDataConfigured = Get-DotEnvValue "CADGPT_APPDATA_ROOT"
+    if ($appDataConfigured -eq "appdata") { $appDataConfigured = $null }
+    $tempAppDataRoot = if (-not $appDataConfigured) {
+        [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA "CadGPT"))
+    } elseif ([System.IO.Path]::IsPathRooted($appDataConfigured)) {
+        [System.IO.Path]::GetFullPath($appDataConfigured)
+    } else {
+        [System.IO.Path]::GetFullPath((Join-Path $ScriptDir $appDataConfigured))
+    }
+    $tempLogDir = Join-Path $tempAppDataRoot "logs"
     New-Item -ItemType Directory -Force -Path $tempLogDir | Out-Null
     $stdoutPath = Join-Path $tempLogDir "setup-slim.stdout.log"
     $stderrPath = Join-Path $tempLogDir "setup-slim.stderr.log"
@@ -312,7 +321,7 @@ function Start-TemporarySlimMcp {
         $env:PORT = [string]$ResolvedPort
         $env:MCP_TOKEN = Get-DotEnvValue "MCP_TOKEN"
         $env:CADGPT_BUILD_PROFILE = $(if (Get-DotEnvValue "CADGPT_BUILD_PROFILE") { Get-DotEnvValue "CADGPT_BUILD_PROFILE" } else { "development" })
-        $env:CADGPT_APPDATA_ROOT = $(if (Get-DotEnvValue "CADGPT_APPDATA_ROOT") { Get-DotEnvValue "CADGPT_APPDATA_ROOT" } else { "appdata" })
+        $env:CADGPT_APPDATA_ROOT = $appDataConfigured
 
         if (-not $env:MCP_TOKEN) {
             throw "MCP_TOKEN is empty before starting temporary CadGPT slim MCP."
