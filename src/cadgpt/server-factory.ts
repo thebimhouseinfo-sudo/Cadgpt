@@ -427,7 +427,7 @@ export function createMcpServer(sessionKey: string): McpServer {
     },
     launchCadWorkspace: async () => {
       const launch = await prepareCadLaunch(sessionKey);
-      return launch.welcome_text;
+      return launch.welcome_text ?? "";
     },
     listJobs: async () => {
       const { listRegisteredJobs } = await import("./tools/jobs.js");
