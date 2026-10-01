@@ -134,11 +134,8 @@ test("CAD verified loader publishes and clears the source directory around load"
   assert.match(source, /setq \*cadgpt-load-dir\* nil/);
 });
 
-test("tbh executor performs exactly one verified load of permanent loader while owning child commands", async () => {
+test("tbh executor performs exactly one verified loader call and only toggles toolkit state", async () => {
   const { getInternalJob } = await import("../dist/cadgpt/lib/internal-jobs.js");
-  const { listBundledLispEntries } = await import(
-    "../dist/cadgpt/lib/bundled-assets.js"
-  );
   const { executeInternalDirectJob } = await import(
     "../dist/cadgpt/tools/jobs.js"
   );
@@ -146,15 +143,8 @@ test("tbh executor performs exactly one verified load of permanent loader while 
   const tbh = getInternalJob("tbh");
   assert.ok(tbh);
 
-  const entries = (await listBundledLispEntries())
-    .filter((entry) => entry.library_id === "tbh-toolkit")
-    .sort((a, b) => a.load_path.localeCompare(b.load_path));
-  const expectedFiles = entries.map((entry) => entry.load_path);
-  const expectedCommands = [
-    ...new Set(entries.flatMap((entry) => entry.commands)),
-  ].sort();
-
   const calls = [];
+  const toggles = [];
   const result = await executeInternalDirectJob(
     tbh,
     [],
@@ -162,26 +152,33 @@ test("tbh executor performs exactly one verified load of permanent loader while 
       calls.push({ loadPath, drawingId, ownedCommands });
       return {
         loaded: true,
-        commands: ownedCommands ?? [],
+        commands: [],
         drawing_id: "drawing-fixture",
         raw: { loaded: true },
       };
+    },
+    (drawingId, group) => {
+      toggles.push({ drawingId, group });
     }
   );
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].loadPath, tbhLoaderVirtual);
   assert.equal(calls[0].drawingId, undefined);
-  assert.deepEqual(calls[0].ownedCommands, expectedCommands);
+  assert.equal(calls[0].ownedCommands, undefined);
+  assert.deepEqual(toggles, [
+    { drawingId: "drawing-fixture", group: "tbh-toolkit" },
+  ]);
   assert.equal(result.loader_calls, 1);
   assert.equal(result.loader_path, tbhLoaderVirtual);
-  assert.equal(result.loaded_count, expectedFiles.length);
-  assert.deepEqual(result.loaded_files, expectedFiles);
-  assert.equal(result.command_count, expectedCommands.length);
-  assert.deepEqual(result.commands, expectedCommands);
+  assert.equal(result.loaded, true);
+  assert.equal(result.state, "on");
+  assert.equal("commands" in result, false);
+  assert.equal("command_count" in result, false);
+  assert.equal("loaded_files" in result, false);
 });
 
-test("tbh executor reports one failed permanent-loader call and does not retry child files through CAD MCP", async () => {
+test("tbh executor does not toggle state when permanent loader fails", async () => {
   const { getInternalJob } = await import("../dist/cadgpt/lib/internal-jobs.js");
   const { executeInternalDirectJob } = await import(
     "../dist/cadgpt/tools/jobs.js"
@@ -190,24 +187,32 @@ test("tbh executor reports one failed permanent-loader call and does not retry c
   const tbh = getInternalJob("tbh");
   assert.ok(tbh);
   let calls = 0;
+  let toggles = 0;
   const failingChild =
     "TBH Tool Kit/Draw/Create/FlexConn.lsp";
 
   await assert.rejects(
     () =>
-      executeInternalDirectJob(tbh, [], async (loadPath) => {
-        calls += 1;
-        assert.equal(loadPath, tbhLoaderVirtual);
-        return {
-          loaded: false,
-          commands: [],
-          drawing_id: "drawing-fixture",
-          raw: {
+      executeInternalDirectJob(
+        tbh,
+        [],
+        async (loadPath) => {
+          calls += 1;
+          assert.equal(loadPath, tbhLoaderVirtual);
+          return {
             loaded: false,
-            error: `TBH child load failed: ${failingChild}`,
-          },
-        };
-      }),
+            commands: [],
+            drawing_id: "drawing-fixture",
+            raw: {
+              loaded: false,
+              error: `TBH child load failed: ${failingChild}`,
+            },
+          };
+        },
+        () => {
+          toggles += 1;
+        }
+      ),
     (error) => {
       const message = String(error);
       assert.equal(message.includes("TBH_TOOLKIT_LOAD_FAILED"), true);
@@ -216,6 +221,40 @@ test("tbh executor reports one failed permanent-loader call and does not retry c
     }
   );
   assert.equal(calls, 1);
+  assert.equal(toggles, 0);
+});
+
+test("TBH loaded state is isolated by execution and drawing and clears with execution state", async () => {
+  const {
+    clearExecutionCadProxyState,
+    internalLispGroupLoaded,
+    markInternalLispGroupLoadedForExecution,
+  } = await import("../dist/cadgpt/tools/cad-proxy.js");
+
+  markInternalLispGroupLoadedForExecution(
+    "exec-a",
+    "drawing-a",
+    "tbh-toolkit"
+  );
+
+  assert.equal(
+    internalLispGroupLoaded("exec-a", "drawing-a", "tbh-toolkit"),
+    true
+  );
+  assert.equal(
+    internalLispGroupLoaded("exec-a", "drawing-b", "tbh-toolkit"),
+    false
+  );
+  assert.equal(
+    internalLispGroupLoaded("exec-b", "drawing-a", "tbh-toolkit"),
+    false
+  );
+
+  clearExecutionCadProxyState("exec-a");
+  assert.equal(
+    internalLispGroupLoaded("exec-a", "drawing-a", "tbh-toolkit"),
+    false
+  );
 });
 
 test("tbh internal direct Job rejects positional args", async () => {
@@ -232,6 +271,9 @@ test("tbh internal direct Job rejects positional args", async () => {
         ["unexpected"],
         async () => {
           throw new Error("loader should not be called");
+        },
+        () => {
+          throw new Error("state marker should not be called");
         }
       ),
     /INTERNAL_JOB_ARGS_UNSUPPORTED/
