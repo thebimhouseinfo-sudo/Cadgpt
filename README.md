@@ -163,7 +163,7 @@ Most users need only Lisp Libraries. Job Libraries are optional for advanced/leg
 
 Asset commands: `cg/rl` / `cg/rj` register an external folder in place; `cg/il` / `cg/ij` import by copying into AppData and indexing; `cg/el` / `cg/ej` export managed content to a user folder. Registry entries stay lightweight: identity/title/library/path/commands only; source is read when deeper understanding is actually needed.
 
-Registered Jobs are extension-driven: `.py` is a Direct Job dispatched without model planning; `.md` is a sequential Reasoning Job that uses the per-stage READ → PLAN → REVIEW → REVISE → EXEC → READBACK loop.
+Jobs are execution-mode driven. Official Internal Direct Jobs such as `tbh` are dispatched by `job_run_direct` through bounded built-in CadGPT executors with no model planning. User Registry `.py` Jobs are also Direct Jobs; User Registry `.md` Jobs are sequential Reasoning Jobs using the per-stage READ → PLAN → REVIEW → REVISE → EXEC → READBACK loop.
 
 ## Capability Registry
 
@@ -172,14 +172,16 @@ CadGPT exposes one effective registry with strict ownership:
 ```text
 Internal Registry
 ├─ MCP tools
-└─ system skills
+├─ system skills
+├─ bundled Lisp capabilities
+└─ official Jobs (for example tbh)
 
 User Registry
 ├─ Lisp capabilities
-└─ concrete Jobs
+└─ user-created/imported Jobs
 ```
 
-Use `registry_list` / `registry_get` to search the unified view. User Registry cannot overwrite Internal Registry because the allowed capability kinds are disjoint. User capability IDs are unique within User Registry.
+Use `registry_list` / `registry_get` to search the unified view. User Registry cannot overwrite Internal Registry; official Internal Job ids are reserved and user-created/imported Jobs cannot replace them. User capability IDs remain unique within User Registry.
 
 Re-imported implementation content is hash-tracked. When an imported Lisp/Job implementation changes, previously trusted semantic/safety metadata is invalidated to `needs_review` rather than silently retained as curated truth.
 
@@ -192,7 +194,7 @@ Import/index does not modify source. When the user explicitly asks `write-lisp` 
 ```text
 User Registry discovery
 → lisp_checkout
-→ appdata/workspace/lisp-draft/**
+→ %LOCALAPPDATA%\CadGPT\workspace\lisp-draft\**
 → update/repair functionality + normalize working header/description
 → static validation
 → user-approved AutoCAD test drawing
@@ -209,14 +211,14 @@ Blocking syntax errors in the managed source do not prevent checkout for repair;
 
 ## Jobs
 
-Concrete Jobs live under managed User Job Libraries in AppData and are registered in User Registry. Job rules, schema/authoring guidance and runtime semantics are internal CadGPT knowledge under `knowledge/jobs/**`.
+User-created/imported Jobs live under managed User Job Libraries in AppData and are registered in User Registry. CadGPT may also ship explicit read-only Internal Jobs. The official `tbh` Direct Job loads the bundled TBH Toolkit from `resources/cad/internal-lisp/tbh-toolkit` into the bound drawing through the verified Lisp bridge; it is never copied into User AppData. Job rules, schema/authoring guidance and runtime semantics are internal CadGPT knowledge under `knowledge/jobs/**`.
 
 `jobcreate` uses the same controlled working-copy principle as `write-lisp`:
 
 ```text
 existing Job (optional)
 → job_checkout
-→ appdata/workspace/job-draft/**
+→ %LOCALAPPDATA%\CadGPT\workspace\job-draft\**
 → author/refine
 → job_draft_validate
 → explicitly approved real test
@@ -232,7 +234,7 @@ CadGPT core must remain functional with no user Job Library and no user Lisp Lib
 
 ## Internal resources
 
-System skills remain under `skills/**`. Internal CAD fixtures/resources, such as the safe Lisp load smoke test, live under `resources/cad/**`; they are not user Lisp capabilities.
+System skills remain under `skills/**`. Internal CAD fixtures/resources and bundled Lisp live under `resources/cad/**`. Official Internal Jobs are explicit product capabilities; `tbh` is the bounded Direct Job that loads the bundled TBH Toolkit into the currently bound drawing.
 
 ## Installation
 
