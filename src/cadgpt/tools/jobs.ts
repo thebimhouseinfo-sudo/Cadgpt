@@ -259,13 +259,18 @@ async function validateJobDraft(
 }
 
 async function assertManagedLibraryExists(libraryId: string): Promise<void> {
+  if (libraryId.trim().toLowerCase() === "tbh-toolkit") {
+    throw new Error(
+      "INTERNAL_LIBRARY_RESERVED: tbh-toolkit is reserved for CadGPT Internal Registry/install content and cannot be a User Job library."
+    );
+  }
   const manifest = await readJson<{ libraries?: Array<Record<string, unknown>> }>(getUserLibrariesManifestPath(), { libraries: [] });
   const jobLibraries = (manifest.libraries ?? []).filter((item) => item.kind === "job" && item.enabled !== false);
   const match = jobLibraries.find((item) => item.id === libraryId);
   if (!match) {
     const available = jobLibraries.map((item) => String(item.id)).join(", ") || "(none)";
     throw new Error(
-      `MANAGED_LIBRARY_NOT_FOUND: Enabled managed Job library '${libraryId}' not found in libraries.json. Available libraries: [${available}]. You must register/import the library first via library_import or choose an existing library.`
+      `MANAGED_LIBRARY_NOT_FOUND: Enabled managed Job library '${libraryId}' not found in libraries.json. Available libraries: [${available}]. Create one with library_create, import one with library_import, or choose an existing library.`
     );
   }
 }
@@ -599,7 +604,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
               library_id: potentialLibId,
               note: found
                 ? `Target library '${potentialLibId}' exists and is ready for eventual promotion.`
-                : `Target library '${potentialLibId}' is not yet in libraries.json. You can continue drafting and testing, but before promoting with job_promote_draft you will need to register it via library_import.`,
+                : `Target library '${potentialLibId}' is not yet in libraries.json. You can continue drafting/testing, then create it with library_create or import it with library_import before job_promote_draft.`,
             };
           }
 

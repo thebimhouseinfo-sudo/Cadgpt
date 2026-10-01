@@ -17,6 +17,7 @@ import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
 const LIBRARY_ID = /^[a-z0-9][a-z0-9._-]{0,79}$/;
+const INTERNAL_LIBRARY_IDS = new Set(["tbh-toolkit"]);
 const MAX_IMPORT_FILES = 10000;
 const MAX_IMPORT_BYTES = 256 * 1024 * 1024;
 type LibraryKind = "lisp" | "job";
@@ -27,11 +28,21 @@ interface LibraryRecord {
   name: string;
   enabled: boolean;
   managed_path: string;
-  imported_from: string;
+  origin?: "imported" | "created";
+  imported_from?: string;
   imported_at?: string;
-  import_mode: "managed-copy";
-  source_access: "read-only";
-  authoring_profile?: "cadgpt" | "tbh";
+  created_at?: string;
+  import_mode?: "managed-copy";
+  source_access?: "read-only";
+  authoring_profile?: "cadgpt";
+}
+
+function assertUserLibraryId(libraryId: string): void {
+  if (INTERNAL_LIBRARY_IDS.has(libraryId.trim().toLowerCase())) {
+    throw new Error(
+      `INTERNAL_LIBRARY_RESERVED: '${libraryId}' belongs to CadGPT Internal Registry/install content and cannot be created/imported as a User Library.`
+    );
+  }
 }
 
 async function readJson<T>(target: string, fallback: T): Promise<T> {
@@ -288,6 +299,112 @@ export function registerLibraryDiscoveryTools(server: McpServer): void {
 
 export function registerLibraryMutationTools(server: McpServer): void {
   server.registerTool(
+    "library_create",
+    {
+      title: "Create Empty Managed User Library",
+      description:
+        "Create an empty user-owned managed Lisp/Job library in CadGPT AppData so a new draft can later be promoted without importing an external folder. Internal library ids such as tbh-toolkit are reserved.",
+      inputSchema: {
+        kind: z.enum(["lisp", "job"]),
+        library_id: z.string().regex(LIBRARY_ID),
+        name: z.string().min(1).max(160),
+        target_path: z
+          .string()
+          .min(1)
+          .describe("Absolute managed AppData library directory; must exactly match kind + library_id."),
+      },
+    },
+    async ({ kind, library_id, name, target_path }) => {
+      try {
+        assertUserLibraryId(library_id);
+        const parent = kind === "lisp" ? getLispLibrariesRoot() : getJobLibrariesRoot();
+        await fs.mkdir(parent, { recursive: true });
+        if (!path.isAbsolute(target_path)) {
+          throw new Error("ABSOLUTE_PATH_REQUIRED: library_create target_path must be absolute");
+        }
+        const expectedTarget = path.resolve(parent, library_id);
+        const target = await resolveAbsoluteMutationPath(target_path, {
+          allowedRoots: [parent],
+          forCreate: true,
+          label: "managed user library",
+        });
+        if (path.relative(expectedTarget, target) !== "") {
+          throw new Error(
+            `TARGET_PATH_MISMATCH: target_path must exactly match managed library target ${expectedTarget}`
+          );
+        }
+
+        const manifestPath = getUserLibrariesManifestPath();
+        return await withFileMutationLocks([target, manifestPath], async () => {
+          const existing = await fs.stat(target).catch((error) => {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+            throw error;
+          });
+          if (existing) {
+            throw new Error(`MANAGED_LIBRARY_EXISTS: user library already exists at ${target}`);
+          }
+
+          const baseline = await readOptionalText(manifestPath);
+          const manifest = baseline
+            ? (JSON.parse(baseline) as { version: number; libraries: LibraryRecord[] })
+            : { version: 1, libraries: [] as LibraryRecord[] };
+          if (
+            manifest.libraries.some(
+              (item) => item.kind === kind && item.id === library_id
+            )
+          ) {
+            throw new Error(
+              `MANAGED_LIBRARY_EXISTS: user library '${library_id}' is already registered for kind '${kind}'.`
+            );
+          }
+
+          const record: LibraryRecord = {
+            id: library_id,
+            kind,
+            name,
+            enabled: true,
+            managed_path: toCadgptPath(target),
+            origin: "created",
+            created_at: new Date().toISOString(),
+            ...(kind === "lisp" ? { authoring_profile: "cadgpt" as const } : {}),
+          };
+          const next = [...manifest.libraries, record].sort((a, b) =>
+            `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`)
+          );
+
+          await fs.mkdir(target, { recursive: false });
+          try {
+            const current = await readOptionalText(manifestPath);
+            if (current !== baseline) {
+              throw new Error(
+                "RESOURCE_CONFLICT: User Library manifest changed during library_create"
+              );
+            }
+            await fs.mkdir(getUserRegistryRoot(), { recursive: true });
+            await atomicJson(manifestPath, {
+              version: manifest.version || 1,
+              libraries: next,
+            });
+          } catch (error) {
+            await fs.rm(target, { recursive: true, force: true }).catch(() => undefined);
+            throw error;
+          }
+
+          return toolResult("library_create", {
+            library: record,
+            managed_absolute_path: target,
+            ready_for_promotion: true,
+            note:
+              "The library is empty and user-owned. Create/test drafts in workspace, then promote them into this managed library.",
+          });
+        });
+      } catch (error) {
+        return toolError("library_create", error);
+      }
+    }
+  );
+
+  server.registerTool(
     "library_import",
     {
       title: "Import User Library into CadGPT AppData",
@@ -304,6 +421,7 @@ export function registerLibraryMutationTools(server: McpServer): void {
     },
     async ({ kind, library_id, name, source_path, target_path, user_approved_source, replace_existing }) => {
       try {
+        assertUserLibraryId(library_id);
         if (!user_approved_source) throw new Error("Library import requires explicit user approval of source_path");
         if (!path.isAbsolute(source_path)) throw new Error("source_path must be an absolute directory selected by the user");
         const source = await fs.realpath(source_path);
@@ -398,11 +516,12 @@ export function registerLibraryMutationTools(server: McpServer): void {
             name,
             enabled: true,
             managed_path: toCadgptPath(target),
+            origin: "imported",
             imported_from: source,
             imported_at: new Date().toISOString(),
             import_mode: "managed-copy",
             source_access: "read-only",
-            ...(kind === "lisp" ? { authoring_profile: library_id === "tbh-toolkit" ? "tbh" : "cadgpt" } : {}),
+            ...(kind === "lisp" ? { authoring_profile: "cadgpt" as const } : {}),
           };
           const libraries = manifest.libraries.filter((item) => !(item.id === library_id && item.kind === kind));
           libraries.push(record);

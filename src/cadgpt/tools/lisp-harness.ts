@@ -339,7 +339,7 @@ export function registerLispHarnessTools(server: McpServer): void {
     "lisp_scaffold",
     {
       title: "Create Canonical AutoLISP Scaffold",
-      description: "Create CadGPT's canonical AutoLISP scaffold. Default profile is CadGPT; target_library_id=tbh-toolkit is the deliberate TBH header exception. Returns content AND a ready-to-use suggested_draft_path; pass that path directly to file_create.",
+      description: "Create a canonical user-owned AutoLISP scaffold. Internal tbh-toolkit is reserved and cannot be used as a User Library target. Returns content AND a namespaced ready-to-use suggested_draft_path; pass that path directly to file_create.",
       inputSchema: {
         file_name: z.string().regex(/^[^\\/]+\.lsp$/i),
         module: z.string().min(1).max(120),
@@ -353,10 +353,20 @@ export function registerLispHarnessTools(server: McpServer): void {
     async ({ file_name, module, command, description, target_library_id, mutating, uses_com }) => {
       try {
         const { getLispDraftRoot } = await import("../lib/appdata.js");
+        if (target_library_id?.trim().toLowerCase() === "tbh-toolkit") {
+          throw new Error(
+            "INTERNAL_LIBRARY_RESERVED: tbh-toolkit is repo-bundled Internal Registry content, not a User AppData promotion target."
+          );
+        }
         const profile = profileForLibrary(target_library_id);
         const content = makeScaffold({ profile, fileName: file_name, module, command, description, mutating, usesCom: uses_com });
         const draftRoot = getLispDraftRoot();
-        const suggestedDraftPath = path.join(draftRoot, file_name);
+        const draftNamespace = target_library_id?.trim() || "unassigned";
+        const suggestedDraftPath = path.join(
+          draftRoot,
+          draftNamespace,
+          file_name
+        );
 
         let libraryStatus: { registered: boolean; library_id: string; note: string } | undefined;
         if (target_library_id) {
@@ -368,7 +378,7 @@ export function registerLispHarnessTools(server: McpServer): void {
             library_id: target_library_id,
             note: found
               ? `Target library '${target_library_id}' exists and is ready for promotion.`
-              : `Target library '${target_library_id}' is not yet in libraries.json. You will need to register it via library_import before calling lisp_promote_draft.`,
+              : `Target library '${target_library_id}' is not yet in libraries.json. Create it with library_create or import it with library_import before calling lisp_promote_draft.`,
           };
         }
 

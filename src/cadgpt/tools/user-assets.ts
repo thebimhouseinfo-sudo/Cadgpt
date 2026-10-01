@@ -40,6 +40,7 @@ interface UserRegistry {
 }
 
 const LIBRARY_ID = /^[a-z0-9][a-z0-9._-]{0,79}$/i;
+const INTERNAL_LIBRARY_IDS = new Set(["tbh-toolkit"]);
 const MAX_FILES = 10000;
 const MAX_BYTES = 256 * 1024 * 1024;
 
@@ -92,6 +93,14 @@ async function walk(root: string, kind: AssetKind, out: string[] = []): Promise<
     }
   }
   return out;
+}
+
+function assertUserLibraryId(libraryId: string): void {
+  if (INTERNAL_LIBRARY_IDS.has(libraryId.trim().toLowerCase())) {
+    throw new Error(
+      `INTERNAL_LIBRARY_RESERVED: '${libraryId}' belongs to CadGPT Internal Registry/install content and cannot be registered as a User Library.`
+    );
+  }
 }
 
 async function assertSourceFolder(folderPath: string): Promise<string> {
@@ -204,6 +213,7 @@ export async function resolveRegisteredAssetPath(
 }
 
 async function importLibrary(kind: AssetKind, libraryId: string, name: string, folderPath: string, replaceExisting: boolean) {
+  assertUserLibraryId(libraryId);
   const source = await assertSourceFolder(folderPath);
   const entries = await indexLibrary(kind, libraryId, source);
   const targetParent = kind === "lisp" ? getLispLibrariesRoot() : getJobLibrariesRoot();
@@ -245,6 +255,7 @@ async function importLibrary(kind: AssetKind, libraryId: string, name: string, f
 }
 
 async function registerExternalLibrary(kind: AssetKind, libraryId: string, name: string, folderPath: string) {
+  assertUserLibraryId(libraryId);
   const root = await assertSourceFolder(folderPath);
   const entries = await indexLibrary(kind, libraryId, root);
   await saveLibraryAndRegistry({

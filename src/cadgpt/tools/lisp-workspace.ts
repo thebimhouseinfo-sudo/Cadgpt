@@ -78,13 +78,18 @@ async function loadRegistry(): Promise<UserRegistry> {
 }
 
 async function assertManagedLibraryExists(libraryId: string): Promise<void> {
+  if (libraryId.trim().toLowerCase() === "tbh-toolkit") {
+    throw new Error(
+      "INTERNAL_LIBRARY_RESERVED: tbh-toolkit is Internal Registry/install content and cannot be a User Lisp promotion target."
+    );
+  }
   const manifest = await readJson<{ libraries?: Array<Record<string, unknown>> }>(getUserLibrariesManifestPath(), { libraries: [] });
   const lispLibraries = (manifest.libraries ?? []).filter((item) => item.kind === "lisp" && item.enabled !== false);
   const match = lispLibraries.find((item) => item.id === libraryId);
   if (!match) {
     const available = lispLibraries.map((item) => String(item.id)).join(", ") || "(none)";
     throw new Error(
-      `MANAGED_LIBRARY_NOT_FOUND: Enabled managed Lisp library '${libraryId}' not found in libraries.json. Available libraries: [${available}]. You must register/import the library first via library_import or choose an existing library.`
+      `MANAGED_LIBRARY_NOT_FOUND: Enabled managed Lisp library '${libraryId}' not found in libraries.json. Available libraries: [${available}]. Create one with library_create, import one with library_import, or choose an existing library.`
     );
   }
 }
