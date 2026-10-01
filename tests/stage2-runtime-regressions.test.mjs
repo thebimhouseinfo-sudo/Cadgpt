@@ -118,3 +118,14 @@ test("workspace activation serializes CAD MCP activation and document binding", 
     /withCadHostLock\("autocad",[\s\S]*?cadUpstream\.activate\(\)[\s\S]*?bindDrawingForExecution\(work\.executionId, selector\)/
   );
 });
+
+
+test("persistent MCP instructions require a fresh CAD read for every live-state question", async () => {
+  const { FRESH_CAD_STATE_POLICY } = await import(
+    "../dist/cadgpt/server-factory.js"
+  );
+  assert.match(FRESH_CAD_STATE_POLICY, /same user turn/i);
+  assert.match(FRESH_CAD_STATE_POLICY, /Never reuse or restate a prior CAD result/i);
+  assert.match(FRESH_CAD_STATE_POLICY, /layer count/i);
+  assert.match(FRESH_CAD_STATE_POLICY, /fail closed/i);
+});
