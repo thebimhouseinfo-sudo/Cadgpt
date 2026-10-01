@@ -176,6 +176,87 @@ test("headerless recovery detects cadgpt_cad_confirm and treats token as optiona
   );
 });
 
+test("bare launch auto-binds only when tray reports exactly one drawing", async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "cadgpt-single-auto-bind-")
+  );
+  const previous = process.env.CADGPT_APPDATA_ROOT;
+  process.env.CADGPT_APPDATA_ROOT = tempRoot;
+
+  const {
+    checkAdmission,
+    revokeSessionAdmissions,
+  } = await import("../dist/cadgpt/lib/admission.js");
+  const {
+    clearCadPrepare,
+    prepareCadLaunch,
+  } = await import("../dist/cadgpt/tools/cad-launcher.js");
+
+  const sessionKey = "single-auto-bind-session";
+  checkAdmission(sessionKey, "@cg", "mention");
+
+  const stateDir = path.join(tempRoot, "state");
+  const statePath = path.join(stateDir, "tray-ready.json");
+  await fs.mkdir(stateDir, { recursive: true });
+
+  const writeTray = async (drawings) => {
+    await fs.writeFile(
+      statePath,
+      JSON.stringify({
+        autocad_running: true,
+        autocad_attached: true,
+        autocad_drawing_count: drawings.length,
+        autocad_drawings: drawings,
+        autocad_probe_at: new Date().toISOString(),
+      }),
+      "utf8"
+    );
+  };
+
+  try {
+    await writeTray([]);
+    const zero = await prepareCadLaunch(sessionKey, {
+      autoBindSingle: true,
+    });
+    assert.equal(zero.mode, "cad_prepare");
+    assert.equal(zero.auto_bind_drawing, undefined);
+    assert.match(zero.welcome_text ?? "", /Chưa có drawing/);
+
+    await writeTray([
+      { name: "Drawing1.dwg", full_name: "C:\\Drawing1.dwg" },
+    ]);
+    const one = await prepareCadLaunch(sessionKey, {
+      autoBindSingle: true,
+    });
+    assert.equal(one.mode, "auto_bind");
+    assert.equal(one.auto_bind_drawing?.name, "Drawing1.dwg");
+    assert.equal(one.confirmation_token, undefined);
+    assert.equal(one.welcome_text, undefined);
+
+    await writeTray([
+      { name: "Drawing1.dwg", full_name: "C:\\Drawing1.dwg" },
+      { name: "Drawing2.dwg", full_name: "C:\\Drawing2.dwg" },
+    ]);
+    const many = await prepareCadLaunch(sessionKey, {
+      autoBindSingle: true,
+    });
+    assert.equal(many.mode, "cad_prepare");
+    assert.equal(many.drawings?.length, 2);
+    assert.equal(typeof many.confirmation_token, "string");
+    assert.match(many.welcome_text ?? "", /1\. C:\\Drawing1\.dwg/);
+    assert.match(many.welcome_text ?? "", /2\. C:\\Drawing2\.dwg/);
+  } finally {
+    clearCadPrepare(sessionKey);
+    revokeSessionAdmissions(sessionKey);
+    if (previous === undefined) delete process.env.CADGPT_APPDATA_ROOT;
+    else process.env.CADGPT_APPDATA_ROOT = previous;
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("CAD prepare survives repeated launch and MCP session churn, while remaining single-use and transactional", async () => {
   const fs = await import("node:fs/promises");
   const os = await import("node:os");
