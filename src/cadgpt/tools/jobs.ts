@@ -7,7 +7,6 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import {
-  getDynamicLispRoot,
   getJobDraftRoot,
   getJobLibrariesRoot,
   getUserCapabilitiesPath,
@@ -23,7 +22,6 @@ import { resolveRegisteredAssetPath } from "./user-assets.js";
 import {
   getBundledLispLibrariesRoot,
   listBundledLispEntries,
-  resolveBundledLispPath,
 } from "../lib/bundled-assets.js";
 import {
   getInternalJob,
@@ -504,92 +502,14 @@ async function executeDirectJobScript(
   };
 }
 
-function escapeAutoLispString(value: string): string {
-  return value.replaceAll("\\", "/").replaceAll('"', '\\"');
-}
-
-export function renderTbhToolkitLoaderSource(
-  absoluteFiles: string[]
-): string {
-  const fileList = absoluteFiles
-    .map((item) => `  "${escapeAutoLispString(item)}"`)
-    .join("\n");
-
-  return [
-    ";;; CadGPT generated TBH Toolkit batch loader",
-    "(vl-load-com)",
-    "(setq *cadgpt-tbh-load-files* '(",
-    fileList,
-    "))",
-    "(foreach *cadgpt-tbh-file* *cadgpt-tbh-load-files*",
-    "  (setq *cadgpt-tbh-result*",
-    "    (vl-catch-all-apply 'load (list *cadgpt-tbh-file*)))",
-    "  (if (vl-catch-all-error-p *cadgpt-tbh-result*)",
-    "    (error",
-    "      (strcat",
-    '        "TBH child load failed: "',
-    "        *cadgpt-tbh-file*",
-    '        " :: "',
-    "        (vl-catch-all-error-message *cadgpt-tbh-result*)",
-    "      )",
-    "    )",
-    "  )",
-    ")",
-    "(setq *cadgpt-tbh-load-files* nil)",
-    "(setq *cadgpt-tbh-file* nil)",
-    "(setq *cadgpt-tbh-result* nil)",
-    "(princ)",
-    "",
-  ].join("\n");
-}
-
-export async function buildTbhToolkitLoader(): Promise<{
-  loader_path: string;
-  files: string[];
-  commands: string[];
-}> {
-  const entries = (await listBundledLispEntries())
-    .filter((item) => item.library_id === "tbh-toolkit")
-    .sort((a, b) => a.load_path.localeCompare(b.load_path));
-
-  if (entries.length === 0) {
-    throw new Error(
-      "INTERNAL_JOB_RESOURCE_EMPTY: no bundled Lisp files found for tbh-toolkit"
-    );
-  }
-
-  const absoluteFiles: string[] = [];
-  const commands = new Set<string>();
-  for (const entry of entries) {
-    absoluteFiles.push(
-      await resolveBundledLispPath(entry.library_id, entry.relative_path)
-    );
-    for (const command of entry.commands) commands.add(command);
-  }
-
-  const source = renderTbhToolkitLoaderSource(absoluteFiles);
-
-  const root = getDynamicLispRoot();
-  const target = path.join(
-    root,
-    "tbh",
-    `tbh-load-all-${currentToolLease().workId}.lsp`
-  );
-  await atomicWrite(target, source);
-  return {
-    loader_path: target,
-    files: entries.map((entry) => entry.load_path),
-    commands: [...commands].sort(),
-  };
-}
+const TBH_LOADER_PATH =
+  "resources/cad/internal-lisp/tbh-toolkit/tbhloader.lsp";
 
 export async function executeInternalDirectJob(
   entry: InternalJobEntry,
   args: string[],
   loader: typeof loadVerifiedLispForCurrentWork =
-    loadVerifiedLispForCurrentWork,
-  batchBuilder: typeof buildTbhToolkitLoader =
-    buildTbhToolkitLoader
+    loadVerifiedLispForCurrentWork
 ): Promise<Record<string, unknown>> {
   if (entry.executor !== "builtin:tbh-toolkit-loader") {
     throw new Error(`INTERNAL_JOB_EXECUTOR_UNSUPPORTED: ${entry.executor}`);
@@ -600,37 +520,48 @@ export async function executeInternalDirectJob(
     );
   }
 
-  const batch = await batchBuilder();
-  try {
-    const result = await loader(
-      batch.loader_path,
-      undefined,
-      batch.commands
-    );
-    if (!result.loaded) {
-      throw new Error(
-        `TBH_TOOLKIT_LOAD_FAILED: batch loader failed: ${JSON.stringify(
-          result.raw
-        )}`
-      );
-    }
+  const entries = (await listBundledLispEntries())
+    .filter((item) => item.library_id === entry.library_id)
+    .sort((a, b) => a.load_path.localeCompare(b.load_path));
 
-    return {
-      execution_mode: "direct",
-      registry: "internal",
-      executor: entry.executor,
-      library_id: entry.library_id,
-      resource_root: entry.resource_root,
-      drawing_id: result.drawing_id,
-      loader_calls: 1,
-      loaded_count: batch.files.length,
-      loaded_files: batch.files,
-      command_count: batch.commands.length,
-      commands: batch.commands,
-    };
-  } finally {
-    await fs.rm(batch.loader_path, { force: true }).catch(() => undefined);
+  if (entries.length === 0) {
+    throw new Error(
+      `INTERNAL_JOB_RESOURCE_EMPTY: no bundled Lisp files found for ${entry.library_id}`
+    );
   }
+
+  const commands = [
+    ...new Set(entries.flatMap((item) => item.commands)),
+  ].sort();
+  const loadedFiles = entries.map((item) => item.load_path);
+
+  const result = await loader(
+    TBH_LOADER_PATH,
+    undefined,
+    commands
+  );
+  if (!result.loaded) {
+    throw new Error(
+      `TBH_TOOLKIT_LOAD_FAILED: loader failed: ${JSON.stringify(
+        result.raw
+      )}`
+    );
+  }
+
+  return {
+    execution_mode: "direct",
+    registry: "internal",
+    executor: entry.executor,
+    library_id: entry.library_id,
+    resource_root: entry.resource_root,
+    drawing_id: result.drawing_id,
+    loader_calls: 1,
+    loader_path: TBH_LOADER_PATH,
+    loaded_count: loadedFiles.length,
+    loaded_files: loadedFiles,
+    command_count: commands.length,
+    commands,
+  };
 }
 
 export function registerJobAuthoringTools(server: McpServer): void {
