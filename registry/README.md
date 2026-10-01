@@ -6,18 +6,19 @@ CadGPT exposes one effective capability catalog to ChatGPT, but ownership is spl
 Internal Registry
 ├─ MCP tools
 ├─ system skills
-└─ repo-bundled/install Lisp (for example TBH Tool Kit)
+├─ repo-bundled/install Lisp (for example TBH Tool Kit)
+└─ official repo-bundled Jobs (for example tbh)
 
 User Registry
 ├─ managed Lisp capabilities
-└─ concrete Jobs
+└─ user-created/imported Jobs
 ```
 
-The effective registry is a unified search/view layer, not an override mechanism. User Registry cannot contain tools or system skills; Internal Registry does not own user Lisp/Jobs.
+The effective registry is a unified search/view layer, not an override mechanism. User Registry cannot contain tools or system skills and cannot override official Internal Job ids. Internal Registry owns only CadGPT-shipped Jobs; user-created/imported Jobs remain User Registry assets.
 
 ## Internal Registry
 
-Internal entries are generated from CadGPT core tool metadata, the stable CAD MCP manifest, and `skills/*/SKILL.md`. They version with CadGPT and are not user-editable workflow assets.
+Internal entries are generated from CadGPT core tool metadata, the stable CAD MCP manifest, `skills/*/SKILL.md`, bundled Lisp resources, and the explicit official Internal Job table. They version with CadGPT and are not user-editable workflow assets.
 
 ## User Registry
 
@@ -75,7 +76,7 @@ Import/index never modifies source. Freshly discovered entries may remain `seman
 
 ## Job metadata
 
-Concrete Jobs are User Registry assets from managed Job Libraries. Job rules/spec/schema are internal CadGPT knowledge under `knowledge/jobs/**` and are not themselves user Job entries.
+Most concrete Jobs are User Registry assets from managed Job Libraries. CadGPT may also ship a small explicit set of official Internal Jobs. Those Internal Jobs are read-only product capabilities, are never copied into AppData, and cannot be replaced by User Registry entries. Job rules/spec/schema remain internal CadGPT knowledge under `knowledge/jobs/**`.
 
 ## write-lisp lifecycle
 
