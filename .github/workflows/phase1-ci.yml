@@ -138,17 +138,20 @@ jobs:
       - name: Smoke admission, lazy families, managed sandbox and registry
         shell: pwsh
         run: |
+          $managedRoot = Join-Path $env:RUNNER_TEMP "CadGPT"
+          Remove-Item $managedRoot -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path @(
-            "appdata/libraries/lisp", "appdata/libraries/jobs", "appdata/registry/user",
-            "appdata/workspace/lisp-draft", "appdata/workspace/job-draft", "appdata/data/runs",
-            "appdata/runtime/dynamic-lisp", "appdata/drawings", "appdata/state", "appdata/logs"
+            (Join-Path $managedRoot "libraries\lisp"), (Join-Path $managedRoot "libraries\jobs"), (Join-Path $managedRoot "registry\user"),
+            (Join-Path $managedRoot "workspace\lisp-draft"), (Join-Path $managedRoot "workspace\job-draft"), (Join-Path $managedRoot "data\runs"),
+            (Join-Path $managedRoot "runtime\dynamic-lisp"), (Join-Path $managedRoot "drawings"), (Join-Path $managedRoot "state"), (Join-Path $managedRoot "logs")
           ) | Out-Null
-          Set-Content -LiteralPath "appdata/data/ci-read.txt" -Value "ci fixture" -NoNewline
+          $ciReadPath = Join-Path $managedRoot "data\ci-read.txt"
+          Set-Content -LiteralPath $ciReadPath -Value "ci fixture" -NoNewline
 
           $env:CAD_MCP_PYTHON = "python"
           $env:CAD_MCP_ENTRY = "runtimes\cad-mcp\main.py"
           $env:MCP_TOKEN = "ci-secret-token"
-          $env:CADGPT_APPDATA_ROOT = (Resolve-Path "appdata").Path
+          $env:CADGPT_APPDATA_ROOT = $managedRoot
           $env:CADGPT_BUILD_PROFILE = "development"
           $mcpUrl = "http://127.0.0.1:3000/mcp/ci-secret-token"
           $proc = Start-Process -FilePath "node" -ArgumentList "dist/index.js" -PassThru -NoNewWindow
@@ -262,7 +265,7 @@ jobs:
               if ($rootNames -notcontains $required) { throw "Managed root missing: $required" }
             }
 
-            $allowedRead = Invoke-Work "file_read" @{ path="appdata/data/ci-read.txt"; start_line=1; end_line=2 }
+            $allowedRead = Invoke-Work "file_read" @{ path=$ciReadPath; start_line=1; end_line=2 }
             if ($allowedRead.result.isError -eq $true) { throw "Managed AppData read rejected" }
             $blockedRead = Invoke-Work "file_read" @{ path="package.json" }
             if ($blockedRead.result.isError -ne $true) { throw "Sandbox allowed package.json" }
@@ -277,7 +280,7 @@ jobs:
               throw "TBH Tool Kit must not appear as user AppData content"
             }
 
-            $relativeCreate = Invoke-Work "file_create" @{ path="appdata/workspace/reject.txt"; content="reject" }
+            $relativeCreate = Invoke-Work "file_create" @{ path="workspace/reject.txt"; content="reject" }
             if ($relativeCreate.result.isError -ne $true -or $relativeCreate.result.structuredContent.data.error -notmatch "ABSOLUTE_PATH_REQUIRED") { throw "Relative file mutation was not rejected" }
 
             Write-Host "Stable tool surface + session/work authority + lazy runtime + managed sandbox smoke passed"
