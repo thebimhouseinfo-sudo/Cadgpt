@@ -2,7 +2,7 @@
 
 CadGPT keeps user-owned workflow assets and runtime/generated data separate from installation source.
 
-During Beta the AppData root is repo-local `appdata/`. A packaged build can map the same virtual paths to `%LOCALAPPDATA%\CadGPT` through `CADGPT_APPDATA_ROOT`.
+The repository does **not** ship user/runtime AppData. On Windows the default runtime root is `%LOCALAPPDATA%\CadGPT`; `CADGPT_APPDATA_ROOT` may override it for development/tests. The repo-local `appdata/` directory is documentation-only and must not contain bundled tools or user data.
 
 ## Layout
 
@@ -95,13 +95,13 @@ managed library content
 
 If re-imported implementation bytes differ from the implementation hash stored with a capability, previous semantic/safety claims are invalidated to `needs_review` rather than silently kept as trusted curated metadata.
 
-During Beta, `appdata/libraries/**` and `appdata/registry/user/**` are committed so the repo can simulate an already-imported user environment. Other generated AppData areas remain ignored.
+Repo-bundled/internal CAD resources (including TBH Tool Kit) live under `resources/cad/internal-lisp/**` and are discovered through Internal Registry. They are never resolved through user AppData.
 
 ## Registry ownership
 
 ```text
-Internal Registry  → MCP tools + system skills
-User Registry      → managed Lisp + concrete Jobs
+Internal Registry  → MCP tools + system skills + repo-bundled/install Lisp
+User Registry      → user-created/imported managed Lisp + concrete Jobs
 ```
 
 The effective registry is a unified discovery view, not an override mechanism. User Registry cannot contain tools or system skills and User capability IDs must remain unique.

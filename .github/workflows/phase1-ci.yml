@@ -143,6 +143,7 @@ jobs:
             "appdata/workspace/lisp-draft", "appdata/workspace/job-draft", "appdata/data/runs",
             "appdata/runtime/dynamic-lisp", "appdata/drawings", "appdata/state", "appdata/logs"
           ) | Out-Null
+          Set-Content -LiteralPath "appdata/data/ci-read.txt" -Value "ci fixture" -NoNewline
 
           $env:CAD_MCP_PYTHON = "python"
           $env:CAD_MCP_ENTRY = "runtimes\cad-mcp\main.py"
@@ -261,7 +262,7 @@ jobs:
               if ($rootNames -notcontains $required) { throw "Managed root missing: $required" }
             }
 
-            $allowedRead = Invoke-Work "file_read" @{ path="appdata/libraries/jobs/tbh-toolkit/JOB.md"; start_line=1; end_line=2 }
+            $allowedRead = Invoke-Work "file_read" @{ path="appdata/data/ci-read.txt"; start_line=1; end_line=2 }
             if ($allowedRead.result.isError -eq $true) { throw "Managed AppData read rejected" }
             $blockedRead = Invoke-Work "file_read" @{ path="package.json" }
             if ($blockedRead.result.isError -ne $true) { throw "Sandbox allowed package.json" }
@@ -270,12 +271,11 @@ jobs:
             $entries = @($registry.result.structuredContent.data.entries)
             if (@($entries | Where-Object { $_.registry -eq "internal" -and $_.kind -eq "tool" }).Count -lt 1) { throw "Internal tool registry empty" }
             if (@($entries | Where-Object { $_.registry -eq "internal" -and $_.kind -eq "skill" }).Count -lt 1) { throw "Internal skill registry empty" }
-            $bundledLisp = @($entries | Where-Object { $_.registry -eq "internal" -and $_.kind -eq "lisp" -and $_.load_path -like "bundled/lisp/*" })
-            if ($bundledLisp.Count -lt 1) { throw "Bundled/Internal Lisp registry empty" }
-            if (@($entries | Where-Object { $_.registry -eq "user" -and $_.kind -eq "lisp" -and $_.library_id -eq "tbh-toolkit" }).Count -ne 0) {
-              throw "TBH Tool Kit must not appear as user AppData Lisp"
+            $bundledLisp = @($entries | Where-Object { $_.registry -eq "internal" -and $_.kind -eq "lisp" -and $_.load_path -like "resources/cad/internal-lisp/*" })
+            if ($bundledLisp.Count -ne 63) { throw "Expected 63 bundled/internal TBH Lisp files, got $($bundledLisp.Count)" }
+            if (@($entries | Where-Object { $_.registry -eq "user" -and $_.library_id -eq "tbh-toolkit" }).Count -ne 0) {
+              throw "TBH Tool Kit must not appear as user AppData content"
             }
-            if (@($entries | Where-Object { $_.registry -eq "user" -and $_.kind -eq "job" }).Count -lt 1) { throw "User Job registry empty" }
 
             $relativeCreate = Invoke-Work "file_create" @{ path="appdata/workspace/reject.txt"; content="reject" }
             if ($relativeCreate.result.isError -ne $true -or $relativeCreate.result.structuredContent.data.error -notmatch "ABSOLUTE_PATH_REQUIRED") { throw "Relative file mutation was not rejected" }
@@ -325,8 +325,8 @@ jobs:
           $env:CADGPT_LISP_FIXTURE = $fixture
           python -c "import os; from services.lisp_service import _resolve_lisp_path; p,v=_resolve_lisp_path(os.environ['CADGPT_LISP_FIXTURE']); assert os.path.isabs(p); assert v.replace('\\','/').startswith('resources/cad/'); print('approved absolute Lisp path OK')"
 
-          $bundled = "bundled/lisp/tbh-toolkit/TBH Tool Kit/Setup Xref/CleanATT.lsp"
-          python -c "from services.lisp_service import _resolve_lisp_path; p,v=_resolve_lisp_path(r'''$bundled'''); assert v.replace('\\','/').startswith('bundled/lisp/'); print('bundled Lisp namespace OK:', v)"
+          $bundled = "resources/cad/internal-lisp/tbh-toolkit/TBH Tool Kit/Setup Xref/CleanATT.lsp"
+          python -c "from services.lisp_service import _resolve_lisp_path; p,v=_resolve_lisp_path(r'''$bundled'''); assert v.replace('\\','/').startswith('resources/cad/internal-lisp/'); print('internal Lisp namespace OK:', v)"
 
           $outside = Join-Path $env:RUNNER_TEMP "cadgpt-outside-load.lsp"
           Set-Content -LiteralPath $outside -Value "(princ)" -NoNewline

@@ -14,45 +14,25 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Validate managed User Registry
+      - name: Validate bundled/internal ownership
         run: python scripts/validate-lisp-registry.py
 
-      - name: Verify User Registry ownership and AI-mode contract
-        shell: pwsh
-        run: |
-          $registry = Get-Content "appdata/registry/user/capabilities.json" -Raw | ConvertFrom-Json
-          if (-not $registry.entries -or $registry.entries.Count -lt 1) { throw "User Registry has no entries" }
-          foreach ($entry in $registry.entries) {
-            if ($entry.kind -notin @("lisp", "job")) { throw "User Registry contains forbidden kind: $($entry.kind) / $($entry.id)" }
-            if ($entry.registry -and $entry.registry -ne "user") { throw "User capability claims internal ownership: $($entry.id)" }
-            if (-not $entry.library_id -or -not $entry.relative_path) { throw "User capability missing library reference: $($entry.id)" }
-            if ($entry.kind -eq "lisp") {
-              if ($entry.ai_mode -notin @("static", "dynamic")) { throw "Invalid Lisp ai_mode: $($entry.id)" }
-              if ($null -ne $entry.type -or $null -ne $entry.dynamic_role) { throw "Legacy Lisp type/dynamic_role metadata is forbidden: $($entry.id)" }
-              if ($entry.ai_mode -eq "static" -and $entry.dynamic_parameters.Count -gt 0) { throw "Static AI mode cannot declare dynamic parameters: $($entry.id)" }
-              if ($entry.ai_mode -eq "dynamic" -and $entry.dynamic_parameters.Count -lt 1) { throw "Dynamic AI mode requires bounded parameters: $($entry.id)" }
-            }
-          }
-
-          if (@($registry.entries | Where-Object { $_.kind -eq "lisp" -and $_.library_id -eq "tbh-toolkit" }).Count -ne 0) {
-            throw "Bundled tbh-toolkit Lisp must not be duplicated in checked-in User Registry"
-          }
-
-          $job = $registry.entries | Where-Object { $_.kind -eq "job" } | Select-Object -First 1
-          if (-not $job) { throw "Concrete Job fixture missing from User Registry" }
-
-          $manifest = Get-Content "appdata/registry/user/libraries.json" -Raw | ConvertFrom-Json
-          if (@($manifest.libraries | Where-Object { $_.id -eq "tbh-toolkit" -and $_.kind -eq "lisp" }).Count -ne 0) {
-            throw "Bundled tbh-toolkit Lisp must not be declared as a user managed library"
-          }
-          Write-Host "Split bundled-internal/User Registry ownership contract OK"
-
-      - name: Verify internal registry kinds are generated, not stored in User Registry
+      - name: Verify Internal Registry dynamically exposes bundled Lisp
         shell: pwsh
         run: |
           $source = Get-Content "src/cadgpt/tools/registry.ts" -Raw
-          foreach ($marker in @('kind: "tool"', 'kind: "skill"', 'registry: "internal"', 'listBundledLispEntries', 'getUserCapabilitiesPath')) {
-            if ($source -notmatch [regex]::Escape($marker)) { throw "Internal registry generator missing: $marker" }
+          foreach ($marker in @('registry: "internal"', 'listBundledLispEntries', 'resolveBundledLispPath', 'getUserCapabilitiesPath')) {
+            if ($source -notmatch [regex]::Escape($marker)) {
+              throw "Registry ownership generator missing: $marker"
+            }
           }
-          if ($source -notmatch 'User Registry may contain only lisp/job') { throw "Runtime ownership guard missing" }
-          Write-Host "Internal Registry generation contract OK"
+
+          $bundle = Get-ChildItem "resources/cad/internal-lisp/tbh-toolkit" -Recurse -File | Where-Object { $_.Extension -match '^(?i)\.lsp$' }
+          if (@($bundle).Count -ne 63) { throw "Expected 63 internal TBH Lisp files, got $(@($bundle).Count)" }
+
+          foreach ($forbidden in @("appdata/libraries", "appdata/registry", "appdata/workspace", "appdata/runtime", "appdata/data")) {
+            if (Test-Path -LiteralPath $forbidden) {
+              throw "Repository must not ship runtime/user AppData content: $forbidden"
+            }
+          }
+          Write-Host "Internal bundled Lisp / runtime User AppData ownership contract OK"
