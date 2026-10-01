@@ -500,9 +500,11 @@ async function executeDirectJobScript(
   };
 }
 
-async function executeInternalDirectJob(
+export async function executeInternalDirectJob(
   entry: InternalJobEntry,
-  args: string[]
+  args: string[],
+  loader: typeof loadVerifiedLispForCurrentWork =
+    loadVerifiedLispForCurrentWork
 ): Promise<Record<string, unknown>> {
   if (entry.executor !== "builtin:tbh-toolkit-loader") {
     throw new Error(`INTERNAL_JOB_EXECUTOR_UNSUPPORTED: ${entry.executor}`);
@@ -528,7 +530,7 @@ async function executeInternalDirectJob(
   let drawingId: string | null = null;
 
   for (const file of files) {
-    const result = await loadVerifiedLispForCurrentWork(file.load_path);
+    const result = await loader(file.load_path);
     if (!result.loaded) {
       throw new Error(
         `TBH_TOOLKIT_LOAD_FAILED: ${file.load_path}: ${JSON.stringify(result.raw)}`
