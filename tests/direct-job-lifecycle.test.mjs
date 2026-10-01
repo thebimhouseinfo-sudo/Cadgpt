@@ -52,7 +52,7 @@ test("direct Python Job drafts validate and promote through the controlled Job l
       "utf8"
     );
 
-    const directDraft = path.join(draftRoot, "direct-lib", "tbh", "tbh.py");
+    const directDraft = path.join(draftRoot, "direct-lib", "fixture-direct", "fixture-direct.py");
     await fs.mkdir(path.dirname(directDraft), { recursive: true });
     await fs.writeFile(
       directDraft,
@@ -127,13 +127,13 @@ test("direct Python Job drafts validate and promote through the controlled Job l
       draft_path: directDraft,
       target_path: target,
       library_id: "direct-lib",
-      relative_path: "tbh/tbh.py",
+      relative_path: "fixture-direct/fixture-direct.py",
       metadata: {
-        id: "tbh",
-        title: "TBH",
+        id: "fixture-direct",
+        title: "Fixture Direct",
         class_name: "workflow.user",
         subclass: "direct",
-        tags: ["tbh", "lisp"],
+        tags: ["fixture", "direct"],
         summary: "Direct Job fixture",
         status: "active",
         risk: "medium",
@@ -148,7 +148,7 @@ test("direct Python Job drafts validate and promote through the controlled Job l
       "direct",
       JSON.stringify(promoted)
     );
-    assert.equal(promoted.structuredContent?.data?.registry_id, "tbh");
+    assert.equal(promoted.structuredContent?.data?.registry_id, "fixture-direct");
     assert.equal(
       await fs.readFile(target, "utf8"),
       await fs.readFile(directDraft, "utf8")
@@ -157,8 +157,8 @@ test("direct Python Job drafts validate and promote through the controlled Job l
     const registry = JSON.parse(
       await fs.readFile(path.join(registryRoot, "capabilities.json"), "utf8")
     );
-    const entry = registry.entries.find((item) => item.id === "tbh");
-    assert.equal(entry?.relative_path, "tbh/tbh.py");
+    const entry = registry.entries.find((item) => item.id === "fixture-direct");
+    assert.equal(entry?.relative_path, "fixture-direct/fixture-direct.py");
     assert.equal(entry?.execution_mode, "direct");
 
     const reasoningDraft = path.join(
