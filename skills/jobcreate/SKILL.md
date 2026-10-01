@@ -160,7 +160,7 @@ job_get
 
 Relative/CWD-derived mutation paths are invalid. Re-checking out over an existing draft requires explicit overwrite plus its current SHA-256.
 
-Do not copy/edit the permanent managed Job directly. The managed reusable Job remains unchanged until `job_promote_draft` succeeds.
+Do not copy/edit the permanent managed Job directly. The managed reusable Job remains unchanged until `job_promote_draft` succeeds. If the target user Job library does not exist yet, create that empty managed library with `library_create` before promotion; do not invent or reuse the reserved internal id `tbh-toolkit`.
 
 #### B2. Author against the canonical Job contract
 

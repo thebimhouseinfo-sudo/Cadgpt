@@ -111,7 +111,7 @@ Preserve public commands and working behavior unless the requested contract chan
 
 Call `lisp_scaffold` for a new **user-owned** Lisp draft. Do not use `target_library_id="tbh-toolkit"` for ordinary user authoring: TBH Tool Kit is bundled Internal Registry/install content, not user AppData.
 
-Create/edit the result using absolute paths under `appdata/workspace/lisp-draft/**`. Use `file_create` / `file_edit` only with the absolute path returned/resolved for that draft; `file_edit` also requires the latest SHA-256 from `file_read`.
+Create/edit the result using absolute paths under `appdata/workspace/lisp-draft/**`. `lisp_scaffold` namespaces `suggested_draft_path` by the target user library to avoid filename collisions. Use `file_create` / `file_edit` only with the absolute path returned/resolved for that draft; `file_edit` also requires the latest SHA-256 from `file_read`. If the target user library does not exist yet, create it with `library_create` before promotion.
 
 ### 5. Static validation — mandatory
 

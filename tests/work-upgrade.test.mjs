@@ -182,3 +182,95 @@ test("job draft creation and promotion validate library prerequisites clearly", 
     await fs.rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+
+test("user library creation reserves internal ids and Lisp scaffold paths are namespaced", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-library-create-test-"));
+  const previousRoot = process.env.CADGPT_APPDATA_ROOT;
+  process.env.CADGPT_APPDATA_ROOT = tempRoot;
+
+  try {
+    const { registerLibraryMutationTools } = await import(
+      "../dist/cadgpt/tools/libraries.js"
+    );
+    const { registerLispHarnessTools } = await import(
+      "../dist/cadgpt/tools/lisp-harness.js"
+    );
+
+    const callbacks = new Map();
+    const fakeServer = {
+      registerTool(name, _config, callback) {
+        callbacks.set(name, callback);
+      },
+    };
+    registerLibraryMutationTools(fakeServer);
+    registerLispHarnessTools(fakeServer);
+
+    const createLibrary = callbacks.get("library_create");
+    assert.ok(createLibrary);
+
+    const reserved = await createLibrary({
+      kind: "lisp",
+      library_id: "tbh-toolkit",
+      name: "Forbidden",
+      target_path: path.join(tempRoot, "libraries", "lisp", "tbh-toolkit"),
+    });
+    assert.equal(reserved.isError, true);
+    assert.match(
+      reserved.structuredContent?.data?.error ?? "",
+      /INTERNAL_LIBRARY_RESERVED/
+    );
+
+    const libraryPath = path.join(tempRoot, "libraries", "lisp", "my-lisp");
+    const created = await createLibrary({
+      kind: "lisp",
+      library_id: "my-lisp",
+      name: "My Lisp",
+      target_path: libraryPath,
+    });
+    assert.equal(created.structuredContent?.data?.ready_for_promotion, true);
+    assert.equal((await fs.stat(libraryPath)).isDirectory(), true);
+
+    const scaffold = callbacks.get("lisp_scaffold");
+    assert.ok(scaffold);
+    const scaffolded = await scaffold({
+      file_name: "same-name.lsp",
+      module: "Test",
+      command: "MYCMD",
+      description: "Test command",
+      target_library_id: "my-lisp",
+      mutating: false,
+      uses_com: false,
+    });
+    assert.equal(scaffolded.structuredContent?.ok, true);
+    assert.equal(
+      path.resolve(scaffolded.structuredContent.data.suggested_draft_path),
+      path.resolve(
+        tempRoot,
+        "workspace",
+        "lisp-draft",
+        "my-lisp",
+        "same-name.lsp"
+      )
+    );
+
+    const reservedScaffold = await scaffold({
+      file_name: "bad.lsp",
+      module: "Test",
+      command: "BADCMD",
+      description: "Should fail",
+      target_library_id: "tbh-toolkit",
+      mutating: false,
+      uses_com: false,
+    });
+    assert.equal(reservedScaffold.isError, true);
+    assert.match(
+      reservedScaffold.structuredContent?.data?.error ?? "",
+      /INTERNAL_LIBRARY_RESERVED/
+    );
+  } finally {
+    if (previousRoot === undefined) delete process.env.CADGPT_APPDATA_ROOT;
+    else process.env.CADGPT_APPDATA_ROOT = previousRoot;
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
