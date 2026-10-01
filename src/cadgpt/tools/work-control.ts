@@ -36,6 +36,7 @@ export function registerWorkControlTools(
       cad_proxy_tool_count: number;
       cad_proxy_tools: string[];
       tool_surface?: Record<string, unknown>;
+      created_test_drawing?: boolean;
     }>;
   }
 ): void {
@@ -364,7 +365,7 @@ export function registerWorkControlTools(
     {
       title: "Upgrade CadGPT Work to Hybrid (CAD + Files)",
       description:
-        "Upgrade an active FILE work to HYBRID work (successor work registration) when drawing access / CAD testing is needed. Supersedes the previous execution_id and authority_token, connects CAD MCP, binds the selected drawing, and returns a new work_handle with cad__* proxy tools enabled. GPT MUST use the new execution_id + authority_token from the returned work_handle for all subsequent calls.",
+        "Upgrade active FILE authoring work to a HYBRID successor when CAD testing is needed. Supply an exact approved open drawing name/full path, or CREATE_TEST only after the user approved an isolated blank test drawing. If activation/binding fails, the original FILE work_handle remains valid. On success the old handle becomes stale and GPT MUST use only the returned HYBRID work_handle.",
       inputSchema: {
         execution_id: z
           .string()
@@ -409,6 +410,7 @@ export function registerWorkControlTools(
             cad_tools_ready: z.boolean().optional(),
             cad_proxy_tool_count: z.number().int().optional(),
             cad_proxy_tools: z.array(z.string()).optional(),
+            created_test_drawing: z.boolean().optional(),
             note: z.string().optional(),
           })
           .passthrough(),
@@ -434,6 +436,9 @@ export function registerWorkControlTools(
           cad_tools_ready: result.cad_tools_ready,
           cad_proxy_tool_count: result.cad_proxy_tool_count,
           cad_proxy_tools: result.cad_proxy_tools,
+          ...(result.created_test_drawing !== undefined
+            ? { created_test_drawing: result.created_test_drawing }
+            : {}),
           note:
             "IMPORTANT: Work upgraded to HYBRID. The old execution_id and authority_token are invalidated. You MUST use the new work_handle.execution_id and work_handle.authority_token for all subsequent tool calls (file_*, job_*, lisp_*, cad__*, drawing_*).",
         });

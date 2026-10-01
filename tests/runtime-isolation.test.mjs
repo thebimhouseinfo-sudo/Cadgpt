@@ -54,6 +54,35 @@ test("continuity diagnostics fingerprint metadata without logging secrets or too
   assert.doesNotMatch(serialized, /raw-confirmation-secret/);
 });
 
+test("continuity diagnostics follow the current AppData root", async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-continuity-root-"));
+  const previous = process.env.CADGPT_APPDATA_ROOT;
+
+  try {
+    process.env.CADGPT_APPDATA_ROOT = tempRoot;
+    const {
+      continuityDiagnosticsPath,
+      flushContinuityDiagnostics,
+      logContinuityDiagnostic,
+    } = await import("../dist/cadgpt/lib/continuity-diagnostics.js");
+
+    logContinuityDiagnostic("dynamic-root-test", { marker: "ok" });
+    await flushContinuityDiagnostics();
+
+    const expected = path.join(tempRoot, "logs", "continuity.ndjson");
+    assert.equal(path.resolve(continuityDiagnosticsPath()), path.resolve(expected));
+    const content = await fs.readFile(expected, "utf8");
+    assert.match(content, /dynamic-root-test/);
+  } finally {
+    if (previous === undefined) delete process.env.CADGPT_APPDATA_ROOT;
+    else process.env.CADGPT_APPDATA_ROOT = previous;
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("CadGPT launch claims the MCP session without creating execution authority", async () => {
   const {
     checkAdmission,

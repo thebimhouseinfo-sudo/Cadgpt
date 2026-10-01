@@ -10,7 +10,6 @@ const ENABLED =
   "false";
 const RUNTIME_ID = randomUUID();
 const RUNTIME_SALT = randomBytes(32);
-const LOG_PATH = getAppDataPath("logs", "continuity.ndjson");
 const MAX_BYTES = 2 * 1024 * 1024;
 
 const BLOCKED_HEADER_NAMES = new Set([
@@ -99,13 +98,15 @@ export function summarizeMcpBody(body: unknown): Record<string, unknown> {
   };
 }
 
-async function rotateIfNeeded(): Promise<void> {
+async function rotateIfNeeded(
+  logPath: string,
+  rotatedPath: string
+): Promise<void> {
   try {
-    const stat = await fs.stat(LOG_PATH);
+    const stat = await fs.stat(logPath);
     if (stat.size < MAX_BYTES) return;
-    const rotated = getAppDataPath("logs", "continuity.previous.ndjson");
-    await fs.rm(rotated, { force: true });
-    await fs.rename(LOG_PATH, rotated);
+    await fs.rm(rotatedPath, { force: true });
+    await fs.rename(logPath, rotatedPath);
   } catch {
     // Missing/unavailable diagnostics file is non-fatal.
   }
@@ -113,9 +114,12 @@ async function rotateIfNeeded(): Promise<void> {
 
 async function appendRecord(record: Record<string, unknown>): Promise<void> {
   if (!ENABLED) return;
-  await fs.mkdir(getAppDataPath("logs"), { recursive: true });
-  await rotateIfNeeded();
-  await fs.appendFile(LOG_PATH, JSON.stringify(record) + "\n", "utf8");
+  const logsRoot = getAppDataPath("logs");
+  const logPath = getAppDataPath("logs", "continuity.ndjson");
+  const rotatedPath = getAppDataPath("logs", "continuity.previous.ndjson");
+  await fs.mkdir(logsRoot, { recursive: true });
+  await rotateIfNeeded(logPath, rotatedPath);
+  await fs.appendFile(logPath, JSON.stringify(record) + "\n", "utf8");
 }
 
 export function logContinuityDiagnostic(
@@ -159,7 +163,7 @@ export function logContinuityRequest(
 }
 
 export function continuityDiagnosticsPath(): string {
-  return LOG_PATH;
+  return getAppDataPath("logs", "continuity.ndjson");
 }
 
 export async function flushContinuityDiagnostics(): Promise<void> {

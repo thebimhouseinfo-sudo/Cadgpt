@@ -481,73 +481,15 @@ export function createMcpServer(sessionKey: string): McpServer {
       }
 
       const requestedSelector = drawingSelector.trim();
-      if (!requestedSelector) {
+      const selectorUpper = requestedSelector.toUpperCase();
+      if (
+        !requestedSelector ||
+        selectorUpper === "CURRENT" ||
+        selectorUpper === "ACTIVE"
+      ) {
         throw new Error(
           "DRAWING_SELECTION_REQUIRED: choose an exact open drawing name/full path, or CREATE_TEST."
         );
-      }
-
-      // Preflight CAD and the explicit target while FILE authority remains active.
-      const { cadUpstream } = await import("./runtime/cad-upstream.js");
-      await cadUpstream.activate();
-      const { bindDrawingForExecution, listOpenDrawings } = await import(
-        "./session/drawing-binding.js"
-      );
-
-      let targetSelector = requestedSelector;
-      if (requestedSelector.toUpperCase() === "CREATE_TEST") {
-        const { withCadHostLock } = await import("./runtime/cad-scheduler.js");
-        await withCadHostLock("autocad", async () => {
-          const created = await cadUpstream.callTool(
-            "acad_create_blank_test_document",
-            {}
-          );
-          if (
-            created &&
-            typeof created === "object" &&
-            (created as { isError?: boolean }).isError
-          ) {
-            throw new Error("CAD MCP could not create a blank test drawing");
-          }
-        });
-        const openDocs = await listOpenDrawings();
-        const active = openDocs.filter(
-          (item) => item.active === true || item.is_active === true
-        );
-        if (active.length !== 1) {
-          throw new Error(
-            "TEST_DRAWING_AMBIGUOUS: could not resolve the newly-created active test drawing uniquely."
-          );
-        }
-        targetSelector = String(active[0].full_name || active[0].name || "");
-        if (!targetSelector) {
-          throw new Error("New test drawing has no usable identity");
-        }
-      } else {
-        const upper = requestedSelector.toUpperCase();
-        if (upper === "CURRENT" || upper === "ACTIVE") {
-          throw new Error(
-            "DRAWING_SELECTION_REQUIRED: CURRENT/ACTIVE guessing is forbidden."
-          );
-        }
-        const openDocs = await listOpenDrawings();
-        const needle = requestedSelector.toLowerCase();
-        const matches = openDocs.filter((item) => {
-          const name = String(item.name ?? "").toLowerCase();
-          const fullName = String(item.full_name ?? "").toLowerCase();
-          return name === needle || fullName === needle;
-        });
-        if (matches.length === 0) {
-          throw new Error(
-            `OPEN_DRAWING_NOT_FOUND: no open drawing matches '${requestedSelector}'. Use an exact name/full path or CREATE_TEST.`
-          );
-        }
-        if (matches.length > 1) {
-          throw new Error(
-            `DRAWING_IDENTITY_AMBIGUOUS: more than one open drawing matches '${requestedSelector}'. Use the exact full path.`
-          );
-        }
-        targetSelector = String(matches[0].full_name || matches[0].name || "");
       }
 
       const successor = createSuccessorWorkRegistration({
@@ -559,12 +501,75 @@ export function createMcpServer(sessionKey: string): McpServer {
       let committed = false;
 
       try {
+        // Prepare the staged successor before waking CAD. If any later step
+        // fails, cleanupExecutionState(successor) can return CAD MCP to sleep
+        // while the original FILE handle stays active.
         const toolSurface = await prepareFamilies(
           server,
           "hybrid",
           successor.ownerId,
           successor.executionId
         );
+
+        const { cadUpstream } = await import("./runtime/cad-upstream.js");
+        await cadUpstream.activate();
+        const { bindDrawingForExecution, listOpenDrawings } = await import(
+          "./session/drawing-binding.js"
+        );
+
+        let targetSelector = requestedSelector;
+        let createdTestDrawing = false;
+
+        if (selectorUpper === "CREATE_TEST") {
+          const { withCadHostLock } = await import("./runtime/cad-scheduler.js");
+          await withCadHostLock("autocad", async () => {
+            const created = await cadUpstream.callTool(
+              "acad_create_blank_test_document",
+              {}
+            );
+            if (
+              created &&
+              typeof created === "object" &&
+              (created as { isError?: boolean }).isError
+            ) {
+              throw new Error("CAD MCP could not create a blank test drawing");
+            }
+          });
+          const openDocs = await listOpenDrawings();
+          const active = openDocs.filter(
+            (item) => item.active === true || item.is_active === true
+          );
+          if (active.length !== 1) {
+            throw new Error(
+              "TEST_DRAWING_AMBIGUOUS: could not resolve the newly-created active test drawing uniquely."
+            );
+          }
+          targetSelector = String(active[0].full_name || active[0].name || "");
+          if (!targetSelector) {
+            throw new Error("New test drawing has no usable identity");
+          }
+          createdTestDrawing = true;
+        } else {
+          const openDocs = await listOpenDrawings();
+          const needle = requestedSelector.toLowerCase();
+          const matches = openDocs.filter((item) => {
+            const name = String(item.name ?? "").toLowerCase();
+            const fullName = String(item.full_name ?? "").toLowerCase();
+            return name === needle || fullName === needle;
+          });
+          if (matches.length === 0) {
+            throw new Error(
+              `OPEN_DRAWING_NOT_FOUND: no open drawing matches '${requestedSelector}'. Use an exact name/full path or CREATE_TEST.`
+            );
+          }
+          if (matches.length > 1) {
+            throw new Error(
+              `DRAWING_IDENTITY_AMBIGUOUS: more than one open drawing matches '${requestedSelector}'. Use the exact full path.`
+            );
+          }
+          targetSelector = String(matches[0].full_name || matches[0].name || "");
+        }
+
         const bound = await bindDrawingForExecution(
           successor.executionId,
           targetSelector
@@ -579,7 +584,6 @@ export function createMcpServer(sessionKey: string): McpServer {
         });
         committed = true;
 
-        // Retire predecessor resources only after the HYBRID handle is active.
         await cleanupExecutionState(previousWork.executionId);
 
         const { cadProxySurfaceSnapshot } = await import("./tools/cad-proxy.js");
@@ -603,6 +607,7 @@ export function createMcpServer(sessionKey: string): McpServer {
           cad_tools_ready: true,
           cad_proxy_tool_count: cadSurface.count,
           cad_proxy_tools: cadSurface.tools,
+          created_test_drawing: createdTestDrawing,
         };
       } catch (error) {
         if (!committed) {
@@ -621,6 +626,7 @@ export function createMcpServer(sessionKey: string): McpServer {
         }
         throw error;
       }
+    },
     },
   });
 

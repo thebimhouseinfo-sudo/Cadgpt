@@ -66,7 +66,7 @@ const CORE_TOOLS = [
   { name: "job_promote_draft", class: "workflow.authoring", summary: "Promote a tested Job draft into a managed Job Library and synchronize User Registry." },
   { name: "skill_list", class: "skills", summary: "List internal CadGPT system skills." },
   { name: "skill_get", class: "skills", summary: "Load one internal CadGPT skill resource." },
-  { name: "lisp_scaffold", class: "lisp.authoring", summary: "Create a canonical CadGPT AutoLISP scaffold, with TBH profile only for target library tbh-toolkit." },
+  { name: "lisp_scaffold", class: "lisp.authoring", summary: "Create a canonical AutoLISP draft for a user-managed library; bundled Internal Registry library ids are read-only." },
   { name: "lisp_checkout", class: "lisp.authoring", summary: "Copy one managed Lisp capability into workspace for editing/repair and normalize its working header only when write-lisp is activated." },
   { name: "lisp_validate", class: "lisp.authoring", summary: "Statically validate managed AutoLISP source with an explicit authoring profile." },
   { name: "lisp_draft_validate", class: "lisp.authoring", summary: "Statically validate an AutoLISP workspace draft." },

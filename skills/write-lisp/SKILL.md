@@ -43,12 +43,13 @@ CadGPT does **not** analyze user libraries to invent a style template.
 
 Canonical authored headers keep clear metadata fields: File, Module, Command, Description, Inputs, Effects, Interaction, Risk, Dependencies, Notes, Revision.
 
-Existing Lisp remains untouched merely because it was imported. When the user explicitly activates `write-lisp` to modify it, `lisp_checkout` creates a workspace draft and normalizes the header/description **in the draft only**. TBH Toolkit keeps the TBH header; other libraries use the CadGPT header.
+User-managed Lisp remains untouched merely because it was imported. When the user explicitly activates `write-lisp` to modify it, `lisp_checkout` creates a workspace draft and normalizes the header/description **in the draft only**. Repo-bundled TBH Toolkit is Internal Registry read-only content; custom variants must use a distinct User Library id.
 
 ## Main tools
 
 ```text
 library_list
+library_create
 library_import
 registry_list
 registry_get
@@ -57,6 +58,7 @@ file_read
 file_search
 file_create
 file_edit
+cadgpt_work_upgrade
 lisp_scaffold
 lisp_checkout
 lisp_validate
@@ -76,7 +78,7 @@ Use structured CAD inspection tools where they express the requirement/postcondi
 
 ### 1. Discover and inspect
 
-Search User Registry first. Read implementation only when reuse, modification, debugging or audit needs source detail. Inspect structured CAD state before designing drawing-dependent automation.
+Search the effective registry first (Internal + User Registry). Read implementation only when reuse, modification, debugging or audit needs source detail. Inspect structured CAD state before designing drawing-dependent automation.
 
 ### 2. Prefer reuse
 
@@ -92,7 +94,7 @@ Order of preference:
 
 ### 3. Existing Lisp: checkout before editing
 
-For a registered capability that must change, first resolve the absolute workspace root with `file_roots`, choose the exact absolute draft target under `appdata/workspace/lisp-draft/**`, then call:
+For a **user-managed** registered capability that must change, first resolve the absolute workspace root with `file_roots`, choose the exact absolute draft target under `appdata/workspace/lisp-draft/**`, then call:
 
 ```text
 lisp_checkout(
@@ -103,7 +105,7 @@ lisp_checkout(
 
 A relative/CWD-derived draft path is invalid. If that draft already exists, checkout requires `overwrite_existing=true` plus the current `expected_sha256`; never silently reset another execution's draft.
 
-Checkout copies the managed library source to the explicit absolute draft and applies the appropriate CadGPT/TBH authoring header in the working draft. The managed library source is unchanged until explicit promotion.
+Checkout copies user-managed library source to the explicit absolute draft and applies the CadGPT authoring header in the working draft. Bundled Internal Registry Lisp is not checked out or promoted in place; reuse it unchanged or create a user-owned variant. The managed user source is unchanged until explicit promotion.
 
 Preserve public commands and working behavior unless the requested contract changes them. Do not rewrite whole files for cosmetic consistency.
 
@@ -121,19 +123,13 @@ Managed imported source may be inspected with:
 lisp_validate(profile="syntax")
 ```
 
-A write-lisp draft must use its authoring profile:
+A user-owned write-lisp draft must use its authoring profile:
 
 ```text
 lisp_draft_validate(profile="cadgpt")
 ```
 
-or for TBH Toolkit:
-
-```text
-lisp_draft_validate(profile="tbh")
-```
-
-The harness checks AutoLISP/Visual LISP syntax/dialect, balanced strings/parentheses, public commands, Common-Lisp-only constructs, COM initialization and relevant safety warnings. CadGPT/TBH profiles additionally enforce the canonical authored header.
+The harness checks AutoLISP/Visual LISP syntax/dialect, balanced strings/parentheses, public commands, Common-Lisp-only constructs, COM initialization and relevant safety warnings. Authored profiles additionally enforce the canonical header.
 
 A failed static gate blocks CAD load.
 
