@@ -117,7 +117,12 @@ test("tbh executor stops at the first verified load failure", async () => {
             : { loaded: false, error: "fixture failure" },
         };
       }),
-    new RegExp(`TBH_TOOLKIT_LOAD_FAILED: ${expected[2].replace(/[.*+?^$()|[\\]\\]/g, "\\$&")}`)
+    (error) => {
+      const message = String(error);
+      assert.equal(message.includes("TBH_TOOLKIT_LOAD_FAILED"), true);
+      assert.equal(message.includes(expected[2]), true);
+      return true;
+    }
   );
   assert.deepEqual(seen, expected.slice(0, 3));
 });
