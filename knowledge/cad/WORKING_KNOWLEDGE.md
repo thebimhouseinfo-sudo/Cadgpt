@@ -2,7 +2,7 @@
 
 This file contains curated, durable operating knowledge for ChatGPT while CadGPT/CG is active.
 
-Only stable lessons belong here. Raw product errors, failures, workarounds, and regressions belong in `ERROR_LOG.md`.
+Only stable lessons belong here. Raw product errors, failures, workarounds, and regressions belong in `diagnostics/cad/ERROR_LOG.md`.
 
 ## Intent routing inside an active CAD workspace
 
@@ -25,5 +25,5 @@ Only stable lessons belong here. Raw product errors, failures, workarounds, and 
 
 ## Knowledge maintenance
 
-- Use `ERROR_LOG.md` to improve the app. Promote only stable CAD operating knowledge from an error into this file after the behavior is understood.
+- Use `diagnostics/cad/ERROR_LOG.md` to improve the app. Promote only stable CAD operating knowledge from an error into this file after the behavior is understood.
 - Keep this file concise enough to be useful as model context.
