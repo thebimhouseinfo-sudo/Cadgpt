@@ -508,35 +508,14 @@ function escapeAutoLispString(value: string): string {
   return value.replaceAll("\\", "/").replaceAll('"', '\\"');
 }
 
-export async function buildTbhToolkitLoader(): Promise<{
-  loader_path: string;
-  files: string[];
-  commands: string[];
-}> {
-  const entries = (await listBundledLispEntries())
-    .filter((item) => item.library_id === "tbh-toolkit")
-    .sort((a, b) => a.load_path.localeCompare(b.load_path));
-
-  if (entries.length === 0) {
-    throw new Error(
-      "INTERNAL_JOB_RESOURCE_EMPTY: no bundled Lisp files found for tbh-toolkit"
-    );
-  }
-
-  const absoluteFiles: string[] = [];
-  const commands = new Set<string>();
-  for (const entry of entries) {
-    absoluteFiles.push(
-      await resolveBundledLispPath(entry.library_id, entry.relative_path)
-    );
-    for (const command of entry.commands) commands.add(command);
-  }
-
+export function renderTbhToolkitLoaderSource(
+  absoluteFiles: string[]
+): string {
   const fileList = absoluteFiles
     .map((item) => `  "${escapeAutoLispString(item)}"`)
     .join("\n");
 
-  const source = [
+  return [
     ";;; CadGPT generated TBH Toolkit batch loader",
     "(vl-load-com)",
     "(setq *cadgpt-tbh-load-files* '(",
@@ -562,6 +541,33 @@ export async function buildTbhToolkitLoader(): Promise<{
     "(princ)",
     "",
   ].join("\n");
+}
+
+export async function buildTbhToolkitLoader(): Promise<{
+  loader_path: string;
+  files: string[];
+  commands: string[];
+}> {
+  const entries = (await listBundledLispEntries())
+    .filter((item) => item.library_id === "tbh-toolkit")
+    .sort((a, b) => a.load_path.localeCompare(b.load_path));
+
+  if (entries.length === 0) {
+    throw new Error(
+      "INTERNAL_JOB_RESOURCE_EMPTY: no bundled Lisp files found for tbh-toolkit"
+    );
+  }
+
+  const absoluteFiles: string[] = [];
+  const commands = new Set<string>();
+  for (const entry of entries) {
+    absoluteFiles.push(
+      await resolveBundledLispPath(entry.library_id, entry.relative_path)
+    );
+    for (const command of entry.commands) commands.add(command);
+  }
+
+  const source = renderTbhToolkitLoaderSource(absoluteFiles);
 
   const root = getDynamicLispRoot();
   const target = path.join(
@@ -581,7 +587,9 @@ export async function executeInternalDirectJob(
   entry: InternalJobEntry,
   args: string[],
   loader: typeof loadVerifiedLispForCurrentWork =
-    loadVerifiedLispForCurrentWork
+    loadVerifiedLispForCurrentWork,
+  batchBuilder: typeof buildTbhToolkitLoader =
+    buildTbhToolkitLoader
 ): Promise<Record<string, unknown>> {
   if (entry.executor !== "builtin:tbh-toolkit-loader") {
     throw new Error(`INTERNAL_JOB_EXECUTOR_UNSUPPORTED: ${entry.executor}`);
@@ -592,7 +600,7 @@ export async function executeInternalDirectJob(
     );
   }
 
-  const batch = await buildTbhToolkitLoader();
+  const batch = await batchBuilder();
   try {
     const result = await loader(
       batch.loader_path,
