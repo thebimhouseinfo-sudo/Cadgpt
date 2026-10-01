@@ -23,11 +23,8 @@ jobs:
             "ROADMAP.md",
             "setup.bat",
             "run.bat",
-            "appdata/README.md",
             "knowledge/jobs/JOB_RULES.md",
-            "resources/cad/CADGPT_LOAD_SMOKE.lsp",
-            "appdata/registry/user/capabilities.json",
-            "appdata/registry/user/libraries.json"
+            "resources/cad/CADGPT_LOAD_SMOKE.lsp"
           )) {
             if (-not (Test-Path -LiteralPath $required)) { throw "Missing Beta artifact: $required" }
           }
@@ -64,17 +61,19 @@ jobs:
       - name: Exercise libraries, registry and write-lisp through MCP
         shell: pwsh
         run: |
+          $managedRoot = Join-Path $env:RUNNER_TEMP "CadGPT"
+          Remove-Item $managedRoot -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path @(
-            "appdata/libraries/lisp",
-            "appdata/libraries/jobs",
-            "appdata/registry/user",
-            "appdata/workspace/lisp-draft",
-            "appdata/workspace/job-draft",
-            "appdata/data/runs",
-            "appdata/runtime/dynamic-lisp",
-            "appdata/drawings",
-            "appdata/state",
-            "appdata/logs"
+            (Join-Path $managedRoot "libraries\lisp"),
+            (Join-Path $managedRoot "libraries\jobs"),
+            (Join-Path $managedRoot "registry\user"),
+            (Join-Path $managedRoot "workspace\lisp-draft"),
+            (Join-Path $managedRoot "workspace\job-draft"),
+            (Join-Path $managedRoot "data\runs"),
+            (Join-Path $managedRoot "runtime\dynamic-lisp"),
+            (Join-Path $managedRoot "drawings"),
+            (Join-Path $managedRoot "state"),
+            (Join-Path $managedRoot "logs")
           ) | Out-Null
 
           $external = Join-Path $env:RUNNER_TEMP "cadgpt-external-lisp"
@@ -94,7 +93,7 @@ jobs:
           $env:CAD_MCP_PYTHON = "python"
           $env:CAD_MCP_ENTRY = "runtimes\cad-mcp\main.py"
           $env:MCP_TOKEN = "beta-gate-token"
-          $env:CADGPT_APPDATA_ROOT = (Resolve-Path "appdata").Path
+          $env:CADGPT_APPDATA_ROOT = $managedRoot
           $env:CADGPT_BUILD_PROFILE = "development"
           $mcpUrl = "http://127.0.0.1:3000/mcp/beta-gate-token"
           $proc = Start-Process -FilePath "node" -ArgumentList "dist/index.js" -PassThru -NoNewWindow
@@ -176,14 +175,14 @@ jobs:
 
             $blockedRelativeImport = Invoke-Work "library_import" @{
               kind="lisp"; library_id="ci-user-lib"; name="CI User Library"; source_path=$external;
-              target_path="appdata/libraries/lisp/ci-user-lib";
+              target_path="libraries/lisp/ci-user-lib";
               user_approved_source=$true; replace_existing=$true
             }
             if ($blockedRelativeImport.result.isError -ne $true -or $blockedRelativeImport.result.structuredContent.data.error -notmatch "ABSOLUTE_PATH_REQUIRED") {
               throw "library_import accepted a relative managed target"
             }
 
-            $managedLibraryTarget = Join-Path (Resolve-Path "appdata/libraries/lisp").Path "ci-user-lib"
+            $managedLibraryTarget = Join-Path $managedRoot "libraries\lisp\ci-user-lib"
             $imported = Invoke-Work "library_import" @{
               kind="lisp"; library_id="ci-user-lib"; name="CI User Library"; source_path=$external;
               target_path=$managedLibraryTarget;
@@ -192,7 +191,7 @@ jobs:
             if ($imported.result.isError -eq $true -or $imported.result.structuredContent.ok -ne $true) { throw "library_import failed" }
             $sourceHashAfter = (Get-FileHash $externalFile -Algorithm SHA256).Hash
             if ($sourceHashBefore -ne $sourceHashAfter) { throw "External user source was modified during import" }
-            if (-not (Test-Path "appdata/libraries/lisp/ci-user-lib/UserHello.lsp")) { throw "Managed copy was not created" }
+            if (-not (Test-Path (Join-Path $managedLibraryTarget "UserHello.lsp"))) { throw "Managed copy was not created" }
 
             $userCap = Invoke-Discovery "registry_get" @{ id="USERHELLO"; kind="lisp" }
             if ($userCap.result.isError -eq $true -or $userCap.result.structuredContent.data.entry.library_id -ne "ci-user-lib") { throw "Imported Lisp not indexed in User Registry" }
@@ -211,7 +210,7 @@ jobs:
             }
             if ($tbhScaffold.result.structuredContent.data.content -notmatch "TBH-HEADER-START") { throw "TBH authoring exception missing" }
 
-            $checkoutDraft = Join-Path (Resolve-Path "appdata/workspace/lisp-draft").Path "ci-user-lib\UserHello.lsp"
+            $checkoutDraft = Join-Path $managedRoot "workspace\lisp-draft\ci-user-lib\UserHello.lsp"
             $checkout = Invoke-Work "lisp_checkout" @{
               registry_id="ci-user-lib.lisp.userhello";
               draft_path=$checkoutDraft;
@@ -227,11 +226,11 @@ jobs:
             if ($draftValid.result.structuredContent.data.valid -ne $true) { throw "CadGPT checkout draft failed validation" }
 
             $managedValid = Invoke-Work "lisp_validate" @{
-              path="appdata/libraries/lisp/tbh-toolkit/Setup Xref/XRlayer.lsp"; expected_commands=@("XRLAYER"); profile="syntax"
+              path=(Resolve-Path "resources/cad/internal-lisp/tbh-toolkit/Setup Xref/XRlayer.lsp").Path; expected_commands=@("XRLAYER"); profile="syntax"
             }
             if ($managedValid.result.structuredContent.data.valid -ne $true) { throw "Untouched imported Lisp should pass syntax validation without header normalization" }
 
-            $badPath = Join-Path (Resolve-Path "appdata/workspace/lisp-draft").Path "CI_BAD.lsp"
+            $badPath = Join-Path $managedRoot "workspace\lisp-draft\CI_BAD.lsp"
             $bad = $scaffoldSource -replace "\(defun c:BETASMOKE \(/ \)", "(defun c:BETASMOKE (/ x)`n  (let ((x 1)) (princ x))"
             $created = Invoke-Work "file_create" @{ path=$badPath; content=$bad }
             if ($created.result.isError -eq $true) { throw "Could not create Common Lisp reject fixture" }
