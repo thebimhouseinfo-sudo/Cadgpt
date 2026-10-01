@@ -511,7 +511,9 @@ export async function executeInternalDirectJob(
   entry: InternalJobEntry,
   args: string[],
   loader: typeof loadVerifiedLispForCurrentWork =
-    loadVerifiedLispForCurrentWork
+    loadVerifiedLispForCurrentWork,
+  markLoaded: typeof markInternalLispGroupLoaded =
+    markInternalLispGroupLoaded
 ): Promise<Record<string, unknown>> {
   if (entry.executor !== "builtin:tbh-toolkit-loader") {
     throw new Error(`INTERNAL_JOB_EXECUTOR_UNSUPPORTED: ${entry.executor}`);
@@ -531,7 +533,7 @@ export async function executeInternalDirectJob(
     );
   }
 
-  markInternalLispGroupLoaded(
+  markLoaded(
     result.drawing_id,
     entry.library_id
   );
