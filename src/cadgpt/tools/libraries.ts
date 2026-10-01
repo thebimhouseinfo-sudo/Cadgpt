@@ -323,16 +323,24 @@ export function registerLibraryMutationTools(server: McpServer): void {
           throw new Error("ABSOLUTE_PATH_REQUIRED: library_create target_path must be absolute");
         }
         const expectedTarget = path.resolve(parent, library_id);
+        const requestedTarget = path.resolve(target_path);
+        if (
+          (process.platform === "win32"
+            ? requestedTarget.toLowerCase()
+            : requestedTarget) !==
+          (process.platform === "win32"
+            ? expectedTarget.toLowerCase()
+            : expectedTarget)
+        ) {
+          throw new Error(
+            `TARGET_PATH_MISMATCH: target_path must exactly match managed library target ${expectedTarget}`
+          );
+        }
         const target = await resolveAbsoluteMutationPath(target_path, {
           allowedRoots: [parent],
           forCreate: true,
           label: "managed user library",
         });
-        if (path.relative(expectedTarget, target) !== "") {
-          throw new Error(
-            `TARGET_PATH_MISMATCH: target_path must exactly match managed library target ${expectedTarget}`
-          );
-        }
 
         const manifestPath = getUserLibrariesManifestPath();
         return await withFileMutationLocks([target, manifestPath], async () => {
@@ -446,16 +454,24 @@ export function registerLibraryMutationTools(server: McpServer): void {
           throw new Error("ABSOLUTE_PATH_REQUIRED: library_import target_path must be absolute");
         }
         const expectedTarget = path.resolve(parent, library_id);
+        const requestedTarget = path.resolve(target_path);
+        if (
+          (process.platform === "win32"
+            ? requestedTarget.toLowerCase()
+            : requestedTarget) !==
+          (process.platform === "win32"
+            ? expectedTarget.toLowerCase()
+            : expectedTarget)
+        ) {
+          throw new Error(
+            `TARGET_PATH_MISMATCH: target_path must exactly match managed library target ${expectedTarget}`
+          );
+        }
         const target = await resolveAbsoluteMutationPath(target_path, {
           allowedRoots: [parent],
           forCreate: true,
           label: "managed library import",
         });
-        if (path.relative(expectedTarget, target) !== "") {
-          throw new Error(
-            `TARGET_PATH_MISMATCH: target_path must exactly match managed library target ${expectedTarget}`
-          );
-        }
         const temp = path.join(parent, `.${library_id}.import-${randomUUID()}`);
         const backup = path.join(parent, `.${library_id}.backup-${randomUUID()}`);
 
