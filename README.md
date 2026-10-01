@@ -1,5 +1,7 @@
 # CadGPT
 
+**Status: Beta complete / temporarily frozen**
+
 CadGPT turns ChatGPT into a drawing-centric AutoCAD execution environment without adding another chat UI or local AI model.
 
 ```text
@@ -7,125 +9,196 @@ ChatGPT
    ⇅
 OpenAI Secure MCP Tunnel
    ⇅
-CadGPT slim control/admission plane
-   ↓  explicit one-time session launch: literal @cadgpt OR CadGPT plugin/icon
+CadGPT slim admission/control plane
+   ↓
 WorkRegistration + ToolLease
-   ├── FILE capability path
-   └── CAD capability path
+   ├── FILE
+   └── CAD / HYBRID
           ↓
         CAD MCP
           ↓
        AutoCAD
 ```
 
-## User flow
+ChatGPT is the reasoning surface. CadGPT provides controlled local execution, drawing binding, AutoLISP/Job orchestration, registry discovery, diagnostics, and the CAD MCP bridge.
 
-CadGPT is drawing-workspace-first.
+## Current Beta contract
+
+- explicit launch through the CadGPT/CG plugin or literal `@cadgpt` / `@cg`;
+- one work binds one drawing;
+- current CAD facts are always read fresh from the bound drawing;
+- when CG is active with a bound drawing, requests such as **draw / redraw / create / add / modify / vẽ / vẽ lại / tạo / sửa** default to modifying the AutoCAD drawing, not generating an external image;
+- image generation is used only when the user explicitly asks for an image/render/illustration outside AutoCAD;
+- AutoCAD is never launched implicitly;
+- CAD MCP sleeps until actual CAD demand;
+- managed user/runtime state lives under `%LOCALAPPDATA%\CadGPT`;
+- production runtime does not self-modify CAD MCP source;
+- Revit MCP is preserved only as inactive source material for the future **RevitGPT** project.
+
+## Launch and drawing binding
+
+CadGPT reads the lightweight tray snapshot before starting full CAD MCP.
 
 ```text
-CG plugin / @cadgpt
-→ read latest tray snapshot
-→ show 3-section Welcome
-→ choose exactly 1 open drawing
-→ start full CAD MCP
-→ verify the selected drawing live
-→ bind 1 drawing
-→ register 1 work
-→ Workspace Ready
-→ natural request or registered Job
+CG / @cg / @cadgpt
+├─ 0 drawings
+│  → Welcome screen
+│  → WORK IDLE
+│
+├─ exactly 1 drawing
+│  → auto-bind that drawing
+│  → Workspace Ready
+│
+└─ 2+ drawings
+   → Welcome screen + drawing list
+   → user chooses exactly one
+   → Workspace Ready
 ```
 
-**Invariant: `1 work = 1 drawing`.** Multi-drawing workspace selection is not supported.
+`cg/list` refreshes the tray-backed drawing list and does not wake full CAD MCP by itself.
 
-Welcome always contains:
+A bound workspace follows the invariant:
 
-1. **CAD** — `Offline`, or `Online` plus the open drawing list. The launcher does not display AutoCAD's active-document marker.
-2. **WORKSPACE** — choose one drawing; `cg/list` refreshes from the latest tray snapshot without starting full CAD MCP.
-3. **COMMANDS** — only the common shortcuts `cg/cl`, `cg/cj`, `cg/job`, and `cg/` for the full command menu.
+```text
+1 work = 1 drawing
+```
 
-Full fake CLI:
+CadGPT never treats ambient AutoCAD `ActiveDocument` as authority.
+
+## Fake CLI
 
 ```text
 cg/       full command menu
-cg/list   refresh drawings / choose workspace
+cg/list   refresh open drawings
 cg/cl     create or repair Lisp
 cg/cj     create or repair Job
 cg/job    list registered Jobs
-cg/mcp    update/develop CAD MCP
+cg/mcp    CAD MCP development workflow (development builds only)
 cg/help   help
 cg/stop   stop current work
 ```
 
-`@cadgpt` is activation text, not the CLI namespace.
+`@cadgpt` / `@cg` activate CadGPT; they are not the CLI namespace.
 
-After the drawing is verified and bound, CadGPT reports the selected drawing and lists the Jobs currently registered in User Registry. Lisp/Job/file work uses the same single-drawing hybrid workspace; CAD MCP development remains development-only and retains its stricter authority rules.
+## CAD intent and live state
 
-## Product model
+While CadGPT is active with a drawing workspace:
 
-- ChatGPT is the reasoning/chat UI.
-- CadGPT is a thin local execution/orchestration layer.
-- CAD MCP is the only active CAD runtime.
-- AutoCAD is never launched implicitly by CadGPT.
-- Revit MCP is preserved only for possible future RevitGPT work.
-- Job rules/specification are CadGPT internal knowledge; concrete Jobs are user assets.
+- drawing/editing language targets the bound AutoCAD drawing by default;
+- an attached image can be used as a visual/geometric reference for CAD work;
+- the attachment does not change the output destination to image generation;
+- layer counts, entity counts, geometry, properties, selections, and other current-state questions require a fresh CAD read in the same turn;
+- conversation history is never treated as live CAD state.
 
-## Admission and Windows lifecycle
-
-The Windows tray independently runs a lightweight read-only AutoCAD probe. It does not start the full CAD MCP, create WorkRegistration, bind drawings, or grant mutation authority. The tray reports `AutoCAD: OFF` or `AutoCAD: ON · N drawings` and refreshes the probe periodically plus immediately when the tray menu opens.
-
-The fake CLI is response-based, not live-updating. Use `cg/list` to refresh the drawing list from the newest tray snapshot after drawings are opened or closed in AutoCAD.
-
-CadGPT launcher is context-aware:
+The curated rules used by ChatGPT are stored in:
 
 ```text
-CG / @cadgpt
-├─ AutoCAD not detected
-│  → General Welcome
-│  → SESSION READY / WORK IDLE / CAD MCP SLEEPING
-│
-└─ AutoCAD detected
-   → CAD PREPARE (read-only)
-   → list open drawings
-   → ask user to confirm the CAD workspace
-   → confirmation creates/reuses direct-cad WorkRegistration
-   → bind selected drawings
-   → CAD Work CLI + quick commands
+knowledge/cad/WORKING_KNOWLEDGE.md
 ```
 
-Detection/prepare never launches AutoCAD, never starts full CAD MCP, and never grants mutation authority. The launcher reads the tray snapshot only. Full CAD MCP starts after workspace confirmation, then live AutoCAD is re-verified before binding.
+## Diagnostics and product improvement
 
-CadGPT is explicit-launch only. The user launches CadGPT once per ChatGPT/MCP session, either with literal `@cadgpt` or by selecting/calling the CadGPT plugin/icon (the connector may be renamed, for example `CG`). That claim persists for later turns in the same session, so repeated `@cadgpt` is not required. A different chat/MCP session starts unclaimed.
+Real product failures and incorrect behavior are accumulated separately from model knowledge:
 
 ```text
-ChatGPT considers CadGPT
-→ cadgpt_admission(exact launch turn, invocation_source)
-   ├── first plugin/icon call OR bare/qualified @cadgpt → SESSION READY
-   ├── no work_handle yet → WORK IDLE / CAD MCP SLEEPING
-   ├── first real FILE/CAD task → cadgpt_work_start → create work_handle
-   ├── later compatible tasks → reuse the same active work_handle
-   ├── cg/status and cg/stop → direct control surface, no token handshake
-   └── a different/unclaimed MCP session → IDLE until explicitly launched
+diagnostics/cad/ERROR_LOG.md
 ```
 
-There is no contextual exception for an AutoCAD-looking task, an `.lsp` file, an absolute path, AutoCAD already running, memory, or prior CadGPT use.
+Use this log for:
 
-After one-time setup, Windows starts a **CadGPT tray host** through the current user's HKCU Run key. Idle state keeps only:
+- tool/runtime failures;
+- wrong model routing;
+- latency regressions;
+- workarounds;
+- unexpected CAD behavior;
+- other defects discovered during real use.
+
+The error log is product evidence for future CadGPT improvement. It does **not** automatically change model behavior.
+
+Only stable CAD operating knowledge should be promoted into `knowledge/cad/WORKING_KNOWLEDGE.md`.
+
+## Internal and User Registry
+
+CadGPT exposes one effective registry with strict ownership.
 
 ```text
-CadGPT tray
-slim admission/control MCP
-OpenAI Secure MCP Tunnel
+Internal Registry
+├─ MCP tools
+├─ system skills
+├─ bundled Lisp
+└─ official Internal Jobs
+
+User Registry
+├─ Lisp capabilities
+└─ user Jobs
 ```
 
-FILE capability families load only after admitted FILE work. CAD capability families load only after admitted CAD work. The Python CAD MCP backend starts only on actual CAD demand and returns to sleep after CAD work ends. AutoCAD is never launched implicitly.
+User Registry cannot overwrite Internal Registry.
 
-The former Scheduled Task / polling wake-agent lifecycle is retired. The supported source entrypoints are now `setup.bat`, `run.bat`, the silent `cadgpt-tray.vbs` launcher, and `cadgpt-tray.ps1`; retired compatibility shims are no longer part of the active tree.
+### TBH Toolkit
 
-`run.bat` is a control utility (`install`, `start`, `stop`, `restart`, `status`, `uninstall`), not a daily launcher.
+TBH Toolkit is bundled internal content under:
+
+```text
+resources/cad/internal-lisp/tbh-toolkit
+```
+
+The official Internal Direct Job `tbh` loads:
+
+```text
+resources/cad/internal-lisp/tbh-toolkit/tbhloader.lsp
+```
+
+TBH commands are already known by Internal Registry.
+
+Per drawing:
+
+```text
+tbhloader.lsp load success → TBH = ON
+tbhloader.lsp load failure → TBH = OFF
+```
+
+The Job does not dynamically re-register the toolkit commands. A failed Internal Direct Job is surfaced as a failure rather than bypassed with lower-level tools.
+
+## AutoLISP
+
+Lisp remains normal AutoLISP usable directly in AutoCAD and discoverable through CadGPT.
+
+User-managed Lisp lives under:
+
+```text
+%LOCALAPPDATA%\CadGPT\libraries\lisp
+```
+
+Editing uses controlled checkout → validate → real CAD test → promote workflows. Generic file tools cannot mutate permanent managed libraries.
+
+System Lisp authoring guidance lives under:
+
+```text
+skills/write-lisp/
+```
+
+## Jobs
+
+User-created/imported Jobs live in managed AppData and User Registry.
+
+CadGPT supports:
+
+- **Direct Jobs** — execute through fixed local implementations without model planning;
+- **Reasoning Jobs** — sequential READ → PLAN → REVIEW → EXEC → READBACK workflows.
+
+Official Internal Direct Jobs use bounded built-in executors.
+
+Job authoring guidance lives under:
+
+```text
+skills/jobcreate/
+knowledge/jobs/
+```
 
 ## Managed AppData
 
-CadGPT stores managed user/runtime data under `%LOCALAPPDATA%\CadGPT` on Windows. `CADGPT_APPDATA_ROOT` is only an explicit development/test override and must not point inside `<repo>\appdata`.
+Production data lives under:
 
 ```text
 %LOCALAPPDATA%\CadGPT\
@@ -138,112 +211,22 @@ CadGPT stores managed user/runtime data under `%LOCALAPPDATA%\CadGPT` on Windows
 │   ├── lisp-draft/
 │   └── job-draft/
 ├── runtime/
-│   └── dynamic-lisp/
 ├── data/
-│   └── runs/
 ├── drawings/
 ├── state/
 └── logs/
 ```
 
-A user-selected Lisp or Job folder is an **import source only**:
+`CADGPT_APPDATA_ROOT` is a development/test override only and must not point to a repository-root `appdata` folder.
 
-```text
-explicitly approved external source folder (read-only)
-→ asset_import
-→ managed copy in AppData
-→ User Registry
-```
+## Installation and daily use
 
-CadGPT never writes to the external source folder. Import rejects symlinked source entries, excludes repository metadata such as `.git/.svn`, and bounds import size/file count.
-
-After import, execution reads from the managed AppData copy. Permanent managed-library changes do **not** use generic file editing: they go through controlled draft/validation/promotion flows so the implementation and User Registry stay synchronized.
-
-Most users need only Lisp Libraries. Job Libraries are optional for advanced/legacy CadGPT users.
-
-Asset commands: `cg/rl` / `cg/rj` register an external folder in place; `cg/il` / `cg/ij` import by copying into AppData and indexing; `cg/el` / `cg/ej` export managed content to a user folder. Registry entries stay lightweight: identity/title/library/path/commands only; source is read when deeper understanding is actually needed.
-
-Jobs are execution-mode driven. Official Internal Direct Jobs such as `tbh` are dispatched by `job_run_direct` through bounded built-in CadGPT executors with no model planning. User Registry `.py` Jobs are also Direct Jobs; User Registry `.md` Jobs are sequential Reasoning Jobs using the per-stage READ → PLAN → REVIEW → REVISE → EXEC → READBACK loop.
-
-## Capability Registry
-
-CadGPT exposes one effective registry with strict ownership:
-
-```text
-Internal Registry
-├─ MCP tools
-├─ system skills
-├─ bundled Lisp capabilities
-└─ official Jobs (for example tbh)
-
-User Registry
-├─ Lisp capabilities
-└─ user-created/imported Jobs
-```
-
-Use `registry_list` / `registry_get` to search the unified view. User Registry cannot overwrite Internal Registry; official Internal Job ids are reserved and user-created/imported Jobs cannot replace them. User capability IDs remain unique within User Registry.
-
-Re-imported implementation content is hash-tracked. When an imported Lisp/Job implementation changes, previously trusted semantic/safety metadata is invalidated to `needs_review` rather than silently retained as curated truth.
-
-## AutoLISP lifecycle
-
-Lisp remains normal AutoLISP usable directly as AutoCAD commands and also discoverable/executable by CadGPT.
-
-Import/index does not modify source. When the user explicitly asks `write-lisp` to change or repair an existing capability:
-
-```text
-User Registry discovery
-→ lisp_checkout
-→ %LOCALAPPDATA%\CadGPT\workspace\lisp-draft\**
-→ update/repair functionality + normalize working header/description
-→ static validation
-→ user-approved AutoCAD test drawing
-→ verified load/runtime verification
-→ lisp_promote_draft
-→ managed Lisp Library + User Registry
-```
-
-Blocking syntax errors in the managed source do not prevent checkout for repair; they are reported as diagnostics and must be fixed before promotion. Helper/library Lisp files without public `c:` commands are valid when intentional and may be promoted.
-
-`write-lisp` uses a CadGPT-native canonical scaffold. TBH Toolkit is the explicit exception: `library_id=tbh-toolkit` retains the TBH header convention. Other imported libraries are not rewritten on registration; their headers are normalized only when `write-lisp` is explicitly activated to edit them.
-
-`ai_mode=dynamic` is not a Lisp type. It only allows CadGPT/AI to derive bounded temporary runtime variants from ordinary AutoLISP using registry-declared `dynamic_parameters`.
-
-## Jobs
-
-User-created/imported Jobs live under managed User Job Libraries in AppData and are registered in User Registry. CadGPT may also ship explicit read-only Internal Jobs. The official `tbh` Direct Job loads the bundled TBH Toolkit from `resources/cad/internal-lisp/tbh-toolkit` into the bound drawing through the verified Lisp bridge; it is never copied into User AppData. Job rules, schema/authoring guidance and runtime semantics are internal CadGPT knowledge under `knowledge/jobs/**`.
-
-`jobcreate` uses the same controlled working-copy principle as `write-lisp`:
-
-```text
-existing Job (optional)
-→ job_checkout
-→ %LOCALAPPDATA%\CadGPT\workspace\job-draft\**
-→ author/refine
-→ job_draft_validate
-→ explicitly approved real test
-→ final-result validation
-→ explicit user acceptance
-→ job_promote_draft
-→ managed Job Library + User Registry
-```
-
-New Jobs start directly in `%LOCALAPPDATA%\CadGPT\workspace/job-draft/**` only after the `jobcreate` planning approval gate. `job_promote_draft` requires recorded test evidence, final-validation evidence and explicit user acceptance.
-
-CadGPT core must remain functional with no user Job Library and no user Lisp Library configured.
-
-## Internal resources
-
-System skills remain under `skills/**`. Internal CAD fixtures/resources and bundled Lisp live under `resources/cad/**`. Official Internal Jobs are explicit product capabilities; `tbh` is the bounded Direct Job that loads the bundled TBH Toolkit into the currently bound drawing.
-
-## Installation
-
-Current Beta source requirements:
+Beta source requirements:
 
 - Windows
 - Node.js 20+
 - Python 3.11–3.14
-- AutoCAD for live CAD validation
+- AutoCAD for live CAD work
 
 One-time setup:
 
@@ -251,90 +234,73 @@ One-time setup:
 setup.bat
 ```
 
-Setup installs locked dependencies, generates the stable CAD tool manifest, initializes managed AppData, configures the Secure MCP Tunnel, removes the legacy Scheduled Task if present, registers the silent CadGPT tray launcher under HKCU Run, starts the tray/slim runtime, and runs diagnostics.
-
-Daily use normally requires no command.
+Common maintenance commands:
 
 ```bat
 run.bat status
 run.bat restart
 doctor.bat
+acceptance.bat
 ```
 
-## Execution isolation
+After setup, the Windows tray hosts the lightweight CadGPT control plane and Secure MCP tunnel.
 
-Launching CadGPT claims only the current ChatGPT/MCP session; that claim is routing state, not execution authority. Real FILE/CAD work creates (or reuses) an execution-scoped WorkRegistration and opaque work_handle. Every actual capability call then receives a per-call ToolLease. Different chats, Jobs, Skills and providers therefore share implementations without sharing execution context.
+## Runtime safety
 
-CadGPT does not use global `currentJob`, `currentWorkspace`, or `currentDrawing` authority.
+Important invariants:
 
-FILE and CAD work are separate execution paths. A workflow may use both through `execution_path=hybrid`, but FILE mutation scope and drawing scope remain explicit.
+- explicit CadGPT session launch;
+- execution authority comes only from the current `work_handle`;
+- file mutation requires canonical absolute paths inside approved roots;
+- FILE and CAD authority remain explicit;
+- one work binds one drawing;
+- stale/reopened drawing lifetimes do not silently reuse old drawing authority;
+- destructive CAD actions use guarded preview/execution contracts;
+- work authority expires after idle timeout;
+- different ChatGPT conversations do not intentionally share work authority.
 
-## File safety
+## Development-only CAD MCP improvement
 
-All CadGPT file **mutations** require an explicit absolute filesystem path. Relative paths and ambient process CWD are never write authority. Mutation targets are canonicalized and verified inside the exact workflow-owned allowed root, including symlink/junction escape checks.
+Source/development builds may expose `cad-mcp-dev`.
 
-Generic file tools have **read** access to:
+Its writable scope is limited to:
 
 ```text
-appdata/libraries/**
-appdata/workspace/**
-appdata/data/**
+runtimes/cad-mcp/**
 ```
 
-Generic file tools have **write** access only to:
+It is not part of the production self-modification surface.
+
+## Preserved Revit MCP
+
+The inactive Revit source mirror is intentionally retained at:
 
 ```text
-appdata/workspace/**
-appdata/data/**
+preserved/revit-mcp/
 ```
 
-`%LOCALAPPDATA%\CadGPT\libraries/**` is permanent managed content and is read-only to generic file tools. It changes only through controlled operations such as `asset_import`, `lisp_promote_draft` and `job_promote_draft`.
+CadGPT does not import, start, build, or expose it.
 
-External folders may be registered in place with `asset_register_external`, imported into AppData with `asset_import`, or used as export destinations with `asset_export`. Registry/runtime/state/log areas remain internal.
+It is preserved as source material for the next project: **RevitGPT**.
 
-## Drawing binding and concurrency
-
-Before CAD business operations, each work execution binds explicitly to one or more open drawings and receives opaque `drawing_id` values.
-
-A binding stores a CAD-MCP runtime document-lifetime identity in addition to file name/path. Closing and reopening the same file does not silently revive an old `drawing_id`; stale bindings must be explicitly rebound.
-
-When one execution has multiple drawings, mutation calls require an explicit `drawing_id`. AutoCAD `ActiveDocument` is never treated as ambient authority.
-
-CAD tool implementations are shared across chats, while each invocation has its own ToolLease and drawing context. Mutation-sensitive operations are serialized per AutoCAD host so concurrent chats cannot race `ActiveDocument` switching.
-
-## Development-only CAD MCP self-improvement
-
-Source/development builds expose the internal `cad-mcp-dev` Skill when `CADGPT_BUILD_PROFILE=development`.
-
-It is intentionally narrow:
+## Repository areas
 
 ```text
-writable source root:
-<repo>\runtimes\cad-mcp\**
-
-read-only supporting context:
-src/cg/**
-knowledge/**
-registry/**
-selected contract/docs/generator files
+src/cadgpt/                    CadGPT orchestration/control plane
+runtimes/cad-mcp/              active AutoCAD MCP runtime
+resources/cad/                 bundled CAD resources / TBH Toolkit
+skills/                        system authoring/development skills
+knowledge/                     curated runtime/model knowledge
+diagnostics/                   product error evidence
+registry/                      registry contracts/docs
+tests/                         regression suite
+preserved/revit-mcp/           inactive Revit source for RevitGPT
 ```
 
-The Skill has no unrestricted shell and no Git branch/add/commit/push/PR authority. It uses absolute-path source tools, immutable baseline snapshots, compile/import/manifest validation, controlled dependency sync, optional exclusive live candidate validation, and rollback of unaccepted source.
+## Beta closure
 
-Adding/removing/changing a CAD MCP tool regenerates `runtimes/cad-mcp/tool-manifest.json`, which feeds CadGPT's Internal Registry/tool surface.
+The current CadGPT Beta has passed the working real-AutoCAD flows exercised during development, including drawing binding/continuity, live CAD reads, AppData productionization, Internal Registry/TBH Direct Job behavior, and current CI/registry contracts.
 
-`cad-mcp-dev` is development-only. Production/package builds must not register or expose the Skill or its source-mutation tools.
+CadGPT development is now **temporarily frozen**. Future CadGPT defects should be recorded in `diagnostics/cad/ERROR_LOG.md` for a later improvement cycle.
 
-## Development status
-
-Stage 1 is complete. Source/CI integrity review and local Windows installation/runtime stabilization are in progress before the Human-run Stage 2 real-AutoCAD validation.
-
-Static/CI checks do not substitute for real AutoCAD validation.
-
-
-### Work idle cleanup
-
-An active CadGPT work expires after **30 minutes of no CadGPT work/tool activity**. This prevents a closed or abandoned chat from leaving drawing/work authority alive indefinitely. Active ToolLeases are never interrupted; cleanup occurs only after the work is idle and no tool call is in flight.
-
-
-The official Internal Job `tbh` verified-loads `resources/cad/internal-lisp/tbh-toolkit/tbhloader.lsp` once. That loader is intentionally excluded from Lisp registry discovery; the toolkit's actual component Lisp files remain indexed normally.
+The next planned project is **RevitGPT**, using the preserved Revit MCP only as source material rather than activating it inside CadGPT.
