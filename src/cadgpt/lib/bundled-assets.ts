@@ -15,8 +15,8 @@ export interface BundledLispEntry {
 }
 
 export function getBundledLispLibrariesRoot(): string {
-  // The committed TBH Lisp pack is installation content, not user AppData.
-  return path.join(getRepoRoot(), "appdata", "libraries", "lisp");
+  // Repo-bundled/internal Lisp lives with installation resources, never in user AppData.
+  return path.join(getRepoRoot(), "resources", "cad", "internal-lisp");
 }
 
 function slug(value: string): string {
@@ -75,7 +75,7 @@ export async function listBundledLispEntries(): Promise<BundledLispEntry[]> {
       title: titleFromLisp(source, file, commands),
       library_id: libraryId,
       relative_path: relativePath,
-      load_path: `bundled/lisp/${libraryId}/${relativePath}`,
+      load_path: `resources/cad/internal-lisp/${libraryId}/${relativePath}`,
       commands,
     });
   }

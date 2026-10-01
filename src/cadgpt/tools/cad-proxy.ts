@@ -92,7 +92,6 @@ async function resolveLispSourceForCommandDiscovery(
 
   const approvedRoots = [
     path.resolve(getRepoRoot(), "resources", "cad"),
-    path.resolve(getRepoRoot(), "appdata", "libraries", "lisp"),
     path.resolve(getAppDataRoot(), "libraries", "lisp"),
     path.resolve(getAppDataRoot(), "workspace", "lisp-draft"),
     path.resolve(getAppDataRoot(), "runtime", "dynamic-lisp"),
@@ -115,17 +114,14 @@ async function resolveLispSourceForCommandDiscovery(
     if (lower.startsWith("resources/cad/")) {
       root = approvedRoots[0];
       suffix = normalized.slice("resources/cad/".length);
-    } else if (lower.startsWith("bundled/lisp/")) {
-      root = approvedRoots[1];
-      suffix = normalized.slice("bundled/lisp/".length);
     } else if (lower.startsWith("appdata/libraries/lisp/")) {
-      root = approvedRoots[2];
+      root = approvedRoots[1];
       suffix = normalized.slice("appdata/libraries/lisp/".length);
     } else if (lower.startsWith("appdata/workspace/lisp-draft/")) {
-      root = approvedRoots[3];
+      root = approvedRoots[2];
       suffix = normalized.slice("appdata/workspace/lisp-draft/".length);
     } else if (lower.startsWith("appdata/runtime/dynamic-lisp/")) {
-      root = approvedRoots[4];
+      root = approvedRoots[3];
       suffix = normalized.slice("appdata/runtime/dynamic-lisp/".length);
     } else {
       throw new Error(
@@ -575,7 +571,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
       {
         title: "Load Verified Lisp File",
         description:
-          "[CAD MCP / execution-owned Lisp state] Load and verify one sandboxed Lisp file on a bound drawing. Internal repo-bundled Lisp uses bundled/lisp/**; user-managed Lisp uses appdata/libraries/lisp/**. Commands discovered from the successfully loaded source become runnable only by this work execution on this drawing.",
+          "[CAD MCP / execution-owned Lisp state] Load and verify one sandboxed Lisp file on a bound drawing. Internal repo-bundled Lisp uses resources/cad/internal-lisp/**; user-managed Lisp uses appdata/libraries/lisp/**. Commands discovered from the successfully loaded source become runnable only by this work execution on this drawing.",
         inputSchema: {
           path: z.string().min(1),
           drawing_id: z.string().optional(),
