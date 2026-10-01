@@ -7,6 +7,7 @@ intentionally not exposed.
 
 Allowed load namespaces:
 - resources/cad/**                         internal CadGPT fixtures/resources
+- bundled/lisp/**                          repo-bundled/internal Lisp libraries
 - appdata/libraries/lisp/**               managed user Lisp libraries
 - appdata/workspace/lisp-draft/**         write-lisp working drafts
 - appdata/runtime/dynamic-lisp/**         parameterized/session-only artifacts
@@ -68,6 +69,7 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
     normalized = raw.replace("\\", "/")
     roots = [
         (os.path.realpath(os.path.join(_repo_root(), "resources", "cad")), "resources/cad"),
+        (os.path.realpath(os.path.join(_repo_root(), "appdata", "libraries", "lisp")), "bundled/lisp"),
         (os.path.realpath(os.path.join(_appdata_root(), "libraries", "lisp")), "appdata/libraries/lisp"),
         (os.path.realpath(os.path.join(_appdata_root(), "workspace", "lisp-draft")), "appdata/workspace/lisp-draft"),
         (os.path.realpath(os.path.join(_appdata_root(), "runtime", "dynamic-lisp")), "appdata/runtime/dynamic-lisp"),
@@ -86,18 +88,21 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
         if lower.startswith("resources/cad/"):
             suffix = normalized[len("resources/cad/") :]
             root, virtual_prefix = roots[0]
+        elif lower.startswith("bundled/lisp/"):
+            suffix = normalized[len("bundled/lisp/") :]
+            root, virtual_prefix = roots[1]
         elif lower.startswith("appdata/libraries/lisp/"):
             suffix = normalized[len("appdata/libraries/lisp/") :]
-            root, virtual_prefix = roots[1]
+            root, virtual_prefix = roots[2]
         elif lower.startswith("appdata/workspace/lisp-draft/"):
             suffix = normalized[len("appdata/workspace/lisp-draft/") :]
-            root, virtual_prefix = roots[2]
+            root, virtual_prefix = roots[3]
         elif lower.startswith("appdata/runtime/dynamic-lisp/"):
             suffix = normalized[len("appdata/runtime/dynamic-lisp/") :]
-            root, virtual_prefix = roots[3]
+            root, virtual_prefix = roots[4]
         else:
             raise LispServiceError(
-                "LISP path must be under resources/cad/**, appdata/libraries/lisp/**, "
+                "LISP path must be under resources/cad/**, bundled/lisp/**, appdata/libraries/lisp/**, "
                 "appdata/workspace/lisp-draft/**, or appdata/runtime/dynamic-lisp/**"
             )
 

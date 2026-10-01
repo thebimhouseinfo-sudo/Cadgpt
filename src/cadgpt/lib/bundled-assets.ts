@@ -10,6 +10,7 @@ export interface BundledLispEntry {
   title: string;
   library_id: string;
   relative_path: string;
+  load_path: string;
   commands: string[];
 }
 
@@ -74,6 +75,7 @@ export async function listBundledLispEntries(): Promise<BundledLispEntry[]> {
       title: titleFromLisp(source, file, commands),
       library_id: libraryId,
       relative_path: relativePath,
+      load_path: `bundled/lisp/${libraryId}/${relativePath}`,
       commands,
     });
   }
