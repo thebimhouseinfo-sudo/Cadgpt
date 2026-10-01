@@ -301,8 +301,9 @@ export function registerJobDiscoveryTools(server: McpServer): void {
   server.registerTool(
     "job_list",
     {
-      title: "List User Jobs",
-      description: "List concrete Jobs from User Registry. Job rules/spec are internal CadGPT knowledge, not user Jobs.",
+      title: "List CadGPT Jobs",
+      description:
+        "List official Internal Registry Jobs plus concrete User Registry Jobs. Internal Jobs are read-only CadGPT capabilities and cannot be overridden by user assets.",
       inputSchema: { library_id: z.string().optional() },
     },
     async ({ library_id }) => {
@@ -354,8 +355,9 @@ export function registerJobDiscoveryTools(server: McpServer): void {
   server.registerTool(
     "job_get",
     {
-      title: "Load User Job",
-      description: "Load one concrete Job registered from a managed AppData Job Library.",
+      title: "Load CadGPT Job",
+      description:
+        "Load one official Internal Job or one concrete User Job. Internal Jobs expose read-only metadata; User Jobs resolve to managed AppData source.",
       inputSchema: { id: z.string().min(1).describe("Canonical Job registry id returned by job_list/registry_list") },
     },
     async ({ id }) => {
@@ -559,8 +561,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
   server.registerTool(
     "job_run_direct",
     {
-      title: "Run Direct Python Job",
-      description: "Run one registered .py Job directly with CadGPT's fixed Python runtime. No shell and no model planning are used. Registered .md Jobs are rejected and must use the reasoning Job harness.",
+      title: "Run Direct Job",
+      description:
+        "Run one direct Job without model planning. Official Internal Jobs use bounded built-in CadGPT executors; User Registry .py Jobs use CadGPT's fixed Python runtime. User .md Jobs are rejected and must use the reasoning Job harness.",
       inputSchema: {
         id: z.string().min(1),
         args: z.array(z.string()).max(50).optional().default([]),
