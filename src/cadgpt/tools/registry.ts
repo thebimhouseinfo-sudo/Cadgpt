@@ -16,6 +16,7 @@ import {
   listInternalJobs,
 } from "../lib/internal-jobs.js";
 import { resolveRegisteredAssetPath } from "./user-assets.js";
+import { internalLispGroupLoadedForCurrentDrawing } from "./cad-proxy.js";
 
 interface ToolManifestEntry {
   name: string;
@@ -270,10 +271,36 @@ async function loadEffectiveRegistry(): Promise<Array<Record<string, unknown>>> 
     listBundledLispEntries(),
     loadUserEntries(),
   ]);
-  const bundled = bundledLisp as unknown as Array<Record<string, unknown>>;
-  const internalJobs = listInternalJobs() as unknown as Array<
-    Record<string, unknown>
-  >;
+  const tbhState =
+    internalLispGroupLoadedForCurrentDrawing("tbh-toolkit");
+  const bundled = (
+    bundledLisp as unknown as Array<Record<string, unknown>>
+  ).map((entry) =>
+    entry.library_id === "tbh-toolkit"
+      ? {
+          ...entry,
+          enabled: tbhState.loaded,
+          state: tbhState.loaded ? "on" : "off",
+          ...(tbhState.drawing_id
+            ? { drawing_id: tbhState.drawing_id }
+            : {}),
+        }
+      : entry
+  );
+  const internalJobs = (
+    listInternalJobs() as unknown as Array<Record<string, unknown>>
+  ).map((entry) =>
+    entry.id === "tbh"
+      ? {
+          ...entry,
+          enabled: tbhState.loaded,
+          state: tbhState.loaded ? "on" : "off",
+          ...(tbhState.drawing_id
+            ? { drawing_id: tbhState.drawing_id }
+            : {}),
+        }
+      : entry
+  );
   return [...tools, ...skills, ...bundled, ...internalJobs, ...users].sort(
     (a, b) =>
       `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`)
