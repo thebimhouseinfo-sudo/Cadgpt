@@ -176,6 +176,70 @@ test("headerless recovery detects cadgpt_cad_confirm and treats token as optiona
   );
 });
 
+test("admission preserves auto-bound work authority in Workspace Ready response", async () => {
+  const { registerAdmissionTool } = await import(
+    "../dist/cadgpt/tools/admission.js"
+  );
+  const { revokeSessionAdmissions } = await import(
+    "../dist/cadgpt/lib/admission.js"
+  );
+
+  let callback;
+  const fakeServer = {
+    registerTool(name, _config, registered) {
+      assert.equal(name, "cadgpt_admission");
+      callback = registered;
+      return { remove() {} };
+    },
+  };
+
+  registerAdmissionTool(fakeServer, {
+    sessionKey: "admission-auto-bind",
+    onActive: async () => ({
+      launch_mode: "auto_bind",
+      welcome_text: "CadGPT / CG — Workspace Ready",
+      autocad_detected: true,
+      auto_bound: true,
+      drawing: { name: "Drawing1.dwg" },
+      work_handle: {
+        execution_id: "exec-auto",
+        authority_token: "authority-auto",
+      },
+      cad_tools_ready: true,
+      cad_proxy_tool_count: 2,
+      cad_proxy_tools: ["cad__cad_list_layers", "cad__cad_list_entities"],
+    }),
+  });
+
+  try {
+    const result = await callback({
+      user_turn: "@cg",
+      invocation_source: "mention",
+    });
+    assert.equal(result.structuredContent?.launch_mode, "auto_bind");
+    assert.equal(result.structuredContent?.auto_bound, true);
+    assert.equal(
+      result.structuredContent?.work_handle?.execution_id,
+      "exec-auto"
+    );
+    assert.equal(
+      result.structuredContent?.work_handle?.authority_token,
+      "authority-auto"
+    );
+    assert.equal(result.structuredContent?.cad_tools_ready, true);
+    assert.deepEqual(result.structuredContent?.cad_proxy_tools, [
+      "cad__cad_list_layers",
+      "cad__cad_list_entities",
+    ]);
+    assert.match(
+      result.structuredContent?.welcome_text ?? "",
+      /Workspace Ready/
+    );
+  } finally {
+    revokeSessionAdmissions("admission-auto-bind");
+  }
+});
+
 test("bare launch auto-binds only when tray reports exactly one drawing", async () => {
   const fs = await import("node:fs/promises");
   const os = await import("node:os");
