@@ -19,7 +19,17 @@ import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import { resolveRegisteredAssetPath } from "./user-assets.js";
-import { getBundledLispLibrariesRoot } from "../lib/bundled-assets.js";
+import {
+  getBundledLispLibrariesRoot,
+  listBundledLispEntries,
+} from "../lib/bundled-assets.js";
+import {
+  getInternalJob,
+  isInternalJobId,
+  listInternalJobs,
+  type InternalJobEntry,
+} from "../lib/internal-jobs.js";
+import { loadVerifiedLispForCurrentWork } from "./cad-proxy.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -83,7 +93,11 @@ async function loadRegistry(): Promise<UserRegistry> {
 async function loadJobs(): Promise<JobEntry[]> {
   const parsed = await loadRegistry();
   return parsed.entries
-    .filter((entry) => entry.kind === "job")
+    .filter(
+      (entry) =>
+        entry.kind === "job" &&
+        !isInternalJobId(String(entry.id || ""))
+    )
     .map((entry) => entry as unknown as JobEntry)
     .sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -94,11 +108,18 @@ export async function listRegisteredJobs(): Promise<Array<{
   summary?: string;
 }>> {
   const jobs = await loadJobs();
-  return jobs.map((job) => ({
-    id: job.id,
-    title: job.title,
-    ...(job.summary ? { summary: job.summary } : {}),
-  }));
+  return [
+    ...listInternalJobs().map((job) => ({
+      id: job.id,
+      title: job.title,
+      summary: job.summary,
+    })),
+    ...jobs.map((job) => ({
+      id: job.id,
+      title: job.title,
+      ...(job.summary ? { summary: job.summary } : {}),
+    })),
+  ].sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function safeRelativeRegisteredJob(value: string): string {
@@ -286,18 +307,41 @@ export function registerJobDiscoveryTools(server: McpServer): void {
     },
     async ({ library_id }) => {
       try {
-        let jobs = await loadJobs();
-        if (library_id) jobs = jobs.filter((job) => job.library_id === library_id);
-        return toolResult("job_list", {
-          jobs: jobs.map((job) => ({
+        let jobs: Array<Record<string, unknown>> = [
+          ...listInternalJobs().map((job) => ({
             id: job.id,
             title: job.title,
             library_id: job.library_id,
+            registry: "internal",
+            execution_mode: job.execution_mode,
+            executor: job.executor,
+            path: job.resource_root,
+            summary: job.summary,
+            status: job.status,
+            risk: job.risk,
+          })),
+          ...(await loadJobs()).map((job) => ({
+            id: job.id,
+            title: job.title,
+            library_id: job.library_id,
+            registry: "user",
+            execution_mode: jobExecutionModeForPath(job.relative_path),
             path: `appdata/libraries/jobs/${job.library_id}/${job.relative_path}`,
             ...(job.summary ? { summary: job.summary } : {}),
             ...(job.status ? { status: job.status } : {}),
             ...(job.risk ? { risk: job.risk } : {}),
           })),
+        ];
+        if (library_id) {
+          jobs = jobs.filter(
+            (job) => String(job.library_id ?? "") === library_id
+          );
+        }
+        jobs.sort((a, b) =>
+          String(a.id ?? "").localeCompare(String(b.id ?? ""))
+        );
+        return toolResult("job_list", {
+          jobs,
           count: jobs.length,
           rules: "knowledge/jobs/JOB_RULES.md",
         });
@@ -316,17 +360,42 @@ export function registerJobDiscoveryTools(server: McpServer): void {
     },
     async ({ id }) => {
       try {
+        const internal = getInternalJob(id);
+        if (internal) {
+          return toolResult("job_get", {
+            id: internal.id,
+            title: internal.title,
+            library_id: internal.library_id,
+            registry: "internal",
+            path: internal.resource_root,
+            execution_mode: internal.execution_mode,
+            executor: internal.executor,
+            summary: internal.summary,
+            status: internal.status,
+            risk: internal.risk,
+            rules: "knowledge/jobs/JOB_RULES.md",
+          });
+        }
+
         const jobs = await loadJobs();
-        const entry = jobs.find((job) => job.id.toLowerCase() === id.trim().toLowerCase());
-        if (!entry) throw new Error(`Job not found in User Registry: ${id}`);
+        const entry = jobs.find(
+          (job) => job.id.toLowerCase() === id.trim().toLowerCase()
+        );
+        if (!entry) throw new Error(`Job not found: ${id}`);
         const relative = safeRelativeRegisteredJob(entry.relative_path);
-        const real = await resolveRegisteredAssetPath("job", entry.library_id, relative);
+        const real = await resolveRegisteredAssetPath(
+          "job",
+          entry.library_id,
+          relative
+        );
         const content = await fs.readFile(real, "utf8");
-        const executionMode = path.extname(real).toLowerCase() === ".py" ? "direct" : "reasoning";
+        const executionMode =
+          path.extname(real).toLowerCase() === ".py" ? "direct" : "reasoning";
         return toolResult("job_get", {
           id: entry.id,
           title: entry.title,
           library_id: entry.library_id,
+          registry: "user",
           path: real,
           relative_path: relative,
           execution_mode: executionMode,
@@ -431,6 +500,59 @@ async function executeDirectJobScript(
   };
 }
 
+async function executeInternalDirectJob(
+  entry: InternalJobEntry,
+  args: string[]
+): Promise<Record<string, unknown>> {
+  if (entry.executor !== "builtin:tbh-toolkit-loader") {
+    throw new Error(`INTERNAL_JOB_EXECUTOR_UNSUPPORTED: ${entry.executor}`);
+  }
+  if (args.length > 0) {
+    throw new Error(
+      "INTERNAL_JOB_ARGS_UNSUPPORTED: tbh does not accept positional arguments."
+    );
+  }
+
+  const files = (await listBundledLispEntries())
+    .filter((item) => item.library_id === entry.library_id)
+    .sort((a, b) => a.load_path.localeCompare(b.load_path));
+
+  if (files.length === 0) {
+    throw new Error(
+      `INTERNAL_JOB_RESOURCE_EMPTY: no bundled Lisp files found for ${entry.library_id}`
+    );
+  }
+
+  const loaded: string[] = [];
+  const commands = new Set<string>();
+  let drawingId: string | null = null;
+
+  for (const file of files) {
+    const result = await loadVerifiedLispForCurrentWork(file.load_path);
+    if (!result.loaded) {
+      throw new Error(
+        `TBH_TOOLKIT_LOAD_FAILED: ${file.load_path}: ${JSON.stringify(result.raw)}`
+      );
+    }
+    drawingId ??= result.drawing_id;
+    loaded.push(file.load_path);
+    for (const command of result.commands) commands.add(command);
+  }
+
+  return {
+    execution_mode: "direct",
+    registry: "internal",
+    executor: entry.executor,
+    library_id: entry.library_id,
+    resource_root: entry.resource_root,
+    drawing_id: drawingId,
+    loaded_count: loaded.length,
+    loaded_files: loaded,
+    command_count: commands.size,
+    commands: [...commands].sort(),
+  };
+}
+
 export function registerJobAuthoringTools(server: McpServer): void {
   server.registerTool(
     "job_run_direct",
@@ -444,19 +566,38 @@ export function registerJobAuthoringTools(server: McpServer): void {
     },
     async ({ id, args }) => {
       try {
+        const internal = getInternalJob(id);
+        if (internal) {
+          const executed = await executeInternalDirectJob(internal, args);
+          return toolResult("job_run_direct", {
+            id: internal.id,
+            title: internal.title,
+            ...executed,
+          });
+        }
+
         const jobs = await loadJobs();
-        const entry = jobs.find((job) => job.id.toLowerCase() === id.trim().toLowerCase());
-        if (!entry) throw new Error(`Job not found in User Registry: ${id}`);
+        const entry = jobs.find(
+          (job) => job.id.toLowerCase() === id.trim().toLowerCase()
+        );
+        if (!entry) throw new Error(`Job not found: ${id}`);
         const relative = safeRelativeRegisteredJob(entry.relative_path);
         if (path.extname(relative).toLowerCase() !== ".py") {
-          throw new Error("REASONING_JOB_REQUIRED: Markdown Jobs must run through the reasoning Job harness.");
+          throw new Error(
+            "REASONING_JOB_REQUIRED: Markdown Jobs must run through the reasoning Job harness."
+          );
         }
-        const script = await resolveRegisteredAssetPath("job", entry.library_id, relative);
+        const script = await resolveRegisteredAssetPath(
+          "job",
+          entry.library_id,
+          relative
+        );
         const executed = await executeDirectJobScript(script, args, entry.id);
 
         return toolResult("job_run_direct", {
           id: entry.id,
           title: entry.title,
+          registry: "user",
           ...executed,
         });
       } catch (error) {
@@ -737,6 +878,11 @@ export function registerJobAuthoringTools(server: McpServer): void {
           throw new Error("ABSOLUTE_PATH_REQUIRED: job_promote_draft draft_path must be absolute");
         }
         const draftMode = assertDraftVirtualPath(draft_path);
+        if (isInternalJobId(metadata.id)) {
+          throw new Error(
+            `INTERNAL_JOB_ID_RESERVED: '${metadata.id}' is owned by CadGPT Internal Registry and cannot be promoted as a User Job.`
+          );
+        }
         await assertManagedLibraryExists(library_id);
         if (!user_accepted) throw new Error("Job promotion requires explicit user acceptance");
 
