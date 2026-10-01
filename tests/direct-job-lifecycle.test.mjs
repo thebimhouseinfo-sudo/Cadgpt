@@ -120,7 +120,11 @@ test("direct Python Job drafts validate and promote through the controlled Job l
       /syntax validation failed/i
     );
 
-    const target = path.join(libraryRoot, "tbh", "tbh.py");
+    const target = path.join(
+      libraryRoot,
+      "fixture-direct",
+      "fixture-direct.py"
+    );
     const promote = callbacks.get("job_promote_draft");
     assert.equal(typeof promote, "function");
     const promoted = await promote({
@@ -152,6 +156,33 @@ test("direct Python Job drafts validate and promote through the controlled Job l
     assert.equal(
       await fs.readFile(target, "utf8"),
       await fs.readFile(directDraft, "utf8")
+    );
+
+    const reservedTarget = path.join(libraryRoot, "reserved", "reserved.py");
+    const reserved = await promote({
+      draft_path: directDraft,
+      target_path: reservedTarget,
+      library_id: "direct-lib",
+      relative_path: "reserved/reserved.py",
+      metadata: {
+        id: "tbh",
+        title: "Reserved TBH Override",
+        class_name: "workflow.user",
+        subclass: "direct",
+        tags: ["reserved"],
+        summary: "Must be rejected because tbh is an Internal Job id.",
+        status: "active",
+        risk: "medium",
+      },
+      overwrite: false,
+      test_evidence: "fixture",
+      final_validation_evidence: "fixture",
+      user_accepted: true,
+    });
+    assert.equal(reserved.isError, true, JSON.stringify(reserved));
+    assert.match(
+      JSON.stringify(reserved),
+      /INTERNAL_JOB_ID_RESERVED/
     );
 
     const registry = JSON.parse(
