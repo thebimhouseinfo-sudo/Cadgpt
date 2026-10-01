@@ -50,6 +50,9 @@ import {
 import { cleanupExecutionState } from "./runtime/execution-cleanup.js";
 import { withCadHostLock } from "./runtime/cad-scheduler.js";
 
+export const FRESH_CAD_STATE_POLICY =
+  "FRESH CAD STATE — mandatory: whenever the user asks for the current state of the bound drawing (including repeated questions such as layer count, entity count, properties, geometry, selection contents, or whether something changed), call the relevant CAD read tool in that SAME user turn and answer from that fresh tool result. Never reuse or restate a prior CAD result from conversation history as if it were current. If no valid work_handle/drawing context is available, fail closed and tell the user to rebind/restart the CAD workspace instead of answering from memory.";
+
 const loadedByServer = new WeakMap<McpServer, Set<string>>();
 const registeredSurfaceByServer = new WeakMap<McpServer, Set<string>>();
 const sessionKeyByServer = new WeakMap<McpServer, string>();
@@ -291,6 +294,7 @@ export function createMcpServer(sessionKey: string): McpServer {
         "CadGPT session claim is routing state only; it is not an execution credential and has no per-turn token.",
         "Actual work begins with cadgpt_work_start (for file/job/lisp work) or cadgpt_cad_confirm (for a user-selected drawing workspace). FILE work that later needs CAD testing must transition through cadgpt_work_upgrade with an explicit drawing selector or CREATE_TEST. The returned work_handle (execution_id + authority_token) is the only execution credential; after upgrade the old handle is stale. Lisp/Job authoring, register, import and export are FILE work until a real CAD test is requested.",
         "CRITICAL — CAD tools after workspace ready: When cadgpt_cad_confirm returns cad_tools_ready=true, ALL tools listed in cad_proxy_tools (e.g. cad__cad_list_layers, cad__cad_list_entities, etc.) are immediately callable. Pass execution_id and authority_token from work_handle as required parameters in EVERY cad__* and drawing_* tool call. The empty work_capabilities array is normal for a drawing workspace and does NOT mean tools are unavailable — it is an internal privilege flag unrelated to the MCP tool surface.",
+        FRESH_CAD_STATE_POLICY,
         "Reuse the active work_handle for later compatible requests in the same chat. Do not call cadgpt_work_start again unless there is no active work or the owner/execution path must change.",
         "If the connector replaces the MCP transport/session inside the same ChatGPT conversation, continue normal work on the replacement transport. CadGPT rehydrates the required lazy tool families from logical conversation state; do not create a new work generation merely because transport identity changed.",
         "Normal same-conversation MCP transport rotation must not require a model-visible resume step. cadgpt_work_resume and continuation fields remain compatibility/recovery tools for explicit handle recovery, not prerequisites for ordinary cg/*, Job/Lisp, or CAD continuation.",
