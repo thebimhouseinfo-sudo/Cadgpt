@@ -219,6 +219,109 @@ export function createWorkRegistration(input: {
   return { ...work, capabilities: [...work.capabilities] };
 }
 
+
+export function createSuccessorWorkRegistration(input: {
+  previousExecutionId: string;
+  authorityToken: string;
+  sessionKey: string;
+  executionPath: "hybrid";
+}): WorkRegistration {
+  const previous = validateWorkHandle(
+    input.previousExecutionId,
+    input.authorityToken,
+    input.sessionKey
+  );
+  if (previous.executionPath !== "file") {
+    throw new Error(
+      `WORK_UPGRADE_REQUIRES_FILE: current work is '${previous.executionPath}'.`
+    );
+  }
+  if (activeBySession.get(input.sessionKey) !== previous.executionId) {
+    throw new Error(
+      "WORK_UPGRADE_STALE: the requested FILE work is no longer active."
+    );
+  }
+  if (hasActiveLeaseForWork(previous.executionId)) {
+    throw new Error(
+      "WORK_BUSY: cannot stage a work upgrade while FILE work has an active ToolLease."
+    );
+  }
+
+  const generation =
+    Math.max(
+      generationBySession.get(input.sessionKey) || 0,
+      previous.generation
+    ) + 1;
+  generationBySession.set(input.sessionKey, generation);
+  const executionId =
+    `exec:${previous.ownerId}@${sessionTag(input.sessionKey)}:e${DRIVER_EPOCH}:g${generation}`;
+  const now = new Date().toISOString();
+  const successor: WorkRegistration = {
+    executionId,
+    authorityToken: randomBytes(24).toString("base64url"),
+    sessionKey: input.sessionKey,
+    ownerType: previous.ownerType,
+    ownerId: previous.ownerId,
+    ...(previous.jobId ? { jobId: previous.jobId } : {}),
+    executionPath: input.executionPath,
+    capabilities: [...previous.capabilities],
+    driverEpoch: DRIVER_EPOCH,
+    generation,
+    callSequence: 0,
+    createdAt: now,
+    lastActivityAt: now,
+  };
+  registrations.set(executionId, successor);
+  return { ...successor, capabilities: [...successor.capabilities] };
+}
+
+export function commitSuccessorWorkRegistration(input: {
+  previousExecutionId: string;
+  previousAuthorityToken: string;
+  successorExecutionId: string;
+  successorAuthorityToken: string;
+  sessionKey: string;
+}): WorkRegistration {
+  const previous = validateWorkHandle(
+    input.previousExecutionId,
+    input.previousAuthorityToken,
+    input.sessionKey
+  );
+  const successor = validateWorkHandle(
+    input.successorExecutionId,
+    input.successorAuthorityToken,
+    input.sessionKey
+  );
+  if (activeBySession.get(input.sessionKey) !== previous.executionId) {
+    throw new Error(
+      "WORK_UPGRADE_STALE: active work changed before successor commit."
+    );
+  }
+  if (
+    successor.executionPath !== "hybrid" ||
+    successor.ownerType !== previous.ownerType ||
+    successor.ownerId !== previous.ownerId ||
+    successor.generation <= previous.generation
+  ) {
+    throw new Error(
+      "WORK_UPGRADE_INVALID_SUCCESSOR: staged HYBRID work does not match the active FILE work."
+    );
+  }
+  if (
+    hasActiveLeaseForWork(previous.executionId) ||
+    hasActiveLeaseForWork(successor.executionId)
+  ) {
+    throw new Error(
+      "WORK_BUSY: cannot commit work upgrade while a ToolLease is active."
+    );
+  }
+
+  registrations.delete(previous.executionId);
+  activeBySession.set(input.sessionKey, successor.executionId);
+  successor.lastActivityAt = new Date().toISOString();
+  return { ...successor, capabilities: [...successor.capabilities] };
+}
+
 export function enableWorkCapability(
   executionId: string | undefined,
   authorityToken: string | undefined,

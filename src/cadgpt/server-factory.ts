@@ -10,7 +10,9 @@ import {
   activeWorkForSession,
   acquireToolLease,
   createWorkRegistration,
-  enableWorkCapability,
+  createSuccessorWorkRegistration,
+  commitSuccessorWorkRegistration,
+  releaseWorkRegistration,
   releaseSessionWork,
   runWithToolLease,
   setWorkExpirationHandler,
@@ -485,9 +487,7 @@ export function createMcpServer(sessionKey: string): McpServer {
         );
       }
 
-      // Preflight CAD and the requested drawing while the FILE work is still
-      // authoritative. A CAD startup/selection failure therefore leaves the
-      // authoring work intact instead of destroying it first.
+      // Preflight CAD and the explicit target while FILE authority remains active.
       const { cadUpstream } = await import("./runtime/cad-upstream.js");
       await cadUpstream.activate();
       const { bindDrawingForExecution, listOpenDrawings } = await import(
@@ -524,6 +524,12 @@ export function createMcpServer(sessionKey: string): McpServer {
           throw new Error("New test drawing has no usable identity");
         }
       } else {
+        const upper = requestedSelector.toUpperCase();
+        if (upper === "CURRENT" || upper === "ACTIVE") {
+          throw new Error(
+            "DRAWING_SELECTION_REQUIRED: CURRENT/ACTIVE guessing is forbidden."
+          );
+        }
         const openDocs = await listOpenDrawings();
         const needle = requestedSelector.toLowerCase();
         const matches = openDocs.filter((item) => {
@@ -544,37 +550,38 @@ export function createMcpServer(sessionKey: string): McpServer {
         targetSelector = String(matches[0].full_name || matches[0].name || "");
       }
 
-      const cleanupId = releaseSessionWork(sessionKey);
-      if (cleanupId) await cleanupExecutionState(cleanupId);
-
-      let work = createWorkRegistration({
+      const successor = createSuccessorWorkRegistration({
+        previousExecutionId: previousWork.executionId,
+        authorityToken: previousWork.authorityToken,
         sessionKey,
-        ownerType: previousWork.ownerType,
-        ownerId: previousWork.ownerId,
         executionPath: "hybrid",
       });
-
-      if (previousWork.capabilities.includes("cad-mcp-dev")) {
-        work = enableWorkCapability(
-          work.executionId,
-          work.authorityToken,
-          sessionKey,
-          "cad-mcp-dev"
-        );
-      }
+      let committed = false;
 
       try {
         const toolSurface = await prepareFamilies(
           server,
           "hybrid",
-          work.ownerId,
-          work.executionId
+          successor.ownerId,
+          successor.executionId
         );
-
         const bound = await bindDrawingForExecution(
-          work.executionId,
+          successor.executionId,
           targetSelector
         );
+
+        const work = commitSuccessorWorkRegistration({
+          previousExecutionId: previousWork.executionId,
+          previousAuthorityToken: previousWork.authorityToken,
+          successorExecutionId: successor.executionId,
+          successorAuthorityToken: successor.authorityToken,
+          sessionKey,
+        });
+        committed = true;
+
+        // Retire predecessor resources only after the HYBRID handle is active.
+        await cleanupExecutionState(previousWork.executionId);
+
         const { cadProxySurfaceSnapshot } = await import("./tools/cad-proxy.js");
         const cadSurface = cadProxySurfaceSnapshot(server);
 
@@ -598,8 +605,20 @@ export function createMcpServer(sessionKey: string): McpServer {
           cad_proxy_tools: cadSurface.tools,
         };
       } catch (error) {
-        const cleanupId = releaseSessionWork(sessionKey);
-        if (cleanupId) await cleanupExecutionState(cleanupId);
+        if (!committed) {
+          try {
+            releaseWorkRegistration(
+              successor.executionId,
+              successor.authorityToken,
+              sessionKey
+            );
+          } catch {
+            // Staged successor cleanup is best-effort; predecessor stays active.
+          }
+          await cleanupExecutionState(successor.executionId).catch(
+            () => undefined
+          );
+        }
         throw error;
       }
     },

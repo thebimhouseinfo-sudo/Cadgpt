@@ -19,6 +19,7 @@ import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import { resolveRegisteredAssetPath } from "./user-assets.js";
+import { getBundledLispLibrariesRoot } from "../lib/bundled-assets.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -394,12 +395,7 @@ async function executeDirectJobScript(
     CADGPT_EXECUTION_ID: lease.workId,
     CADGPT_JOB_ID: jobId,
     CADGPT_REPO_ROOT: getRepoRoot(),
-    CADGPT_BUNDLED_LISP_ROOT: path.join(
-      getRepoRoot(),
-      "appdata",
-      "libraries",
-      "lisp"
-    ),
+    CADGPT_BUNDLED_LISP_ROOT: getBundledLispLibrariesRoot(),
     ...(drawing
       ? {
           CADGPT_DRAWING_ID: drawing.drawing_id,

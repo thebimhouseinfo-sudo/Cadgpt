@@ -20,8 +20,10 @@ interface LibraryRecord {
   id: string;
   kind: AssetKind;
   name: string;
-  mode: LibraryMode;
-  root_path: string;
+  mode?: LibraryMode;
+  root_path?: string;
+  managed_path?: string;
+  import_mode?: string;
   enabled: boolean;
 }
 
@@ -191,6 +193,34 @@ function managedRoot(kind: AssetKind, libraryId: string): string {
   return path.join(kind === "lisp" ? getLispLibrariesRoot() : getJobLibrariesRoot(), libraryId);
 }
 
+function libraryMode(record: LibraryRecord): LibraryMode {
+  if (record.mode === "managed" || record.mode === "external") return record.mode;
+  if (record.managed_path || record.import_mode?.toLowerCase().includes("managed")) {
+    return "managed";
+  }
+  return "external";
+}
+
+function libraryRoot(record: LibraryRecord, kind: AssetKind, libraryId: string): string {
+  if (record.root_path?.trim()) return record.root_path.trim();
+  if (record.managed_path?.trim()) {
+    const expected =
+      `appdata/libraries/${kind === "lisp" ? "lisp" : "jobs"}/${libraryId}`;
+    const normalized = record.managed_path
+      .replaceAll("\\", "/")
+      .replace(/\/+$/, "");
+    if (normalized.toLowerCase() !== expected.toLowerCase()) {
+      throw new Error(
+        `Registered managed_path does not match library identity: ${record.managed_path}`
+      );
+    }
+    return managedRoot(kind, libraryId);
+  }
+  throw new Error(
+    `Registered library '${libraryId}' has no usable root_path/managed_path.`
+  );
+}
+
 export async function resolveRegisteredAssetPath(
   kind: AssetKind,
   libraryId: string,
@@ -204,7 +234,7 @@ export async function resolveRegisteredAssetPath(
     (item) => item.kind === kind && item.id === libraryId && item.enabled !== false
   );
   if (!record) throw new Error("Registered library not found: " + libraryId);
-  const root = await fs.realpath(record.root_path);
+  const root = await fs.realpath(libraryRoot(record, kind, libraryId));
   const candidate = path.resolve(root, relativePath);
   if (!isPathInside(candidate, root)) throw new Error("Registered asset path escapes library root.");
   const real = await fs.realpath(candidate);
@@ -278,9 +308,9 @@ async function exportLibrary(kind: AssetKind, libraryId: string, folderPath: str
     (item) => item.kind === kind && item.id === libraryId && item.enabled !== false
   );
   if (!record) throw new Error("Library chưa được đăng ký: " + libraryId);
-  if (record.mode !== "managed") throw new Error("Export chỉ áp dụng cho Lisp/Job đang được quản lý trong CadGPT AppData.");
+  if (libraryMode(record) !== "managed") throw new Error("Export chỉ áp dụng cho Lisp/Job đang được quản lý trong CadGPT AppData.");
 
-  const source = await fs.realpath(record.root_path);
+  const source = await fs.realpath(libraryRoot(record, kind, libraryId));
   const destination = path.resolve(folderPath.trim());
   if (!path.isAbsolute(folderPath.trim())) throw new Error("Không tìm thấy thư mục này. Hãy kiểm tra lại đường dẫn và thử lại.");
   if (isPathInside(destination, source) || isPathInside(source, destination)) {
