@@ -46,6 +46,7 @@ import {
   prepareCadLaunch,
   registerCadPrepareConfirmTool,
   clearCadPrepare,
+  type CadPrepareDrawing,
 } from "./tools/cad-launcher.js";
 import { cleanupExecutionState } from "./runtime/execution-cleanup.js";
 import { withCadHostLock } from "./runtime/cad-scheduler.js";
@@ -300,8 +301,8 @@ export function createMcpServer(sessionKey: string): McpServer {
         "Normal same-conversation MCP transport rotation must not require a model-visible resume step. cadgpt_work_resume and continuation fields remain compatibility/recovery tools for explicit handle recovery, not prerequisites for ordinary cg/*, Job/Lisp, or CAD continuation.",
         "cg/cl and cg/cj are state-aware workflow selectors: with SESSION READY but no compatible work, start independent FILE work (lisp-authoring or job-authoring) and continue without requiring a drawing workspace; with existing FILE/HYBRID work, reuse that work and never replace a HYBRID drawing workspace merely because the task changes to Lisp/Job authoring.",
         "cg/mcp is demand-driven development fallback, not a normal workspace command. Use it only when a CAD MCP tool is missing/broken or the user explicitly requests MCP improvement. In a development build with no compatible work, start standalone cad-mcp-dev FILE work. If a FILE/HYBRID work already exists, keep the same execution and explicitly enable the cad-mcp-dev capability through cadgpt_work_start continuation; never replace an existing drawing workspace. In production builds cad-mcp-dev remains unavailable.",
-        "Bare launch always renders the three-section CadGPT Welcome from tray state. If AutoCAD is offline, keep WORK IDLE and tell the user to open AutoCAD/a drawing then use cg/list.",
-        "If the tray cache reports AutoCAD, list open drawings with no active-drawing marker and ask the user to choose exactly one drawing. The fake CLI is not live-updating; cg/list refreshes from the newest tray snapshot. PREPARE does not start CAD MCP, has no WorkRegistration, and cannot mutate CAD.",
+        "Bare launch uses tray state. If AutoCAD is offline or no drawing is open, render the existing three-section Welcome and keep WORK IDLE. If exactly one drawing is open, bind it automatically and return Workspace Ready without showing the Welcome. If two or more drawings are open, render the existing Welcome with the drawing list and wait for the user to choose one.",
+        "If the tray cache reports exactly one open drawing on a bare launch, CadGPT auto-binds that drawing and starts the drawing workspace. If the tray cache reports two or more drawings, list them with no active-drawing marker and ask the user to choose exactly one. cg/list refreshes from the newest tray snapshot and does not auto-bind by itself. PREPARE for multi-drawing selection does not start CAD MCP, has no WorkRegistration, and cannot mutate CAD.",
         "After the user chooses one listed drawing, call cadgpt_cad_confirm with exactly one choice_key. The confirmation capability is server-side continuity state; normal user/model flow does not need to supply or manage a token. The choice may be the displayed number, drawing name, or full path. Multi-drawing selection is forbidden. This transition replaces any prior work, starts full CAD MCP, verifies the selected drawing live, binds exactly one DrawingContext, and returns Workspace Ready.",
         "A workspace choice is the user's direct drawing selection; no extra nomination or confirmation step exists. Do not treat bare 'xác nhận' as a drawing choice and never default to all drawings. Reuse the private confirmation_token internally; never ask the user to copy or manage it. Repeated admission/list calls with an unchanged drawing list must preserve the same pending selection state.",
         "Hard invariant: 1 work = 1 drawing. For later compatible requests, reuse the active work_handle. cg/list may prepare a replacement workspace; selecting a new drawing releases the prior work before registering the new one.",
@@ -318,9 +319,7 @@ export function createMcpServer(sessionKey: string): McpServer {
   configureToolRegistration(server, sessionKey);
   registerStableProductionSurface(server);
 
-  registerCadPrepareConfirmTool(server, {
-    sessionKey,
-    activateWorkspace: async (drawing) => {
+  const activateCadWorkspace = async (drawing: CadPrepareDrawing) => {
       const previousExecution = activeExecutionForSession(sessionKey);
       if (previousExecution) {
         const cleanupId = releaseSessionWork(sessionKey);
@@ -408,7 +407,11 @@ export function createMcpServer(sessionKey: string): McpServer {
         if (cleanupId) await cleanupExecutionState(cleanupId);
         throw error;
       }
-    },
+  };
+
+  registerCadPrepareConfirmTool(server, {
+    sessionKey,
+    activateWorkspace: activateCadWorkspace,
   });
 
   registerCadGptControlTool(server, {
@@ -463,7 +466,25 @@ export function createMcpServer(sessionKey: string): McpServer {
       await loadDiscoveryFamily(server);
       if (!bareLaunch) return;
       clearSessionWorkStopBarrier(sessionKey);
-      const launch = await prepareCadLaunch(sessionKey);
+      const launch = await prepareCadLaunch(sessionKey, {
+        autoBindSingle: true,
+      });
+      if (launch.mode === "auto_bind" && launch.auto_bind_drawing) {
+        const activated = await activateCadWorkspace(
+          launch.auto_bind_drawing
+        );
+        return {
+          launch_mode: "auto_bind",
+          welcome_text: activated.text,
+          autocad_detected: true,
+          auto_bound: true,
+          drawing: activated.drawing,
+          work_handle: activated.work_handle,
+          cad_tools_ready: activated.cad_tools_ready,
+          cad_proxy_tool_count: activated.cad_proxy_tool_count,
+          cad_proxy_tools: activated.cad_proxy_tools,
+        };
+      }
       return {
         launch_mode: launch.mode,
         welcome_text: launch.welcome_text,
