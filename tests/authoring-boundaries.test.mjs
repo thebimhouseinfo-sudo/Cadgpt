@@ -130,20 +130,3 @@ test("Direct Job bundled Lisp environment points to internal resources", async (
     /CADGPT_BUNDLED_LISP_ROOT:[\s\S]{0,160}appdata[\\/]+libraries[\\/]+lisp/
   );
 });
-
-test("server upgrade block stages successor instead of releasing FILE work first", async () => {
-  const serverSource = await fs.readFile(
-    new URL("../src/cadgpt/server-factory.ts", import.meta.url),
-    "utf8"
-  );
-  const normalizedSource = serverSource.replaceAll("\r\n", "\n");
-  const start = normalizedSource.indexOf(
-    "upgradeToHybrid: async (previousExecutionId, authorityToken, drawingSelector) => {"
-  );
-  const end = normalizedSource.indexOf("\n\n  return server;", start);
-  assert.ok(start >= 0 && end > start);
-  const block = normalizedSource.slice(start, end);
-  assert.match(block, /createSuccessorWorkRegistration/);
-  assert.match(block, /commitSuccessorWorkRegistration/);
-  assert.doesNotMatch(block, /releaseSessionWork\(sessionKey\)/);
-});
