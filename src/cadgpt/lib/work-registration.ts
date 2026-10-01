@@ -49,6 +49,7 @@ const DRIVER_EPOCH = Date.now();
 const registrations = new Map<string, WorkRegistration>();
 const activeBySession = new Map<string, string>();
 const generationBySession = new Map<string, number>();
+const stoppedBySession = new Set<string>();
 const leaseStorage = new AsyncLocalStorage<ToolLease>();
 const activeLeases = new Map<string, ToolLease>();
 let expirationHandler: ((executionId: string) => void | Promise<void>) | null = null;
@@ -142,6 +143,26 @@ export function isDevelopmentBuild(): boolean {
   return (process.env.CADGPT_BUILD_PROFILE || "production").trim().toLowerCase() === "development";
 }
 
+export function markSessionWorkStopped(sessionKey: string): void {
+  stoppedBySession.add(sessionKey);
+}
+
+export function clearSessionWorkStopBarrier(sessionKey: string): void {
+  stoppedBySession.delete(sessionKey);
+}
+
+export function sessionWorkStartBlocked(sessionKey: string): boolean {
+  return stoppedBySession.has(sessionKey);
+}
+
+function assertSessionWorkStartAllowed(sessionKey: string): void {
+  if (stoppedBySession.has(sessionKey)) {
+    throw new Error(
+      "WORK_STOPPED_RESTART_REQUIRED: cg/stop revoked work authority. Start a new explicit CadGPT workflow (for example @cg/cg/list, cg/cl, or cg/cj) before creating new work."
+    );
+  }
+}
+
 export function createWorkRegistration(input: {
   sessionKey: string;
   ownerType: WorkOwnerType;
@@ -150,6 +171,7 @@ export function createWorkRegistration(input: {
 }): WorkRegistration {
   cleanup();
   assertSessionClaimed(input.sessionKey);
+  assertSessionWorkStartAllowed(input.sessionKey);
 
   const ownerId = safeId(input.ownerId);
   if (ownerId === "cad-mcp-dev" && input.ownerId.trim() !== "cad-mcp-dev") {
