@@ -41,10 +41,7 @@ $LogDir = Join-Path $AppDataRoot "logs"
 $StateDir = Join-Path $AppDataRoot "state"
 $TrayLog = Join-Path $LogDir "tray.log"
 $TrayReadyPath = Join-Path $StateDir "tray-ready.json"
-$LegacyTrayReadyPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "appdata\state\tray-ready.json"))
-
-# Keep the managed user/runtime tree self-healing for source upgrades and legacy
-# checkouts that moved from repo-local appdata to %LOCALAPPDATA%\CadGPT.
+# Keep the managed per-user runtime tree self-healing under %LOCALAPPDATA%\CadGPT.
 foreach ($relative in @(
     "libraries\lisp",
     "libraries\jobs",
@@ -338,9 +335,6 @@ function Stop-TrayHostAtMarker([string]$MarkerPath) {
 
 function Stop-TrayHostFromMarker {
     Stop-TrayHostAtMarker $TrayReadyPath
-    if ($LegacyTrayReadyPath -ne $TrayReadyPath) {
-        Stop-TrayHostAtMarker $LegacyTrayReadyPath
-    }
 }
 
 if ($InstallStartup) {
