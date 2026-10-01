@@ -21,7 +21,7 @@ const INTERNAL_JOBS: InternalJobEntry[] = [
     registry: "internal",
     title: "TBH Toolkit Loader",
     summary:
-      "Load every bundled AutoLISP file from the official TBH Toolkit into the currently bound AutoCAD drawing through CadGPT's verified Lisp bridge.",
+      "Load the official TBH Toolkit into the currently bound AutoCAD drawing through one generated fail-fast batch Lisp and a single verified CadGPT Lisp bridge call.",
     library_id: "tbh-toolkit",
     execution_mode: "direct",
     executor: "builtin:tbh-toolkit-loader",
