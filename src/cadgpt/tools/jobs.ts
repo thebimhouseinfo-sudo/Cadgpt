@@ -21,7 +21,6 @@ import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import { resolveRegisteredAssetPath } from "./user-assets.js";
 import {
   getBundledLispLibrariesRoot,
-  listBundledLispEntries,
 } from "../lib/bundled-assets.js";
 import {
   getInternalJob,
@@ -29,7 +28,10 @@ import {
   listInternalJobs,
   type InternalJobEntry,
 } from "../lib/internal-jobs.js";
-import { loadVerifiedLispForCurrentWork } from "./cad-proxy.js";
+import {
+  loadVerifiedLispForCurrentWork,
+  markInternalLispGroupLoaded,
+} from "./cad-proxy.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -520,26 +522,7 @@ export async function executeInternalDirectJob(
     );
   }
 
-  const entries = (await listBundledLispEntries())
-    .filter((item) => item.library_id === entry.library_id)
-    .sort((a, b) => a.load_path.localeCompare(b.load_path));
-
-  if (entries.length === 0) {
-    throw new Error(
-      `INTERNAL_JOB_RESOURCE_EMPTY: no bundled Lisp files found for ${entry.library_id}`
-    );
-  }
-
-  const commands = [
-    ...new Set(entries.flatMap((item) => item.commands)),
-  ].sort();
-  const loadedFiles = entries.map((item) => item.load_path);
-
-  const result = await loader(
-    TBH_LOADER_PATH,
-    undefined,
-    commands
-  );
+  const result = await loader(TBH_LOADER_PATH);
   if (!result.loaded) {
     throw new Error(
       `TBH_TOOLKIT_LOAD_FAILED: loader failed: ${JSON.stringify(
@@ -547,6 +530,11 @@ export async function executeInternalDirectJob(
       )}`
     );
   }
+
+  markInternalLispGroupLoaded(
+    result.drawing_id,
+    entry.library_id
+  );
 
   return {
     execution_mode: "direct",
@@ -557,10 +545,8 @@ export async function executeInternalDirectJob(
     drawing_id: result.drawing_id,
     loader_calls: 1,
     loader_path: TBH_LOADER_PATH,
-    loaded_count: loadedFiles.length,
-    loaded_files: loadedFiles,
-    command_count: commands.length,
-    commands,
+    loaded: true,
+    state: "on",
   };
 }
 
