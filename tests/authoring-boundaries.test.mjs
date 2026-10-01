@@ -136,12 +136,13 @@ test("server upgrade block stages successor instead of releasing FILE work first
     new URL("../src/cadgpt/server-factory.ts", import.meta.url),
     "utf8"
   );
-  const start = serverSource.indexOf(
+  const normalizedSource = serverSource.replaceAll("\r\n", "\n");
+  const start = normalizedSource.indexOf(
     "upgradeToHybrid: async (previousExecutionId, authorityToken, drawingSelector) => {"
   );
-  const end = serverSource.indexOf("\n\n  return server;", start);
+  const end = normalizedSource.indexOf("\n\n  return server;", start);
   assert.ok(start >= 0 && end > start);
-  const block = serverSource.slice(start, end);
+  const block = normalizedSource.slice(start, end);
   assert.match(block, /createSuccessorWorkRegistration/);
   assert.match(block, /commitSuccessorWorkRegistration/);
   assert.doesNotMatch(block, /releaseSessionWork\(sessionKey\)/);
