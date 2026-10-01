@@ -125,10 +125,10 @@ The former Scheduled Task / polling wake-agent lifecycle is retired. The support
 
 ## Managed AppData
 
-During Beta, AppData is repo-local. Packaged builds can move the same virtual paths to `%LOCALAPPDATA%\CadGPT` through `CADGPT_APPDATA_ROOT`.
+CadGPT stores managed user/runtime data under `%LOCALAPPDATA%\CadGPT` on Windows. `CADGPT_APPDATA_ROOT` is only an explicit development/test override and must not point inside `<repo>\appdata`.
 
 ```text
-appdata/
+%LOCALAPPDATA%\CadGPT\
 ├── libraries/
 │   ├── lisp/
 │   └── jobs/
@@ -226,7 +226,7 @@ existing Job (optional)
 → managed Job Library + User Registry
 ```
 
-New Jobs start directly in `appdata/workspace/job-draft/**` only after the `jobcreate` planning approval gate. `job_promote_draft` requires recorded test evidence, final-validation evidence and explicit user acceptance.
+New Jobs start directly in `%LOCALAPPDATA%\CadGPT\workspace/job-draft/**` only after the `jobcreate` planning approval gate. `job_promote_draft` requires recorded test evidence, final-validation evidence and explicit user acceptance.
 
 CadGPT core must remain functional with no user Job Library and no user Lisp Library configured.
 
@@ -286,7 +286,7 @@ appdata/workspace/**
 appdata/data/**
 ```
 
-`appdata/libraries/**` is permanent managed content and is read-only to generic file tools. It changes only through controlled operations such as `asset_import`, `lisp_promote_draft` and `job_promote_draft`.
+`%LOCALAPPDATA%\CadGPT\libraries/**` is permanent managed content and is read-only to generic file tools. It changes only through controlled operations such as `asset_import`, `lisp_promote_draft` and `job_promote_draft`.
 
 External folders may be registered in place with `asset_register_external`, imported into AppData with `asset_import`, or used as export destinations with `asset_export`. Registry/runtime/state/log areas remain internal.
 
