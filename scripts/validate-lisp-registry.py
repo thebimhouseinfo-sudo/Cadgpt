@@ -1,8 +1,9 @@
-"""Validate CadGPT User Registry against managed AppData libraries.
+"""Validate CadGPT checked-in registry/bundled asset contracts.
 
-Internal Registry is generated from MCP manifests + system skills. User Registry
-may contain only Lisp and concrete Jobs copied into AppData. Import/index never
-changes source; this validator checks structural drift only.
+The committed TBH Lisp pack is installation-owned bundled/internal content even
+though it lives under repo/appdata/libraries/lisp during Beta. Runtime user Lisp
+lives under the real CADGPT_APPDATA_ROOT and is indexed in User Registry.
+Checked-in User Registry fixtures therefore must not duplicate the bundled pack.
 """
 
 from __future__ import annotations
@@ -36,6 +37,9 @@ def main() -> None:
     ids: set[str] = set()
     registered_lisp: set[tuple[str, str]] = set()
     registered_jobs: set[tuple[str, str]] = set()
+    bundled_lisp = sorted(LISP_ROOT.rglob("*.lsp")) if LISP_ROOT.exists() else []
+    if not bundled_lisp:
+        errors.append("repo-bundled/internal Lisp pack is empty")
 
     for entry in entries:
         entry_id = str(entry.get("id", "")).strip()
@@ -62,6 +66,10 @@ def main() -> None:
             continue
 
         if kind == "lisp":
+            if library_id == "tbh-toolkit":
+                errors.append(
+                    f"{entry_id}: repo-bundled tbh-toolkit is Internal Registry content and must not be duplicated in User Registry"
+                )
             ai_mode = entry.get("ai_mode")
             if ai_mode not in {"static", "dynamic"}:
                 errors.append(f"{entry_id}: ai_mode must be static or dynamic")
@@ -100,11 +108,13 @@ def main() -> None:
             if not job_path.is_file() or job_path.name.lower() != "job.md":
                 errors.append(f"{entry_id}: managed Job not found: {job_path.relative_to(ROOT)}")
 
-    for source in sorted(LISP_ROOT.rglob("*.lsp")) if LISP_ROOT.exists() else []:
-        library_id = source.relative_to(LISP_ROOT).parts[0]
-        relative = source.relative_to(LISP_ROOT / library_id).as_posix()
-        if (library_id.lower(), relative.lower()) not in registered_lisp:
-            errors.append(f"unregistered managed Lisp: {source.relative_to(ROOT).as_posix()}")
+    # Repo-bundled Lisp is enumerated dynamically by Internal Registry and must
+    # not be mirrored into checked-in User Registry.
+    for source in bundled_lisp:
+        if source.relative_to(LISP_ROOT).parts[0].lower() != "tbh-toolkit":
+            errors.append(
+                f"unexpected bundled Lisp library root: {source.relative_to(ROOT).as_posix()}"
+            )
 
     for source in sorted(JOB_ROOT.rglob("JOB.md")) if JOB_ROOT.exists() else []:
         library_id = source.relative_to(JOB_ROOT).parts[0]
@@ -119,8 +129,9 @@ def main() -> None:
         raise SystemExit(1)
 
     print(
-        f"User Registry validation passed: {len(entries)} entries, "
-        f"{len(registered_lisp)} Lisp files, {len(registered_jobs)} Jobs"
+        f"Registry validation passed: {len(entries)} user entries, "
+        f"{len(registered_lisp)} user Lisp refs, {len(registered_jobs)} Jobs, "
+        f"{len(bundled_lisp)} bundled/internal Lisp files"
     )
 
 
