@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import {
+  getDynamicLispRoot,
   getJobDraftRoot,
   getJobLibrariesRoot,
   getUserCapabilitiesPath,
@@ -22,6 +23,7 @@ import { resolveRegisteredAssetPath } from "./user-assets.js";
 import {
   getBundledLispLibrariesRoot,
   listBundledLispEntries,
+  resolveBundledLispPath,
 } from "../lib/bundled-assets.js";
 import {
   getInternalJob,
@@ -502,6 +504,79 @@ async function executeDirectJobScript(
   };
 }
 
+function escapeAutoLispString(value: string): string {
+  return value.replaceAll("\\", "/").replaceAll('"', '\\"');
+}
+
+export async function buildTbhToolkitLoader(): Promise<{
+  loader_path: string;
+  files: string[];
+  commands: string[];
+}> {
+  const entries = (await listBundledLispEntries())
+    .filter((item) => item.library_id === "tbh-toolkit")
+    .sort((a, b) => a.load_path.localeCompare(b.load_path));
+
+  if (entries.length === 0) {
+    throw new Error(
+      "INTERNAL_JOB_RESOURCE_EMPTY: no bundled Lisp files found for tbh-toolkit"
+    );
+  }
+
+  const absoluteFiles: string[] = [];
+  const commands = new Set<string>();
+  for (const entry of entries) {
+    absoluteFiles.push(
+      await resolveBundledLispPath(entry.library_id, entry.relative_path)
+    );
+    for (const command of entry.commands) commands.add(command);
+  }
+
+  const fileList = absoluteFiles
+    .map((item) => `  "${escapeAutoLispString(item)}"`)
+    .join("\n");
+
+  const source = [
+    ";;; CadGPT generated TBH Toolkit batch loader",
+    "(vl-load-com)",
+    "(setq *cadgpt-tbh-load-files* '(",
+    fileList,
+    "))",
+    "(foreach *cadgpt-tbh-file* *cadgpt-tbh-load-files*",
+    "  (setq *cadgpt-tbh-result*",
+    "    (vl-catch-all-apply 'load (list *cadgpt-tbh-file*)))",
+    "  (if (vl-catch-all-error-p *cadgpt-tbh-result*)",
+    "    (error",
+    "      (strcat",
+    '        "TBH child load failed: "',
+    "        *cadgpt-tbh-file*",
+    '        " :: "',
+    "        (vl-catch-all-error-message *cadgpt-tbh-result*)",
+    "      )",
+    "    )",
+    "  )",
+    ")",
+    "(setq *cadgpt-tbh-load-files* nil)",
+    "(setq *cadgpt-tbh-file* nil)",
+    "(setq *cadgpt-tbh-result* nil)",
+    "(princ)",
+    "",
+  ].join("\n");
+
+  const root = getDynamicLispRoot();
+  const target = path.join(
+    root,
+    "tbh",
+    `tbh-load-all-${currentToolLease().workId}.lsp`
+  );
+  await atomicWrite(target, source);
+  return {
+    loader_path: target,
+    files: entries.map((entry) => entry.load_path),
+    commands: [...commands].sort(),
+  };
+}
+
 export async function executeInternalDirectJob(
   entry: InternalJobEntry,
   args: string[],
@@ -517,44 +592,37 @@ export async function executeInternalDirectJob(
     );
   }
 
-  const files = (await listBundledLispEntries())
-    .filter((item) => item.library_id === entry.library_id)
-    .sort((a, b) => a.load_path.localeCompare(b.load_path));
-
-  if (files.length === 0) {
-    throw new Error(
-      `INTERNAL_JOB_RESOURCE_EMPTY: no bundled Lisp files found for ${entry.library_id}`
+  const batch = await buildTbhToolkitLoader();
+  try {
+    const result = await loader(
+      batch.loader_path,
+      undefined,
+      batch.commands
     );
-  }
-
-  const loaded: string[] = [];
-  const commands = new Set<string>();
-  let drawingId: string | null = null;
-
-  for (const file of files) {
-    const result = await loader(file.load_path);
     if (!result.loaded) {
       throw new Error(
-        `TBH_TOOLKIT_LOAD_FAILED: ${file.load_path}: ${JSON.stringify(result.raw)}`
+        `TBH_TOOLKIT_LOAD_FAILED: batch loader failed: ${JSON.stringify(
+          result.raw
+        )}`
       );
     }
-    drawingId ??= result.drawing_id;
-    loaded.push(file.load_path);
-    for (const command of result.commands) commands.add(command);
-  }
 
-  return {
-    execution_mode: "direct",
-    registry: "internal",
-    executor: entry.executor,
-    library_id: entry.library_id,
-    resource_root: entry.resource_root,
-    drawing_id: drawingId,
-    loaded_count: loaded.length,
-    loaded_files: loaded,
-    command_count: commands.size,
-    commands: [...commands].sort(),
-  };
+    return {
+      execution_mode: "direct",
+      registry: "internal",
+      executor: entry.executor,
+      library_id: entry.library_id,
+      resource_root: entry.resource_root,
+      drawing_id: result.drawing_id,
+      loader_calls: 1,
+      loaded_count: batch.files.length,
+      loaded_files: batch.files,
+      command_count: batch.commands.length,
+      commands: batch.commands,
+    };
+  } finally {
+    await fs.rm(batch.loader_path, { force: true }).catch(() => undefined);
+  }
 }
 
 export function registerJobAuthoringTools(server: McpServer): void {
