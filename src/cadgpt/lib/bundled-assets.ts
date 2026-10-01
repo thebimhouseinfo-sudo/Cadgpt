@@ -19,6 +19,16 @@ export function getBundledLispLibrariesRoot(): string {
   return path.join(getRepoRoot(), "resources", "cad", "internal-lisp");
 }
 
+export const BUNDLED_LISP_REGISTRY_EXCEPTIONS = new Set([
+  "tbh-toolkit/tbhloader.lsp",
+]);
+
+function isBundledLispRegistryException(relativeFromRoot: string): boolean {
+  return BUNDLED_LISP_REGISTRY_EXCEPTIONS.has(
+    relativeFromRoot.replaceAll("\\", "/").toLowerCase()
+  );
+}
+
 function slug(value: string): string {
   return value
     .toLowerCase()
@@ -62,6 +72,7 @@ export async function listBundledLispEntries(): Promise<BundledLispEntry[]> {
   const result: BundledLispEntry[] = [];
   for (const file of files.sort((a, b) => a.localeCompare(b))) {
     const relFromRoot = path.relative(root, file).replaceAll("\\", "/");
+    if (isBundledLispRegistryException(relFromRoot)) continue;
     const parts = relFromRoot.split("/");
     if (parts.length < 2) continue;
     const libraryId = parts.shift()!;
