@@ -11,6 +11,7 @@ import { cadUpstream } from "../runtime/cad-upstream.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import { getRepoRoot, isPathInside } from "../lib/path-security.js";
 import { getAppDataRoot } from "../lib/appdata.js";
+import { listBundledLispEntries } from "../lib/bundled-assets.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { currentToolLease } from "../lib/work-registration.js";
 import {
@@ -67,6 +68,68 @@ const loadedLispCommands = new Map<
   string,
   Map<string, Set<string>>
 >();
+const internalLispGroups = new Map<
+  string,
+  Map<string, Set<string>>
+>();
+
+function internalLispGroupSet(
+  workId: string,
+  drawingId: string
+): Set<string> {
+  let byDrawing = internalLispGroups.get(workId);
+  if (!byDrawing) {
+    byDrawing = new Map<string, Set<string>>();
+    internalLispGroups.set(workId, byDrawing);
+  }
+  let groups = byDrawing.get(drawingId);
+  if (!groups) {
+    groups = new Set<string>();
+    byDrawing.set(drawingId, groups);
+  }
+  return groups;
+}
+
+export function markInternalLispGroupLoaded(
+  drawingId: string,
+  group: string
+): void {
+  const lease = currentToolLease();
+  internalLispGroupSet(lease.workId, drawingId).add(
+    group.trim().toLowerCase()
+  );
+}
+
+export function internalLispGroupLoadedForCurrentDrawing(
+  group: string
+): { loaded: boolean; drawing_id?: string } {
+  try {
+    const lease = currentToolLease();
+    const drawing = resolveDrawingContext();
+    const loaded =
+      internalLispGroups
+        .get(lease.workId)
+        ?.get(drawing.drawing_id)
+        ?.has(group.trim().toLowerCase()) ?? false;
+    return { loaded, drawing_id: drawing.drawing_id };
+  } catch {
+    return { loaded: false };
+  }
+}
+
+async function bundledGroupOwnsCommand(
+  libraryId: string,
+  command: string
+): Promise<boolean> {
+  const needle = command.trim().toUpperCase();
+  if (!needle) return false;
+  const entries = await listBundledLispEntries();
+  return entries.some(
+    (entry) =>
+      entry.library_id === libraryId &&
+      entry.commands.includes(needle)
+  );
+}
 
 function lispCommandSet(workId: string, drawingId: string): Set<string> {
   let byDrawing = loadedLispCommands.get(workId);
@@ -694,9 +757,21 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
               .get(currentToolLease().workId)
               ?.get(binding.drawing_id) ?? new Set<string>();
 
-          if (!owned.has(normalizedName)) {
+          const tbhLoaded =
+            internalLispGroups
+              .get(currentToolLease().workId)
+              ?.get(binding.drawing_id)
+              ?.has("tbh-toolkit") ?? false;
+          const allowedByTbh =
+            tbhLoaded &&
+            (await bundledGroupOwnsCommand(
+              "tbh-toolkit",
+              normalizedName
+            ));
+
+          if (!owned.has(normalizedName) && !allowedByTbh) {
             throw new Error(
-              `LISP_COMMAND_NOT_OWNED: '${name}' was not discovered in a Lisp file successfully loaded by this execution on drawing ${binding.drawing_id}.`
+              `LISP_COMMAND_NOT_OWNED: '${name}' is neither individually loaded by this execution nor enabled by a loaded Internal Lisp group on drawing ${binding.drawing_id}.`
             );
           }
 
@@ -729,6 +804,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
 export function clearExecutionCadProxyState(executionId: string): void {
   clearDestructivePreviewOwnershipForExecution(executionId);
   loadedLispCommands.delete(executionId);
+  internalLispGroups.delete(executionId);
 }
 
 export function clearDestructivePreviewOwnershipForExecution(
