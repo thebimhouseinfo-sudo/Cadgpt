@@ -42,12 +42,12 @@ A step must **not** directly edit permanent `appdata/libraries/**` content with 
 
 ## Job execution modes
 
-CadGPT has two Job source modes:
+CadGPT has two execution modes:
 
-- **Reasoning Job (`.md`)** — uses the canonical structured workflow contract and `REASONING_HARNESS.md`.
-- **Direct Job (`.py`)** — a reviewed deterministic Python entrypoint dispatched directly by `job_run_direct` with no model planning between its internal operations.
+- **Reasoning Job** — User Registry `.md` workflows use the canonical structured workflow contract and `REASONING_HARNESS.md`.
+- **Direct Job** — dispatched by `job_run_direct` with no model planning between internal operations. User Registry Direct Jobs are reviewed deterministic `.py` entrypoints. CadGPT may also ship a small explicit set of **official Internal Direct Jobs** implemented by bounded built-in executors.
 
-Both modes use the same managed draft → validate → real test → user acceptance → promote lifecycle. A Direct Job is not exempt from evidence, drawing-targeting, or promotion rules.
+User-authored Jobs use the managed draft → validate → real test → user acceptance → promote lifecycle. Official Internal Jobs version with CadGPT, are read-only product capabilities, never live in User AppData, and cannot be overridden by a User Registry id. A Direct Job is never exempt from drawing-targeting, authority, evidence, or final validation rules.
 
 When a Direct Job runs with one bound drawing, CadGPT serializes the child process under that drawing host lock and provides exact target identity through `CADGPT_DRAWING_ID`, `CADGPT_DRAWING_NAME`, `CADGPT_DRAWING_PATH`, `CADGPT_DRAWING_HOST`, and `CADGPT_DRAWING_RUNTIME_IDENTITY`. Direct Job code must use that explicit identity and must not guess or inherit AutoCAD `ActiveDocument`.
 
@@ -80,7 +80,7 @@ Tool alternatives are allowed only when they satisfy the same step contract and 
 
 Job **specification, rules, schema, authoring guidance, and runtime contract** are CadGPT internal knowledge and version with CadGPT.
 
-Concrete Jobs are user assets. Reusable promoted Jobs live in managed Job Libraries under:
+User-created/imported Jobs are user assets. Reusable promoted User Jobs live in managed Job Libraries under:
 
 ```text
 appdata/libraries/jobs/<library-id>/**
@@ -93,6 +93,8 @@ appdata/workspace/job-draft/**
 ```
 
 Every Job source mutation uses an explicit absolute canonical filesystem path under that approved draft root. Relative paths and ambient process CWD never authorize a write.
+
+Official Internal Jobs do not use this storage path. They remain in CadGPT install/source resources and are registered by the Internal Registry.
 
 In packaged builds the same virtual AppData paths map to the user's CadGPT AppData directory.
 
@@ -172,7 +174,7 @@ Jobs fail explicitly rather than silently guessing:
 
 ## Naming and Location
 
-A concrete reusable Job normally lives under one managed library:
+A concrete reusable **User Job** normally lives under one managed library:
 
 ```text
 Reasoning: appdata/libraries/jobs/<library-id>/<job-name>/JOB.md
