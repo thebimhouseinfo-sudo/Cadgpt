@@ -17,6 +17,12 @@ test("direct Python Job drafts validate and promote through the controlled Job l
   const { registerJobAuthoringTools } = await import(
     "../dist/cadgpt/tools/jobs.js"
   );
+  const {
+    acquireToolLease,
+    createWorkRegistration,
+    runWithToolLease,
+  } = await import("../dist/cadgpt/lib/work-registration.js");
+  const { checkAdmission } = await import("../dist/cadgpt/lib/admission.js");
 
   const callbacks = new Map();
   const fakeServer = {
@@ -68,6 +74,35 @@ test("direct Python Job drafts validate and promote through the controlled Job l
       JSON.stringify(valid)
     );
     assert.equal(valid.structuredContent?.data?.execution_mode, "direct");
+    assert.match(valid.structuredContent?.data?.sha256 ?? "", /^[a-f0-9]{64}$/);
+
+    const sessionKey = "direct-draft-test-session";
+    checkAdmission(sessionKey, "@cadgpt", "mention");
+    const work = createWorkRegistration({
+      sessionKey,
+      ownerType: "file",
+      ownerId: "job-authoring",
+      executionPath: "file",
+    });
+    const lease = acquireToolLease({
+      tool: "job_run_direct_draft",
+      family: "job-authoring",
+      targetId: directDraft,
+      executionId: work.executionId,
+      authorityToken: work.authorityToken,
+      sessionKey,
+    });
+    const runDraft = callbacks.get("job_run_direct_draft");
+    assert.equal(typeof runDraft, "function");
+    const draftRun = await runWithToolLease(lease, () =>
+      runDraft({
+        draft_path: directDraft,
+        expected_sha256: valid.structuredContent.data.sha256,
+        args: [],
+      })
+    );
+    assert.equal(draftRun.structuredContent?.data?.validation_passed, true);
+    assert.match(String(draftRun.structuredContent?.data?.stdout ?? ""), /no-drawing/);
 
     const invalidDraft = path.join(
       draftRoot,

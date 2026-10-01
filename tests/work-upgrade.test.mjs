@@ -17,6 +17,14 @@ test("cadgpt_work_upgrade safely transitions FILE work to HYBRID successor work"
     const { registerWorkControlTools } = await import(
       "../dist/cadgpt/tools/work-control.js"
     );
+    const { toolAuthority } = await import(
+      "../dist/cadgpt/lib/tool-policy.js"
+    );
+    assert.equal(
+      toolAuthority("cadgpt_work_upgrade"),
+      "control",
+      "cadgpt_work_upgrade must receive its old execution credentials intact"
+    );
 
     const sessionKey = "test-upgrade-session-1";
     checkAdmission(sessionKey, "@cadgpt", "mention");
@@ -144,6 +152,7 @@ test("job draft creation and promotion validate library prerequisites clearly", 
     const registeredDraftPath = path.join(draftRoot, "my-existing-lib", "test.py");
     const resRegistered = await draftNew({
       draft_path: registeredDraftPath,
+      target_library_id: "my-existing-lib",
       content: "print('hello')",
     });
     assert.equal(resRegistered.structuredContent.ok, true);

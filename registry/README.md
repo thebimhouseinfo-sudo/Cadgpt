@@ -5,7 +5,8 @@ CadGPT exposes one effective capability catalog to ChatGPT, but ownership is spl
 ```text
 Internal Registry
 ├─ MCP tools
-└─ system skills
+├─ system skills
+└─ repo-bundled/install Lisp (for example TBH Tool Kit)
 
 User Registry
 ├─ managed Lisp capabilities
@@ -20,13 +21,9 @@ Internal entries are generated from CadGPT core tool metadata, the stable CAD MC
 
 ## User Registry
 
-User Registry lives under:
+User Registry lives under the real per-user CadGPT AppData root (normally `%LOCALAPPDATA%\CadGPT\registry\user` on Windows).
 
-```text
-appdata/registry/user/
-```
-
-Lisp/Job libraries are first copied into:
+Repo-bundled/install Lisp such as TBH Tool Kit is **not** User Registry content and is never resolved through per-user AppData. User-created/imported Lisp/Jobs are first copied into:
 
 ```text
 appdata/libraries/lisp/<library-id>/**

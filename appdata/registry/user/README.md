@@ -1,6 +1,6 @@
 # User Registry
 
-User Registry contains only capabilities owned by imported user libraries:
+User Registry contains only capabilities owned by user-created/imported libraries. Repo-bundled/install capabilities such as TBH Tool Kit belong to Internal Registry and must not be duplicated here:
 
 - `kind=lisp`
 - `kind=job`

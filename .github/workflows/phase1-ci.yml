@@ -191,8 +191,8 @@ jobs:
             $initial = Invoke-Mcp "tools/list" @{}
             $initialNames = @($initial.result.tools | ForEach-Object { $_.name })
             foreach ($required in @(
-              "cadgpt_control","cadgpt_admission","cadgpt_work_start","cadgpt_work_status","cadgpt_work_stop",
-              "library_list","library_import","registry_list","job_list","job_get","job_run_direct","job_checkout","job_draft_validate","job_promote_draft",
+              "cadgpt_control","cadgpt_admission","cadgpt_work_start","cadgpt_work_status","cadgpt_work_stop","cadgpt_work_upgrade",
+              "library_list","library_import","registry_list","job_list","job_get","job_run_direct","job_run_direct_draft","job_draft_new","job_checkout","job_draft_validate","job_promote_draft",
               "file_roots","file_create","file_edit","lisp_scaffold","lisp_checkout","asset_import","asset_export",
               "drawing_list","cad_status","cad__cad_list_layers","cad_invoke_manifest_tool"
             )) {
@@ -270,7 +270,11 @@ jobs:
             $entries = @($registry.result.structuredContent.data.entries)
             if (@($entries | Where-Object { $_.registry -eq "internal" -and $_.kind -eq "tool" }).Count -lt 1) { throw "Internal tool registry empty" }
             if (@($entries | Where-Object { $_.registry -eq "internal" -and $_.kind -eq "skill" }).Count -lt 1) { throw "Internal skill registry empty" }
-            if (@($entries | Where-Object { $_.registry -eq "user" -and $_.kind -eq "lisp" }).Count -lt 1) { throw "User Lisp registry empty" }
+            $bundledLisp = @($entries | Where-Object { $_.registry -eq "internal" -and $_.kind -eq "lisp" -and $_.load_path -like "bundled/lisp/*" })
+            if ($bundledLisp.Count -lt 1) { throw "Bundled/Internal Lisp registry empty" }
+            if (@($entries | Where-Object { $_.registry -eq "user" -and $_.kind -eq "lisp" -and $_.library_id -eq "tbh-toolkit" }).Count -ne 0) {
+              throw "TBH Tool Kit must not appear as user AppData Lisp"
+            }
             if (@($entries | Where-Object { $_.registry -eq "user" -and $_.kind -eq "job" }).Count -lt 1) { throw "User Job registry empty" }
 
             $relativeCreate = Invoke-Work "file_create" @{ path="appdata/workspace/reject.txt"; content="reject" }
@@ -320,6 +324,9 @@ jobs:
           $fixture = (Resolve-Path "resources\cad\CADGPT_LOAD_SMOKE.lsp").Path
           $env:CADGPT_LISP_FIXTURE = $fixture
           python -c "import os; from services.lisp_service import _resolve_lisp_path; p,v=_resolve_lisp_path(os.environ['CADGPT_LISP_FIXTURE']); assert os.path.isabs(p); assert v.replace('\\','/').startswith('resources/cad/'); print('approved absolute Lisp path OK')"
+
+          $bundled = "bundled/lisp/tbh-toolkit/TBH Tool Kit/Setup Xref/CleanATT.lsp"
+          python -c "from services.lisp_service import _resolve_lisp_path; p,v=_resolve_lisp_path(r'''$bundled'''); assert v.replace('\\','/').startswith('bundled/lisp/'); print('bundled Lisp namespace OK:', v)"
 
           $outside = Join-Path $env:RUNNER_TEMP "cadgpt-outside-load.lsp"
           Set-Content -LiteralPath $outside -Value "(princ)" -NoNewline
