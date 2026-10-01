@@ -29,18 +29,14 @@ jobs:
             }
           }
 
-          $bundle = Get-ChildItem "resources/cad/internal-lisp/tbh-toolkit" -Recurse -File | Where-Object { $_.Extension -match '^(?i)\.lsp
-
-          foreach ($forbidden in @("appdata/libraries", "appdata/registry", "appdata/workspace", "appdata/runtime", "appdata/data")) {
-            if (Test-Path -LiteralPath $forbidden) {
-              throw "Repository must not ship runtime/user AppData content: $forbidden"
-            }
+          $bundle = Get-ChildItem "resources/cad/internal-lisp/tbh-toolkit" -Recurse -File | Where-Object { $_.Extension -match '^(?i)\.lsp$' }
+          if (@($bundle).Count -ne 64) {
+            throw "Expected 64 physical TBH Lisp files (63 components + tbhloader), got $(@($bundle).Count)"
           }
-          Write-Host "Internal bundled Lisp / runtime User AppData ownership contract OK"
- }
-          if (@($bundle).Count -ne 64) { throw "Expected 64 physical TBH Lisp files (63 components + tbhloader), got $(@($bundle).Count)" }
           $loader = @($bundle | Where-Object { $_.Name -ieq "tbhloader.lsp" })
-          if ($loader.Count -ne 1) { throw "Expected exactly one TBH loader registry exception: tbhloader.lsp" }
+          if ($loader.Count -ne 1) {
+            throw "Expected exactly one TBH loader registry exception: tbhloader.lsp"
+          }
 
           foreach ($forbidden in @("appdata/libraries", "appdata/registry", "appdata/workspace", "appdata/runtime", "appdata/data")) {
             if (Test-Path -LiteralPath $forbidden) {
