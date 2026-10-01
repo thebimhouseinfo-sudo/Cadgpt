@@ -7,6 +7,7 @@ import {
   adoptWorkSession,
   createWorkRegistration,
   enableWorkCapability,
+  markSessionWorkStopped,
   releaseSessionWork,
   workStatus,
   type ExecutionPath,
@@ -330,6 +331,7 @@ export function registerWorkControlTools(
     async () => {
       try {
         assertSessionClaimed(options.sessionKey);
+        markSessionWorkStopped(options.sessionKey);
         const activeExecution = activeExecutionForSession(options.sessionKey);
         if (!activeExecution) {
           return toolResult("cadgpt_work_stop", {
