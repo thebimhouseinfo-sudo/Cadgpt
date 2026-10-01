@@ -130,7 +130,6 @@ export function registerCadGptControlTool(
       let text: string;
 
       if (
-        surface === "list" ||
         surface === "cl" ||
         surface === "cj" ||
         surface === "mcp" ||
