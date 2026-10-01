@@ -152,6 +152,49 @@ async function discoverLispCommands(virtualPath: string): Promise<string[]> {
   return validateLispSource(source).commands;
 }
 
+export async function loadVerifiedLispForCurrentWork(
+  lispPath: string,
+  drawingId?: string
+): Promise<{
+  loaded: boolean;
+  commands: string[];
+  drawing_id: string;
+  raw: unknown;
+}> {
+  await ensureCadRuntimeActive();
+  const binding = resolveDrawingContext(drawingId);
+  const commands = await discoverLispCommands(lispPath);
+
+  return withCadHostLock(binding.host, async () => {
+    await activateDrawingContext(binding);
+    const result = await cadUpstream.callTool("cad_load_lisp_file", {
+      path: lispPath,
+    });
+    const loaded =
+      !isToolErrorResult(result) &&
+      findPayloadField(extractUpstreamPayload(result), "loaded") === true;
+
+    if (loaded) {
+      const owned = lispCommandSet(
+        currentToolLease().workId,
+        binding.drawing_id
+      );
+      for (const command of commands) owned.add(command);
+      recordCadCandidateSuccess(
+        currentToolLease().workId,
+        "cad__cad_load_lisp_file"
+      );
+    }
+
+    return {
+      loaded,
+      commands,
+      drawing_id: binding.drawing_id,
+      raw: result,
+    };
+  });
+}
+
 function purgeExpiredDeletePreviewOwners(): void {
   const now = Date.now();
   for (const [token, owner] of deletePreviewOwners) {
