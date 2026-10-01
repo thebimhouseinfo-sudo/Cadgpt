@@ -238,11 +238,15 @@ function renderOnlineWelcome(
   return lines.join("\n");
 }
 
-export async function prepareCadLaunch(sessionKey: string): Promise<{
-  mode: "offline" | "cad_prepare";
-  welcome_text: string;
+export async function prepareCadLaunch(
+  sessionKey: string,
+  options: { autoBindSingle?: boolean } = {}
+): Promise<{
+  mode: "offline" | "cad_prepare" | "auto_bind";
+  welcome_text?: string;
   confirmation_token?: string;
   drawings?: CadPrepareDrawing[];
+  auto_bind_drawing?: CadPrepareDrawing;
   autocad_detected: boolean;
   source: "tray_cache";
   probe_age_ms: number | null;
@@ -293,6 +297,18 @@ export async function prepareCadLaunch(sessionKey: string): Promise<{
   }
 
   const drawings = normalizeDrawings(snapshot);
+  if (options.autoBindSingle && drawings.length === 1) {
+    replacePending(sessionKey);
+    return {
+      mode: "auto_bind",
+      auto_bind_drawing: drawings[0],
+      drawings,
+      autocad_detected: true,
+      source: "tray_cache",
+      probe_age_ms: age_ms,
+    };
+  }
+
   if (!drawings.length) {
     replacePending(sessionKey);
     return {
