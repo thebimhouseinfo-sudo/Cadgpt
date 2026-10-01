@@ -37,7 +37,6 @@ class LispServiceError(RuntimeError):
 _COMMAND_NAME = re.compile(r"^[A-Za-z0-9_+\-.$:]+$")
 _LOAD_POLL_INTERVAL = 0.10
 _LOAD_TIMEOUT_SECONDS = 8.0
-_TBH_LOADER_TIMEOUT_SECONDS = 120.0
 
 
 def _repo_root() -> str:
@@ -204,13 +203,6 @@ def _verified_load_expression(lisp_path: str, token: str) -> str:
     )
 
 
-def _load_timeout_seconds(relative_path: str) -> float:
-    normalized = relative_path.replace("\\", "/").lower()
-    if normalized == "resources/cad/internal-lisp/tbh-toolkit/tbhloader.lsp":
-        return _TBH_LOADER_TIMEOUT_SECONDS
-    return _LOAD_TIMEOUT_SECONDS
-
-
 def load_lisp_file(path: str) -> dict:
     """Load one sandboxed Lisp file and verify AutoCAD reached a success sentinel."""
     absolute, relative = _resolve_lisp_path(path)
@@ -232,8 +224,7 @@ def load_lisp_file(path: str) -> dict:
 
     try:
         _send(_verified_load_expression(lisp_path, token))
-        timeout_seconds = _load_timeout_seconds(relative)
-        deadline = time.monotonic() + timeout_seconds
+        deadline = time.monotonic() + _LOAD_TIMEOUT_SECONDS
         result = pending
         while time.monotonic() < deadline:
             time.sleep(_LOAD_POLL_INTERVAL)
@@ -269,7 +260,7 @@ def load_lisp_file(path: str) -> dict:
             "path": relative,
             "error": "AutoCAD did not reach the Lisp load-success sentinel before timeout.",
             "log_tail": log_tail[-8000:] if log_tail else "",
-            "note": f"Inspect command-history evidence; verified load timed out after {timeout_seconds:.1f}s. Do not retry or run the Lisp command until load is verified.",
+            "note": "Inspect command-history evidence; do not run the Lisp command until load is verified.",
         }
     finally:
         _safe_setvar(doc, "USERS5", previous_users5 if isinstance(previous_users5, str) else str(previous_users5 or ""))
