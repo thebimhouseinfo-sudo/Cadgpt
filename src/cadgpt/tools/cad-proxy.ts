@@ -90,13 +90,38 @@ function internalLispGroupSet(
   return groups;
 }
 
+export function markInternalLispGroupLoadedForExecution(
+  workId: string,
+  drawingId: string,
+  group: string
+): void {
+  internalLispGroupSet(workId, drawingId).add(
+    group.trim().toLowerCase()
+  );
+}
+
 export function markInternalLispGroupLoaded(
   drawingId: string,
   group: string
 ): void {
   const lease = currentToolLease();
-  internalLispGroupSet(lease.workId, drawingId).add(
-    group.trim().toLowerCase()
+  markInternalLispGroupLoadedForExecution(
+    lease.workId,
+    drawingId,
+    group
+  );
+}
+
+export function internalLispGroupLoaded(
+  workId: string,
+  drawingId: string,
+  group: string
+): boolean {
+  return (
+    internalLispGroups
+      .get(workId)
+      ?.get(drawingId)
+      ?.has(group.trim().toLowerCase()) ?? false
   );
 }
 
@@ -106,11 +131,11 @@ export function internalLispGroupLoadedForCurrentDrawing(
   try {
     const lease = currentToolLease();
     const drawing = resolveDrawingContext();
-    const loaded =
-      internalLispGroups
-        .get(lease.workId)
-        ?.get(drawing.drawing_id)
-        ?.has(group.trim().toLowerCase()) ?? false;
+    const loaded = internalLispGroupLoaded(
+      lease.workId,
+      drawing.drawing_id,
+      group
+    );
     return { loaded, drawing_id: drawing.drawing_id };
   } catch {
     return { loaded: false };
