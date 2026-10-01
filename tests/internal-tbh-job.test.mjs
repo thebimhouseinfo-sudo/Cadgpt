@@ -125,6 +125,30 @@ test("permanent tbhloader child list exactly matches registered toolkit componen
   assert.deepEqual(listed, expected);
 });
 
+test("TBH loader uses a dedicated longer verification timeout while normal Lisp keeps the short timeout", async () => {
+  const source = await fs.readFile(
+    path.join(repoRoot, "runtimes", "cad-mcp", "services", "lisp_service.py"),
+    "utf8"
+  );
+  assert.match(source, /_LOAD_TIMEOUT_SECONDS\s*=\s*8\.0/);
+  assert.match(source, /_TBH_LOADER_TIMEOUT_SECONDS\s*=\s*120\.0/);
+  assert.match(
+    source,
+    /resources\/cad\/internal-lisp\/tbh-toolkit\/tbhloader\.lsp/
+  );
+  assert.match(source, /return _TBH_LOADER_TIMEOUT_SECONDS/);
+});
+
+test("connector instructions forbid bypassing a failed internal direct Job with lower-level Lisp tools", async () => {
+  const source = await fs.readFile(
+    path.join(repoRoot, "src", "cadgpt", "server-factory.ts"),
+    "utf8"
+  );
+  assert.match(source, /Internal Direct Job path is authoritative/);
+  assert.match(source, /do NOT bypass it/i);
+  assert.match(source, /cad__cad_load_lisp_file/);
+});
+
 test("CAD verified loader publishes and clears the source directory around load", async () => {
   const source = await fs.readFile(
     path.join(repoRoot, "runtimes", "cad-mcp", "services", "lisp_service.py"),
