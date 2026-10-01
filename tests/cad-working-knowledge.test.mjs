@@ -31,7 +31,7 @@ test("curated CAD working knowledge is loaded into MCP instructions", async () =
     "utf8"
   );
   const errorLog = await fs.readFile(
-    path.join(repoRoot, "knowledge", "cad", "ERROR_LOG.md"),
+    path.join(repoRoot, "diagnostics", "cad", "ERROR_LOG.md"),
     "utf8"
   );
 
