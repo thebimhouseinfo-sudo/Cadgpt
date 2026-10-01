@@ -836,6 +836,12 @@ export function registerCadProxyTools(server: McpServer): void {
     },
     async ({ document }) => {
       try {
+        const lease = currentToolLease();
+        if (lease.ownerId === "drawing-workspace") {
+          throw new Error(
+            "DRAWING_REBIND_REQUIRES_SELECTION: this drawing workspace cannot bind a different drawing implicitly. Use cg/list and let the user explicitly select the target drawing."
+          );
+        }
         await ensureCadRuntimeActive();
         return await withCadHostLock("autocad", async () => {
           const drawing = await bindDrawing(document);
