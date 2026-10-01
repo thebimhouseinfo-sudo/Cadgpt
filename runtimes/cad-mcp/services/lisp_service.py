@@ -189,10 +189,13 @@ def _verified_load_expression(lisp_path: str, token: str) -> str:
     """Build a controlled expression that records load success/error in USERS5."""
     ok = f"CADGPT_OK:{token}"
     err = f"CADGPT_ERR:{token}:"
+    load_dir = os.path.dirname(lisp_path).replace("\\", "/")
     return (
         "(progn "
         "(vl-load-com) "
+        f"(setq *cadgpt-load-dir* \"{load_dir}\") "
         f"(setq *cadgpt-load-result* (vl-catch-all-apply 'load (list \"{lisp_path}\"))) "
+        "(setq *cadgpt-load-dir* nil) "
         "(if (vl-catch-all-error-p *cadgpt-load-result*) "
         f"(setvar \"USERS5\" (strcat \"{err}\" (substr (vl-catch-all-error-message *cadgpt-load-result*) 1 180))) "
         f"(setvar \"USERS5\" \"{ok}\")) "
