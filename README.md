@@ -335,3 +335,6 @@ Static/CI checks do not substitute for real AutoCAD validation.
 ### Work idle cleanup
 
 An active CadGPT work expires after **30 minutes of no CadGPT work/tool activity**. This prevents a closed or abandoned chat from leaving drawing/work authority alive indefinitely. Active ToolLeases are never interrupted; cleanup occurs only after the work is idle and no tool call is in flight.
+
+
+The official Internal Job `tbh` verified-loads `resources/cad/internal-lisp/tbh-toolkit/tbhloader.lsp` once. That loader is intentionally excluded from Lisp registry discovery; the toolkit's actual component Lisp files remain indexed normally.
