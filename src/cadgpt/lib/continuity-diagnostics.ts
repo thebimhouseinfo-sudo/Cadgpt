@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import fsSync from "node:fs";
+import path from "node:path";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 
 import type { Request } from "express";
 
@@ -9,8 +11,37 @@ const ENABLED =
   (process.env.CADGPT_CONTINUITY_DIAGNOSTICS || "true").trim().toLowerCase() !==
   "false";
 const RUNTIME_ID = randomUUID();
-const RUNTIME_SALT = randomBytes(32);
 const MAX_BYTES = 2 * 1024 * 1024;
+const FINGERPRINT_KEY_PATH = getAppDataPath("state", "continuity-fingerprint.key");
+
+function loadOrCreateFingerprintKey(): Buffer {
+  fsSync.mkdirSync(path.dirname(FINGERPRINT_KEY_PATH), { recursive: true });
+  try {
+    const existing = fsSync.readFileSync(FINGERPRINT_KEY_PATH);
+    if (existing.length >= 32) return existing;
+  } catch {
+    // Create the key below.
+  }
+
+  const created = randomBytes(32);
+  const tempPath = `${FINGERPRINT_KEY_PATH}.${process.pid}.tmp`;
+  try {
+    fsSync.writeFileSync(tempPath, created, { flag: "wx", mode: 0o600 });
+    fsSync.renameSync(tempPath, FINGERPRINT_KEY_PATH);
+    return created;
+  } catch {
+    try {
+      fsSync.rmSync(tempPath, { force: true });
+    } catch {}
+    const existing = fsSync.readFileSync(FINGERPRINT_KEY_PATH);
+    if (existing.length < 32) {
+      throw new Error("CADGPT_CONTINUITY_FINGERPRINT_KEY_INVALID");
+    }
+    return existing;
+  }
+}
+
+const FINGERPRINT_KEY = loadOrCreateFingerprintKey();
 
 const BLOCKED_HEADER_NAMES = new Set([
   "authorization",
@@ -30,9 +61,7 @@ function scalarHeaderValue(value: string | string[] | undefined): string | undef
 
 export function continuityFingerprint(value: string | undefined): string | null {
   if (!value) return null;
-  return createHash("sha256")
-    .update(RUNTIME_SALT)
-    .update("\u0000")
+  return createHmac("sha256", FINGERPRINT_KEY)
     .update(value)
     .digest("hex")
     .slice(0, 16);
