@@ -474,51 +474,6 @@ export function clearCadPrepare(sessionKey: string): void {
   replacePending(sessionKey);
 }
 
-export function registerCadConnectDrawingTool(
-  server: McpServer,
-  options: {
-    sessionKey: string;
-    activateWorkspace: (
-      drawing: CadPrepareDrawing
-    ) => Promise<{ text: string; work_handle: Record<string, unknown>; drawing: unknown; cad_tools_ready?: boolean; cad_proxy_tool_count?: number; cad_proxy_tools?: string[] }>;
-  }
-): void {
-  server.registerTool(
-    "cadgpt_connect_drawing",
-    {
-      title: "Connect CadGPT To Drawing",
-      description:
-        "Replace the current CadGPT drawing workspace with exactly one currently-open AutoCAD drawing selected by exact name or full path. Intended for the AutoCAD add-in 'Connect this drawing' action. This keeps the same ChatGPT conversation while replacing prior drawing work authority.",
-      inputSchema: {
-        drawing_selector: z
-          .string()
-          .min(1)
-          .describe("Exact open drawing name or full path supplied by the AutoCAD add-in."),
-      },
-    },
-    async ({ drawing_selector }) => {
-      const launch = await prepareCadLaunch(options.sessionKey);
-      const drawing = resolveCadDrawingSelection(
-        launch.drawings ?? [],
-        drawing_selector
-      );
-      clearCadPrepare(options.sessionKey);
-      const activated = await options.activateWorkspace(drawing);
-      return {
-        content: [{ type: "text" as const, text: activated.text }],
-        structuredContent: {
-          text: activated.text,
-          work_handle: activated.work_handle,
-          cad_tools_ready: activated.cad_tools_ready ?? false,
-          cad_proxy_tool_count: activated.cad_proxy_tool_count ?? 0,
-          cad_proxy_tools: activated.cad_proxy_tools ?? [],
-          drawing: activated.drawing,
-        },
-      };
-    }
-  );
-}
-
 export function registerCadPrepareConfirmTool(
   server: McpServer,
   options: {
