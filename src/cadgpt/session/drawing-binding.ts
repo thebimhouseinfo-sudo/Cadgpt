@@ -193,6 +193,22 @@ export async function bindDrawingForExecution(
   return binding;
 }
 
+export async function replaceDrawingForExecution(
+  executionId: string,
+  document: string
+): Promise<BoundDrawing> {
+  // Bind/validate the replacement first. If resolution fails, the previous
+  // drawing context remains intact.
+  const replacement = await bindDrawingForExecution(executionId, document);
+  const map = executionContexts(executionId);
+  for (const drawingId of [...map.keys()]) {
+    if (drawingId !== replacement.drawing_id) {
+      map.delete(drawingId);
+    }
+  }
+  return replacement;
+}
+
 export async function bindDrawing(document: string): Promise<BoundDrawing> {
   const lease = currentToolLease();
   return bindDrawingForExecution(lease.workId, document);
