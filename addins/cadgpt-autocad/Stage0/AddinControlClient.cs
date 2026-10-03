@@ -191,14 +191,16 @@ namespace CadGpt.AutoCad.Stage0
                 "POST",
                 "/addin-control/drawing/connect",
                 body,
-                token);
+                token,
+                45000);
         }
 
         private async Task<T> SendAsync<T>(
             string method,
             string relativePath,
             string? body,
-            CancellationToken token)
+            CancellationToken token,
+            int timeoutMilliseconds = 10000)
         {
             token.ThrowIfCancellationRequested();
             var descriptor = ReadDescriptor();
@@ -207,8 +209,8 @@ namespace CadGpt.AutoCad.Stage0
                 descriptor.Port +
                 relativePath);
             request.Method = method;
-            request.Timeout = 10000;
-            request.ReadWriteTimeout = 10000;
+            request.Timeout = timeoutMilliseconds;
+            request.ReadWriteTimeout = timeoutMilliseconds;
             request.Headers["x-cadgpt-addin-secret"] =
                 descriptor.Secret;
             request.Accept = "application/json";
@@ -252,9 +254,11 @@ namespace CadGpt.AutoCad.Stage0
                 var response =
                     error.Response as HttpWebResponse;
                 var message =
-                    response == null
-                        ? "ADDIN_CONTROL_UNAVAILABLE"
-                        : ReadError(response);
+                    error.Status == WebExceptionStatus.Timeout
+                        ? "ADDIN_CONTROL_TIMEOUT"
+                        : response == null
+                            ? "ADDIN_CONTROL_UNAVAILABLE"
+                            : ReadError(response);
                 throw new AddinControlException(
                     message,
                     response?.StatusCode);
