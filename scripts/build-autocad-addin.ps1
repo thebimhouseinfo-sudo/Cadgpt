@@ -41,7 +41,121 @@ $project = Join-Path $repoRoot "addins\cadgpt-autocad\CadGpt.AutoCad.csproj"
 $tests = Join-Path $repoRoot "addins\cadgpt-autocad.tests\CadGpt.AutoCad.Tests.csproj"
 
 $testTfm = $tfm
-if ($testTfm -match '^net(?<major>\d+)\.(?<minor>\d+)-windows$') {
+if ($testTfm -match '^net4\d+
+
+Write-Host "Running host-independent lifecycle tests for $testTfm..."
+& dotnet test $tests --configuration $Configuration "-p:CadGptTestTargetFramework=$testTfm"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+$props = @(
+    "-p:CadGptTargetFramework=$tfm",
+    "-p:CadGptHostValidated=true",
+    "-p:AutoCadInstallDir=$installDir"
+)
+
+Write-Host "Restoring add-in for $tfm..."
+& dotnet restore $project @props --use-lock-file
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Write-Host "Building add-in for $tfm..."
+& dotnet build $project --configuration $Configuration --no-restore @props
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+$outputDir = Join-Path $repoRoot "addins\cadgpt-autocad\bin\$Configuration\$tfm"
+$dll = Join-Path $outputDir "CadGpt.AutoCad.dll"
+if (-not (Test-Path $dll)) {
+    Write-Error "Expected output was not produced: $dll"
+    exit 3
+}
+
+$stageRoot = Join-Path $repoRoot "addins\cadgpt-autocad\bin\stage0-bundle\CadGPT.Stage0.bundle"
+$stageContents = Join-Path $stageRoot "Contents\Windows"
+if (Test-Path $stageRoot) { Remove-Item $stageRoot -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $stageContents | Out-Null
+Copy-Item (Join-Path $outputDir "*") $stageContents -Recurse -Force
+
+foreach ($name in @("AcCoreMgd.dll","AcDbMgd.dll","AcMgd.dll")) {
+    Get-ChildItem $stageContents -Recurse -Filter $name -ErrorAction SilentlyContinue | Remove-Item -Force
+}
+
+$templatePath = Join-Path $repoRoot "addins\cadgpt-autocad\bundle\PackageContents.xml"
+$manifest = (Get-Content $templatePath -Raw).Replace("__AUTOCAD_SERIES__", $series)
+$manifest | Set-Content -Encoding UTF8 (Join-Path $stageRoot "PackageContents.xml")
+
+$copied = @(Get-ChildItem $stageContents -Recurse -File | Where-Object {
+    $_.Name -in @("AcCoreMgd.dll","AcDbMgd.dll","AcMgd.dll")
+})
+if ($copied.Count -gt 0) {
+    Write-Error "AutoCAD managed API DLLs must not be redistributed in the bundle."
+    exit 3
+}
+
+Write-Host ""
+Write-Host "CadGPT Stage 0 add-in build succeeded."
+Write-Host "Target framework : $tfm"
+Write-Host "AutoCAD series   : $series"
+Write-Host "Bundle           : $stageRoot"
+Write-Host "Host record      : $hostMarkdown"
+) {
+    # Host-independent lifecycle tests do not need to run on the legacy AutoCAD CLR.
+    # Keep them on the installed modern SDK while the add-in itself targets the probed framework.
+    $testTfm = "net8.0"
+} elseif ($testTfm -match '^net(?<major>\d+)\.(?<minor>\d+)-windows
+
+Write-Host "Running host-independent lifecycle tests for $testTfm..."
+& dotnet test $tests --configuration $Configuration "-p:CadGptTestTargetFramework=$testTfm"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+$props = @(
+    "-p:CadGptTargetFramework=$tfm",
+    "-p:CadGptHostValidated=true",
+    "-p:AutoCadInstallDir=$installDir"
+)
+
+Write-Host "Restoring add-in for $tfm..."
+& dotnet restore $project @props --use-lock-file
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Write-Host "Building add-in for $tfm..."
+& dotnet build $project --configuration $Configuration --no-restore @props
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+$outputDir = Join-Path $repoRoot "addins\cadgpt-autocad\bin\$Configuration\$tfm"
+$dll = Join-Path $outputDir "CadGpt.AutoCad.dll"
+if (-not (Test-Path $dll)) {
+    Write-Error "Expected output was not produced: $dll"
+    exit 3
+}
+
+$stageRoot = Join-Path $repoRoot "addins\cadgpt-autocad\bin\stage0-bundle\CadGPT.Stage0.bundle"
+$stageContents = Join-Path $stageRoot "Contents\Windows"
+if (Test-Path $stageRoot) { Remove-Item $stageRoot -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $stageContents | Out-Null
+Copy-Item (Join-Path $outputDir "*") $stageContents -Recurse -Force
+
+foreach ($name in @("AcCoreMgd.dll","AcDbMgd.dll","AcMgd.dll")) {
+    Get-ChildItem $stageContents -Recurse -Filter $name -ErrorAction SilentlyContinue | Remove-Item -Force
+}
+
+$templatePath = Join-Path $repoRoot "addins\cadgpt-autocad\bundle\PackageContents.xml"
+$manifest = (Get-Content $templatePath -Raw).Replace("__AUTOCAD_SERIES__", $series)
+$manifest | Set-Content -Encoding UTF8 (Join-Path $stageRoot "PackageContents.xml")
+
+$copied = @(Get-ChildItem $stageContents -Recurse -File | Where-Object {
+    $_.Name -in @("AcCoreMgd.dll","AcDbMgd.dll","AcMgd.dll")
+})
+if ($copied.Count -gt 0) {
+    Write-Error "AutoCAD managed API DLLs must not be redistributed in the bundle."
+    exit 3
+}
+
+Write-Host ""
+Write-Host "CadGPT Stage 0 add-in build succeeded."
+Write-Host "Target framework : $tfm"
+Write-Host "AutoCAD series   : $series"
+Write-Host "Bundle           : $stageRoot"
+Write-Host "Host record      : $hostMarkdown"
+) {
     $testTfm = "net$($Matches.major).$($Matches.minor)"
 }
 
