@@ -1,0 +1,33 @@
+<UserControl x:Class="CadGpt.AutoCad.ChatView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+             MinWidth="320"
+             MinHeight="420">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Padding="8" BorderThickness="0,0,0,1" BorderBrush="#33000000">
+            <DockPanel LastChildFill="False">
+                <TextBlock x:Name="StatusText" VerticalAlignment="Center" Text="CadGPT Stage 0 — initializing" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="ReloadButton" Margin="8,0,0,0" Padding="8,3" Click="ReloadButton_Click">Reload</Button>
+                    <Button x:Name="RetryButton" Margin="6,0,0,0" Padding="8,3" Click="RetryButton_Click">Retry</Button>
+                    <Button x:Name="RecreateButton" Margin="6,0,0,0" Padding="8,3" Click="RecreateButton_Click">Recreate</Button>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <wv2:WebView2 x:Name="Browser" Grid.Row="1" />
+
+        <TextBlock Grid.Row="2"
+                   Padding="8"
+                   TextWrapping="Wrap"
+                   Foreground="#77000000"
+                   Text="Stage 0 shell only. No drawing binding or CAD authority is provided by this panel." />
+    </Grid>
+</UserControl>
