@@ -116,7 +116,7 @@ if ($copiedApi.Count -gt 0) {
 }
 
 Write-Host ""
-Write-Host "CadGPT Stage 0 add-in build succeeded."
+Write-Host "CadGPT AutoCAD add-in build succeeded."
 Write-Host "Target framework : $tfm"
 Write-Host "AutoCAD series   : $series"
 Write-Host "Bundle           : $stageRoot"
