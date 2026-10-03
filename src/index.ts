@@ -17,9 +17,8 @@ import { routeMcpPost } from "./cadgpt/lib/mcp-post-routing.js";
 import { activeToolLeaseCount, activeWorkCount, sweepExpiredWork } from "./cadgpt/lib/work-registration.js";
 import { continuityDiagnosticsPath } from "./cadgpt/lib/continuity-diagnostics.js";
 import {
+  addinBindingStatus,
   addinControlSecretMatches,
-  addinPairStatus,
-  connectAddinPairToDrawing,
   removeAddinControlDescriptor,
   startAddinPairing,
   writeAddinControlDescriptor,
@@ -136,34 +135,19 @@ app.post("/addin-control/pair/start", (req, res) => {
   res.json({ ok: true, ...startAddinPairing() });
 });
 
-app.get("/addin-control/pair/:pairId", (req, res) => {
+app.get("/addin-control/binding/:pairId", async (req, res) => {
   if (!authorizeAddinControl(req, res)) return;
-  res.json({
-    ok: true,
-    pair_id: req.params.pairId,
-    ...addinPairStatus(req.params.pairId),
-  });
-});
-
-app.post("/addin-control/drawing/connect", async (req, res) => {
-  if (!authorizeAddinControl(req, res)) return;
-  const pairId =
-    typeof req.body?.pair_id === "string" ? req.body.pair_id.trim() : "";
-  const selector =
-    typeof req.body?.drawing_selector === "string"
-      ? req.body.drawing_selector.trim()
-      : "";
   try {
-    const result = await connectAddinPairToDrawing(pairId, selector);
-    res.json(result);
+    const status = await addinBindingStatus(req.params.pairId);
+    res.json({
+      ok: true,
+      pair_id: req.params.pairId,
+      ...status,
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const status =
-      message === "ADDIN_PAIR_REQUIRED" ||
-      message === "ADDIN_SESSION_UNAVAILABLE"
-        ? 409
-        : 400;
-    res.status(status).json({ ok: false, error: message });
+    const message =
+      error instanceof Error ? error.message : String(error);
+    res.status(500).json({ ok: false, error: message });
   }
 });
 
