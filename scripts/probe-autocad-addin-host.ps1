@@ -80,6 +80,14 @@ function Get-RuntimeTarget {
         }
     }
 
+    if ($ReleaseNumber -eq "25.0") {
+        return [ordered]@{
+            target_framework = "net8.0-windows"
+            source = "AutoCAD release 25.0 compatibility rule"
+            runtime_tfm = ".NET 8.0"
+        }
+    }
+
     if ($ReleaseNumber -eq "24.3") {
         return [ordered]@{
             target_framework = "net48"
