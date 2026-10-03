@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <CadGptTestTargetFramework Condition="'$(CadGptTestTargetFramework)' == ''">net8.0</CadGptTestTargetFramework>
+    <TargetFramework>$(CadGptTestTargetFramework)</TargetFramework>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <Nullable>enable</Nullable>
