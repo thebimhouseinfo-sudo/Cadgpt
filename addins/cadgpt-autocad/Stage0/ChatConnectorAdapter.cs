@@ -91,8 +91,25 @@ namespace CadGpt.AutoCad.Stage0
 
             if (!selected.Success)
             {
-                return selected.Code ??
-                    "CG_CONNECTOR_SELECTION_TIMEOUT";
+                if (!string.Equals(
+                    selected.Code,
+                    "CG_CONNECTOR_NOT_FOUND",
+                    StringComparison.Ordinal))
+                {
+                    return selected.Code ??
+                        "CG_CONNECTOR_SELECTION_TIMEOUT";
+                }
+
+                // ChatGPT's mention menu markup changes frequently. Native
+                // keyboard input is the fallback: first Enter accepts the
+                // highlighted exact @cg suggestion (or submits bare @cg if
+                // no menu exists), second Enter submits if the first only
+                // accepted the suggestion. Backend pairing remains the final
+                // proof that CadGPT was actually invoked.
+                await PressEnterAsync(core, token);
+                await Task.Delay(350, token);
+                await PressEnterAsync(core, token);
+                return string.Empty;
             }
 
             await Task.Delay(300, token);
@@ -105,14 +122,21 @@ namespace CadGpt.AutoCad.Stage0
                 return refocused.Code ?? "COMPOSER_REFOCUS_FAILED";
             }
 
+            await PressEnterAsync(core, token);
+            return string.Empty;
+        }
+
+        private static async Task PressEnterAsync(
+            Microsoft.Web.WebView2.Core.CoreWebView2 core,
+            CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
             await core.CallDevToolsProtocolMethodAsync(
                 "Input.dispatchKeyEvent",
                 "{\"type\":\"keyDown\",\"key\":\"Enter\",\"code\":\"Enter\",\"windowsVirtualKeyCode\":13,\"nativeVirtualKeyCode\":13}");
             await core.CallDevToolsProtocolMethodAsync(
                 "Input.dispatchKeyEvent",
                 "{\"type\":\"keyUp\",\"key\":\"Enter\",\"code\":\"Enter\",\"windowsVirtualKeyCode\":13,\"nativeVirtualKeyCode\":13}");
-
-            return string.Empty;
         }
 
         private async Task<ConnectorScriptResult> ExecuteStageAsync(
