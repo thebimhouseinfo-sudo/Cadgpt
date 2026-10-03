@@ -462,16 +462,14 @@ export function createMcpServer(sessionKey: string): McpServer {
         throw new Error("ADDIN_DRAWING_WORKSPACE_UNAVAILABLE");
       }
 
-      const {
-        bindDrawingForExecution,
-        clearExecutionDrawingContexts,
-      } = await import("./session/drawing-binding.js");
+      const { replaceDrawingForExecution } = await import(
+        "./session/drawing-binding.js"
+      );
       const { cadUpstream } = await import("./runtime/cad-upstream.js");
 
-      clearExecutionDrawingContexts(work.executionId);
       const bound = await withCadHostLock("autocad", async () => {
         await cadUpstream.activate();
-        return bindDrawingForExecution(work.executionId, selector);
+        return replaceDrawingForExecution(work.executionId, selector);
       });
 
       return {
