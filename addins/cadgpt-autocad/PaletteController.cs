@@ -44,7 +44,7 @@ namespace CadGpt.AutoCad
             var view = new ChatView();
             view.RecreateRequested += OnRecreateRequested;
 
-            var palette = new PaletteSet("CadGPT Stage 0", PaletteId)
+            var palette = new PaletteSet("CadGPT", PaletteId)
             {
                 DockEnabled = DockSides.Left | DockSides.Right,
                 MinimumSize = new Size(360, 480),
