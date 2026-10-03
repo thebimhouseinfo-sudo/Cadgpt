@@ -47,7 +47,6 @@ import { registerCadMcpDevTools } from "./tools/cad-mcp-dev.js";
 import {
   prepareCadLaunch,
   registerCadPrepareConfirmTool,
-  resolveCadDrawingSelection,
   clearCadPrepare,
   type CadPrepareDrawing,
 } from "./tools/cad-launcher.js";
@@ -453,12 +452,16 @@ export function createMcpServer(sessionKey: string): McpServer {
 
   registerAddinSessionControl(sessionKey, {
     connectDrawing: async (drawingSelector) => {
-      const launch = await prepareCadLaunch(sessionKey);
-      const drawing = resolveCadDrawingSelection(
-        launch.drawings ?? [],
-        drawingSelector
-      );
+      const selector = drawingSelector.trim();
+      if (!selector) {
+        throw new Error("ADDIN_DRAWING_SELECTOR_REQUIRED");
+      }
       clearCadPrepare(sessionKey);
+      const drawing: CadPrepareDrawing = {
+        key: "addin-active",
+        name: path.win32.basename(selector) || selector,
+        full_name: selector,
+      };
       const activated = await activateCadWorkspace(drawing);
       return {
         drawing_name:
