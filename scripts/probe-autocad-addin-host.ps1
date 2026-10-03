@@ -87,6 +87,14 @@ function Get-RuntimeTarget {
         }
     }
 
+    if ($ReleaseNumber -eq "22.0") {
+        return [ordered]@{
+            target_framework = "net46"
+            source = "AutoCAD 2018 / release 22.0 compatibility rule"
+            runtime_tfm = ".NET Framework 4.6"
+        }
+    }
+
     if ($ReleaseNumber -eq "25.0") {
         return [ordered]@{
             target_framework = "net8.0-windows"
