@@ -15,12 +15,17 @@ namespace CadGpt.AutoCad
     {
         private readonly PaletteLifecycleState _lifecycle = new PaletteLifecycleState();
         private readonly CancellationTokenSource _actionCts = new CancellationTokenSource();
+        private readonly LocalCadGptControlClient _localControl =
+            new LocalCadGptControlClient();
+        private readonly string _panelId =
+            "panel-" + Guid.NewGuid().ToString("N");
+
         private CancellationTokenSource? _initializeCts;
         private ChatConnectorAdapter? _connector;
         private bool _disposed;
         private bool _darkChrome;
-        private bool _autoInvokeCompleted;
-        private bool _autoInvokeInProgress;
+        private bool _paired;
+        private bool _pairingInProgress;
 
         public event EventHandler? RecreateRequested;
 
@@ -45,7 +50,8 @@ namespace CadGpt.AutoCad
 
         private async Task InitializeBrowserAsync()
         {
-            if (_disposed || _lifecycle.Phase == PaletteLifecyclePhase.Initializing)
+            if (_disposed ||
+                _lifecycle.Phase == PaletteLifecyclePhase.Initializing)
             {
                 return;
             }
@@ -59,9 +65,10 @@ namespace CadGpt.AutoCad
             try
             {
                 WebViewProfile.EnsureDirectories();
-                var environment = await CoreWebView2Environment.CreateAsync(
-                    null,
-                    WebViewProfile.UserDataPath);
+                var environment =
+                    await CoreWebView2Environment.CreateAsync(
+                        null,
+                        WebViewProfile.UserDataPath);
                 token.ThrowIfCancellationRequested();
 
                 await Browser.EnsureCoreWebView2Async(environment);
@@ -73,8 +80,10 @@ namespace CadGpt.AutoCad
                 }
 
                 _connector = new ChatConnectorAdapter(Browser);
-                Browser.NavigationCompleted -= Browser_NavigationCompleted;
-                Browser.NavigationCompleted += Browser_NavigationCompleted;
+                Browser.NavigationCompleted -=
+                    Browser_NavigationCompleted;
+                Browser.NavigationCompleted +=
+                    Browser_NavigationCompleted;
 
                 var target =
                     WebViewProfile.ReadLastConversationUrl() ??
@@ -95,7 +104,9 @@ namespace CadGpt.AutoCad
                     "WEBVIEW_INIT_FAILED") &&
                     !_disposed)
                 {
-                    SetStatus("CadGPT — failed: " + ex.GetType().Name);
+                    SetStatus(
+                        "CadGPT — failed: " +
+                        ex.GetType().Name);
                 }
             }
         }
@@ -116,51 +127,83 @@ namespace CadGpt.AutoCad
 
             if (WebViewProfile.NormalizeConversationUrl(current) != null)
             {
-                await TryAutoInvokeCadGptAsync();
+                await EnsurePairedAsync();
             }
         }
 
-        private async Task TryAutoInvokeCadGptAsync()
+        private async Task<bool> EnsurePairedAsync()
         {
-            if (_disposed ||
-                _autoInvokeCompleted ||
-                _autoInvokeInProgress ||
-                _connector == null)
+            if (_disposed || _connector == null)
             {
-                return;
+                return false;
             }
 
-            _autoInvokeInProgress = true;
+            if (_pairingInProgress)
+            {
+                return _paired;
+            }
+
+            _pairingInProgress = true;
             try
             {
-                var result = await _connector.SendCadGptTurnAsync(
-                    string.Empty,
+                try
+                {
+                    if (await _localControl.IsPairedAsync(
+                        _panelId,
+                        _actionCts.Token))
+                    {
+                        _paired = true;
+                        SetStatus("CadGPT — connected");
+                        return true;
+                    }
+                }
+                catch
+                {
+                    _paired = false;
+                }
+
+                SetStatus("CadGPT — connecting chat");
+                await _localControl.BeginPairAsync(
+                    _panelId,
                     _actionCts.Token);
 
-                if (result.Success)
+                var invoked = await _connector.InvokeCadGptAsync(
+                    _actionCts.Token);
+                if (!invoked.Success)
                 {
-                    _autoInvokeCompleted = true;
-                    SetStatus("CadGPT — connected");
-                }
-                else
-                {
+                    _paired = false;
                     SetStatus(
                         "CadGPT — auto connect: " +
-                        result.FailureCode);
+                        invoked.FailureCode);
+                    return false;
                 }
+
+                _paired = await _localControl.WaitForPairAsync(
+                    _panelId,
+                    TimeSpan.FromSeconds(20),
+                    _actionCts.Token);
+
+                SetStatus(
+                    _paired
+                        ? "CadGPT — connected"
+                        : "CadGPT — pairing timeout");
+                return _paired;
             }
             catch (OperationCanceledException)
             {
+                return false;
             }
             catch (Exception ex)
             {
+                _paired = false;
                 SetStatus(
-                    "CadGPT — auto connect failed: " +
+                    "CadGPT — local control unavailable: " +
                     ex.GetType().Name);
+                return false;
             }
             finally
             {
-                _autoInvokeInProgress = false;
+                _pairingInProgress = false;
             }
         }
 
@@ -168,12 +211,6 @@ namespace CadGpt.AutoCad
             object sender,
             RoutedEventArgs e)
         {
-            if (_disposed || _connector == null)
-            {
-                SetStatus("CadGPT — WebView not ready");
-                return;
-            }
-
             var selector = ActiveDrawingSelector();
             if (string.IsNullOrWhiteSpace(selector))
             {
@@ -186,15 +223,44 @@ namespace CadGpt.AutoCad
 
             try
             {
-                var result = await _connector.SendCadGptTurnAsync(
-                    "connect drawing: " + selector,
+                if (!await EnsurePairedAsync())
+                {
+                    return;
+                }
+
+                var result = await _localControl.ConnectDrawingAsync(
+                    _panelId,
+                    selector,
                     _actionCts.Token);
 
+                if (!result.Ok &&
+                    (result.Error == "ADDIN_PANEL_NOT_PAIRED" ||
+                     result.Error == "ADDIN_SESSION_UNAVAILABLE"))
+                {
+                    _paired = false;
+                    if (await EnsurePairedAsync())
+                    {
+                        result = await _localControl.ConnectDrawingAsync(
+                            _panelId,
+                            selector,
+                            _actionCts.Token);
+                    }
+                }
+
+                if (!result.Ok)
+                {
+                    SetStatus(
+                        "CadGPT — connect failed: " +
+                        (result.Error ?? "UNKNOWN"));
+                    return;
+                }
+
+                var label =
+                    result.DrawingName ??
+                    result.DrawingFullName ??
+                    selector;
                 SetStatus(
-                    result.Success
-                        ? "CadGPT — connect request sent"
-                        : "CadGPT — connect failed: " +
-                          result.FailureCode);
+                    "CadGPT — connected: " + label);
             }
             catch (OperationCanceledException)
             {
@@ -369,8 +435,10 @@ namespace CadGpt.AutoCad
             var generation = _lifecycle.BeginDispose();
 
             Loaded -= OnLoaded;
-            Browser.PreviewMouseDown -= Browser_PreviewMouseDown;
-            Browser.NavigationCompleted -= Browser_NavigationCompleted;
+            Browser.PreviewMouseDown -=
+                Browser_PreviewMouseDown;
+            Browser.NavigationCompleted -=
+                Browser_NavigationCompleted;
 
             try
             {
