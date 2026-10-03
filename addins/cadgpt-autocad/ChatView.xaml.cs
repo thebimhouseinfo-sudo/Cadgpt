@@ -23,7 +23,6 @@ namespace CadGpt.AutoCad
             new AddinControlClient();
 
         private CancellationTokenSource? _initializeCts;
-        private ChatConnectorAdapter? _connector;
         private string? _pairId;
         private bool _disposed;
         private bool _darkChrome;
@@ -94,8 +93,6 @@ namespace CadGpt.AutoCad
                     return;
                 }
 
-                _connector =
-                    new ChatConnectorAdapter(Browser);
                 Browser.NavigationCompleted -=
                     Browser_NavigationCompleted;
                 Browser.NavigationCompleted +=
@@ -177,7 +174,7 @@ namespace CadGpt.AutoCad
                     {
                         var current =
                             await _control.GetPairStatusAsync(
-                                _pairId,
+                                _pairId!,
                                 token);
                         if (current.Paired &&
                             current.ControllerReady)
@@ -194,13 +191,6 @@ namespace CadGpt.AutoCad
                     _pairId = null;
                     _initialDrawingBindCompleted = false;
                     _control.ClearSavedPairId();
-                }
-
-                if (_connector == null)
-                {
-                    SetStatus(
-                        "CadGPT — WebView not ready");
-                    return false;
                 }
 
                 AddinPairResponse pair;
@@ -229,54 +219,10 @@ namespace CadGpt.AutoCad
 
                 _pairId = pair.PairId;
                 SetStatus(
-                    "CadGPT — connecting @cg");
-
-                var invocationDeadline =
-                    DateTime.UtcNow.AddSeconds(20);
-                var invocationError =
-                    "COMPOSER_NOT_FOUND";
-
-                while (DateTime.UtcNow <
-                    invocationDeadline)
-                {
-                    invocationError =
-                        await _connector
-                            .InvokeCadGptAsync(
-                                token);
-
-                    if (string.IsNullOrWhiteSpace(
-                        invocationError))
-                    {
-                        break;
-                    }
-
-                    if (!string.Equals(
-                        invocationError,
-                        "COMPOSER_NOT_FOUND",
-                        StringComparison.Ordinal))
-                    {
-                        break;
-                    }
-
-                    SetStatus(
-                        "CadGPT — waiting for ChatGPT");
-                    await Task.Delay(
-                        500,
-                        token);
-                }
-
-                if (!string.IsNullOrWhiteSpace(
-                    invocationError))
-                {
-                    SetStatus(
-                        "CadGPT — @cg failed: " +
-                        invocationError);
-                    _pairId = null;
-                    return false;
-                }
+                    "CadGPT — invoke @cg to connect");
 
                 var deadline =
-                    DateTime.UtcNow.AddSeconds(25);
+                    DateTime.UtcNow.AddSeconds(115);
                 while (DateTime.UtcNow < deadline)
                 {
                     token.ThrowIfCancellationRequested();
@@ -304,12 +250,12 @@ namespace CadGpt.AutoCad
                     }
 
                     await Task.Delay(
-                        300,
+                        400,
                         token);
                 }
 
                 SetStatus(
-                    "CadGPT — pairing timeout");
+                    "CadGPT — invoke @cg, then Refresh");
                 _pairId = null;
                 return false;
             }
