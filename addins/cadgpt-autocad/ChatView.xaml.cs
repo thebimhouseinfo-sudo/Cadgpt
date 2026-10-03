@@ -27,6 +27,7 @@ namespace CadGpt.AutoCad
         private string? _pairId;
         private bool _disposed;
         private bool _darkChrome;
+        private bool _initialDrawingBindCompleted;
 
         public event EventHandler? RecreateRequested;
 
@@ -82,6 +83,10 @@ namespace CadGpt.AutoCad
                 await Browser.EnsureCoreWebView2Async(
                     environment);
                 token.ThrowIfCancellationRequested();
+
+                // Give the narrow AutoCAD palette more usable horizontal room
+                // without changing the user's ChatGPT account/browser zoom.
+                Browser.ZoomFactor = 0.90;
 
                 if (!_lifecycle.IsCurrent(generation) ||
                     _disposed)
@@ -146,8 +151,12 @@ namespace CadGpt.AutoCad
             }
 
             SetStatus("CadGPT — checking connection");
-            await EnsurePairedAsync(
-                _actionCts.Token);
+            if (await EnsurePairedAsync(
+                _actionCts.Token))
+            {
+                await TryInitialDrawingBindAsync(
+                    _actionCts.Token);
+            }
         }
 
         private async Task<bool> EnsurePairedAsync(
@@ -183,6 +192,7 @@ namespace CadGpt.AutoCad
                     }
 
                     _pairId = null;
+                    _initialDrawingBindCompleted = false;
                     _control.ClearSavedPairId();
                 }
 
@@ -313,6 +323,35 @@ namespace CadGpt.AutoCad
             }
         }
 
+        private async Task TryInitialDrawingBindAsync(
+            CancellationToken token)
+        {
+            if (_initialDrawingBindCompleted ||
+                _disposed)
+            {
+                return;
+            }
+
+            var selector = ActiveDrawingSelector();
+            if (string.IsNullOrWhiteSpace(selector))
+            {
+                SetStatus(
+                    "CadGPT — connected; no active drawing");
+                return;
+            }
+
+            SetStatus(
+                "CadGPT — binding active drawing");
+
+            if (await ConnectDrawingSelectorAsync(
+                selector,
+                token,
+                ensurePair: false))
+            {
+                _initialDrawingBindCompleted = true;
+            }
+        }
+
         private async void ConnectButton_Click(
             object sender,
             RoutedEventArgs e)
@@ -322,10 +361,8 @@ namespace CadGpt.AutoCad
                 return;
             }
 
-            var selector =
-                ActiveDrawingSelector();
-            if (string.IsNullOrWhiteSpace(
-                selector))
+            var selector = ActiveDrawingSelector();
+            if (string.IsNullOrWhiteSpace(selector))
             {
                 SetStatus(
                     "CadGPT — no active drawing");
@@ -335,82 +372,16 @@ namespace CadGpt.AutoCad
             ConnectButton.IsEnabled = false;
             try
             {
-                if (!await EnsurePairedAsync(
-                    _actionCts.Token))
+                if (await ConnectDrawingSelectorAsync(
+                    selector,
+                    _actionCts.Token,
+                    ensurePair: true))
                 {
-                    return;
+                    _initialDrawingBindCompleted = true;
                 }
-
-                SetStatus(
-                    "CadGPT — connecting drawing");
-
-                AddinConnectResponse result;
-                try
-                {
-                    result =
-                        await _control.ConnectDrawingAsync(
-                            _pairId!,
-                            selector,
-                            _actionCts.Token);
-                }
-                catch (AddinControlException error)
-                    when (
-                        error.Message ==
-                            "ADDIN_PAIR_REQUIRED" ||
-                        error.Message ==
-                            "ADDIN_SESSION_UNAVAILABLE")
-                {
-                    _pairId = null;
-                    _control.ClearSavedPairId();
-
-                    if (!await EnsurePairedAsync(
-                        _actionCts.Token))
-                    {
-                        return;
-                    }
-
-                    result =
-                        await _control.ConnectDrawingAsync(
-                            _pairId!,
-                            selector,
-                            _actionCts.Token);
-                }
-
-                if (!result.Ok)
-                {
-                    SetStatus(
-                        "CadGPT — connect failed");
-                    return;
-                }
-
-                var label =
-                    result.Drawing?.FullName;
-                if (string.IsNullOrWhiteSpace(
-                    label))
-                {
-                    label =
-                        result.Drawing?.Name;
-                }
-
-                SetStatus(
-                    string.IsNullOrWhiteSpace(label)
-                        ? "CadGPT — drawing connected"
-                        : "CadGPT — " + label);
             }
             catch (OperationCanceledException)
             {
-            }
-            catch (AddinControlException error)
-            {
-                SetStatus(
-                    "CadGPT — connect failed: " +
-                    error.Message);
-            }
-            catch (Exception ex)
-            {
-                SetStatus(
-                    "CadGPT — connect failed: " +
-                    ex.GetType().Name);
             }
             finally
             {
@@ -418,6 +389,119 @@ namespace CadGpt.AutoCad
                 {
                     ConnectButton.IsEnabled = true;
                 }
+            }
+        }
+
+        private async Task<bool> ConnectDrawingSelectorAsync(
+            string selector,
+            CancellationToken token,
+            bool ensurePair)
+        {
+            if (ensurePair &&
+                !await EnsurePairedAsync(token))
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(_pairId))
+            {
+                SetStatus(
+                    "CadGPT — connect failed: no pair");
+                return false;
+            }
+
+            SetStatus(
+                "CadGPT — connecting drawing");
+
+            try
+            {
+                AddinConnectResponse result;
+                try
+                {
+                    result =
+                        await _control.ConnectDrawingAsync(
+                            _pairId,
+                            selector,
+                            token);
+                }
+                catch (AddinControlException error)
+                    when (
+                        error.Message ==
+                            "ADDIN_PAIR_REQUIRED" ||
+                        error.Message ==
+                            "ADDIN_SESSION_UNAVAILABLE" ||
+                        error.Message ==
+                            "ADDIN_DRAWING_WORKSPACE_UNAVAILABLE")
+                {
+                    _pairId = null;
+                    _initialDrawingBindCompleted = false;
+                    _control.ClearSavedPairId();
+
+                    if (!await EnsurePairedAsync(token))
+                    {
+                        return false;
+                    }
+
+                    result =
+                        await _control.ConnectDrawingAsync(
+                            _pairId!,
+                            selector,
+                            token);
+                }
+
+                if (!result.Ok)
+                {
+                    SetStatus(
+                        "CadGPT — connect failed: " +
+                        (string.IsNullOrWhiteSpace(
+                            result.Error)
+                            ? "UNKNOWN"
+                            : result.Error));
+                    return false;
+                }
+
+                var fullLabel =
+                    result.Drawing?.FullName;
+                var shortLabel =
+                    result.Drawing?.Name;
+
+                if (string.IsNullOrWhiteSpace(
+                    shortLabel))
+                {
+                    shortLabel = fullLabel;
+                }
+
+                SetStatus(
+                    string.IsNullOrWhiteSpace(shortLabel)
+                        ? "CadGPT — drawing connected"
+                        : "CadGPT — " + shortLabel);
+
+                ConnectButton.ToolTip =
+                    string.IsNullOrWhiteSpace(fullLabel)
+                        ? "Connected drawing: " +
+                          (shortLabel ?? "unknown")
+                        : "Connected drawing: " +
+                          fullLabel;
+
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (AddinControlException error)
+            {
+                SetStatus(
+                    "CadGPT — connect failed: " +
+                    error.Message);
+                return false;
+            }
+            catch (Exception ex)
+            {
+                SetStatus(
+                    "CadGPT — connect failed: " +
+                    ex.GetType().Name);
+                return false;
             }
         }
 
@@ -572,6 +656,7 @@ namespace CadGpt.AutoCad
         private void SetStatus(string value)
         {
             StatusText.Text = value;
+            StatusText.ToolTip = value;
         }
 
         private void CancelInitialization()
