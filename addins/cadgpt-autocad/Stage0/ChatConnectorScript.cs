@@ -5,13 +5,12 @@ namespace CadGpt.AutoCad.Stage0
     internal static class ChatConnectorScript
     {
         public const string AdapterVersion =
-            "single-chat-pair-v1";
+            "single-chat-pair-v2";
 
-        public static string InvokeCadGpt()
+        public static string PrepareComposer()
         {
-            return @"(async () => {
+            return @"(() => {
 try {
-  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const visible = (el) => {
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
@@ -21,11 +20,7 @@ try {
   };
   const norm = (value) =>
     (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
-  const label = (el) => norm(
-    el.getAttribute('aria-label') ||
-    el.getAttribute('title') ||
-    el.textContent
-  );
+
   const composers = [...document.querySelectorAll(
     'textarea,[contenteditable=""true""]'
   )]
@@ -52,32 +47,55 @@ try {
   }
 
   const composer = composers[0];
-  composer.focus();
-  if (composer.tagName.toLowerCase() === 'textarea') {
-    const setter = Object.getOwnPropertyDescriptor(
-      HTMLTextAreaElement.prototype,
-      'value'
-    )?.set;
-    if (!setter) {
-      return {
-        success:false,
-        code:'COMPOSER_SETTER_UNAVAILABLE'
-      };
-    }
-    setter.call(composer, '@cg');
-  } else {
-    composer.textContent = '@cg';
+  const current = composer.tagName.toLowerCase() === 'textarea'
+    ? composer.value
+    : composer.textContent;
+  if ((current || '').trim().length > 0) {
+    return {
+      success:false,
+      code:'COMPOSER_NOT_EMPTY'
+    };
   }
-  composer.dispatchEvent(new InputEvent('input', {
-    bubbles:true,
-    inputType:'insertText',
-    data:'@cg'
-  }));
 
-  await wait(450);
+  composer.focus();
+  return {
+    success:true,
+    code:'OK',
+    method:'focus-composer'
+  };
+} catch (error) {
+  return {
+    success:false,
+    code:'SCRIPT_EXCEPTION',
+    name:(error && error.name)
+      ? error.name
+      : 'Error'
+  };
+}
+})();";
+        }
 
-  const suggestions = [...document.querySelectorAll(
-    '[role=""option""],[role=""menuitem""],button,a'
+        public static string SelectCadGptSuggestion()
+        {
+            return @"(() => {
+try {
+  const visible = (el) => {
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 &&
+      style.display !== 'none' &&
+      style.visibility !== 'hidden';
+  };
+  const norm = (value) =>
+    (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const label = (el) => norm(
+    el.getAttribute('aria-label') ||
+    el.getAttribute('title') ||
+    el.textContent
+  );
+
+  const candidates = [...document.querySelectorAll(
+    '[role=""option""],[role=""menuitem""],[data-radix-collection-item],button,a'
   )]
     .filter(visible)
     .filter((el) => {
@@ -88,48 +106,76 @@ try {
         value.startsWith('cadgpt ');
     });
 
-  if (suggestions.length !== 1) {
-    return {
-      success:false,
-      code:suggestions.length === 0
-        ? 'CG_CONNECTOR_NOT_FOUND'
-        : 'CG_CONNECTOR_AMBIGUOUS',
-      count:suggestions.length
-    };
-  }
-
-  suggestions[0].click();
-  await wait(250);
-
-  const sendCandidates =
-    [...document.querySelectorAll(
-      'button,[role=""button""]'
+  if (candidates.length !== 1) {
+    const samples = [...document.querySelectorAll(
+      '[role=""option""],[role=""menuitem""],[data-radix-collection-item],button,a'
     )]
       .filter(visible)
-      .filter((el) => {
-        const value = label(el);
-        const testId =
-          norm(el.getAttribute('data-testid'));
-        return value === 'send' ||
-          value === 'send message' ||
-          testId === 'send-button';
-      });
+      .map((el) => label(el))
+      .filter((value) =>
+        value.includes('cg') ||
+        value.includes('cadgpt')
+      )
+      .slice(0, 8);
 
-  if (sendCandidates.length !== 1) {
     return {
       success:false,
-      code:sendCandidates.length === 0
-        ? 'SEND_NOT_FOUND'
-        : 'SEND_AMBIGUOUS',
-      count:sendCandidates.length
+      code:candidates.length === 0
+        ? 'CG_CONNECTOR_NOT_FOUND'
+        : 'CG_CONNECTOR_AMBIGUOUS',
+      count:candidates.length,
+      samples:samples
     };
   }
 
-  sendCandidates[0].click();
+  candidates[0].click();
   return {
     success:true,
     code:'OK',
-    method:'mention-exact'
+    method:'exact-visible-suggestion'
+  };
+} catch (error) {
+  return {
+    success:false,
+    code:'SCRIPT_EXCEPTION',
+    name:(error && error.name)
+      ? error.name
+      : 'Error'
+  };
+}
+})();";
+        }
+
+        public static string RefocusComposer()
+        {
+            return @"(() => {
+try {
+  const visible = (el) => {
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 &&
+      style.display !== 'none' &&
+      style.visibility !== 'hidden';
+  };
+  const composers = [...document.querySelectorAll(
+    'textarea,[contenteditable=""true""]'
+  )].filter(visible);
+
+  if (composers.length !== 1) {
+    return {
+      success:false,
+      code:composers.length === 0
+        ? 'COMPOSER_LOST_AFTER_CONNECTOR'
+        : 'COMPOSER_AMBIGUOUS_AFTER_CONNECTOR',
+      count:composers.length
+    };
+  }
+
+  composers[0].focus();
+  return {
+    success:true,
+    code:'OK',
+    method:'refocus-composer'
   };
 } catch (error) {
   return {
