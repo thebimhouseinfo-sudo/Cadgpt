@@ -115,23 +115,39 @@ Call `lisp_scaffold` for a new **user-owned** Lisp draft. Do not use `target_lib
 
 Create/edit the result using absolute paths under `appdata/workspace/lisp-draft/**`. `lisp_scaffold` namespaces `suggested_draft_path` by the target user library to avoid filename collisions. Use `file_create` / `file_edit` only with the absolute path returned/resolved for that draft; `file_edit` also requires the latest SHA-256 from `file_read`. If the target user library does not exist yet, create it with `library_create` before promotion.
 
-### 5. Static validation — mandatory
+### 5. Syntax preflight + static validation — mandatory
 
-Managed imported source may be inspected with:
+Every changed `.lsp` must pass a syntax preflight **before any AutoCAD load attempt**. Do not rely on visual inspection or an ad-hoc parenthesis count.
+
+CadGPT ships a ready-made source/dev test script that calls the **same validator engine** used by the MCP Lisp tools:
 
 ```text
-lisp_validate(profile="syntax")
+npm run test:lisp-syntax -- "<absolute-or-repo-relative-file.lsp>" --profile=cadgpt
 ```
 
-A user-owned write-lisp draft must use its authoring profile:
+When the public command is known, tighten the check:
+
+```text
+npm run test:lisp-syntax -- "<file.lsp>" --profile=cadgpt --expect=MYCOMMAND
+```
+
+Run this immediately after creating or editing a Lisp file when a local repo shell is available. If the script reports FAIL, patch the source and rerun it until PASS; do not proceed to AutoCAD.
+
+In connector/MCP authoring, the equivalent mandatory gate is:
 
 ```text
 lisp_draft_validate(profile="cadgpt")
 ```
 
-The harness checks AutoLISP/Visual LISP syntax/dialect, balanced strings/parentheses, public commands, Common-Lisp-only constructs, COM initialization and relevant safety warnings. Authored profiles additionally enforce the canonical header.
+Managed imported source may be inspected without CadGPT header enforcement using:
 
-A failed static gate blocks CAD load.
+```text
+lisp_validate(profile="syntax")
+```
+
+The CLI script, `lisp_validate`, and `lisp_draft_validate` share `validateLispSource`; they must not become separate syntax rule sets. The validator checks AutoLISP/Visual LISP structure/dialect, balanced strings/parentheses, public commands, Common-Lisp-only constructs, COM initialization and relevant safety warnings. Authored profiles additionally enforce the canonical header.
+
+A failed syntax/static gate blocks CAD load. After every syntax-related patch, rerun the gate before retrying the load.
 
 ### 6. Test drawing approval — mandatory
 
@@ -188,7 +204,8 @@ For `ai_mode=dynamic`, temporary variants live under `appdata/runtime/dynamic-li
 classify failure
 → collect source/CAD evidence
 → patch workspace draft narrowly
-→ static validate
+→ ready-made syntax preflight (when local shell is available)
+→ lisp_draft_validate / static validate
 → same approved test drawing
 → verified load
 → if load fails: patch → static validate → reload same drawing

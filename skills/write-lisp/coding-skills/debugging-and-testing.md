@@ -8,6 +8,14 @@ Every changed production `.lsp` must be loaded in AutoCAD before handoff.
 
 Static validation is only a pre-load gate. A file is not considered fixed merely because parentheses balance or `lisp_validate` passes.
 
+Before the AutoCAD load gate, use the repository's ready-made syntax test whenever a local source/dev shell is available:
+
+```text
+npm run test:lisp-syntax -- "<file.lsp>" --profile=cadgpt
+```
+
+For a known command, add `--expect=COMMAND`. This script uses the same `validateLispSource` implementation as the MCP validators, so it is a fast preflight rather than a competing checker. In MCP-only execution, `lisp_draft_validate` is the equivalent mandatory syntax gate.
+
 ## Test-environment selection requires user choice
 
 After static validation passes and the Lisp is ready for AutoCAD testing, do not silently pick a drawing.
@@ -46,7 +54,8 @@ reproduce/inspect
 → classify failure
 → inspect source/state
 → patch narrowly
-→ lisp_validate
+→ ready-made syntax preflight when local shell is available
+→ lisp_draft_validate / lisp_validate
 → obtain user-approved test drawing
 → verified load
 → read load error evidence
@@ -86,9 +95,25 @@ Before patching runtime bugs, collect the smallest useful evidence:
 - before-state counts/properties;
 - expected state.
 
-## Static test
+## Syntax/static test
 
-Every edited `.lsp` must pass `lisp_validate` before load. Static validation catches source structure, AutoLISP dialect and command/header contract problems; it does not prove AutoCAD can load the file.
+Every edited `.lsp` must pass the shared CadGPT validator before load.
+
+Source/dev preflight:
+
+```text
+npm run test:lisp-syntax -- "<file.lsp>" --profile=cadgpt [--expect=COMMAND]
+```
+
+MCP draft gate:
+
+```text
+lisp_draft_validate(profile="cadgpt")
+```
+
+Imported managed source may use `lisp_validate(profile="syntax")`.
+
+These paths intentionally share one validation engine. Do not replace them with a hand-written one-off parser. Static validation catches source structure, AutoLISP dialect and command/header contract problems; it does not prove AutoCAD can load the file.
 
 ## Verified load test
 

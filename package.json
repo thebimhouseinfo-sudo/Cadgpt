@@ -10,7 +10,8 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "test": "npm run build && node --test tests/*.test.mjs",
-    "test:unit": "node --test tests/*.test.mjs"
+    "test:unit": "node --test tests/*.test.mjs",
+    "test:lisp-syntax": "tsx scripts/test-lisp-syntax.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

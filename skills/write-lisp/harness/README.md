@@ -2,9 +2,21 @@
 
 The harness is intentionally small and AutoLISP-specific. It is not a generic build/test framework.
 
+## Gate 0 — Ready-made syntax preflight
+
+Source/dev script:
+
+```text
+npm run test:lisp-syntax -- "<file.lsp>" --profile=cadgpt [--expect=COMMAND]
+```
+
+The script is `scripts/test-lisp-syntax.ts`. It reads one or more explicit `.lsp` paths, calls the same exported `validateLispSource` function as CadGPT's MCP tools, prints diagnostics with locations, and exits non-zero on any blocking syntax/dialect error.
+
+Use it immediately after editing when a local repo shell is available. It is intentionally not a second parser.
+
 ## Gate 1 — Static source validation
 
-Tool: `lisp_validate`
+Tools: `lisp_validate` / `lisp_draft_validate`
 
 Checks currently include:
 
@@ -21,7 +33,7 @@ Checks currently include:
 
 The result includes a SHA-256 fingerprint of the validated source so the caller can identify exactly which text passed the static gate.
 
-This validator is a structural reader-aware gate, not a full AutoLISP evaluator.
+The CLI preflight and MCP validation tools share this validator. This validator is a structural reader-aware gate, not a full AutoLISP evaluator. A verified AutoCAD load remains mandatory for changed production Lisp.
 
 ## Gate 2 — AutoCAD load
 
