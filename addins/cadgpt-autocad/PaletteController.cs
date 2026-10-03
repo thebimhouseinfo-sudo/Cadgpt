@@ -48,7 +48,11 @@ namespace CadGpt.AutoCad
             {
                 DockEnabled = DockSides.Left | DockSides.Right,
                 MinimumSize = new Size(360, 480),
-                Size = new Size(520, 760)
+                Size = new Size(520, 760),
+                // AutoCAD can otherwise reclaim input focus from modeless palettes.
+                // WebView2 needs the palette to retain focus so native WebAuthn/
+                // Windows Security prompts are launched from an active browser host.
+                KeepFocus = true
             };
 
             palette.AddVisual("ChatGPT", view, true);
