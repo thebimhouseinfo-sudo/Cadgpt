@@ -157,7 +157,7 @@ test("add-in managed workspace keeps one work handle and tells the model to rech
   );
   assert.match(
     serverFactory,
-    /call drawing_binding_status with the current work_handle/
+    /call drawing_status with the current work_handle/
   );
   assert.match(
     serverFactory,
