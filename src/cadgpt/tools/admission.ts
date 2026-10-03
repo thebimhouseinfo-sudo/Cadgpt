@@ -33,6 +33,11 @@ export function registerAdmissionTool(
     async ({ user_turn, invocation_source }) => {
       const decision = checkAdmission(options.sessionKey, user_turn, invocation_source);
       const bareLaunch = isBareCadGptLaunch(user_turn, invocation_source);
+
+      if (bareLaunch && decision.mode === "active" && decision.claimed) {
+        completePendingAddinPair(options.sessionKey);
+      }
+
       const launch =
         decision.mode === "active"
           ? await options.onActive({ bareLaunch })
@@ -41,10 +46,6 @@ export function registerAdmissionTool(
         bareLaunch && launch && typeof launch.welcome_text === "string"
           ? launch.welcome_text
           : undefined;
-
-      if (bareLaunch && decision.mode === "active" && decision.claimed) {
-        completePendingAddinPair(options.sessionKey);
-      }
 
       const data = {
         internal_control_signal: true,
