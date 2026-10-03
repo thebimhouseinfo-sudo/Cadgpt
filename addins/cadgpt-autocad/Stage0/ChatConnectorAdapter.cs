@@ -20,6 +20,9 @@ namespace CadGpt.AutoCad.Stage0
 
         [DataMember(Name = "method")]
         public string? Method { get; set; }
+
+        [DataMember(Name = "count")]
+        public int Count { get; set; }
     }
 
     internal sealed class ChatConnectorAdapter
@@ -35,20 +38,73 @@ namespace CadGpt.AutoCad.Stage0
             CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
-            if (_browser.CoreWebView2 == null)
+            var core = _browser.CoreWebView2;
+            if (core == null)
             {
                 return "WEBVIEW_NOT_READY";
             }
 
-            var json =
-                await _browser.CoreWebView2.ExecuteScriptAsync(
-                    ChatConnectorScript.InvokeCadGpt());
+            var prepared = await ExecuteStageAsync(
+                ChatConnectorScript.PrepareComposer(),
+                token);
+            if (!prepared.Success)
+            {
+                return prepared.Code ?? "PREPARE_COMPOSER_FAILED";
+            }
+
+            await core.CallDevToolsProtocolMethodAsync(
+                "Input.insertText",
+                "{\"text\":\"@cg\"}");
             token.ThrowIfCancellationRequested();
 
-            var result = Deserialize(json);
-            return result.Success
-                ? string.Empty
-                : (result.Code ?? "SCRIPT_FAILED");
+            await Task.Delay(650, token);
+
+            var selected = await ExecuteStageAsync(
+                ChatConnectorScript.SelectCadGptSuggestion(),
+                token);
+            if (!selected.Success)
+            {
+                return selected.Code ?? "CG_CONNECTOR_SELECTION_FAILED";
+            }
+
+            await Task.Delay(300, token);
+
+            var refocused = await ExecuteStageAsync(
+                ChatConnectorScript.RefocusComposer(),
+                token);
+            if (!refocused.Success)
+            {
+                return refocused.Code ?? "COMPOSER_REFOCUS_FAILED";
+            }
+
+            await core.CallDevToolsProtocolMethodAsync(
+                "Input.dispatchKeyEvent",
+                "{\"type\":\"keyDown\",\"key\":\"Enter\",\"code\":\"Enter\",\"windowsVirtualKeyCode\":13,\"nativeVirtualKeyCode\":13}");
+            await core.CallDevToolsProtocolMethodAsync(
+                "Input.dispatchKeyEvent",
+                "{\"type\":\"keyUp\",\"key\":\"Enter\",\"code\":\"Enter\",\"windowsVirtualKeyCode\":13,\"nativeVirtualKeyCode\":13}");
+
+            return string.Empty;
+        }
+
+        private async Task<ConnectorScriptResult> ExecuteStageAsync(
+            string script,
+            CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            var core = _browser.CoreWebView2;
+            if (core == null)
+            {
+                return new ConnectorScriptResult
+                {
+                    Success = false,
+                    Code = "WEBVIEW_NOT_READY"
+                };
+            }
+
+            var json = await core.ExecuteScriptAsync(script);
+            token.ThrowIfCancellationRequested();
+            return Deserialize(json);
         }
 
         private static ConnectorScriptResult Deserialize(
