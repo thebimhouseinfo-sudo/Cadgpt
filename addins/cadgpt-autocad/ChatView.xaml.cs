@@ -26,6 +26,7 @@ namespace CadGpt.AutoCad
         private bool _darkChrome;
         private bool _paired;
         private bool _pairingInProgress;
+        private string? _pairedConversationUrl;
 
         public event EventHandler? RecreateRequested;
 
@@ -143,14 +144,27 @@ namespace CadGpt.AutoCad
                 return _paired;
             }
 
+            var currentConversation =
+                WebViewProfile.NormalizeConversationUrl(
+                    Browser.Source?.AbsoluteUri);
+            if (currentConversation == null)
+            {
+                return false;
+            }
+
             _pairingInProgress = true;
             try
             {
                 try
                 {
-                    if (await _localControl.IsPairedAsync(
-                        _panelId,
-                        _actionCts.Token))
+                    if (_pairedConversationUrl != null &&
+                        string.Equals(
+                            _pairedConversationUrl,
+                            currentConversation,
+                            StringComparison.OrdinalIgnoreCase) &&
+                        await _localControl.IsPairedAsync(
+                            _panelId,
+                            _actionCts.Token))
                     {
                         _paired = true;
                         SetStatus("CadGPT — connected");
@@ -183,10 +197,16 @@ namespace CadGpt.AutoCad
                     TimeSpan.FromSeconds(20),
                     _actionCts.Token);
 
-                SetStatus(
-                    _paired
-                        ? "CadGPT — connected"
-                        : "CadGPT — pairing timeout");
+                if (_paired)
+                {
+                    _pairedConversationUrl = currentConversation;
+                    SetStatus("CadGPT — connected");
+                }
+                else
+                {
+                    _pairedConversationUrl = null;
+                    SetStatus("CadGPT — pairing timeout");
+                }
                 return _paired;
             }
             catch (OperationCanceledException)
@@ -196,6 +216,7 @@ namespace CadGpt.AutoCad
             catch (Exception ex)
             {
                 _paired = false;
+                _pairedConversationUrl = null;
                 SetStatus(
                     "CadGPT — local control unavailable: " +
                     ex.GetType().Name);
@@ -238,6 +259,7 @@ namespace CadGpt.AutoCad
                      result.Error == "ADDIN_SESSION_UNAVAILABLE"))
                 {
                     _paired = false;
+                    _pairedConversationUrl = null;
                     if (await EnsurePairedAsync())
                     {
                         result = await _localControl.ConnectDrawingAsync(
