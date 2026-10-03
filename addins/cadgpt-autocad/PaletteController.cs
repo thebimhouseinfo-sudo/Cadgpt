@@ -6,7 +6,7 @@ namespace CadGpt.AutoCad
 {
     internal static class PaletteController
     {
-        private static readonly Guid PaletteId = new Guid("34F319C7-C59A-46A4-83A1-33B1B919BEE6");
+        private static readonly Guid PaletteId = new Guid("A9C4F4D2-8E2A-4F76-9A1D-5C63E7B2F941");
         private static PaletteSet? _palette;
         private static ChatView? _view;
 
