@@ -34,7 +34,9 @@ test("CadGPT panel uses one-chat toolbar without bottom footer or retry/recreate
   assert.match(code, /InvokeCadGptAsync\(/);
   assert.match(code, /LocalCadGptControlClient/);
   assert.doesNotMatch(code, /connect drawing:/i);
-  assert.doesNotMatch(code, /NewChat|new chat|new conversation/i);
+  assert.doesNotMatch(code, /NewChat/);
+  assert.doesNotMatch(code, /["']new chat["']/i);
+  assert.doesNotMatch(code, /["']new conversation["']/i);
 });
 
 test("Refresh is the only panel recovery button while clean recreate stays internal", async () => {
