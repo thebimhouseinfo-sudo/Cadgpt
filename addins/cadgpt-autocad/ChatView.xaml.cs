@@ -30,7 +30,7 @@ namespace CadGpt.AutoCad
 
         private async Task InitializeBrowserAsync()
         {
-            if (_disposed)
+            if (_disposed || _lifecycle.Phase == PaletteLifecyclePhase.Initializing)
             {
                 return;
             }
@@ -69,8 +69,10 @@ namespace CadGpt.AutoCad
             }
             catch (Exception ex)
             {
-                _lifecycle.MarkFailed(generation, "WEBVIEW_INIT_FAILED");
-                SetStatus("CadGPT Stage 0 — WebView2 failed: " + ex.GetType().Name);
+                if (_lifecycle.MarkFailed(generation, "WEBVIEW_INIT_FAILED") && !_disposed)
+                {
+                    SetStatus("CadGPT Stage 0 — WebView2 failed: " + ex.GetType().Name);
+                }
             }
         }
 
@@ -101,7 +103,13 @@ namespace CadGpt.AutoCad
 
         private void RecreateButton_Click(object sender, RoutedEventArgs e)
         {
-            RecreateRequested?.Invoke(this, EventArgs.Empty);
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (!_disposed)
+                {
+                    RecreateRequested?.Invoke(this, EventArgs.Empty);
+                }
+            }));
         }
 
         private void SetStatus(string value)
