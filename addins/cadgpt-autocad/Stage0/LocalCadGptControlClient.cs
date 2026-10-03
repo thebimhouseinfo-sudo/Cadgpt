@@ -26,6 +26,23 @@ namespace CadGpt.AutoCad.Stage0
     }
 
     [DataContract]
+    internal sealed class AddinPairRequest
+    {
+        [DataMember(Name = "panel_id")]
+        public string PanelId { get; set; } = string.Empty;
+    }
+
+    [DataContract]
+    internal sealed class AddinConnectDrawingRequest
+    {
+        [DataMember(Name = "panel_id")]
+        public string PanelId { get; set; } = string.Empty;
+
+        [DataMember(Name = "drawing_selector")]
+        public string DrawingSelector { get; set; } = string.Empty;
+    }
+
+    [DataContract]
     internal sealed class AddinControlResponse
     {
         [DataMember(Name = "ok")]
@@ -74,7 +91,7 @@ namespace CadGpt.AutoCad.Stage0
             var response = await SendAsync(
                 HttpMethod.Post,
                 "/internal/addin/pair/begin",
-                "{"panel_id":"" + Escape(panelId) + ""}",
+                new AddinPairRequest { PanelId = panelId },
                 token);
 
             if (!response.Ok)
@@ -106,9 +123,11 @@ namespace CadGpt.AutoCad.Stage0
             return await SendAsync(
                 HttpMethod.Post,
                 "/internal/addin/connect-drawing",
-                "{"panel_id":"" + Escape(panelId) +
-                    "","drawing_selector":"" +
-                    Escape(drawingSelector) + ""}",
+                new AddinConnectDrawingRequest
+                {
+                    PanelId = panelId,
+                    DrawingSelector = drawingSelector
+                },
                 token);
         }
 
@@ -130,7 +149,7 @@ namespace CadGpt.AutoCad.Stage0
                 }
                 catch
                 {
-                    // The admission request may still be in flight.
+                    // Admission may still be in flight.
                 }
 
                 await Task.Delay(250, token);
@@ -142,7 +161,7 @@ namespace CadGpt.AutoCad.Stage0
         private static async Task<AddinControlResponse> SendAsync(
             HttpMethod method,
             string path,
-            string? json,
+            object? payload,
             CancellationToken token)
         {
             var descriptor = ReadDescriptor();
@@ -158,10 +177,10 @@ namespace CadGpt.AutoCad.Stage0
                     "x-cadgpt-addin-token",
                     descriptor.Token);
 
-                if (json != null)
+                if (payload != null)
                 {
                     request.Content = new StringContent(
-                        json,
+                        Serialize(payload),
                         Encoding.UTF8,
                         "application/json");
                 }
@@ -169,13 +188,13 @@ namespace CadGpt.AutoCad.Stage0
                 using (var response = await Http.SendAsync(request, token))
                 {
                     var raw = await response.Content.ReadAsStringAsync();
-                    var payload = DeserializeResponse(raw);
-                    if (!response.IsSuccessStatusCode && payload.Ok)
+                    var result = DeserializeResponse(raw);
+                    if (!response.IsSuccessStatusCode && result.Ok)
                     {
-                        payload.Ok = false;
+                        result.Ok = false;
                     }
 
-                    return payload;
+                    return result;
                 }
             }
         }
@@ -196,6 +215,7 @@ namespace CadGpt.AutoCad.Stage0
             {
                 var descriptor =
                     (AddinControlDescriptor?)serializer.ReadObject(stream);
+
                 if (descriptor == null ||
                     descriptor.SchemaVersion != 1 ||
                     !string.Equals(
@@ -211,6 +231,16 @@ namespace CadGpt.AutoCad.Stage0
                 }
 
                 return descriptor;
+            }
+        }
+
+        private static string Serialize(object value)
+        {
+            var serializer = new DataContractJsonSerializer(value.GetType());
+            using (var stream = new MemoryStream())
+            {
+                serializer.WriteObject(stream, value);
+                return Encoding.UTF8.GetString(stream.ToArray());
             }
         }
 
@@ -239,15 +269,6 @@ namespace CadGpt.AutoCad.Stage0
                     Error = "ADDIN_CONTROL_RESPONSE_INVALID"
                 };
             }
-        }
-
-        private static string Escape(string value)
-        {
-            return value
-                .Replace("\\", "\\\\")
-                .Replace(""", "\\"")
-                .Replace("\r", "\\r")
-                .Replace("\n", "\\n");
         }
     }
 }
