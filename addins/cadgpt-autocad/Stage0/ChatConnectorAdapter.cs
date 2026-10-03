@@ -38,8 +38,7 @@ namespace CadGpt.AutoCad.Stage0
             _browser = browser ?? throw new ArgumentNullException(nameof(browser));
         }
 
-        public async Task<ConnectorTurnResult> SendCadGptTurnAsync(
-            string instruction,
+        public async Task<ConnectorTurnResult> InvokeCadGptAsync(
             CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
@@ -54,7 +53,7 @@ namespace CadGpt.AutoCad.Stage0
             }
 
             var json = await _browser.CoreWebView2.ExecuteScriptAsync(
-                ChatConnectorScript.BuildSendTurnScript(instruction));
+                ChatConnectorScript.BuildInvokeCadGptScript());
             token.ThrowIfCancellationRequested();
 
             var result = Deserialize(json);
