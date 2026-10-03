@@ -144,3 +144,23 @@ test("auto @cg uses browser-native input rather than synthetic React value mutat
     /setter\.call\(|dispatchEvent\(new InputEvent/
   );
 });
+
+
+test("add-in managed workspace keeps one work handle and tells the model to recheck binding", () => {
+  assert.match(
+    serverFactory,
+    /addin_managed_workspace:\s*true/
+  );
+  assert.match(
+    serverFactory,
+    /AUTO-CAD ADD-IN MANAGED WORKSPACE/
+  );
+  assert.match(
+    serverFactory,
+    /call drawing_binding_status with the current work_handle/
+  );
+  assert.match(
+    serverFactory,
+    /Do not call cg\/list, cadgpt_cad_confirm/
+  );
+});
