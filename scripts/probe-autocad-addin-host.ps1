@@ -54,7 +54,6 @@ function Get-RuntimeTarget {
 
     $runtimeFiles = @(Get-ChildItem $InstallDir -File -Filter "*.runtimeconfig.json" -ErrorAction SilentlyContinue)
     $preferred = $runtimeFiles | Where-Object { $_.Name -match '^acad(\.exe)?\.runtimeconfig\.json$' } | Select-Object -First 1
-    if (-not $preferred) { $preferred = $runtimeFiles | Select-Object -First 1 }
 
     if ($preferred) {
         try {
