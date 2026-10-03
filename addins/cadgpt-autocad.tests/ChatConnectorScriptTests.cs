@@ -7,44 +7,59 @@ namespace CadGpt.AutoCad.Tests
     public sealed class ChatConnectorScriptTests
     {
         [TestMethod]
-        public void PairingScriptInvokesBareCadGptOnly()
+        public void PairingScriptsOnlyPrepareAndSelectBareCadGpt()
         {
-            var script =
-                ChatConnectorScript.InvokeCadGpt();
+            var prepare =
+                ChatConnectorScript.PrepareComposer();
+            var select =
+                ChatConnectorScript.SelectCadGptSuggestion();
+            var refocus =
+                ChatConnectorScript.RefocusComposer();
 
             StringAssert.Contains(
-                script,
-                "setter.call(composer, '@cg')");
+                prepare,
+                "COMPOSER_NOT_EMPTY");
             StringAssert.Contains(
-                script,
+                select,
                 "CG_CONNECTOR_NOT_FOUND");
             StringAssert.Contains(
-                script,
-                "suggestions.length !== 1");
+                select,
+                "CG_CONNECTOR_AMBIGUOUS");
+            StringAssert.Contains(
+                select,
+                "value === 'cg'");
+            StringAssert.Contains(
+                refocus,
+                "COMPOSER_LOST_AFTER_CONNECTOR");
+
+            var combined =
+                prepare + select + refocus;
             Assert.IsFalse(
-                script.Contains("connect drawing"));
+                combined.Contains("connect drawing"));
             Assert.IsFalse(
-                script.ToLowerInvariant().Contains("new chat"));
+                combined.ToLowerInvariant().Contains("new chat"));
         }
 
         [TestMethod]
-        public void PairingScriptDoesNotReadSecretsOrUseNetworkApis()
+        public void PairingScriptsDoNotReadSecretsOrUseNetworkApis()
         {
-            var script =
-                ChatConnectorScript.InvokeCadGpt();
+            var combined =
+                ChatConnectorScript.PrepareComposer() +
+                ChatConnectorScript.SelectCadGptSuggestion() +
+                ChatConnectorScript.RefocusComposer();
 
             Assert.IsFalse(
-                script.Contains("document.cookie"));
+                combined.Contains("document.cookie"));
             Assert.IsFalse(
-                script.Contains("localStorage"));
+                combined.Contains("localStorage"));
             Assert.IsFalse(
-                script.Contains("sessionStorage"));
+                combined.Contains("sessionStorage"));
             Assert.IsFalse(
-                script.Contains("indexedDB"));
+                combined.Contains("indexedDB"));
             Assert.IsFalse(
-                script.Contains("XMLHttpRequest"));
+                combined.Contains("XMLHttpRequest"));
             Assert.IsFalse(
-                script.Contains("fetch("));
+                combined.Contains("fetch("));
         }
     }
 }
