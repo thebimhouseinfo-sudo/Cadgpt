@@ -12,7 +12,7 @@
 
         <Border x:Name="ToolbarBorder"
                 Grid.Row="0"
-                Padding="6"
+                Padding="8,6"
                 Background="White"
                 BorderThickness="0,0,0,1"
                 BorderBrush="#22000000">
@@ -20,36 +20,18 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <TextBlock x:Name="StatusText"
+                <TextBlock x:Name="BoundDrawingText"
                            Grid.Column="0"
                            Margin="2,0,8,0"
                            VerticalAlignment="Center"
+                           FontWeight="SemiBold"
                            TextTrimming="CharacterEllipsis"
-                           Text="CadGPT — initializing" />
-
-                <Button x:Name="ConnectButton"
-                        Grid.Column="1"
-                        Margin="0,0,6,0"
-                        Padding="8,4"
-                        Click="ConnectButton_Click"
-                        ToolTip="Bind this ChatGPT/CadGPT session to AutoCAD's current active drawing without sending a chat message.">
-                    Connect this drawing
-                </Button>
-
-                <Button x:Name="RefreshButton"
-                        Grid.Column="2"
-                        Margin="0,0,6,0"
-                        Padding="8,4"
-                        Click="RefreshButton_Click">
-                    Refresh
-                </Button>
+                           Text="Not bound" />
 
                 <Button x:Name="ThemeButton"
-                        Grid.Column="3"
+                        Grid.Column="1"
                         Padding="8,4"
                         Click="ThemeButton_Click"
                         ToolTip="Toggle add-in chrome between light and dark.">
