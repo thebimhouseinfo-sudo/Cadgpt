@@ -476,34 +476,51 @@
 ;;; ===========================================================================
 ;;; 5. COMMAND: FDT
 ;;; ===========================================================================
-(defun c:FDT (/ dcl_id table_data f_path f idx)
+(defun c:FDT (/ dcl_id table_data f_path f idx row_count)
   (setq table_data (load_fdt_data_mep))
-  (setq f_path (strcat (getvar "TEMPPREFIX") "mep_fdt_edit.dcl")
-        f (open f_path "w"))
-  (write-line "FDT_Edit : dialog { label = \"EDIT FLEXIBLE DUCTING TABLE\";" f)
-  (setq idx 0)
-  (repeat 8
-    (write-line (strcat ":row{:edit_box{label=\"Range " (itoa (1+ idx)) "\";key=\"q" (itoa idx) "\";edit_width=15;}:edit_box{label=\"Dia:\";key=\"d" (itoa idx) "\";edit_width=8;}}") f)
-    (setq idx (1+ idx))
-  )
-  (write-line "ok_cancel;}" f)
-  (close f)
-
-  (setq dcl_id (load_dialog f_path))
-  (if (new_dialog "FDT_Edit" dcl_id)
+  (setq row_count (length table_data))
+  (if (> row_count 0)
     (progn
+      (setq f_path (strcat (getvar "TEMPPREFIX") "mep_fdt_edit.dcl")
+            f (open f_path "w"))
+      (write-line "FDT_Edit : dialog { label = \"EDIT FLEXIBLE DUCTING TABLE\";" f)
       (setq idx 0)
-      (foreach row table_data
-        (set_tile (strcat "q" (itoa idx)) (car row))
-        (set_tile (strcat "d" (itoa idx)) (nth 1 row))
+      (repeat row_count
+        (write-line
+          (strcat
+            ":row{:edit_box{label=\"Range " (itoa (1+ idx))
+            "\";key=\"q" (itoa idx)
+            "\";edit_width=15;}:edit_box{label=\"Dia:\";key=\"d"
+            (itoa idx) "\";edit_width=8;}}")
+          f)
         (setq idx (1+ idx))
       )
-      (action_tile "accept" "(setq i 0 new_data nil) (repeat 8 (setq new_data (cons (list (get_tile (strcat \"q\" (itoa i))) (get_tile (strcat \"d\" (itoa i)))) new_data)) (setq i (1+ i))) (setq table_data (reverse new_data)) (done_dialog 1)")
-      (if (= (start_dialog) 1) (vlax-ldata-put "TBH_PROJECT" "FDT_CONFIG" table_data))
-      (unload_dialog dcl_id)
+      (write-line "ok_cancel;}" f)
+      (close f)
+
+      (setq dcl_id (load_dialog f_path))
+      (if (new_dialog "FDT_Edit" dcl_id)
+        (progn
+          (setq idx 0)
+          (foreach row table_data
+            (set_tile (strcat "q" (itoa idx)) (car row))
+            (set_tile (strcat "d" (itoa idx)) (nth 1 row))
+            (setq idx (1+ idx))
+          )
+          (action_tile
+            "accept"
+            (strcat
+              "(setq i 0 new_data nil) (repeat " (itoa row_count)
+              " (setq new_data (cons (list (get_tile (strcat \"q\" (itoa i))) (get_tile (strcat \"d\" (itoa i)))) new_data)) (setq i (1+ i))) (setq table_data (reverse new_data)) (done_dialog 1)"))
+          (if (= (start_dialog) 1)
+            (vlax-ldata-put "TBH_PROJECT" "FDT_CONFIG" table_data))
+          (unload_dialog dcl_id)
+        )
+      )
+      (vl-file-delete f_path)
     )
+    (princ "\nFDT: No rows available in FDT_CONFIG.")
   )
-  (vl-file-delete f_path)
   (princ)
 )
 
