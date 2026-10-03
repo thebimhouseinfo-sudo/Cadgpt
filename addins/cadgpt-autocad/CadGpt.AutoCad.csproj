@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <CadGptTargetFramework Condition="'$(CadGptTargetFramework)' == ''">net8.0-windows</CadGptTargetFramework>
+    <TargetFramework>$(CadGptTargetFramework)</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <OutputType>Library</OutputType>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>CadGpt.AutoCad</AssemblyName>
+    <RootNamespace>CadGpt.AutoCad</RootNamespace>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(AutoCadInstallDir)' != ''">
+    <Reference Include="AcCoreMgd"><HintPath>$(AutoCadInstallDir)\AcCoreMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcDbMgd"><HintPath>$(AutoCadInstallDir)\AcDbMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcMgd"><HintPath>$(AutoCadInstallDir)\AcMgd.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <Target Name="ValidateCadGptHost" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(CadGptHostValidated)' != 'true'" Text="Run scripts/build-autocad-addin.ps1. Direct builds are blocked until the real AutoCAD host has been probed." />
+    <Error Condition="'$(AutoCadInstallDir)' == ''" Text="AutoCadInstallDir must come from the Stage 0 host probe." />
+    <Error Condition="!Exists('$(AutoCadInstallDir)\AcCoreMgd.dll')" Text="AcCoreMgd.dll was not found in the probed AutoCAD install directory." />
+    <Error Condition="!Exists('$(AutoCadInstallDir)\AcDbMgd.dll')" Text="AcDbMgd.dll was not found in the probed AutoCAD install directory." />
+    <Error Condition="!Exists('$(AutoCadInstallDir)\AcMgd.dll')" Text="AcMgd.dll was not found in the probed AutoCAD install directory." />
+  </Target>
+</Project>
