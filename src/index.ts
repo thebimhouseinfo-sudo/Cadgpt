@@ -16,6 +16,7 @@ import { resolveCadPrepareSessionByToken } from "./cadgpt/tools/cad-launcher.js"
 import { routeMcpPost } from "./cadgpt/lib/mcp-post-routing.js";
 import { activeToolLeaseCount, activeWorkCount, sweepExpiredWork } from "./cadgpt/lib/work-registration.js";
 import { continuityDiagnosticsPath } from "./cadgpt/lib/continuity-diagnostics.js";
+import { withContinuityRequestContext } from "./cadgpt/lib/continuity-request-context.js";
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
@@ -119,13 +120,15 @@ async function handlePost(
   res: express.Response
 ): Promise<void> {
   try {
-    await routeMcpPost({
-      req,
-      res,
-      sessions,
-      sessionRecovery: SESSION_RECOVERY,
-      resolveCadPrepareSessionByToken,
-    });
+    await withContinuityRequestContext(req, () =>
+      routeMcpPost({
+        req,
+        res,
+        sessions,
+        sessionRecovery: SESSION_RECOVERY,
+        resolveCadPrepareSessionByToken,
+      })
+    );
   } catch (error) {
     console.error("[MCP] POST failed", error);
     if (!res.headersSent) {
