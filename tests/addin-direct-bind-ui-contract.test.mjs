@@ -248,3 +248,14 @@ test("production CadGPT palette never reuses the Stage 0 palette GUID", () => {
     /new PaletteSet\("CadGPT", PaletteId\)/
   );
 });
+
+test("panel startup is not pinned to a persisted ChatGPT conversation", () => {
+  assert.match(
+    code,
+    /Browser\.CoreWebView2\.Navigate\(\s*WebViewProfile\.StartupUrl\s*\)/
+  );
+  assert.doesNotMatch(
+    code,
+    /ReadLastConversationUrl|TrySaveConversationUrl/
+  );
+});
