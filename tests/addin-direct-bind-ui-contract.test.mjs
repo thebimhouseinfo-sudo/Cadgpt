@@ -86,10 +86,26 @@ test("only pairing automation invokes bare @cg and never creates a new chat", ()
 });
 
 
-test("panel pairing establishes session identity without auto-binding a drawing or adding an MCP connect command", () => {
+test("panel pairing creates one reusable drawing workspace handle without adding an MCP connect command", () => {
   assert.match(
     serverFactory,
-    /autoBindSingle:\s*!hasPendingAddinPair\(\)/
+    /const addinPairingLaunch = hasPendingAddinPair\(\)/
+  );
+  assert.match(
+    serverFactory,
+    /ownerId: "drawing-workspace"/
+  );
+  assert.match(
+    serverFactory,
+    /work_handle:\s*\{[\s\S]*execution_id: work\.executionId/
+  );
+  assert.match(
+    serverFactory,
+    /clearExecutionDrawingContexts\(work\.executionId\)/
+  );
+  assert.match(
+    serverFactory,
+    /bindDrawingForExecution\(work\.executionId, selector\)/
   );
   assert.doesNotMatch(
     serverFactory,
