@@ -66,7 +66,7 @@ The dedicated WebView2 profile is stored under:
 %LOCALAPPDATA%\CadGPT\runtime\autocad-addin\stage0-webview2
 ```
 
-Only ordinary ChatGPT navigation URLs are remembered as convenience state. The add-in does not inspect cookies, browser storage, connector headers, auth tokens, or work handles.
+The WebView2 profile preserves normal ChatGPT login/session state, but the add-in does not persist or reopen a specific conversation URL. Each palette initialization starts at `https://chatgpt.com/`. The add-in does not inspect cookies, browser storage, connector headers, auth tokens, or work handles.
 
 ## AutoCAD 2018 compatibility
 
