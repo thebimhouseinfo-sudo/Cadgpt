@@ -78,9 +78,6 @@ export function registerAdmissionTool(
             ...(launch?.work_handle
               ? { work_handle: launch.work_handle }
               : {}),
-            ...(launch?.addin_managed_workspace === true
-              ? { addin_managed_workspace: true }
-              : {}),
             ...(launch?.drawing ? { drawing: launch.drawing } : {}),
             ...(typeof launch?.cad_tools_ready === "boolean"
               ? { cad_tools_ready: launch.cad_tools_ready }
