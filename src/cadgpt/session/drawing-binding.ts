@@ -193,6 +193,23 @@ export async function bindDrawingForExecution(
   return binding;
 }
 
+export async function replaceDrawingForExecution(
+  executionId: string,
+  document: string
+): Promise<BoundDrawing> {
+  // Bind/verify the target first. Only after that succeeds do we retire the
+  // prior drawing contexts, so a failed local Connect leaves the old binding
+  // intact and the existing work_handle remains usable.
+  const binding = await bindDrawingForExecution(executionId, document);
+  const map = executionContexts(executionId);
+  for (const drawingId of [...map.keys()]) {
+    if (drawingId !== binding.drawing_id) {
+      map.delete(drawingId);
+    }
+  }
+  return binding;
+}
+
 export async function bindDrawing(document: string): Promise<BoundDrawing> {
   const lease = currentToolLease();
   return bindDrawingForExecution(lease.workId, document);
