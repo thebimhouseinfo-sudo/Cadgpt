@@ -536,11 +536,10 @@ export function createMcpServer(sessionKey: string): McpServer {
     sessionKey,
     onActive: async ({ bareLaunch }) => {
       await loadDiscoveryFamily(server);
-      if (!bareLaunch) return;
-      clearSessionWorkStopBarrier(sessionKey);
-
       const addinPairingLaunch = hasPendingAddinPair();
+
       if (addinPairingLaunch) {
+        clearSessionWorkStopBarrier(sessionKey);
         let work = activeWorkForSession(sessionKey);
         if (
           !work ||
@@ -602,6 +601,9 @@ export function createMcpServer(sessionKey: string): McpServer {
           cad_proxy_tools: cadSurface.tools,
         };
       }
+
+      if (!bareLaunch) return;
+      clearSessionWorkStopBarrier(sessionKey);
 
       const launch = await prepareCadLaunch(sessionKey, {
         autoBindSingle: true,
