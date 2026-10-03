@@ -53,6 +53,11 @@ import {
 import { cleanupExecutionState } from "./runtime/execution-cleanup.js";
 import { withCadHostLock } from "./runtime/cad-scheduler.js";
 import { getRepoRoot } from "./lib/path-security.js";
+import {
+  clearAddinPairingsForSession,
+  registerAddinSessionController,
+  unregisterAddinSessionController,
+} from "./lib/addin-control.js";
 
 export const FRESH_CAD_STATE_POLICY =
   "FRESH CAD STATE — mandatory: whenever the user asks for the current state of the bound drawing (including repeated questions such as layer count, entity count, properties, geometry, selection contents, or whether something changed), call the relevant CAD read tool in that SAME user turn and answer from that fresh tool result. Never reuse or restate a prior CAD result from conversation history as if it were current. If no valid work_handle/drawing context is available, fail closed and tell the user to rebind/restart the CAD workspace instead of answering from memory.";
@@ -81,6 +86,7 @@ function loadCadWorkingKnowledge(): string {
 const loadedByServer = new WeakMap<McpServer, Set<string>>();
 const registeredSurfaceByServer = new WeakMap<McpServer, Set<string>>();
 const sessionKeyByServer = new WeakMap<McpServer, string>();
+const addinControllerIdByServer = new WeakMap<McpServer, string>();
 
 setWorkExpirationHandler(async (executionId) => {
   await cleanupExecutionState(executionId);
@@ -441,6 +447,20 @@ export function createMcpServer(sessionKey: string): McpServer {
       }
   };
 
+  const addinControllerId = registerAddinSessionController(
+    sessionKey,
+    async (selector) => {
+      assertSessionClaimed(sessionKey);
+      clearSessionWorkStopBarrier(sessionKey);
+      return activateCadWorkspace({
+        key: "addin",
+        name: selector,
+        full_name: selector,
+      });
+    }
+  );
+  addinControllerIdByServer.set(server, addinControllerId);
+
   registerCadPrepareConfirmTool(server, {
     sessionKey,
     activateWorkspace: activateCadWorkspace,
@@ -706,6 +726,7 @@ export async function disposeLogicalSessionState(
   }
   revokeSessionAdmissions(sessionKey);
   clearCadPrepare(sessionKey);
+  clearAddinPairingsForSession(sessionKey);
 }
 
 export async function disposeMcpServerRuntime(
@@ -717,6 +738,12 @@ export async function disposeMcpServerRuntime(
 
   if (!options.preserveSessionState) {
     await disposeLogicalSessionState(sessionKey);
+  }
+
+  const addinControllerId = addinControllerIdByServer.get(server);
+  if (addinControllerId) {
+    unregisterAddinSessionController(sessionKey, addinControllerId);
+    addinControllerIdByServer.delete(server);
   }
 
   loadedByServer.delete(server);
