@@ -1,13 +1,15 @@
 using Autodesk.AutoCAD.Runtime;
 
+[assembly: ExtensionApplication(typeof(CadGpt.AutoCad.EntryPoint))]
+
 namespace CadGpt.AutoCad
 {
     public sealed class EntryPoint : IExtensionApplication
     {
         public void Initialize()
         {
-            // Stage 0 intentionally performs no work at assembly load.
-            // The palette is created only when CGSTAGE0 is invoked.
+            // The installed CadGPT.bundle is loaded automatically by AutoCAD.
+            // Keep startup silent; the CADGPT command opens/activates the panel.
         }
 
         public void Terminate()
