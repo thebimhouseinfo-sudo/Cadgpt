@@ -38,68 +38,71 @@ test.after(async () => {
   });
 });
 
-test("local add-in pair connects a drawing without exposing work authority", async () => {
-  const controllerId =
-    addin.registerAddinSessionController(
+test("paired panel reads bound drawing without receiving work authority", async () => {
+  const observerId =
+    addin.registerAddinSessionObserver(
       "session-A",
-      async (selector) => ({
+      async () => ({
         drawing: {
           name: "B.dwg",
-          full_name: selector,
+          full_name: "C:\\Drawings\\B.dwg",
         },
-        cad_tools_ready: true,
-        work_handle: {
-          execution_id: "SECRET_EXECUTION",
-          authority_token: "SECRET_AUTHORITY",
-        },
+        bound_count: 1,
       })
     );
 
   const pair = addin.startAddinPairing();
-  assert.ok(pair.pair_id);
-  assert.equal(
-    addin.addinPairStatus(pair.pair_id).paired,
-    false
-  );
-
   const completed =
     addin.completePendingAddinPair("session-A");
   assert.equal(completed, pair.pair_id);
 
   const status =
-    addin.addinPairStatus(pair.pair_id);
-  assert.deepEqual(status, {
-    paired: true,
-    controller_ready: true,
-  });
-
-  const result =
-    await addin.connectAddinPairToDrawing(
-      pair.pair_id,
-      "C:\\Drawings\\B.dwg"
+    await addin.addinBindingStatus(
+      pair.pair_id
     );
 
-  assert.deepEqual(result, {
-    ok: true,
+  assert.deepEqual(status, {
+    paired: true,
+    session_ready: true,
     drawing: {
       name: "B.dwg",
       full_name: "C:\\Drawings\\B.dwg",
     },
-    cad_tools_ready: true,
+    bound_count: 1,
   });
-  const serialized = JSON.stringify(result);
+
+  const serialized = JSON.stringify(status);
   assert.equal(
-    serialized.includes("SECRET_EXECUTION"),
+    serialized.includes("authority_token"),
     false
   );
   assert.equal(
-    serialized.includes("SECRET_AUTHORITY"),
+    serialized.includes("execution_id"),
     false
   );
 
-  addin.unregisterAddinSessionController(
+  addin.unregisterAddinSessionObserver(
     "session-A",
-    controllerId
+    observerId
+  );
+});
+
+test("paired panel reports session not ready when observer is gone", async () => {
+  const pair = addin.startAddinPairing();
+  addin.completePendingAddinPair(
+    "session-missing"
+  );
+
+  assert.deepEqual(
+    await addin.addinBindingStatus(
+      pair.pair_id
+    ),
+    {
+      paired: true,
+      session_ready: false,
+      drawing: null,
+      bound_count: 0,
+    }
   );
 });
 
@@ -109,28 +112,42 @@ test("normal user-invoked CadGPT admission consumes a pending panel pair", async
     ["session-task", "@cg list layers"],
   ]) {
     const fake = fakeServer();
-    addin.registerAddinSessionController(
-      sessionKey,
-      async () => ({
-        drawing: { name: "Drawing1.dwg" },
-        cad_tools_ready: true,
-      })
-    );
+    const observerId =
+      addin.registerAddinSessionObserver(
+        sessionKey,
+        async () => ({
+          drawing: null,
+          bound_count: 0,
+        })
+      );
+
     registerAdmissionTool(fake.server, {
       sessionKey,
       onActive: async () => undefined,
     });
 
     const pair = addin.startAddinPairing();
-    await fake.callbacks.get("cadgpt_admission")({
+    await fake.callbacks.get(
+      "cadgpt_admission"
+    )({
       user_turn: userTurn,
       invocation_source: "mention",
     });
 
+    const status =
+      await addin.addinBindingStatus(
+        pair.pair_id
+      );
+    assert.equal(status.paired, true);
     assert.equal(
-      addin.addinPairStatus(pair.pair_id).paired,
+      status.session_ready,
       true
     );
+
     revokeSessionAdmissions(sessionKey);
+    addin.unregisterAddinSessionObserver(
+      sessionKey,
+      observerId
+    );
   }
 });
