@@ -4,22 +4,35 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using CadGpt.AutoCad.Stage0;
 using Microsoft.Web.WebView2.Core;
+using AcApplication = Autodesk.AutoCAD.ApplicationServices.Application;
 
 namespace CadGpt.AutoCad
 {
     public partial class ChatView : UserControl, IDisposable
     {
         private readonly PaletteLifecycleState _lifecycle = new PaletteLifecycleState();
+        private readonly CancellationTokenSource _actionCts = new CancellationTokenSource();
         private CancellationTokenSource? _initializeCts;
+        private ChatConnectorAdapter? _connector;
         private bool _disposed;
+        private bool _darkChrome;
+        private bool _autoInvokeCompleted;
+        private bool _autoInvokeInProgress;
 
         public event EventHandler? RecreateRequested;
 
         public ChatView()
         {
             InitializeComponent();
+            _darkChrome = string.Equals(
+                WebViewProfile.ReadChromeTheme(),
+                "dark",
+                StringComparison.OrdinalIgnoreCase);
+            ApplyChromeTheme();
+
             Loaded += OnLoaded;
             Browser.PreviewMouseDown += Browser_PreviewMouseDown;
         }
@@ -41,12 +54,14 @@ namespace CadGpt.AutoCad
             _initializeCts = new CancellationTokenSource();
             var token = _initializeCts.Token;
             var generation = _lifecycle.BeginInitialization();
-            SetStatus("CadGPT Stage 0 — initializing WebView2");
+            SetStatus("CadGPT — initializing");
 
             try
             {
                 WebViewProfile.EnsureDirectories();
-                var environment = await CoreWebView2Environment.CreateAsync(null, WebViewProfile.UserDataPath);
+                var environment = await CoreWebView2Environment.CreateAsync(
+                    null,
+                    WebViewProfile.UserDataPath);
                 token.ThrowIfCancellationRequested();
 
                 await Browser.EnsureCoreWebView2Async(environment);
@@ -57,41 +72,242 @@ namespace CadGpt.AutoCad
                     return;
                 }
 
+                _connector = new ChatConnectorAdapter(Browser);
                 Browser.NavigationCompleted -= Browser_NavigationCompleted;
                 Browser.NavigationCompleted += Browser_NavigationCompleted;
 
-                var target = WebViewProfile.ReadLastConversationUrl() ?? "https://chatgpt.com/";
+                var target =
+                    WebViewProfile.ReadLastConversationUrl() ??
+                    "https://chatgpt.com/";
                 Browser.CoreWebView2.Navigate(target);
 
                 _lifecycle.MarkReady(generation);
                 FocusBrowser();
-                SetStatus("CadGPT Stage 0 — WebView2 ready");
+                SetStatus("CadGPT — ready");
             }
             catch (OperationCanceledException)
             {
             }
             catch (Exception ex)
             {
-                if (_lifecycle.MarkFailed(generation, "WEBVIEW_INIT_FAILED") && !_disposed)
+                if (_lifecycle.MarkFailed(
+                    generation,
+                    "WEBVIEW_INIT_FAILED") &&
+                    !_disposed)
                 {
-                    SetStatus("CadGPT Stage 0 — WebView2 failed: " + ex.GetType().Name);
+                    SetStatus("CadGPT — failed: " + ex.GetType().Name);
                 }
             }
         }
 
-        private void Browser_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+        private async void Browser_NavigationCompleted(
+            object? sender,
+            CoreWebView2NavigationCompletedEventArgs e)
         {
             if (!e.IsSuccess)
             {
-                SetStatus("CadGPT Stage 0 — navigation failed");
+                SetStatus("CadGPT — navigation failed");
                 return;
             }
 
-            WebViewProfile.TrySaveConversationUrl(Browser.Source?.AbsoluteUri);
-            SetStatus("CadGPT Stage 0 — ChatGPT loaded");
+            var current = Browser.Source?.AbsoluteUri;
+            WebViewProfile.TrySaveConversationUrl(current);
+            SetStatus("CadGPT — ChatGPT loaded");
+
+            if (WebViewProfile.NormalizeConversationUrl(current) != null)
+            {
+                await TryAutoInvokeCadGptAsync();
+            }
         }
 
-        private void Browser_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        private async Task TryAutoInvokeCadGptAsync()
+        {
+            if (_disposed ||
+                _autoInvokeCompleted ||
+                _autoInvokeInProgress ||
+                _connector == null)
+            {
+                return;
+            }
+
+            _autoInvokeInProgress = true;
+            try
+            {
+                var result = await _connector.SendCadGptTurnAsync(
+                    string.Empty,
+                    _actionCts.Token);
+
+                if (result.Success)
+                {
+                    _autoInvokeCompleted = true;
+                    SetStatus("CadGPT — connected");
+                }
+                else
+                {
+                    SetStatus(
+                        "CadGPT — auto connect: " +
+                        result.FailureCode);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                SetStatus(
+                    "CadGPT — auto connect failed: " +
+                    ex.GetType().Name);
+            }
+            finally
+            {
+                _autoInvokeInProgress = false;
+            }
+        }
+
+        private async void ConnectButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (_disposed || _connector == null)
+            {
+                SetStatus("CadGPT — WebView not ready");
+                return;
+            }
+
+            var selector = ActiveDrawingSelector();
+            if (string.IsNullOrWhiteSpace(selector))
+            {
+                SetStatus("CadGPT — no active drawing");
+                return;
+            }
+
+            ConnectButton.IsEnabled = false;
+            SetStatus("CadGPT — connecting drawing");
+
+            try
+            {
+                var result = await _connector.SendCadGptTurnAsync(
+                    "connect drawing: " + selector,
+                    _actionCts.Token);
+
+                SetStatus(
+                    result.Success
+                        ? "CadGPT — connect request sent"
+                        : "CadGPT — connect failed: " +
+                          result.FailureCode);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                SetStatus(
+                    "CadGPT — connect failed: " +
+                    ex.GetType().Name);
+            }
+            finally
+            {
+                if (!_disposed)
+                {
+                    ConnectButton.IsEnabled = true;
+                }
+            }
+        }
+
+        private string? ActiveDrawingSelector()
+        {
+            try
+            {
+                var document =
+                    AcApplication.DocumentManager.MdiActiveDocument;
+                if (document == null)
+                {
+                    return null;
+                }
+
+                var filename = document.Database.Filename;
+                if (!string.IsNullOrWhiteSpace(filename))
+                {
+                    return filename.Trim();
+                }
+
+                return string.IsNullOrWhiteSpace(document.Name)
+                    ? null
+                    : document.Name.Trim();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private void RefreshButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (Browser.CoreWebView2 != null)
+            {
+                Browser.Reload();
+                SetStatus("CadGPT — refreshing");
+                return;
+            }
+
+            RequestCleanRecreate();
+        }
+
+        private void ThemeButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            _darkChrome = !_darkChrome;
+            ApplyChromeTheme();
+            WebViewProfile.TrySaveChromeTheme(
+                _darkChrome ? "dark" : "light");
+        }
+
+        private void ApplyChromeTheme()
+        {
+            var background = new SolidColorBrush(
+                _darkChrome
+                    ? Color.FromRgb(24, 24, 24)
+                    : Color.FromRgb(255, 255, 255));
+            var foreground = new SolidColorBrush(
+                _darkChrome
+                    ? Color.FromRgb(245, 245, 245)
+                    : Color.FromRgb(30, 30, 30));
+            var buttonBackground = new SolidColorBrush(
+                _darkChrome
+                    ? Color.FromRgb(45, 45, 45)
+                    : Color.FromRgb(245, 245, 245));
+            var border = new SolidColorBrush(
+                _darkChrome
+                    ? Color.FromRgb(65, 65, 65)
+                    : Color.FromRgb(220, 220, 220));
+
+            RootGrid.Background = background;
+            ToolbarBorder.Background = background;
+            ToolbarBorder.BorderBrush = border;
+            StatusText.Foreground = foreground;
+
+            foreach (var button in new[]
+            {
+                ConnectButton,
+                RefreshButton,
+                ThemeButton
+            })
+            {
+                button.Background = buttonBackground;
+                button.Foreground = foreground;
+                button.BorderBrush = border;
+            }
+
+            ThemeButton.Content =
+                _darkChrome ? "Light" : "Dark";
+        }
+
+        private void Browser_PreviewMouseDown(
+            object sender,
+            MouseButtonEventArgs e)
         {
             FocusBrowser();
         }
@@ -105,24 +321,6 @@ namespace CadGpt.AutoCad
 
             Browser.Focus();
             Keyboard.Focus(Browser);
-        }
-
-        private void ReloadButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (Browser.CoreWebView2 != null)
-            {
-                Browser.Reload();
-            }
-        }
-
-        private void RetryButton_Click(object sender, RoutedEventArgs e)
-        {
-            RequestCleanRecreate();
-        }
-
-        private void RecreateButton_Click(object sender, RoutedEventArgs e)
-        {
-            RequestCleanRecreate();
         }
 
         private void RequestCleanRecreate()
@@ -148,7 +346,14 @@ namespace CadGpt.AutoCad
                 return;
             }
 
-            try { _initializeCts.Cancel(); } catch { }
+            try
+            {
+                _initializeCts.Cancel();
+            }
+            catch
+            {
+            }
+
             _initializeCts.Dispose();
             _initializeCts = null;
         }
@@ -162,10 +367,21 @@ namespace CadGpt.AutoCad
 
             _disposed = true;
             var generation = _lifecycle.BeginDispose();
+
             Loaded -= OnLoaded;
             Browser.PreviewMouseDown -= Browser_PreviewMouseDown;
-            CancelInitialization();
             Browser.NavigationCompleted -= Browser_NavigationCompleted;
+
+            try
+            {
+                _actionCts.Cancel();
+            }
+            catch
+            {
+            }
+
+            _actionCts.Dispose();
+            CancelInitialization();
             Browser.Dispose();
             _lifecycle.CompleteDispose(generation);
         }
