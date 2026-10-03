@@ -57,9 +57,8 @@ export async function writeAddinControlDescriptor(
   const dir = getAppDataPath("runtime", "autocad-addin");
   const filePath = path.join(dir, "control.json");
   await fs.mkdir(dir, { recursive: true });
-  const tempPath = filePath + ".tmp";
   await fs.writeFile(
-    tempPath,
+    filePath,
     JSON.stringify(
       {
         schema_version: 1,
@@ -72,7 +71,6 @@ export async function writeAddinControlDescriptor(
     ) + "\n",
     "utf8"
   );
-  await fs.rename(tempPath, filePath);
   return filePath;
 }
 
