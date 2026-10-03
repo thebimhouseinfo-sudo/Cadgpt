@@ -119,6 +119,25 @@ jobs:
         shell: pwsh
         run: dotnet test addins/cadgpt-autocad.tests/CadGpt.AutoCad.Tests.csproj --configuration Release
 
+      - name: Stage 0 AutoCAD 2018 compatibility contract
+        shell: pwsh
+        run: |
+          $probe = Get-Content "scripts/probe-autocad-addin-host.ps1" -Raw
+          $project = Get-Content "addins/cadgpt-autocad/CadGpt.AutoCad.csproj" -Raw
+          if ($probe -notmatch [regex]::Escape('if ($ReleaseNumber -eq "22.0")')) {
+            throw "Stage 0 probe missing AutoCAD 2018/R22.0 mapping"
+          }
+          if ($probe -notmatch [regex]::Escape('target_framework = "net46"')) {
+            throw "Stage 0 probe no longer maps AutoCAD 2018 to net46"
+          }
+          if ($project -notmatch [regex]::Escape('Microsoft.Web.WebView2" Version="1.0.2420.47"')) {
+            throw "Stage 0 WebView2 SDK is not pinned to the net46-compatible release"
+          }
+          if ($project -notmatch [regex]::Escape('Microsoft.NETFramework.ReferenceAssemblies.net46')) {
+            throw "Stage 0 net46 reference assemblies package is missing"
+          }
+          Write-Host "AutoCAD 2018 / net46 / WebView2 compatibility contract present"
+
       - name: Guard Doctor AppData resolution contract
         shell: pwsh
         run: |
