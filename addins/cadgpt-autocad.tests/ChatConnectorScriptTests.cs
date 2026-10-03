@@ -23,9 +23,9 @@ namespace CadGpt.AutoCad.Tests
             var script = ChatConnectorScript.BuildInvokeCadGptScript();
 
             StringAssert.Contains(script, "setter.call(composer, '@cg')");
-            StringAssert.DoesNotContain(script, "connect drawing");
-            StringAssert.DoesNotContain(script, "new chat");
-            StringAssert.DoesNotContain(script, "new conversation");
+            Assert.IsFalse(script.Contains("connect drawing"));
+            Assert.IsFalse(script.Contains("new chat"));
+            Assert.IsFalse(script.Contains("new conversation"));
         }
 
         [TestMethod]
@@ -33,12 +33,12 @@ namespace CadGpt.AutoCad.Tests
         {
             var script = ChatConnectorScript.BuildInvokeCadGptScript();
 
-            StringAssert.DoesNotContain(script, "document.cookie");
-            StringAssert.DoesNotContain(script, "localStorage");
-            StringAssert.DoesNotContain(script, "sessionStorage");
-            StringAssert.DoesNotContain(script, "indexedDB");
-            StringAssert.DoesNotContain(script, "fetch(");
-            StringAssert.DoesNotContain(script, "XMLHttpRequest");
+            Assert.IsFalse(script.Contains("document.cookie"));
+            Assert.IsFalse(script.Contains("localStorage"));
+            Assert.IsFalse(script.Contains("sessionStorage"));
+            Assert.IsFalse(script.Contains("indexedDB"));
+            Assert.IsFalse(script.Contains("fetch("));
+            Assert.IsFalse(script.Contains("XMLHttpRequest"));
         }
     }
 }
