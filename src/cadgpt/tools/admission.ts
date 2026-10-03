@@ -4,6 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { checkAdmission } from "../lib/admission.js";
 import { toolResult } from "../lib/tool-result.js";
 import { isBareCadGptLaunch } from "../lib/quickstart.js";
+import { logStage0EvidenceEvent } from "../lib/continuity-request-context.js";
 
 export function registerAdmissionTool(
   server: McpServer,
@@ -30,64 +31,108 @@ export function registerAdmissionTool(
       },
     },
     async ({ user_turn, invocation_source }) => {
-      const decision = checkAdmission(options.sessionKey, user_turn, invocation_source);
-      const bareLaunch = isBareCadGptLaunch(user_turn, invocation_source);
-      const launch =
-        decision.mode === "active"
-          ? await options.onActive({ bareLaunch })
-          : undefined;
-      const welcome =
-        bareLaunch && launch && typeof launch.welcome_text === "string"
-          ? launch.welcome_text
-          : undefined;
+      let decision:
+        | ReturnType<typeof checkAdmission>
+        | undefined;
+      try {
+        decision = checkAdmission(
+          options.sessionKey,
+          user_turn,
+          invocation_source
+        );
+        const bareLaunch = isBareCadGptLaunch(
+          user_turn,
+          invocation_source
+        );
+        const launch =
+          decision.mode === "active"
+            ? await options.onActive({ bareLaunch })
+            : undefined;
+        const welcome =
+          bareLaunch && launch && typeof launch.welcome_text === "string"
+            ? launch.welcome_text
+            : undefined;
 
-      const data = {
-        internal_control_signal: true,
-        render_to_user: Boolean(welcome),
-        ...decision,
-        ...(launch ?? {}),
-        ...(welcome ? { welcome_text: welcome } : {}),
-        instruction:
-          decision.mode === "inactive"
-            ? "STOP CadGPT. Do not call discovery/work/CAD tools. Continue ordinary ChatGPT or use the provider the user actually invoked."
-            : decision.mode === "control"
-              ? "Route the exact CadGPT control command through cadgpt_control. CONTROL never starts FILE/CAD work."
-              : welcome
-                ? "Return welcome_text verbatim. If launch_mode is auto_bind, the sole drawing is already bound: reuse the returned work_handle for CAD calls. If launch_mode is cad_prepare, preserve confirmation_token privately and wait for the user's workspace confirmation before calling cadgpt_cad_confirm."
-                : "CadGPT session is ready. If the user requested real FILE/CAD work, start or reuse a compatible work_handle; otherwise continue conversationally.",
-      };
-
-      if (welcome) {
-        return {
-          content: [{ type: "text" as const, text: welcome }],
-          structuredContent: {
-            welcome_text: welcome,
-            render_verbatim: true,
-            launch_mode: launch?.launch_mode,
-            autocad_detected: launch?.autocad_detected,
-            ...(launch?.confirmation_token
-              ? { confirmation_token: launch.confirmation_token }
-              : {}),
-            ...(launch?.drawings ? { drawings: launch.drawings } : {}),
-            ...(launch?.auto_bound ? { auto_bound: true } : {}),
-            ...(launch?.work_handle
-              ? { work_handle: launch.work_handle }
-              : {}),
-            ...(launch?.drawing ? { drawing: launch.drawing } : {}),
-            ...(typeof launch?.cad_tools_ready === "boolean"
-              ? { cad_tools_ready: launch.cad_tools_ready }
-              : {}),
-            ...(typeof launch?.cad_proxy_tool_count === "number"
-              ? { cad_proxy_tool_count: launch.cad_proxy_tool_count }
-              : {}),
-            ...(Array.isArray(launch?.cad_proxy_tools)
-              ? { cad_proxy_tools: launch.cad_proxy_tools }
-              : {}),
-          },
+        const data = {
+          internal_control_signal: true,
+          render_to_user: Boolean(welcome),
+          ...decision,
+          ...(launch ?? {}),
+          ...(welcome ? { welcome_text: welcome } : {}),
+          instruction:
+            decision.mode === "inactive"
+              ? "STOP CadGPT. Do not call discovery/work/CAD tools. Continue ordinary ChatGPT or use the provider the user actually invoked."
+              : decision.mode === "control"
+                ? "Route the exact CadGPT control command through cadgpt_control. CONTROL never starts FILE/CAD work."
+                : welcome
+                  ? "Return welcome_text verbatim. If launch_mode is auto_bind, the sole drawing is already bound: reuse the returned work_handle for CAD calls. If launch_mode is cad_prepare, preserve confirmation_token privately and wait for the user's workspace confirmation before calling cadgpt_cad_confirm."
+                  : "CadGPT session is ready. If the user requested real FILE/CAD work, start or reuse a compatible work_handle; otherwise continue conversationally.",
         };
-      }
 
-      return toolResult("cadgpt_admission", data);
+        const result = welcome
+          ? {
+              content: [{ type: "text" as const, text: welcome }],
+              structuredContent: {
+                welcome_text: welcome,
+                render_verbatim: true,
+                launch_mode: launch?.launch_mode,
+                autocad_detected: launch?.autocad_detected,
+                ...(launch?.confirmation_token
+                  ? { confirmation_token: launch.confirmation_token }
+                  : {}),
+                ...(launch?.drawings ? { drawings: launch.drawings } : {}),
+                ...(launch?.auto_bound ? { auto_bound: true } : {}),
+                ...(launch?.work_handle
+                  ? { work_handle: launch.work_handle }
+                  : {}),
+                ...(launch?.drawing ? { drawing: launch.drawing } : {}),
+                ...(typeof launch?.cad_tools_ready === "boolean"
+                  ? { cad_tools_ready: launch.cad_tools_ready }
+                  : {}),
+                ...(typeof launch?.cad_proxy_tool_count === "number"
+                  ? { cad_proxy_tool_count: launch.cad_proxy_tool_count }
+                  : {}),
+                ...(Array.isArray(launch?.cad_proxy_tools)
+                  ? { cad_proxy_tools: launch.cad_proxy_tools }
+                  : {}),
+              },
+            }
+          : toolResult("cadgpt_admission", data);
+
+        if (decision.mode === "active" && decision.claimed) {
+          logStage0EvidenceEvent(
+            "admission_completed",
+            options.sessionKey,
+            {
+              toolName: "cadgpt_admission",
+              success: true,
+              claimed: true,
+              mode: decision.mode,
+              launchMode:
+                launch && typeof launch.launch_mode === "string"
+                  ? launch.launch_mode
+                  : undefined,
+            }
+          );
+        }
+
+        return result;
+      } catch (error) {
+        if (!decision || decision.mode === "active") {
+          logStage0EvidenceEvent(
+            "admission_failed",
+            options.sessionKey,
+            {
+              toolName: "cadgpt_admission",
+              success: false,
+              claimed: decision?.claimed ?? false,
+              mode: decision?.mode,
+              failureCategory: "ADMISSION_CALLBACK_FAILED",
+            }
+          );
+        }
+        throw error;
+      }
     }
   );
 }
