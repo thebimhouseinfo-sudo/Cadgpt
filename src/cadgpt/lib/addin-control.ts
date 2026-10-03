@@ -24,16 +24,21 @@ interface PairedPanel {
   lastAccessedAt: number;
 }
 
-interface SessionController {
-  controllerId: string;
-  connectDrawing: (selector: string) => Promise<{
-    drawing?: unknown;
-    cad_tools_ready?: boolean;
+export interface AddinBoundDrawing {
+  name: string | null;
+  full_name: string | null;
+}
+
+interface SessionObserver {
+  observerId: string;
+  getBinding: () => Promise<{
+    drawing: AddinBoundDrawing | null;
+    bound_count: number;
   }>;
 }
 
 const pairedPanels = new Map<string, PairedPanel>();
-const controllers = new Map<string, SessionController>();
+const observers = new Map<string, SessionObserver>();
 let pendingPair: PendingPair | null = null;
 
 function descriptorPath(): string {
@@ -104,11 +109,6 @@ export function startAddinPairing(): {
   };
 }
 
-export function hasPendingAddinPair(): boolean {
-  cleanupPending();
-  return pendingPair !== null;
-}
-
 export function completePendingAddinPair(
   sessionKey: string
 ): string | null {
@@ -126,89 +126,63 @@ export function completePendingAddinPair(
   return pending.pairId;
 }
 
-export function addinPairStatus(pairId: string): {
-  paired: boolean;
-  controller_ready: boolean;
-} {
-  const pair = pairedPanels.get(pairId);
-  if (!pair) {
-    return { paired: false, controller_ready: false };
-  }
-  pair.lastAccessedAt = Date.now();
-  return {
-    paired: true,
-    controller_ready: controllers.has(pair.sessionKey),
-  };
-}
-
-export function registerAddinSessionController(
+export function registerAddinSessionObserver(
   sessionKey: string,
-  connectDrawing: SessionController["connectDrawing"]
+  getBinding: SessionObserver["getBinding"]
 ): string {
-  const controllerId = randomUUID();
-  controllers.set(sessionKey, {
-    controllerId,
-    connectDrawing,
+  const observerId = randomUUID();
+  observers.set(sessionKey, {
+    observerId,
+    getBinding,
   });
-  return controllerId;
+  return observerId;
 }
 
-export function unregisterAddinSessionController(
+export function unregisterAddinSessionObserver(
   sessionKey: string,
-  controllerId: string
+  observerId: string
 ): void {
-  const current = controllers.get(sessionKey);
-  if (current?.controllerId === controllerId) {
-    controllers.delete(sessionKey);
+  const current = observers.get(sessionKey);
+  if (current?.observerId === observerId) {
+    observers.delete(sessionKey);
   }
 }
 
-function drawingSummary(value: unknown): {
-  name: string | null;
-  full_name: string | null;
-} {
-  if (!value || typeof value !== "object") {
-    return { name: null, full_name: null };
-  }
-  const obj = value as Record<string, unknown>;
-  return {
-    name: typeof obj.name === "string" ? obj.name : null,
-    full_name:
-      typeof obj.full_name === "string" ? obj.full_name : null,
-  };
-}
-
-export async function connectAddinPairToDrawing(
-  pairId: string,
-  selector: string
+export async function addinBindingStatus(
+  pairId: string
 ): Promise<{
-  ok: true;
-  drawing: {
-    name: string | null;
-    full_name: string | null;
-  };
-  cad_tools_ready: boolean;
+  paired: boolean;
+  session_ready: boolean;
+  drawing: AddinBoundDrawing | null;
+  bound_count: number;
 }> {
   const pair = pairedPanels.get(pairId);
   if (!pair) {
-    throw new Error("ADDIN_PAIR_REQUIRED");
-  }
-  const controller = controllers.get(pair.sessionKey);
-  if (!controller) {
-    throw new Error("ADDIN_SESSION_UNAVAILABLE");
-  }
-
-  const normalized = selector.trim();
-  if (!normalized) {
-    throw new Error("ADDIN_DRAWING_REQUIRED");
+    return {
+      paired: false,
+      session_ready: false,
+      drawing: null,
+      bound_count: 0,
+    };
   }
 
   pair.lastAccessedAt = Date.now();
-  const result = await controller.connectDrawing(normalized);
+  const observer = observers.get(pair.sessionKey);
+  if (!observer) {
+    return {
+      paired: true,
+      session_ready: false,
+      drawing: null,
+      bound_count: 0,
+    };
+  }
+
+  const binding = await observer.getBinding();
   return {
-    ok: true,
-    drawing: drawingSummary(result.drawing),
-    cad_tools_ready: result.cad_tools_ready === true,
+    paired: true,
+    session_ready: true,
+    drawing: binding.drawing,
+    bound_count: binding.bound_count,
   };
 }
 
