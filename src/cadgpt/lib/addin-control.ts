@@ -78,6 +78,7 @@ export async function writeAddinControlDescriptor(
     ) + "\n",
     "utf8"
   );
+  await fs.rm(filePath, { force: true }).catch(() => undefined);
   await fs.rename(temp, filePath);
 }
 
