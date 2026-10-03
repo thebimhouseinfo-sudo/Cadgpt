@@ -1,44 +1,64 @@
-# CadGPT AutoCAD Add-in — Stage 0
+# CadGPT AutoCAD Add-in
 
-This directory contains the feasibility shell only. It does not bind drawings, mint CadGPT work authority, implement multi-drawing, or replace the Python/COM CAD MCP.
+The AutoCAD add-in lives inside the CadGPT repository at:
 
-## Probe the real host
-
-From the repository root:
-
-```powershell
-powershell -NoProfile -File scripts/probe-autocad-addin-host.ps1
+```text
+addins/cadgpt-autocad
 ```
 
-If multiple AutoCAD installations exist, pass the exact `-AutoCadInstallDir`.
-
-The probe writes a local build descriptor under `%LOCALAPPDATA%\CadGPT\runtime\autocad-addin` and updates the sanitized host record in `docs/roadmap`.
+It embeds the ChatGPT web experience in a dockable AutoCAD palette while CadGPT's existing MCP/runtime remains the authority for CAD work and drawing binding.
 
 ## Build
 
+From the CadGPT repository root:
+
 ```powershell
-powershell -NoProfile -File scripts/build-autocad-addin.ps1 -AutoCadInstallDir "C:\Program Files\Autodesk\AutoCAD 20xx" -Configuration Debug
+powershell -NoProfile -File scripts/probe-autocad-addin-host.ps1
+
+$hostInfo = Get-Content `
+  "$env:LOCALAPPDATA\CadGPT\runtime\autocad-addin\stage0-host.json" `
+  -Raw | ConvertFrom-Json
+
+powershell -NoProfile -File scripts/build-autocad-addin.ps1 `
+  -AutoCadInstallDir "$($hostInfo.build.install_dir)" `
+  -Configuration Release
 ```
 
-The build script re-probes the host, runs host-independent lifecycle tests, restores/builds for the probed target framework, keeps Autodesk API DLLs copy-local disabled, and stages a `CadGPT.Stage0.bundle` under the ignored `bin/stage0-bundle` directory.
-
-Direct add-in builds are intentionally blocked unless host validation is supplied by the build script.
-
-## Development load
-
-Use a scoped trusted path or the staged bundle. Do not disable AutoCAD secure loading globally.
-
-After NETLOAD of the built DLL, run:
+The build stages a production bundle at:
 
 ```text
-CGSTAGE0
+addins\cadgpt-autocad\bin\bundle\CadGPT.bundle
 ```
 
-Lifecycle recreation command:
+## Install / autoload
+
+Close AutoCAD, then run:
+
+```powershell
+powershell -NoProfile -File scripts/install-autocad-addin.ps1 -Configuration Release
+```
+
+The installer copies the bundle to the current user's Autodesk ApplicationPlugins directory:
 
 ```text
-CGSTAGE0RECREATE
+%APPDATA%\Autodesk\ApplicationPlugins\CadGPT.bundle
 ```
+
+The bundle manifest uses `LoadOnAutoCADStartup="True"`, so AutoCAD loads the CadGPT assembly automatically on startup. The panel itself stays hidden until requested.
+
+Open or reactivate the panel with:
+
+```text
+CADGPT
+```
+
+AutoCAD commands are case-insensitive, so `cadgpt` works as well.
+
+## Panel behavior
+
+The palette title is `CadGPT`. Its header is read-only and shows the drawing currently bound by CadGPT plus a Dark/Light toggle. If AutoCAD's active drawing is not the drawing bound to the CadGPT chat/workspace, the header turns orange.
+
+Drawing binding is not controlled by add-in buttons. It follows the normal CadGPT / `@cg` workflow used from ChatGPT.
 
 The dedicated WebView2 profile is stored under:
 
@@ -46,15 +66,8 @@ The dedicated WebView2 profile is stored under:
 %LOCALAPPDATA%\CadGPT\runtime\autocad-addin\stage0-webview2
 ```
 
-Only ordinary ChatGPT navigation URLs are remembered as convenience state. The shell does not inspect cookies, browser storage, connector headers, auth tokens, or work handles.
+Only ordinary ChatGPT navigation URLs are remembered as convenience state. The add-in does not inspect cookies, browser storage, connector headers, auth tokens, or work handles.
 
-## CP1 acceptance
+## AutoCAD 2018 compatibility
 
-CP1 remains unverified until the real host proves probe/build success, palette lifecycle, ChatGPT login/existing-chat access, and profile persistence across AutoCAD reopen.
-
-
-## AutoCAD 2018 compatibility note
-
-AutoCAD 2018 reports managed API release `R22.0` and Autodesk documents .NET Framework 4.6 as its supported managed target. Stage 0 therefore targets `net46` for this host.
-
-The Stage 0 shell intentionally pins `Microsoft.Web.WebView2` to `1.0.2420.47`, a pre-minimum-bump SDK that supports .NET Framework 4.5/4.6 while remaining compatible with newer installed WebView2 runtimes. The build also uses Microsoft's `Microsoft.NETFramework.ReferenceAssemblies.net46` package so the installed modern .NET SDK can compile the legacy target without requiring Visual Studio 2015 on the test machine.
+AutoCAD 2018 reports managed API release `R22.0` and uses .NET Framework 4.6 for this host. The build script probes the installed host and selects the compatible target framework before compiling.
