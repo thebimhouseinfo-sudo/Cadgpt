@@ -103,47 +103,34 @@ test("local add-in pair connects a drawing without exposing work authority", asy
   );
 });
 
-test("bare @cg admission pairs the panel, while a task turn does not consume a pending pair", async () => {
-  const bareSession = "session-bare";
-  const bare = fakeServer();
-  addin.registerAddinSessionController(
-    bareSession,
-    async () => ({
-      drawing: { name: "Drawing1.dwg" },
-      cad_tools_ready: true,
-    })
-  );
-  registerAdmissionTool(bare.server, {
-    sessionKey: bareSession,
-    onActive: async () => undefined,
-  });
+test("normal user-invoked CadGPT admission consumes a pending panel pair", async () => {
+  for (const [sessionKey, userTurn] of [
+    ["session-bare", "@cg"],
+    ["session-task", "@cg list layers"],
+  ]) {
+    const fake = fakeServer();
+    addin.registerAddinSessionController(
+      sessionKey,
+      async () => ({
+        drawing: { name: "Drawing1.dwg" },
+        cad_tools_ready: true,
+      })
+    );
+    registerAdmissionTool(fake.server, {
+      sessionKey,
+      onActive: async () => undefined,
+    });
 
-  const pair = addin.startAddinPairing();
-  await bare.callbacks.get("cadgpt_admission")({
-    user_turn: "@cg",
-    invocation_source: "mention",
-  });
-  assert.equal(
-    addin.addinPairStatus(pair.pair_id).paired,
-    true
-  );
+    const pair = addin.startAddinPairing();
+    await fake.callbacks.get("cadgpt_admission")({
+      user_turn: userTurn,
+      invocation_source: "mention",
+    });
 
-  const taskSession = "session-task";
-  const task = fakeServer();
-  registerAdmissionTool(task.server, {
-    sessionKey: taskSession,
-    onActive: async () => undefined,
-  });
-  const taskPair = addin.startAddinPairing();
-  await task.callbacks.get("cadgpt_admission")({
-    user_turn: "@cg list layers",
-    invocation_source: "mention",
-  });
-  assert.equal(
-    addin.addinPairStatus(taskPair.pair_id).paired,
-    false
-  );
-
-  revokeSessionAdmissions(bareSession);
-  revokeSessionAdmissions(taskSession);
+    assert.equal(
+      addin.addinPairStatus(pair.pair_id).paired,
+      true
+    );
+    revokeSessionAdmissions(sessionKey);
+  }
 });
