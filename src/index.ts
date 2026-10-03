@@ -16,6 +16,13 @@ import { resolveCadPrepareSessionByToken } from "./cadgpt/tools/cad-launcher.js"
 import { routeMcpPost } from "./cadgpt/lib/mcp-post-routing.js";
 import { activeToolLeaseCount, activeWorkCount, sweepExpiredWork } from "./cadgpt/lib/work-registration.js";
 import { continuityDiagnosticsPath } from "./cadgpt/lib/continuity-diagnostics.js";
+import {
+  addinControlToken,
+  addinPanelPairStatus,
+  beginAddinPanelPair,
+  connectAddinPanelDrawing,
+  writeAddinControlDescriptor,
+} from "./cadgpt/runtime/addin-control.js";
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
@@ -110,6 +117,64 @@ app.get("/health", async (_req, res) => {
   });
 });
 
+function requireAddinControl(
+  req: express.Request,
+  res: express.Response
+): boolean {
+  const presented = String(req.headers["x-cadgpt-addin-token"] || "");
+  if (!presented || presented !== addinControlToken()) {
+    res.status(401).json({ ok: false, error: "ADDIN_CONTROL_UNAUTHORIZED" });
+    return false;
+  }
+  return true;
+}
+
+app.post("/internal/addin/pair/begin", (req, res) => {
+  if (!requireAddinControl(req, res)) return;
+  try {
+    const result = beginAddinPanelPair(String(req.body?.panel_id || ""));
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(400).json({
+      ok: false,
+      error: error instanceof Error ? error.message : "ADDIN_PAIR_FAILED",
+    });
+  }
+});
+
+app.get("/internal/addin/pair/status", (req, res) => {
+  if (!requireAddinControl(req, res)) return;
+  try {
+    const result = addinPanelPairStatus(String(req.query.panel_id || ""));
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(400).json({
+      ok: false,
+      error: error instanceof Error ? error.message : "ADDIN_PAIR_STATUS_FAILED",
+    });
+  }
+});
+
+app.post("/internal/addin/connect-drawing", async (req, res) => {
+  if (!requireAddinControl(req, res)) return;
+  try {
+    const result = await connectAddinPanelDrawing(
+      String(req.body?.panel_id || ""),
+      String(req.body?.drawing_selector || "")
+    );
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "ADDIN_CONNECT_DRAWING_FAILED";
+    const status =
+      message === "ADDIN_PANEL_NOT_PAIRED" ||
+      message === "ADDIN_SESSION_UNAVAILABLE"
+        ? 409
+        : 400;
+    res.status(status).json({ ok: false, error: message });
+  }
+});
+
 app.all("/mcp", (_req, res) =>
   res.status(404).json({ ok: false, error: "Not found" })
 );
@@ -179,6 +244,12 @@ const workSweepTimer = setInterval(() => {
 workSweepTimer.unref?.();
 
 const server = app.listen(PORT, HOST, () => {
+  void writeAddinControlDescriptor(PORT).catch((error) => {
+    console.error(
+      "[CadGPT] Could not publish local add-in control descriptor:",
+      error instanceof Error ? error.message : String(error)
+    );
+  });
   console.log("");
   console.log("=== CadGPT Slim Control Plane ===");
   console.log(`Local MCP:  http://${HOST}:${PORT}${mcpPaths[0]}`);
