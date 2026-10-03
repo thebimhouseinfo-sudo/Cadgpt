@@ -17,6 +17,7 @@ namespace CadGpt.AutoCad
         public static string UserDataPath => Path.Combine(RootPath, "stage0-webview2");
 
         private static string LastConversationPath => Path.Combine(RootPath, "stage0-last-chat-url.txt");
+        private static string ChromeThemePath => Path.Combine(RootPath, "panel-theme.txt");
 
         public static void EnsureDirectories()
         {
@@ -57,6 +58,44 @@ namespace CadGpt.AutoCad
             catch
             {
                 // Convenience persistence must never make the palette unusable.
+            }
+        }
+
+        public static string ReadChromeTheme()
+        {
+            try
+            {
+                if (!File.Exists(ChromeThemePath))
+                {
+                    return "light";
+                }
+
+                var value = File.ReadAllText(ChromeThemePath).Trim().ToLowerInvariant();
+                return value == "dark" ? "dark" : "light";
+            }
+            catch
+            {
+                return "light";
+            }
+        }
+
+        public static void TrySaveChromeTheme(string theme)
+        {
+            var value = string.Equals(
+                theme,
+                "dark",
+                StringComparison.OrdinalIgnoreCase)
+                ? "dark"
+                : "light";
+
+            try
+            {
+                EnsureDirectories();
+                File.WriteAllText(ChromeThemePath, value);
+            }
+            catch
+            {
+                // Theme preference is convenience state only.
             }
         }
 
