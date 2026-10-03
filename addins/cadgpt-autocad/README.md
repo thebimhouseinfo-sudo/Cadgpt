@@ -51,3 +51,10 @@ Only ordinary ChatGPT navigation URLs are remembered as convenience state. The s
 ## CP1 acceptance
 
 CP1 remains unverified until the real host proves probe/build success, palette lifecycle, ChatGPT login/existing-chat access, and profile persistence across AutoCAD reopen.
+
+
+## AutoCAD 2018 compatibility note
+
+AutoCAD 2018 reports managed API release `R22.0` and Autodesk documents .NET Framework 4.6 as its supported managed target. Stage 0 therefore targets `net46` for this host.
+
+The Stage 0 shell intentionally pins `Microsoft.Web.WebView2` to `1.0.2420.47`, a pre-minimum-bump SDK that supports .NET Framework 4.5/4.6 while remaining compatible with newer installed WebView2 runtimes. The build also uses Microsoft's `Microsoft.NETFramework.ReferenceAssemblies.net46` package so the installed modern .NET SDK can compile the legacy target without requiring Visual Studio 2015 on the test machine.
