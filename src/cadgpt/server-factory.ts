@@ -53,6 +53,7 @@ import {
 import { cleanupExecutionState } from "./runtime/execution-cleanup.js";
 import { withCadHostLock } from "./runtime/cad-scheduler.js";
 import { getRepoRoot } from "./lib/path-security.js";
+import { runSessionProbeWithEvidence } from "./lib/continuity-request-context.js";
 
 export const FRESH_CAD_STATE_POLICY =
   "FRESH CAD STATE — mandatory: whenever the user asks for the current state of the bound drawing (including repeated questions such as layer count, entity count, properties, geometry, selection contents, or whether something changed), call the relevant CAD read tool in that SAME user turn and answer from that fresh tool result. Never reuse or restate a prior CAD result from conversation history as if it were current. If no valid work_handle/drawing context is available, fail closed and tell the user to rebind/restart the CAD workspace instead of answering from memory.";
@@ -133,8 +134,14 @@ function configureToolRegistration(server: McpServer, sessionKey: string): void 
 
     const wrapped = async (args: Record<string, unknown> = {}, ...rest: unknown[]) => {
       if (authority === "session") {
-        assertSessionClaimed(sessionKey);
-        return callback(args, ...rest);
+        return runSessionProbeWithEvidence(
+          sessionKey,
+          name,
+          () => {
+            assertSessionClaimed(sessionKey);
+          },
+          () => callback(args, ...rest)
+        );
       }
 
       const executionId =
