@@ -55,6 +55,7 @@ import { withCadHostLock } from "./runtime/cad-scheduler.js";
 import { getRepoRoot } from "./lib/path-security.js";
 import {
   clearAddinPairingsForSession,
+  hasPendingAddinPair,
   registerAddinSessionController,
   unregisterAddinSessionController,
 } from "./lib/addin-control.js";
@@ -519,7 +520,9 @@ export function createMcpServer(sessionKey: string): McpServer {
       if (!bareLaunch) return;
       clearSessionWorkStopBarrier(sessionKey);
       const launch = await prepareCadLaunch(sessionKey, {
-        autoBindSingle: true,
+        // A panel pairing launch establishes conversation/session identity only.
+        // Drawing authority changes exclusively through the add-in local control.
+        autoBindSingle: !hasPendingAddinPair(),
       });
       if (launch.mode === "auto_bind" && launch.auto_bind_drawing) {
         const activated = await activateCadWorkspace(
