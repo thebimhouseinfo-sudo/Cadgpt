@@ -16,6 +16,14 @@ import { resolveCadPrepareSessionByToken } from "./cadgpt/tools/cad-launcher.js"
 import { routeMcpPost } from "./cadgpt/lib/mcp-post-routing.js";
 import { activeToolLeaseCount, activeWorkCount, sweepExpiredWork } from "./cadgpt/lib/work-registration.js";
 import { continuityDiagnosticsPath } from "./cadgpt/lib/continuity-diagnostics.js";
+import {
+  addinControlSecretMatches,
+  addinPairStatus,
+  connectAddinPairToDrawing,
+  removeAddinControlDescriptor,
+  startAddinPairing,
+  writeAddinControlDescriptor,
+} from "./cadgpt/lib/addin-control.js";
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
@@ -42,6 +50,7 @@ const mcpPaths = [`/mcp/${MCP_TOKEN}`];
 const mcpPathSet = new Set(mcpPaths);
 const sessions = createSessionManager(PORT);
 sessions.startCleanup();
+await writeAddinControlDescriptor(PORT);
 
 function markMcpActivity(): void {
   lastMcpActivityAt = Date.now();
@@ -108,6 +117,54 @@ app.get("/health", async (_req, res) => {
     ...runtime,
     cad_mcp: cadMcp,
   });
+});
+
+function authorizeAddinControl(
+  req: express.Request,
+  res: express.Response
+): boolean {
+  const secret = req.headers["x-cadgpt-addin-secret"];
+  if (!addinControlSecretMatches(secret)) {
+    res.status(404).json({ ok: false, error: "Not found" });
+    return false;
+  }
+  return true;
+}
+
+app.post("/addin-control/pair/start", (req, res) => {
+  if (!authorizeAddinControl(req, res)) return;
+  res.json({ ok: true, ...startAddinPairing() });
+});
+
+app.get("/addin-control/pair/:pairId", (req, res) => {
+  if (!authorizeAddinControl(req, res)) return;
+  res.json({
+    ok: true,
+    pair_id: req.params.pairId,
+    ...addinPairStatus(req.params.pairId),
+  });
+});
+
+app.post("/addin-control/drawing/connect", async (req, res) => {
+  if (!authorizeAddinControl(req, res)) return;
+  const pairId =
+    typeof req.body?.pair_id === "string" ? req.body.pair_id.trim() : "";
+  const selector =
+    typeof req.body?.drawing_selector === "string"
+      ? req.body.drawing_selector.trim()
+      : "";
+  try {
+    const result = await connectAddinPairToDrawing(pairId, selector);
+    res.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status =
+      message === "ADDIN_PAIR_REQUIRED" ||
+      message === "ADDIN_SESSION_UNAVAILABLE"
+        ? 409
+        : 400;
+    res.status(status).json({ ok: false, error: message });
+  }
 });
 
 app.all("/mcp", (_req, res) =>
@@ -198,6 +255,7 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`[CadGPT] ${signal}: shutting down slim control plane`);
   sessions.stopCleanup();
   clearInterval(workSweepTimer);
+  await removeAddinControlDescriptor();
 
   await sessions.closeAll(signal).catch((error) => {
     console.error("[CadGPT] Session cleanup failed during shutdown", error);
