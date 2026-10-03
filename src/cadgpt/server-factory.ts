@@ -46,13 +46,17 @@ import { registerObservatorTools } from "./tools/observator.js";
 import { registerCadMcpDevTools } from "./tools/cad-mcp-dev.js";
 import {
   prepareCadLaunch,
-  registerCadConnectDrawingTool,
   registerCadPrepareConfirmTool,
+  resolveCadDrawingSelection,
   clearCadPrepare,
   type CadPrepareDrawing,
 } from "./tools/cad-launcher.js";
 import { cleanupExecutionState } from "./runtime/execution-cleanup.js";
 import { withCadHostLock } from "./runtime/cad-scheduler.js";
+import {
+  registerAddinSessionControl,
+  unregisterAddinSessionControl,
+} from "./runtime/addin-control.js";
 import { getRepoRoot } from "./lib/path-security.js";
 
 export const FRESH_CAD_STATE_POLICY =
@@ -316,7 +320,6 @@ export function createMcpServer(sessionKey: string): McpServer {
         "CadGPT is explicit-launch, session-persistent.",
         "The user launches CadGPT once per ChatGPT conversation, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt or @cg. The connector may replace its underlying MCP transport/session without requiring the user to launch again.",
         "On a bare plugin/icon or bare @cadgpt or @cg launch, call cadgpt_admission once. If that launch also contains a real task, claim the session and continue directly instead of forcing the generic Welcome. After the session is claimed, do not call admission again on every turn.",
-        "AUTO-CAD ADD-IN CONNECT — when the current user turn explicitly invokes CadGPT and says 'connect drawing: <selector>' or 'connect this drawing: <selector>', ensure the session is admitted and call cadgpt_connect_drawing with the exact selector from that turn. Do not create a new chat and do not ask the user to choose from cg/list unless cadgpt_connect_drawing reports missing or ambiguous identity.",
         "Never carry admission or work authority into another ChatGPT conversation, memory, unrelated files, paths, or AutoCAD state. CadGPT binds replacement MCP transports to the connector-provided logical ChatGPT conversation identity; unrelated conversations remain isolated.",
         "Bare @cadgpt or bare CG/plugin launch normally makes the session READY. Exception: if tray state reports exactly one open drawing, CadGPT auto-binds that sole drawing and returns WORK ACTIVE / Workspace Ready in the same admission call. With zero or two-or-more drawings, no CAD work starts until the normal workflow continues.",
         "CadGPT session claim is routing state only; it is not an execution credential and has no per-turn token.",
@@ -447,9 +450,25 @@ export function createMcpServer(sessionKey: string): McpServer {
     sessionKey,
     activateWorkspace: activateCadWorkspace,
   });
-  registerCadConnectDrawingTool(server, {
-    sessionKey,
-    activateWorkspace: activateCadWorkspace,
+
+  registerAddinSessionControl(sessionKey, {
+    connectDrawing: async (drawingSelector) => {
+      const launch = await prepareCadLaunch(sessionKey);
+      const drawing = resolveCadDrawingSelection(
+        launch.drawings ?? [],
+        drawingSelector
+      );
+      clearCadPrepare(sessionKey);
+      const activated = await activateCadWorkspace(drawing);
+      return {
+        drawing_name:
+          (activated.drawing as { name?: unknown }).name ?? drawing.name,
+        drawing_full_name:
+          (activated.drawing as { full_name?: unknown }).full_name ??
+          drawing.full_name,
+        cad_tools_ready: activated.cad_tools_ready,
+      };
+    },
   });
 
   registerCadGptControlTool(server, {
@@ -712,6 +731,7 @@ export async function disposeLogicalSessionState(
   }
   revokeSessionAdmissions(sessionKey);
   clearCadPrepare(sessionKey);
+  unregisterAddinSessionControl(sessionKey);
 }
 
 export async function disposeMcpServerRuntime(
