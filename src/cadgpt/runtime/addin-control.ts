@@ -87,6 +87,7 @@ export function beginAddinPanelPair(panelIdRaw: string): {
   // One physical add-in panel is supported in this product path. Clearing
   // stale pending windows avoids pairing a later unrelated admission.
   pendingByPanel.clear();
+  bindingByPanel.delete(panelId);
   pendingByPanel.set(panelId, {
     panelId,
     createdAt: now,
