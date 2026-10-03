@@ -1,11 +1,19 @@
 [CmdletBinding()]
 param(
     [string]$AutoCadInstallDir,
-    [string]$JsonOut = (Join-Path $env:LOCALAPPDATA "CadGPT\runtime\autocad-addin\stage0-host.json"),
-    [string]$MarkdownOut = (Join-Path $PSScriptRoot "..\docs\roadmap\CADGPT-AUTOCAD-ADDIN-STAGE0-HOST.md")
+    [string]$JsonOut,
+    [string]$MarkdownOut
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($JsonOut)) {
+    $JsonOut = Join-Path $env:LOCALAPPDATA "CadGPT\runtime\autocad-addin\stage0-host.json"
+}
+
+if ([string]::IsNullOrWhiteSpace($MarkdownOut)) {
+    $MarkdownOut = Join-Path $PSScriptRoot "..\docs\roadmap\CADGPT-AUTOCAD-ADDIN-STAGE0-HOST.md"
+}
 
 function Resolve-AutoCadInstallDir {
     param([string]$ExplicitDir)
