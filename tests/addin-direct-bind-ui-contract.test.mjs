@@ -164,3 +164,46 @@ test("add-in managed workspace keeps one work handle and tells the model to rech
     /Do not call cg\/list, cadgpt_cad_confirm/
   );
 });
+
+
+test("paired panel auto-binds the active drawing and uses 90 percent WebView zoom", () => {
+  assert.match(
+    code,
+    /Browser\.ZoomFactor\s*=\s*0\.90/
+  );
+  assert.match(
+    code,
+    /if \(await EnsurePairedAsync\([\s\S]*?TryInitialDrawingBindAsync/
+  );
+  assert.match(
+    code,
+    /ConnectDrawingSelectorAsync\([\s\S]*?ensurePair:\s*false/
+  );
+});
+
+test("manual Connect this drawing shares the same hidden bind path and exposes failures", async () => {
+  const client = await fs.readFile(
+    new URL(
+      "../addins/cadgpt-autocad/Stage0/AddinControlClient.cs",
+      import.meta.url
+    ),
+    "utf8"
+  );
+
+  assert.match(
+    code,
+    /ConnectDrawingSelectorAsync\([\s\S]*?ensurePair:\s*true/
+  );
+  assert.match(
+    client,
+    /\/addin-control\/drawing\/connect/
+  );
+  assert.match(
+    client,
+    /45000/
+  );
+  assert.match(
+    client,
+    /ADDIN_CONTROL_TIMEOUT/
+  );
+});
