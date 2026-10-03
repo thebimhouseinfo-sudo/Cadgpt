@@ -9,7 +9,7 @@ import {
 import { getAppDataPath } from "./appdata.js";
 
 const CONTROL_SECRET = randomBytes(32).toString("base64url");
-const PAIR_WINDOW_MS = 30_000;
+const PAIR_WINDOW_MS = 120_000;
 
 interface PendingPair {
   pairId: string;
@@ -101,6 +101,11 @@ export function startAddinPairing(): {
     pair_id: pairId,
     expires_at: new Date(now + PAIR_WINDOW_MS).toISOString(),
   };
+}
+
+export function hasPendingAddinPair(): boolean {
+  cleanupPending();
+  return pendingPair !== null;
 }
 
 export function completePendingAddinPair(
