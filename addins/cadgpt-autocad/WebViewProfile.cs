@@ -5,8 +5,6 @@ namespace CadGpt.AutoCad
 {
     internal static class WebViewProfile
     {
-        private const string ChatGptOrigin = "https://chatgpt.com/";
-
         public static string RootPath
         {
             get
@@ -35,8 +33,7 @@ namespace CadGpt.AutoCad
                     return null;
                 }
 
-                var value = File.ReadAllText(LastConversationPath).Trim();
-                return IsSafeChatGptUrl(value) ? value : null;
+                return NormalizeConversationUrl(File.ReadAllText(LastConversationPath).Trim());
             }
             catch
             {
@@ -46,7 +43,8 @@ namespace CadGpt.AutoCad
 
         public static void TrySaveConversationUrl(string? url)
         {
-            if (!IsSafeChatGptUrl(url))
+            var normalized = NormalizeConversationUrl(url);
+            if (normalized == null)
             {
                 return;
             }
@@ -54,7 +52,7 @@ namespace CadGpt.AutoCad
             try
             {
                 EnsureDirectories();
-                File.WriteAllText(LastConversationPath, url!);
+                File.WriteAllText(LastConversationPath, normalized);
             }
             catch
             {
@@ -62,21 +60,30 @@ namespace CadGpt.AutoCad
             }
         }
 
-        private static bool IsSafeChatGptUrl(string? value)
+        internal static string? NormalizeConversationUrl(string? value)
         {
-            if (string.IsNullOrWhiteSpace(value))
+            if (string.IsNullOrWhiteSpace(value) ||
+                !Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
+                uri.Scheme != Uri.UriSchemeHttps ||
+                !string.Equals(uri.Host, "chatgpt.com", StringComparison.OrdinalIgnoreCase) ||
+                !uri.IsDefaultPort)
             {
-                return false;
+                return null;
             }
 
-            if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            var path = uri.AbsolutePath;
+            if (path.IndexOf("/c/", StringComparison.OrdinalIgnoreCase) < 0)
             {
-                return false;
+                return null;
             }
 
-            return uri.Scheme == Uri.UriSchemeHttps &&
-                   string.Equals(uri.Host, "chatgpt.com", StringComparison.OrdinalIgnoreCase) &&
-                   value.StartsWith(ChatGptOrigin, StringComparison.OrdinalIgnoreCase);
+            var builder = new UriBuilder(Uri.UriSchemeHttps, "chatgpt.com")
+            {
+                Path = path,
+                Query = string.Empty,
+                Fragment = string.Empty
+            };
+            return builder.Uri.AbsoluteUri.TrimEnd('/');
         }
     }
 }
