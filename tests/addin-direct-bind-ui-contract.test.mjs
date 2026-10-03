@@ -16,21 +16,6 @@ const code = await fs.readFile(
   ),
   "utf8"
 );
-const connector = await fs.readFile(
-  new URL(
-    "../addins/cadgpt-autocad/Stage0/ChatConnectorScript.cs",
-    import.meta.url
-  ),
-  "utf8"
-);
-
-const connectorAdapter = await fs.readFile(
-  new URL(
-    "../addins/cadgpt-autocad/Stage0/ChatConnectorAdapter.cs",
-    import.meta.url
-  ),
-  "utf8"
-);
 const serverFactory = await fs.readFile(
   new URL(
     "../src/cadgpt/server-factory.ts",
@@ -78,29 +63,25 @@ test("drawing connect goes through local control, not through a ChatGPT turn", (
   );
 });
 
-test("pairing automation is staged and never creates a new chat", () => {
-  assert.match(
-    connector,
-    /COMPOSER_NOT_EMPTY/
-  );
-  assert.match(
-    connector,
-    /CG_CONNECTOR_NOT_FOUND/
-  );
-  assert.match(
-    connector,
-    /CG_CONNECTOR_AMBIGUOUS/
-  );
+test("panel never auto-types or auto-sends @cg", async () => {
   assert.doesNotMatch(
-    connector,
-    /new chat|new conversation/i
+    code,
+    /InvokeCadGptAsync|CallDevToolsProtocolMethodAsync|Input\.insertText|Input\.dispatchKeyEvent/
   );
-  assert.doesNotMatch(
-    connector,
-    /document\.cookie|localStorage|sessionStorage|indexedDB|XMLHttpRequest|fetch\(/
+  assert.match(
+    code,
+    /CadGPT — invoke @cg to connect/
   );
-});
 
+  for (const relative of [
+    "../addins/cadgpt-autocad/Stage0/ChatConnectorScript.cs",
+    "../addins/cadgpt-autocad/Stage0/ChatConnectorAdapter.cs",
+  ]) {
+    await assert.rejects(
+      fs.access(new URL(relative, import.meta.url))
+    );
+  }
+});
 
 test("panel pairing creates one reusable drawing workspace handle without adding an MCP connect command", () => {
   assert.match(
@@ -126,22 +107,6 @@ test("panel pairing creates one reusable drawing workspace handle without adding
   assert.doesNotMatch(
     toolPolicy,
     /cadgpt_connect_drawing/
-  );
-});
-
-
-test("auto @cg uses browser-native input rather than synthetic React value mutation", () => {
-  assert.match(
-    connectorAdapter,
-    /CallDevToolsProtocolMethodAsync\(\s*"Input\.insertText"/
-  );
-  assert.match(
-    connectorAdapter,
-    /CallDevToolsProtocolMethodAsync\(\s*"Input\.dispatchKeyEvent"/
-  );
-  assert.doesNotMatch(
-    connectorAdapter,
-    /setter\.call\(|dispatchEvent\(new InputEvent/
   );
 });
 
