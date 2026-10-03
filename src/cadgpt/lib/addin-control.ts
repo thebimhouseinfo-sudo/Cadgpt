@@ -9,7 +9,7 @@ import {
 import { getAppDataPath } from "./appdata.js";
 
 const CONTROL_SECRET = randomBytes(32).toString("base64url");
-const PAIR_WINDOW_MS = 120_000;
+const PAIR_WINDOW_MS = 180_000;
 
 interface PendingPair {
   pairId: string;
