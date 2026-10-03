@@ -97,10 +97,8 @@ namespace CadGpt.AutoCad
                 Browser.NavigationCompleted +=
                     Browser_NavigationCompleted;
 
-                var target =
-                    WebViewProfile.ReadLastConversationUrl()
-                    ?? "https://chatgpt.com/";
-                Browser.CoreWebView2.Navigate(target);
+                Browser.CoreWebView2.Navigate(
+                    WebViewProfile.StartupUrl);
 
                 _lifecycle.MarkReady(generation);
                 FocusBrowser();
@@ -128,8 +126,6 @@ namespace CadGpt.AutoCad
 
             var current =
                 Browser.Source?.AbsoluteUri;
-            WebViewProfile.TrySaveConversationUrl(
-                current);
 
             if (IsChatGptPage(current))
             {
