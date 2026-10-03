@@ -42,7 +42,7 @@ export function registerAdmissionTool(
           ? launch.welcome_text
           : undefined;
 
-      if (bareLaunch && decision.mode === "active" && decision.claimed) {
+      if (decision.mode === "active" && decision.claimed) {
         completePendingAddinPair(options.sessionKey);
       }
 
