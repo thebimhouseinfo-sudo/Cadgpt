@@ -16,6 +16,7 @@
   <ItemGroup>
     <Compile Include="../cadgpt-autocad/Stage0/PaletteLifecycleState.cs" Link="Stage0/PaletteLifecycleState.cs" />
     <Compile Include="../cadgpt-autocad/Stage0/ChatConnectorScript.cs" Link="Stage0/ChatConnectorScript.cs" />
+    <Compile Include="../cadgpt-autocad/Stage0/LocalCadGptControlClient.cs" Link="Stage0/LocalCadGptControlClient.cs" />
     <Compile Include="../cadgpt-autocad/WebViewProfile.cs" Link="WebViewProfile.cs" />
   </ItemGroup>
 </Project>
