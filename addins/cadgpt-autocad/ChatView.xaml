@@ -4,30 +4,61 @@
              xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
              MinWidth="320"
              MinHeight="420">
-    <Grid>
+    <Grid x:Name="RootGrid" Background="White">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Padding="8" BorderThickness="0,0,0,1" BorderBrush="#33000000">
-            <DockPanel LastChildFill="False">
-                <TextBlock x:Name="StatusText" VerticalAlignment="Center" Text="CadGPT Stage 0 — initializing" />
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                    <Button x:Name="ReloadButton" Margin="8,0,0,0" Padding="8,3" Click="ReloadButton_Click">Reload</Button>
-                    <Button x:Name="RetryButton" Margin="6,0,0,0" Padding="8,3" Click="RetryButton_Click">Retry</Button>
-                    <Button x:Name="RecreateButton" Margin="6,0,0,0" Padding="8,3" Click="RecreateButton_Click">Recreate</Button>
-                </StackPanel>
-            </DockPanel>
+        <Border x:Name="ToolbarBorder"
+                Grid.Row="0"
+                Padding="6"
+                Background="White"
+                BorderThickness="0,0,0,1"
+                BorderBrush="#22000000">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock x:Name="StatusText"
+                           Grid.Column="0"
+                           Margin="2,0,8,0"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           Text="CadGPT — initializing" />
+
+                <Button x:Name="ConnectButton"
+                        Grid.Column="1"
+                        Margin="0,0,6,0"
+                        Padding="8,4"
+                        Click="ConnectButton_Click"
+                        ToolTip="Bind this ChatGPT/CadGPT session to AutoCAD's current active drawing without sending a chat message.">
+                    Connect this drawing
+                </Button>
+
+                <Button x:Name="RefreshButton"
+                        Grid.Column="2"
+                        Margin="0,0,6,0"
+                        Padding="8,4"
+                        Click="RefreshButton_Click">
+                    Refresh
+                </Button>
+
+                <Button x:Name="ThemeButton"
+                        Grid.Column="3"
+                        Padding="8,4"
+                        Click="ThemeButton_Click"
+                        ToolTip="Toggle add-in chrome between light and dark.">
+                    Dark
+                </Button>
+            </Grid>
         </Border>
 
-        <wv2:WebView2 x:Name="Browser" Grid.Row="1" />
-
-        <TextBlock Grid.Row="2"
-                   Padding="8"
-                   TextWrapping="Wrap"
-                   Foreground="#77000000"
-                   Text="Stage 0 shell only. No drawing binding or CAD authority is provided by this panel." />
+        <wv2:WebView2 x:Name="Browser"
+                      Grid.Row="1" />
     </Grid>
 </UserControl>
