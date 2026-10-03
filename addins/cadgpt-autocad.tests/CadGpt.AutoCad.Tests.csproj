@@ -14,6 +14,6 @@
     <PackageReference Include="MSTest.TestFramework" Version="4.4.1" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="../cadgpt-autocad/Stage0/PaletteLifecycleState.cs" Link="Stage0/PaletteLifecycleState.cs" />
+    <Compile Include="../cadgpt-autocad/Stage0/PaletteLifecycleState.cs" Link="Stage0/PaletteLifecycleState.cs" />\n    <Compile Include="../cadgpt-autocad/WebViewProfile.cs" Link="WebViewProfile.cs" />
   </ItemGroup>
 </Project>
