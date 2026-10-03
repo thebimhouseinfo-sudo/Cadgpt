@@ -89,6 +89,20 @@ jobs:
               throw "PowerShell parse failed: $script"
             }
           }
+      - name: Stage 0 probe default binding smoke on Windows PowerShell
+        shell: powershell
+        run: |
+          $output = & powershell.exe -NoProfile -File .\scripts\probe-autocad-addin-host.ps1 -AutoCadInstallDir "Z:\__cadgpt_missing__" 2>&1
+          $exitCode = $LASTEXITCODE
+          $text = ($output | Out-String)
+          if ($exitCode -eq 0) {
+            throw "Stage 0 probe unexpectedly succeeded against the missing fixture path"
+          }
+          if ($text -match "Cannot bind argument to parameter 'Path' because it is an empty string" -or $text -match "PSScriptRoot") {
+            throw "Stage 0 probe regressed to parameter-binding-time path resolution"
+          }
+          Write-Host "Windows PowerShell default parameter binding reached host resolution as expected"
+
       - name: Stage 0 add-in host-independent lifecycle tests
         shell: pwsh
         run: dotnet test addins/cadgpt-autocad.tests/CadGpt.AutoCad.Tests.csproj --configuration Release
