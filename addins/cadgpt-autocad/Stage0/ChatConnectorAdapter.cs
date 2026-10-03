@@ -57,14 +57,42 @@ namespace CadGpt.AutoCad.Stage0
                 "{\"text\":\"@cg\"}");
             token.ThrowIfCancellationRequested();
 
-            await Task.Delay(650, token);
+            await Task.Delay(500, token);
 
-            var selected = await ExecuteStageAsync(
-                ChatConnectorScript.SelectCadGptSuggestion(),
-                token);
+            ConnectorScriptResult selected =
+                new ConnectorScriptResult
+                {
+                    Success = false,
+                    Code = "CG_CONNECTOR_NOT_FOUND"
+                };
+            var suggestionDeadline =
+                DateTime.UtcNow.AddSeconds(6);
+            while (DateTime.UtcNow < suggestionDeadline)
+            {
+                selected = await ExecuteStageAsync(
+                    ChatConnectorScript.SelectCadGptSuggestion(),
+                    token);
+                if (selected.Success)
+                {
+                    break;
+                }
+
+                if (!string.Equals(
+                    selected.Code,
+                    "CG_CONNECTOR_NOT_FOUND",
+                    StringComparison.Ordinal))
+                {
+                    return selected.Code ??
+                        "CG_CONNECTOR_SELECTION_FAILED";
+                }
+
+                await Task.Delay(300, token);
+            }
+
             if (!selected.Success)
             {
-                return selected.Code ?? "CG_CONNECTOR_SELECTION_FAILED";
+                return selected.Code ??
+                    "CG_CONNECTOR_SELECTION_TIMEOUT";
             }
 
             await Task.Delay(300, token);
