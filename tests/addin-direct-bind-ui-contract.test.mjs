@@ -16,6 +16,20 @@ const code = await fs.readFile(
   ),
   "utf8"
 );
+const palette = await fs.readFile(
+  new URL(
+    "../addins/cadgpt-autocad/PaletteController.cs",
+    import.meta.url
+  ),
+  "utf8"
+);
+const client = await fs.readFile(
+  new URL(
+    "../addins/cadgpt-autocad/Stage0/AddinControlClient.cs",
+    import.meta.url
+  ),
+  "utf8"
+);
 const serverFactory = await fs.readFile(
   new URL(
     "../src/cadgpt/server-factory.ts",
@@ -23,152 +37,135 @@ const serverFactory = await fs.readFile(
   ),
   "utf8"
 );
-const toolPolicy = await fs.readFile(
+const indexSource = await fs.readFile(
   new URL(
-    "../src/cadgpt/lib/tool-policy.ts",
+    "../src/index.ts",
     import.meta.url
   ),
   "utf8"
 );
 
-test("panel has only toolbar plus WebView and no legacy footer/retry controls", () => {
+test("CADGPT panel header contains only bound drawing name and theme button", () => {
   assert.equal(
     (xaml.match(/<RowDefinition/g) ?? []).length,
     2
   );
-  assert.match(xaml, /Connect this drawing/);
-  assert.match(xaml, />\s*Refresh\s*</);
-  assert.match(xaml, />\s*Dark\s*</);
-  assert.doesNotMatch(xaml, /RetryButton/);
-  assert.doesNotMatch(xaml, /RecreateButton/);
-  assert.doesNotMatch(xaml, /Stage 0 shell only/);
-});
-
-test("drawing connect goes through local control, not through a ChatGPT turn", () => {
-  const start = code.indexOf(
-    "private async void ConnectButton_Click"
+  assert.match(
+    xaml,
+    /x:Name="BoundDrawingText"/
   );
-  const end = code.indexOf(
-    "private static string? ActiveDrawingSelector",
-    start
+  assert.match(
+    xaml,
+    /x:Name="ThemeButton"/
   );
-  assert.ok(start >= 0 && end > start);
-
-  const handler = code.slice(start, end);
-  assert.match(handler, /ConnectDrawingAsync/);
-  assert.doesNotMatch(handler, /InvokeCadGptAsync/);
   assert.doesNotMatch(
-    handler,
-    /connect drawing:|@cg/
+    xaml,
+    /ConnectButton|RefreshButton|RetryButton|RecreateButton/
+  );
+  assert.doesNotMatch(
+    xaml,
+    /Connect this drawing|Refresh|Retry/
   );
 });
 
-test("panel never auto-types or auto-sends @cg", async () => {
+test("panel title and visual tab are uppercase CADGPT", () => {
+  assert.match(
+    palette,
+    /new PaletteSet\("CADGPT"/
+  );
+  assert.match(
+    palette,
+    /AddVisual\("CADGPT"/
+  );
+});
+
+test("panel is observation-only and exposes no drawing connect action", () => {
   assert.doesNotMatch(
     code,
-    /InvokeCadGptAsync|CallDevToolsProtocolMethodAsync|Input\.insertText|Input\.dispatchKeyEvent/
+    /ConnectDrawingAsync|ConnectButton_Click|RefreshButton_Click/
+  );
+  assert.doesNotMatch(
+    client,
+    /drawing\/connect|ConnectDrawingAsync/
+  );
+  assert.doesNotMatch(
+    indexSource,
+    /addin-control\/drawing\/connect/
+  );
+  assert.match(
+    indexSource,
+    /addin-control\/binding\/:pairId/
+  );
+});
+
+test("normal CadGPT browser binding flow is preserved", () => {
+  assert.doesNotMatch(
+    serverFactory,
+    /hasPendingAddinPair|addin_managed_workspace|replaceDrawingForExecution/
+  );
+  assert.match(
+    serverFactory,
+    /prepareCadLaunch\(sessionKey,\s*\{\s*autoBindSingle:\s*true/
+  );
+  assert.match(
+    serverFactory,
+    /registerAddinSessionObserver/
+  );
+  assert.match(
+    serverFactory,
+    /getBoundDrawingsForExecution/
+  );
+});
+
+test("header polls bound drawing and becomes orange when active drawing differs", () => {
+  assert.match(
+    code,
+    /DispatcherTimer/
   );
   assert.match(
     code,
-    /CadGPT — invoke @cg to connect/
-  );
-
-  for (const relative of [
-    "../addins/cadgpt-autocad/Stage0/ChatConnectorScript.cs",
-    "../addins/cadgpt-autocad/Stage0/ChatConnectorAdapter.cs",
-  ]) {
-    await assert.rejects(
-      fs.access(new URL(relative, import.meta.url))
-    );
-  }
-});
-
-test("panel pairing creates one reusable drawing workspace handle without adding an MCP connect command", () => {
-  assert.match(
-    serverFactory,
-    /const addinPairingLaunch = hasPendingAddinPair\(\)/
+    /GetBindingStatusAsync/
   );
   assert.match(
-    serverFactory,
-    /ownerId: "drawing-workspace"/
+    code,
+    /ActiveDrawingIdentity\(\)/
   );
   assert.match(
-    serverFactory,
-    /work_handle:\s*\{[\s\S]*execution_id: work\.executionId/
+    code,
+    /DrawingMismatch\(bound, active\)/
   );
   assert.match(
-    serverFactory,
-    /replaceDrawingForExecution\(work\.executionId, selector\)/
+    code,
+    /Color\.FromRgb\(\s*245, 158, 11\)/
   );
-  assert.doesNotMatch(
-    serverFactory,
-    /cadgpt_connect_drawing/
-  );
-  assert.doesNotMatch(
-    toolPolicy,
-    /cadgpt_connect_drawing/
+  assert.match(
+    code,
+    /BoundDrawingText\.Text/
   );
 });
 
-
-test("add-in managed workspace keeps one work handle and tells the model to recheck binding", () => {
-  assert.match(
-    serverFactory,
-    /addin_managed_workspace:\s*true/
-  );
-  assert.match(
-    serverFactory,
-    /AUTO-CAD ADD-IN MANAGED WORKSPACE/
-  );
-  assert.match(
-    serverFactory,
-    /call drawing_status with the current work_handle/
-  );
-  assert.match(
-    serverFactory,
-    /Do not call cg\/list, cadgpt_cad_confirm/
-  );
-});
-
-
-test("paired panel auto-binds the active drawing and uses 90 percent WebView zoom", () => {
+test("panel keeps 90 percent ChatGPT zoom and no auto CadGPT input automation", () => {
   assert.match(
     code,
     /Browser\.ZoomFactor\s*=\s*0\.90/
   );
-  assert.match(
+  assert.doesNotMatch(
     code,
-    /if \(await EnsurePairedAsync\([\s\S]*?TryInitialDrawingBindAsync/
-  );
-  assert.match(
-    code,
-    /ConnectDrawingSelectorAsync\([\s\S]*?ensurePair:\s*false/
+    /InvokeCadGptAsync|CallDevToolsProtocolMethodAsync|Input\.insertText|Input\.dispatchKeyEvent/
   );
 });
 
-test("manual Connect this drawing shares the same hidden bind path and exposes failures", async () => {
-  const client = await fs.readFile(
-    new URL(
-      "../addins/cadgpt-autocad/Stage0/AddinControlClient.cs",
-      import.meta.url
-    ),
-    "utf8"
-  );
-
-  assert.match(
-    code,
-    /ConnectDrawingSelectorAsync\([\s\S]*?ensurePair:\s*true/
-  );
+test("binding status remains read-only and never exposes work authority", () => {
   assert.match(
     client,
-    /\/addin-control\/drawing\/connect/
+    /GetBindingStatusAsync/
   );
-  assert.match(
+  assert.doesNotMatch(
     client,
-    /45000/
+    /authority_token|execution_id/
   );
-  assert.match(
-    client,
-    /ADDIN_CONTROL_TIMEOUT/
+  assert.doesNotMatch(
+    indexSource,
+    /drawing_selector/
   );
 });
