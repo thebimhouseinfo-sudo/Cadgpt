@@ -42,9 +42,7 @@ namespace CadGpt.AutoCad
             }
 
             var view = new ChatView();
-            view.RecreateRequested += OnRecreateRequested;
-
-            var palette = new PaletteSet("CadGPT", PaletteId)
+             var palette = new PaletteSet("CADGPT", PaletteId)
             {
                 DockEnabled = DockSides.Left | DockSides.Right,
                 MinimumSize = new Size(360, 480),
@@ -55,14 +53,9 @@ namespace CadGpt.AutoCad
                 KeepFocus = true
             };
 
-            palette.AddVisual("ChatGPT", view, true);
+            palette.AddVisual("CADGPT", view, true);
             _view = view;
             _palette = palette;
-        }
-
-        private static void OnRecreateRequested(object? sender, EventArgs e)
-        {
-            Recreate();
         }
 
         private static void DisposeCurrent()
@@ -74,7 +67,6 @@ namespace CadGpt.AutoCad
 
             if (view != null)
             {
-                view.RecreateRequested -= OnRecreateRequested;
                 view.Dispose();
             }
 
