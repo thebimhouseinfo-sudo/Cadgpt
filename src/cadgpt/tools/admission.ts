@@ -4,6 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { checkAdmission } from "../lib/admission.js";
 import { toolResult } from "../lib/tool-result.js";
 import { isBareCadGptLaunch } from "../lib/quickstart.js";
+import { captureAddinAdmission } from "../runtime/addin-control.js";
 
 export function registerAdmissionTool(
   server: McpServer,
@@ -32,6 +33,9 @@ export function registerAdmissionTool(
     async ({ user_turn, invocation_source }) => {
       const decision = checkAdmission(options.sessionKey, user_turn, invocation_source);
       const bareLaunch = isBareCadGptLaunch(user_turn, invocation_source);
+      if (decision.mode === "active" && decision.claimed) {
+        captureAddinAdmission(options.sessionKey);
+      }
       const launch =
         decision.mode === "active"
           ? await options.onActive({ bareLaunch })
