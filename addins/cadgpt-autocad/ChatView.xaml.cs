@@ -254,9 +254,12 @@ namespace CadGpt.AutoCad
                         token);
                 }
 
+                // Keep the pending pair id for the remainder of the
+                // backend pairing window. If the user invokes CadGPT shortly
+                // after this UI wait ends, the next Connect/Refresh can still
+                // reuse that exact pairing instead of creating an orphan.
                 SetStatus(
-                    "CadGPT — invoke @cg, then Refresh");
-                _pairId = null;
+                    "CadGPT — invoke @cg, then Connect");
                 return false;
             }
             catch (OperationCanceledException)
