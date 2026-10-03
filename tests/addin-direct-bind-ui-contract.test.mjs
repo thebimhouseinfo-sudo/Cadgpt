@@ -30,6 +30,41 @@ const client = await fs.readFile(
   ),
   "utf8"
 );
+const commands = await fs.readFile(
+  new URL(
+    "../addins/cadgpt-autocad/Commands.cs",
+    import.meta.url
+  ),
+  "utf8"
+);
+const entryPoint = await fs.readFile(
+  new URL(
+    "../addins/cadgpt-autocad/EntryPoint.cs",
+    import.meta.url
+  ),
+  "utf8"
+);
+const packageManifest = await fs.readFile(
+  new URL(
+    "../addins/cadgpt-autocad/bundle/PackageContents.xml",
+    import.meta.url
+  ),
+  "utf8"
+);
+const buildScript = await fs.readFile(
+  new URL(
+    "../scripts/build-autocad-addin.ps1",
+    import.meta.url
+  ),
+  "utf8"
+);
+const installScript = await fs.readFile(
+  new URL(
+    "../scripts/install-autocad-addin.ps1",
+    import.meta.url
+  ),
+  "utf8"
+);
 const serverFactory = await fs.readFile(
   new URL(
     "../src/cadgpt/server-factory.ts",
@@ -68,14 +103,14 @@ test("CADGPT panel header contains only bound drawing name and theme button", ()
   );
 });
 
-test("panel title and visual tab are uppercase CADGPT", () => {
+test("panel title and visual tab are CadGPT", () => {
   assert.match(
     palette,
-    /new PaletteSet\("CADGPT"/
+    /new PaletteSet\("CadGPT"/
   );
   assert.match(
     palette,
-    /AddVisual\("CADGPT"/
+    /AddVisual\("CadGPT"/
   );
 });
 
@@ -168,4 +203,37 @@ test("binding status remains read-only and never exposes work authority", () => 
     indexSource,
     /drawing_selector/
   );
+});
+
+test("CADGPT command opens the CadGPT panel and legacy Stage 0 commands are gone", () => {
+  assert.match(
+    commands,
+    /CommandMethod\("CADGPT",\s*CommandFlags\.Session\)/
+  );
+  assert.match(
+    commands,
+    /PaletteController\.Show\(\)/
+  );
+  assert.doesNotMatch(
+    commands,
+    /CGSTAGE0|CGSTAGE0RECREATE/
+  );
+  assert.match(
+    entryPoint,
+    /ExtensionApplication\(typeof\(CadGpt\.AutoCad\.EntryPoint\)\)/
+  );
+});
+
+test("production bundle autoloads at AutoCAD startup", () => {
+  assert.match(packageManifest, /Name="CadGPT"/);
+  assert.match(packageManifest, /AppName="CadGPT"/);
+  assert.match(packageManifest, /LoadOnAutoCADStartup="True"/);
+  assert.match(buildScript, /bin\\bundle\\CadGPT\.bundle/);
+});
+
+test("installer deploys CadGPT.bundle into Autodesk ApplicationPlugins", () => {
+  assert.match(installScript, /Autodesk\\ApplicationPlugins/);
+  assert.match(installScript, /CadGPT\.bundle/);
+  assert.match(installScript, /LoadOnAutoCADStartup="True"/);
+  assert.match(installScript, /Command : CADGPT/);
 });
