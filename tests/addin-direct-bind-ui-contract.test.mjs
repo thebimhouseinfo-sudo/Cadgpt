@@ -101,11 +101,7 @@ test("panel pairing creates one reusable drawing workspace handle without adding
   );
   assert.match(
     serverFactory,
-    /clearExecutionDrawingContexts\(work\.executionId\)/
-  );
-  assert.match(
-    serverFactory,
-    /bindDrawingForExecution\(work\.executionId, selector\)/
+    /replaceDrawingForExecution\(work\.executionId, selector\)/
   );
   assert.doesNotMatch(
     serverFactory,
