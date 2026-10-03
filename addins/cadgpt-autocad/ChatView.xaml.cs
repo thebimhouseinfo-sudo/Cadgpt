@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using CadGpt.AutoCad.Stage0;
 using Microsoft.Web.WebView2.Core;
 
@@ -20,6 +21,7 @@ namespace CadGpt.AutoCad
         {
             InitializeComponent();
             Loaded += OnLoaded;
+            Browser.PreviewMouseDown += Browser_PreviewMouseDown;
         }
 
         private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -62,6 +64,7 @@ namespace CadGpt.AutoCad
                 Browser.CoreWebView2.Navigate(target);
 
                 _lifecycle.MarkReady(generation);
+                FocusBrowser();
                 SetStatus("CadGPT Stage 0 — WebView2 ready");
             }
             catch (OperationCanceledException)
@@ -86,6 +89,22 @@ namespace CadGpt.AutoCad
 
             WebViewProfile.TrySaveConversationUrl(Browser.Source?.AbsoluteUri);
             SetStatus("CadGPT Stage 0 — ChatGPT loaded");
+        }
+
+        private void Browser_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            FocusBrowser();
+        }
+
+        private void FocusBrowser()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            Browser.Focus();
+            Keyboard.Focus(Browser);
         }
 
         private void ReloadButton_Click(object sender, RoutedEventArgs e)
@@ -144,6 +163,7 @@ namespace CadGpt.AutoCad
             _disposed = true;
             var generation = _lifecycle.BeginDispose();
             Loaded -= OnLoaded;
+            Browser.PreviewMouseDown -= Browser_PreviewMouseDown;
             CancelInitialization();
             Browser.NavigationCompleted -= Browser_NavigationCompleted;
             Browser.Dispose();
