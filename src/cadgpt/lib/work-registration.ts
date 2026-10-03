@@ -480,6 +480,31 @@ export function releaseWorkRegistration(
   return { ...work, capabilities: [...work.capabilities] };
 }
 
+export function assertWorkIdleForInternalRebind(
+  executionId: string,
+  sessionKey: string
+): WorkRegistration {
+  cleanup();
+  const work = registrations.get(executionId);
+  if (
+    !work ||
+    work.closing === true ||
+    work.sessionKey !== sessionKey ||
+    activeBySession.get(sessionKey) !== executionId
+  ) {
+    throw new Error(
+      "NO_ACTIVE_WORK: current session has no matching active work for drawing rebind."
+    );
+  }
+  if (hasActiveLeaseForWork(executionId)) {
+    throw new Error(
+      "WORK_BUSY: current CadGPT work has an active ToolLease; retry Connect this drawing after the tool call finishes."
+    );
+  }
+  work.lastActivityAt = new Date().toISOString();
+  return { ...work, capabilities: [...work.capabilities] };
+}
+
 export function activeExecutionForSession(sessionKey: string): string | null {
   cleanup();
   return activeBySession.get(sessionKey) ?? null;
