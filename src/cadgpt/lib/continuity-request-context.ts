@@ -131,12 +131,12 @@ function successfulProbeResult(result: unknown): boolean {
   return value.isError !== true && value.structuredContent?.ok === true;
 }
 
-export async function runSessionProbeWithEvidence<T>(
+export async function runSessionProbeWithEvidence(
   serverSessionKey: string,
   toolName: string,
   assertAuthority: () => void,
-  action: () => Promise<T>
-): Promise<T> {
+  action: () => Promise<any>
+): Promise<any> {
   if (toolName !== "job_list") {
     assertAuthority();
     return action();
@@ -154,7 +154,7 @@ export async function runSessionProbeWithEvidence<T>(
     throw error;
   }
 
-  let result: T;
+  let result: any;
   try {
     result = await action();
   } catch (error) {
