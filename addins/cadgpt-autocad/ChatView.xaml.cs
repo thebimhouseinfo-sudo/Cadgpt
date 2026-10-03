@@ -221,9 +221,40 @@ namespace CadGpt.AutoCad
                 SetStatus(
                     "CadGPT — connecting @cg");
 
+                var invocationDeadline =
+                    DateTime.UtcNow.AddSeconds(20);
                 var invocationError =
-                    await _connector.InvokeCadGptAsync(
+                    "COMPOSER_NOT_FOUND";
+
+                while (DateTime.UtcNow <
+                    invocationDeadline)
+                {
+                    invocationError =
+                        await _connector
+                            .InvokeCadGptAsync(
+                                token);
+
+                    if (string.IsNullOrWhiteSpace(
+                        invocationError))
+                    {
+                        break;
+                    }
+
+                    if (!string.Equals(
+                        invocationError,
+                        "COMPOSER_NOT_FOUND",
+                        StringComparison.Ordinal))
+                    {
+                        break;
+                    }
+
+                    SetStatus(
+                        "CadGPT — waiting for ChatGPT");
+                    await Task.Delay(
+                        500,
                         token);
+                }
+
                 if (!string.IsNullOrWhiteSpace(
                     invocationError))
                 {
