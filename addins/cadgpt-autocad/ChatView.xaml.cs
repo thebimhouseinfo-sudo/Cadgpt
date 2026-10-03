@@ -96,12 +96,17 @@ namespace CadGpt.AutoCad
             }
         }
 
-        private async void RetryButton_Click(object sender, RoutedEventArgs e)
+        private void RetryButton_Click(object sender, RoutedEventArgs e)
         {
-            await InitializeBrowserAsync();
+            RequestCleanRecreate();
         }
 
         private void RecreateButton_Click(object sender, RoutedEventArgs e)
+        {
+            RequestCleanRecreate();
+        }
+
+        private void RequestCleanRecreate()
         {
             Dispatcher.BeginInvoke(new Action(() =>
             {
