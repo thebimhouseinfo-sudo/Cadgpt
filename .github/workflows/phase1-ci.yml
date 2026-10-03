@@ -17,6 +17,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
 
       - name: Guard retired legacy runtime surface
         shell: pwsh
@@ -77,7 +80,7 @@ jobs:
       - name: Validate PowerShell launcher scripts
         shell: pwsh
         run: |
-          foreach ($script in @("cadgpt-tray.ps1", "wait-tray-ready.ps1", "openai-tunnel.ps1", "doctor.ps1", "acceptance.ps1")) {
+          foreach ($script in @("cadgpt-tray.ps1", "wait-tray-ready.ps1", "openai-tunnel.ps1", "doctor.ps1", "acceptance.ps1", "scripts/probe-autocad-addin-host.ps1", "scripts/build-autocad-addin.ps1")) {
             $errors = $null
             $tokens = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script), [ref]$tokens, [ref]$errors) | Out-Null
@@ -86,6 +89,10 @@ jobs:
               throw "PowerShell parse failed: $script"
             }
           }
+      - name: Stage 0 add-in host-independent lifecycle tests
+        shell: pwsh
+        run: dotnet test addins/cadgpt-autocad.tests/CadGpt.AutoCad.Tests.csproj --configuration Release
+
       - name: Guard Doctor AppData resolution contract
         shell: pwsh
         run: |
