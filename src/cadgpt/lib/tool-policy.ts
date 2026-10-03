@@ -17,6 +17,7 @@ const DISCOVERY_TOOLS = new Set([
   "registry_list",
   "registry_get",
   "library_list",
+  "cadgpt_connect_drawing",
 ]);
 
 export type ToolAuthority = "control" | "session" | "work";
