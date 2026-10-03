@@ -1,19 +1,15 @@
 using Autodesk.AutoCAD.Runtime;
 
+[assembly: CommandClass(typeof(CadGpt.AutoCad.Commands))]
+
 namespace CadGpt.AutoCad
 {
     public sealed class Commands
     {
-        [CommandMethod("CGSTAGE0", CommandFlags.Session)]
-        public void ShowStage0()
+        [CommandMethod("CADGPT", CommandFlags.Session)]
+        public void ShowCadGpt()
         {
             PaletteController.Show();
-        }
-
-        [CommandMethod("CGSTAGE0RECREATE", CommandFlags.Session)]
-        public void RecreateStage0()
-        {
-            PaletteController.Recreate();
         }
     }
 }
