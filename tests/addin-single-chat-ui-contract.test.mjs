@@ -30,8 +30,10 @@ test("CadGPT panel uses one-chat toolbar without bottom footer or retry/recreate
   );
 
   assert.match(code, /MdiActiveDocument/);
-  assert.match(code, /"connect drawing: " \+ selector/);
-  assert.match(code, /SendCadGptTurnAsync\(\s*string\.Empty/);
+  assert.match(code, /ConnectDrawingAsync\(/);
+  assert.match(code, /InvokeCadGptAsync\(/);
+  assert.match(code, /LocalCadGptControlClient/);
+  assert.doesNotMatch(code, /connect drawing:/i);
   assert.doesNotMatch(code, /NewChat|new chat|new conversation/i);
 });
 
