@@ -113,6 +113,7 @@ jobs:
             }
 
             Write-Host "Windows PowerShell default parameter binding reached host resolution as expected"
+            $global:LASTEXITCODE = 0
           }
           finally {
             $ErrorActionPreference = $previousPreference
