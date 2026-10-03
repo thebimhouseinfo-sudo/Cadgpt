@@ -237,3 +237,14 @@ test("installer deploys CadGPT.bundle into Autodesk ApplicationPlugins", () => {
   assert.match(installScript, /LoadOnAutoCADStartup="True"/);
   assert.match(installScript, /Command : CADGPT/);
 });
+
+test("production CadGPT palette never reuses the Stage 0 palette GUID", () => {
+  assert.doesNotMatch(
+    palette,
+    /34F319C7-C59A-46A4-83A1-33B1B919BEE6/
+  );
+  assert.match(
+    palette,
+    /new PaletteSet\("CadGPT", PaletteId\)/
+  );
+});
