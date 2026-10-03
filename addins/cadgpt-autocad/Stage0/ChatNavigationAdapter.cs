@@ -59,6 +59,14 @@ namespace CadGpt.AutoCad.Stage0
             return await ExecuteAsync(ChatNavigationScript.InvokeCadGpt(), token);
         }
 
+        public async Task<ChatNavigationObservation> SendContinuationProbeAsync(
+            CancellationToken token)
+        {
+            return await ExecuteAsync(
+                ChatNavigationScript.ContinuationProbe(),
+                token);
+        }
+
         public async Task<ChatNavigationObservation> WaitForConversationAsync(
             TimeSpan timeout,
             CancellationToken token)
