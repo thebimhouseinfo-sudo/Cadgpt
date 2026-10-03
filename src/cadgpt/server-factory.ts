@@ -452,12 +452,32 @@ export function createMcpServer(sessionKey: string): McpServer {
     sessionKey,
     async (selector) => {
       assertSessionClaimed(sessionKey);
-      clearSessionWorkStopBarrier(sessionKey);
-      return activateCadWorkspace({
-        key: "addin",
-        name: selector,
-        full_name: selector,
+      const work = activeWorkForSession(sessionKey);
+      if (
+        !work ||
+        work.ownerType !== "direct-cad" ||
+        work.ownerId !== "drawing-workspace" ||
+        (work.executionPath !== "cad" && work.executionPath !== "hybrid")
+      ) {
+        throw new Error("ADDIN_DRAWING_WORKSPACE_UNAVAILABLE");
+      }
+
+      const {
+        bindDrawingForExecution,
+        clearExecutionDrawingContexts,
+      } = await import("./session/drawing-binding.js");
+      const { cadUpstream } = await import("./runtime/cad-upstream.js");
+
+      clearExecutionDrawingContexts(work.executionId);
+      const bound = await withCadHostLock("autocad", async () => {
+        await cadUpstream.activate();
+        return bindDrawingForExecution(work.executionId, selector);
       });
+
+      return {
+        drawing: bound,
+        cad_tools_ready: true,
+      };
     }
   );
   addinControllerIdByServer.set(server, addinControllerId);
@@ -519,10 +539,72 @@ export function createMcpServer(sessionKey: string): McpServer {
       await loadDiscoveryFamily(server);
       if (!bareLaunch) return;
       clearSessionWorkStopBarrier(sessionKey);
+
+      const addinPairingLaunch = hasPendingAddinPair();
+      if (addinPairingLaunch) {
+        let work = activeWorkForSession(sessionKey);
+        if (
+          !work ||
+          work.ownerType !== "direct-cad" ||
+          work.ownerId !== "drawing-workspace" ||
+          (work.executionPath !== "cad" && work.executionPath !== "hybrid")
+        ) {
+          const previousExecution = activeExecutionForSession(sessionKey);
+          if (previousExecution) {
+            const cleanupId = releaseSessionWork(sessionKey);
+            if (cleanupId) {
+              await cleanupExecutionState(cleanupId);
+            }
+          }
+
+          work = createWorkRegistration({
+            sessionKey,
+            ownerType: "direct-cad",
+            ownerId: "drawing-workspace",
+            executionPath: "hybrid",
+          });
+          await prepareFamilies(
+            server,
+            "hybrid",
+            "drawing-workspace",
+            work.executionId
+          );
+        }
+
+        const { cadProxySurfaceSnapshot } = await import("./tools/cad-proxy.js");
+        const cadSurface = cadProxySurfaceSnapshot(server);
+        return {
+          launch_mode: "ready",
+          welcome_text: [
+            "```text",
+            "CadGPT / CG — Connected",
+            "────────────────────────────────",
+            "",
+            "ChatGPT đã kết nối với CadGPT.",
+            "Dùng nút Connect this drawing trong AutoCAD",
+            "để chọn bản vẽ làm workspace hiện tại.",
+            "────────────────────────────────",
+            "```",
+          ].join("\n"),
+          autocad_detected: true,
+          work_handle: {
+            execution_id: work.executionId,
+            authority_token: work.authorityToken,
+            owner_type: work.ownerType,
+            owner_id: work.ownerId,
+            execution_path: work.executionPath,
+            capabilities: work.capabilities,
+            work_capabilities: work.capabilities,
+            generation: work.generation,
+          },
+          cad_tools_ready: false,
+          cad_proxy_tool_count: cadSurface.count,
+          cad_proxy_tools: cadSurface.tools,
+        };
+      }
+
       const launch = await prepareCadLaunch(sessionKey, {
-        // A panel pairing launch establishes conversation/session identity only.
-        // Drawing authority changes exclusively through the add-in local control.
-        autoBindSingle: !hasPendingAddinPair(),
+        autoBindSingle: true,
       });
       if (launch.mode === "auto_bind" && launch.auto_bind_drawing) {
         const activated = await activateCadWorkspace(
