@@ -92,16 +92,28 @@ jobs:
       - name: Stage 0 probe default binding smoke on Windows PowerShell
         shell: powershell
         run: |
-          $output = & powershell.exe -NoProfile -File .\scripts\probe-autocad-addin-host.ps1 -AutoCadInstallDir "Z:\__cadgpt_missing__" 2>&1
-          $exitCode = $LASTEXITCODE
-          $text = ($output | Out-String)
-          if ($exitCode -eq 0) {
-            throw "Stage 0 probe unexpectedly succeeded against the missing fixture path"
+          $previousPreference = $ErrorActionPreference
+          $ErrorActionPreference = "Continue"
+          try {
+            $output = & powershell.exe -NoProfile -File .\scripts\probe-autocad-addin-host.ps1 -AutoCadInstallDir "Z:\__cadgpt_missing__" 2>&1
+            $exitCode = $LASTEXITCODE
+            $text = ($output | Out-String)
+
+            if ($exitCode -eq 0) {
+              throw "Stage 0 probe unexpectedly succeeded against the missing fixture path"
+            }
+            if ($text -match "Cannot bind argument to parameter 'Path' because it is an empty string" -or $text -match "PSScriptRoot") {
+              throw "Stage 0 probe regressed to parameter-binding-time path resolution"
+            }
+            if ($text -notmatch "acad.exe was not found in AutoCadInstallDir") {
+              throw "Stage 0 probe did not reach host resolution as expected. Output: $text"
+            }
+
+            Write-Host "Windows PowerShell default parameter binding reached host resolution as expected"
           }
-          if ($text -match "Cannot bind argument to parameter 'Path' because it is an empty string" -or $text -match "PSScriptRoot") {
-            throw "Stage 0 probe regressed to parameter-binding-time path resolution"
+          finally {
+            $ErrorActionPreference = $previousPreference
           }
-          Write-Host "Windows PowerShell default parameter binding reached host resolution as expected"
 
       - name: Stage 0 add-in host-independent lifecycle tests
         shell: pwsh
