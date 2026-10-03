@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ApplicationPackage SchemaVersion="1.0" AutodeskProduct="AutoCAD" ProductType="Application"
-  Name="CadGPT" AppVersion="0.1.0"
+  Name="CadGPT" AppVersion="0.1.1"
   Description="CadGPT embedded ChatGPT panel for AutoCAD"
   ProductCode="{8F64FC7A-9F8C-4DEB-984D-B8024721967F}"
   UpgradeCode="{798C4B1A-A405-40DE-BF08-CFF51D5B6B29}">
   <CompanyDetails Name="CadGPT" />
   <Components>
     <RuntimeRequirements OS="Win64" Platform="AutoCAD*" SeriesMin="__AUTOCAD_SERIES__" SeriesMax="__AUTOCAD_SERIES__" />
-    <ComponentEntry AppName="CadGPT" Version="0.1.0"
+    <ComponentEntry AppName="CadGPT" Version="0.1.1"
       ModuleName="./Contents/Windows/CadGpt.AutoCad.dll"
       AppDescription="CadGPT embedded ChatGPT panel"
       LoadOnAutoCADStartup="True" />
