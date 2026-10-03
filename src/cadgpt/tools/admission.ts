@@ -4,6 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { checkAdmission } from "../lib/admission.js";
 import { toolResult } from "../lib/tool-result.js";
 import { isBareCadGptLaunch } from "../lib/quickstart.js";
+import { completePendingAddinPair } from "../lib/addin-control.js";
 
 export function registerAdmissionTool(
   server: McpServer,
@@ -40,6 +41,10 @@ export function registerAdmissionTool(
         bareLaunch && launch && typeof launch.welcome_text === "string"
           ? launch.welcome_text
           : undefined;
+
+      if (decision.mode === "active" && decision.claimed) {
+        completePendingAddinPair(options.sessionKey);
+      }
 
       const data = {
         internal_control_signal: true,

@@ -53,6 +53,11 @@ import {
 import { cleanupExecutionState } from "./runtime/execution-cleanup.js";
 import { withCadHostLock } from "./runtime/cad-scheduler.js";
 import { getRepoRoot } from "./lib/path-security.js";
+import {
+  clearAddinPairingsForSession,
+  registerAddinSessionObserver,
+  unregisterAddinSessionObserver,
+} from "./lib/addin-control.js";
 
 export const FRESH_CAD_STATE_POLICY =
   "FRESH CAD STATE — mandatory: whenever the user asks for the current state of the bound drawing (including repeated questions such as layer count, entity count, properties, geometry, selection contents, or whether something changed), call the relevant CAD read tool in that SAME user turn and answer from that fresh tool result. Never reuse or restate a prior CAD result from conversation history as if it were current. If no valid work_handle/drawing context is available, fail closed and tell the user to rebind/restart the CAD workspace instead of answering from memory.";
@@ -81,6 +86,7 @@ function loadCadWorkingKnowledge(): string {
 const loadedByServer = new WeakMap<McpServer, Set<string>>();
 const registeredSurfaceByServer = new WeakMap<McpServer, Set<string>>();
 const sessionKeyByServer = new WeakMap<McpServer, string>();
+const addinObserverIdByServer = new WeakMap<McpServer, string>();
 
 setWorkExpirationHandler(async (executionId) => {
   await cleanupExecutionState(executionId);
@@ -441,6 +447,39 @@ export function createMcpServer(sessionKey: string): McpServer {
       }
   };
 
+  const addinObserverId = registerAddinSessionObserver(
+    sessionKey,
+    async () => {
+      const work = activeWorkForSession(sessionKey);
+      if (!work) {
+        return {
+          drawing: null,
+          bound_count: 0,
+        };
+      }
+
+      const { getBoundDrawingsForExecution } = await import(
+        "./session/drawing-binding.js"
+      );
+      const drawings = getBoundDrawingsForExecution(
+        work.executionId
+      );
+      const drawing =
+        drawings.length === 1
+          ? {
+              name: drawings[0].name ?? null,
+              full_name: drawings[0].full_name ?? null,
+            }
+          : null;
+
+      return {
+        drawing,
+        bound_count: drawings.length,
+      };
+    }
+  );
+  addinObserverIdByServer.set(server, addinObserverId);
+
   registerCadPrepareConfirmTool(server, {
     sessionKey,
     activateWorkspace: activateCadWorkspace,
@@ -498,6 +537,7 @@ export function createMcpServer(sessionKey: string): McpServer {
       await loadDiscoveryFamily(server);
       if (!bareLaunch) return;
       clearSessionWorkStopBarrier(sessionKey);
+
       const launch = await prepareCadLaunch(sessionKey, {
         autoBindSingle: true,
       });
@@ -706,6 +746,7 @@ export async function disposeLogicalSessionState(
   }
   revokeSessionAdmissions(sessionKey);
   clearCadPrepare(sessionKey);
+  clearAddinPairingsForSession(sessionKey);
 }
 
 export async function disposeMcpServerRuntime(
@@ -717,6 +758,12 @@ export async function disposeMcpServerRuntime(
 
   if (!options.preserveSessionState) {
     await disposeLogicalSessionState(sessionKey);
+  }
+
+  const addinObserverId = addinObserverIdByServer.get(server);
+  if (addinObserverId) {
+    unregisterAddinSessionObserver(sessionKey, addinObserverId);
+    addinObserverIdByServer.delete(server);
   }
 
   loadedByServer.delete(server);

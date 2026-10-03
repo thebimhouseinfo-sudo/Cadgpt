@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <CadGptTestTargetFramework Condition="'$(CadGptTestTargetFramework)' == ''">net8.0</CadGptTestTargetFramework>
+    <TargetFramework>$(CadGptTestTargetFramework)</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageReference Include="MSTest.TestAdapter" Version="4.4.1" />
+    <PackageReference Include="MSTest.TestFramework" Version="4.4.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../cadgpt-autocad/Stage0/PaletteLifecycleState.cs" Link="Stage0/PaletteLifecycleState.cs" />
+    <Compile Include="../cadgpt-autocad/WebViewProfile.cs" Link="WebViewProfile.cs" />
+  </ItemGroup>
+</Project>
