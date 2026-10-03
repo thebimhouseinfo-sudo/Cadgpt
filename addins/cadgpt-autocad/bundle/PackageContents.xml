@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ApplicationPackage SchemaVersion="1.0" AutodeskProduct="AutoCAD" ProductType="Application"
+  Name="CadGPT Stage 0" AppVersion="0.0.1"
+  Description="CadGPT AutoCAD add-in Stage 0 feasibility shell"
+  ProductCode="{8F64FC7A-9F8C-4DEB-984D-B8024721967F}"
+  UpgradeCode="{798C4B1A-A405-40DE-BF08-CFF51D5B6B29}">
+  <CompanyDetails Name="CadGPT" />
+  <Components>
+    <RuntimeRequirements OS="Win64" Platform="AutoCAD*" SeriesMin="__AUTOCAD_SERIES__" SeriesMax="__AUTOCAD_SERIES__" />
+    <ComponentEntry AppName="CadGPT Stage 0" Version="0.0.1"
+      ModuleName="./Contents/Windows/CadGpt.AutoCad.dll"
+      AppDescription="CadGPT Stage 0 embedded ChatGPT feasibility shell"
+      LoadOnAutoCADStartup="True" />
+  </Components>
+</ApplicationPackage>
