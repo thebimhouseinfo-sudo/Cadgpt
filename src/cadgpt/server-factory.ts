@@ -55,9 +55,8 @@ import { withCadHostLock } from "./runtime/cad-scheduler.js";
 import { getRepoRoot } from "./lib/path-security.js";
 import {
   clearAddinPairingsForSession,
-  hasPendingAddinPair,
-  registerAddinSessionController,
-  unregisterAddinSessionController,
+  registerAddinSessionObserver,
+  unregisterAddinSessionObserver,
 } from "./lib/addin-control.js";
 
 export const FRESH_CAD_STATE_POLICY =
@@ -87,7 +86,7 @@ function loadCadWorkingKnowledge(): string {
 const loadedByServer = new WeakMap<McpServer, Set<string>>();
 const registeredSurfaceByServer = new WeakMap<McpServer, Set<string>>();
 const sessionKeyByServer = new WeakMap<McpServer, string>();
-const addinControllerIdByServer = new WeakMap<McpServer, string>();
+const addinObserverIdByServer = new WeakMap<McpServer, string>();
 
 setWorkExpirationHandler(async (executionId) => {
   await cleanupExecutionState(executionId);
@@ -323,7 +322,6 @@ export function createMcpServer(sessionKey: string): McpServer {
         "The user launches CadGPT once per ChatGPT conversation, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt or @cg. The connector may replace its underlying MCP transport/session without requiring the user to launch again.",
         "On a bare plugin/icon or bare @cadgpt or @cg launch, call cadgpt_admission once. If that launch also contains a real task, claim the session and continue directly instead of forcing the generic Welcome. After the session is claimed, do not call admission again on every turn.",
         "Never carry admission or work authority into another ChatGPT conversation, memory, unrelated files, paths, or AutoCAD state. CadGPT binds replacement MCP transports to the connector-provided logical ChatGPT conversation identity; unrelated conversations remain isolated.",
-        "AUTO-CAD ADD-IN MANAGED WORKSPACE — when cadgpt_admission returns addin_managed_workspace=true with a work_handle, keep and reuse that exact work_handle for later CAD turns. The AutoCAD add-in may replace the drawing binding underneath that same execution without sending a chat message and without changing the work_handle. Before each CAD read/write in this mode, call drawing_status with the current work_handle; if exactly one available drawing is bound, use the normal CAD tool with that same handle. Do not call cg/list, cadgpt_cad_confirm, or re-run drawing selection merely because two or more drawings are open.",
         "Bare @cadgpt or bare CG/plugin launch normally makes the session READY. Exception: if tray state reports exactly one open drawing, CadGPT auto-binds that sole drawing and returns WORK ACTIVE / Workspace Ready in the same admission call. With zero or two-or-more drawings, no CAD work starts until the normal workflow continues.",
         "CadGPT session claim is routing state only; it is not an execution credential and has no per-turn token.",
         "Actual work begins with cadgpt_work_start (for file/job/lisp work), cadgpt_cad_confirm (for a user-selected drawing workspace), or the single-drawing auto-bind path during a bare CadGPT launch. FILE work that later needs CAD testing must transition through cadgpt_work_upgrade with an explicit drawing selector or CREATE_TEST. The returned work_handle (execution_id + authority_token) is the only execution credential; after upgrade the old handle is stale. Lisp/Job authoring, register, import and export are FILE work until a real CAD test is requested.",
@@ -449,37 +447,38 @@ export function createMcpServer(sessionKey: string): McpServer {
       }
   };
 
-  const addinControllerId = registerAddinSessionController(
+  const addinObserverId = registerAddinSessionObserver(
     sessionKey,
-    async (selector) => {
-      assertSessionClaimed(sessionKey);
+    async () => {
       const work = activeWorkForSession(sessionKey);
-      if (
-        !work ||
-        work.ownerType !== "direct-cad" ||
-        work.ownerId !== "drawing-workspace" ||
-        (work.executionPath !== "cad" && work.executionPath !== "hybrid")
-      ) {
-        throw new Error("ADDIN_DRAWING_WORKSPACE_UNAVAILABLE");
+      if (!work) {
+        return {
+          drawing: null,
+          bound_count: 0,
+        };
       }
 
-      const { replaceDrawingForExecution } = await import(
+      const { getBoundDrawingsForExecution } = await import(
         "./session/drawing-binding.js"
       );
-      const { cadUpstream } = await import("./runtime/cad-upstream.js");
-
-      const bound = await withCadHostLock("autocad", async () => {
-        await cadUpstream.activate();
-        return replaceDrawingForExecution(work.executionId, selector);
-      });
+      const drawings = getBoundDrawingsForExecution(
+        work.executionId
+      );
+      const drawing =
+        drawings.length === 1
+          ? {
+              name: drawings[0].name ?? null,
+              full_name: drawings[0].full_name ?? null,
+            }
+          : null;
 
       return {
-        drawing: bound,
-        cad_tools_ready: true,
+        drawing,
+        bound_count: drawings.length,
       };
     }
   );
-  addinControllerIdByServer.set(server, addinControllerId);
+  addinObserverIdByServer.set(server, addinObserverId);
 
   registerCadPrepareConfirmTool(server, {
     sessionKey,
@@ -536,72 +535,6 @@ export function createMcpServer(sessionKey: string): McpServer {
     sessionKey,
     onActive: async ({ bareLaunch }) => {
       await loadDiscoveryFamily(server);
-      const addinPairingLaunch = hasPendingAddinPair();
-
-      if (addinPairingLaunch) {
-        clearSessionWorkStopBarrier(sessionKey);
-        let work = activeWorkForSession(sessionKey);
-        if (
-          !work ||
-          work.ownerType !== "direct-cad" ||
-          work.ownerId !== "drawing-workspace" ||
-          (work.executionPath !== "cad" && work.executionPath !== "hybrid")
-        ) {
-          const previousExecution = activeExecutionForSession(sessionKey);
-          if (previousExecution) {
-            const cleanupId = releaseSessionWork(sessionKey);
-            if (cleanupId) {
-              await cleanupExecutionState(cleanupId);
-            }
-          }
-
-          work = createWorkRegistration({
-            sessionKey,
-            ownerType: "direct-cad",
-            ownerId: "drawing-workspace",
-            executionPath: "hybrid",
-          });
-          await prepareFamilies(
-            server,
-            "hybrid",
-            "drawing-workspace",
-            work.executionId
-          );
-        }
-
-        const { cadProxySurfaceSnapshot } = await import("./tools/cad-proxy.js");
-        const cadSurface = cadProxySurfaceSnapshot(server);
-        return {
-          launch_mode: "ready",
-          welcome_text: [
-            "```text",
-            "CadGPT / CG — Connected",
-            "────────────────────────────────",
-            "",
-            "ChatGPT đã kết nối với CadGPT.",
-            "Add-in sẽ tự bind bản vẽ AutoCAD đang active.",
-            "Dùng Connect this drawing khi muốn chuyển sang bản vẽ khác.",
-            "────────────────────────────────",
-            "```",
-          ].join("\n"),
-          autocad_detected: true,
-          work_handle: {
-            execution_id: work.executionId,
-            authority_token: work.authorityToken,
-            owner_type: work.ownerType,
-            owner_id: work.ownerId,
-            execution_path: work.executionPath,
-            capabilities: work.capabilities,
-            work_capabilities: work.capabilities,
-            generation: work.generation,
-          },
-          addin_managed_workspace: true,
-          cad_tools_ready: false,
-          cad_proxy_tool_count: cadSurface.count,
-          cad_proxy_tools: cadSurface.tools,
-        };
-      }
-
       if (!bareLaunch) return;
       clearSessionWorkStopBarrier(sessionKey);
 
@@ -827,10 +760,10 @@ export async function disposeMcpServerRuntime(
     await disposeLogicalSessionState(sessionKey);
   }
 
-  const addinControllerId = addinControllerIdByServer.get(server);
-  if (addinControllerId) {
-    unregisterAddinSessionController(sessionKey, addinControllerId);
-    addinControllerIdByServer.delete(server);
+  const addinObserverId = addinObserverIdByServer.get(server);
+  if (addinObserverId) {
+    unregisterAddinSessionObserver(sessionKey, addinObserverId);
+    addinObserverIdByServer.delete(server);
   }
 
   loadedByServer.delete(server);
