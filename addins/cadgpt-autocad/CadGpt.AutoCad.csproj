@@ -15,7 +15,12 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2420.47" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net46"
+                      Version="1.0.3"
+                      PrivateAssets="all"
+                      IncludeAssets="runtime; build; native; contentfiles; analyzers"
+                      Condition="'$(CadGptTargetFramework)' == 'net46'" />
   </ItemGroup>
   <ItemGroup Condition="'$(AutoCadInstallDir)' != ''">
     <Reference Include="AcCoreMgd"><HintPath>$(AutoCadInstallDir)\AcCoreMgd.dll</HintPath><Private>false</Private></Reference>
