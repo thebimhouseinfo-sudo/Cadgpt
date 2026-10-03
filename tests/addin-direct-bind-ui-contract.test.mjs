@@ -23,6 +23,20 @@ const connector = await fs.readFile(
   ),
   "utf8"
 );
+const serverFactory = await fs.readFile(
+  new URL(
+    "../src/cadgpt/server-factory.ts",
+    import.meta.url
+  ),
+  "utf8"
+);
+const toolPolicy = await fs.readFile(
+  new URL(
+    "../src/cadgpt/lib/tool-policy.ts",
+    import.meta.url
+  ),
+  "utf8"
+);
 
 test("panel has only toolbar plus WebView and no legacy footer/retry controls", () => {
   assert.equal(
@@ -68,5 +82,21 @@ test("only pairing automation invokes bare @cg and never creates a new chat", ()
   assert.doesNotMatch(
     connector,
     /document\.cookie|localStorage|sessionStorage|indexedDB|XMLHttpRequest|fetch\(/
+  );
+});
+
+
+test("panel pairing establishes session identity without auto-binding a drawing or adding an MCP connect command", () => {
+  assert.match(
+    serverFactory,
+    /autoBindSingle:\s*!hasPendingAddinPair\(\)/
+  );
+  assert.doesNotMatch(
+    serverFactory,
+    /cadgpt_connect_drawing/
+  );
+  assert.doesNotMatch(
+    toolPolicy,
+    /cadgpt_connect_drawing/
   );
 });
