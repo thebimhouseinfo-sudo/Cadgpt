@@ -26,25 +26,6 @@ namespace CadGpt.AutoCad.Stage0
     }
 
     [DataContract]
-    internal sealed class AddinPairResponse
-    {
-        [DataMember(Name = "ok")]
-        public bool Ok { get; set; }
-
-        [DataMember(Name = "pair_id")]
-        public string PairId { get; set; } = string.Empty;
-
-        [DataMember(Name = "paired")]
-        public bool Paired { get; set; }
-
-        [DataMember(Name = "controller_ready")]
-        public bool ControllerReady { get; set; }
-
-        [DataMember(Name = "error")]
-        public string Error { get; set; } = string.Empty;
-    }
-
-    [DataContract]
     internal sealed class AddinDrawingSummary
     {
         [DataMember(Name = "name")]
@@ -55,16 +36,28 @@ namespace CadGpt.AutoCad.Stage0
     }
 
     [DataContract]
-    internal sealed class AddinConnectResponse
+    internal sealed class AddinBindingResponse
     {
         [DataMember(Name = "ok")]
         public bool Ok { get; set; }
 
+        [DataMember(Name = "pair_id")]
+        public string PairId { get; set; } = string.Empty;
+
+        [DataMember(Name = "expires_at")]
+        public string ExpiresAt { get; set; } = string.Empty;
+
+        [DataMember(Name = "paired")]
+        public bool Paired { get; set; }
+
+        [DataMember(Name = "session_ready")]
+        public bool SessionReady { get; set; }
+
         [DataMember(Name = "drawing")]
         public AddinDrawingSummary? Drawing { get; set; }
 
-        [DataMember(Name = "cad_tools_ready")]
-        public bool CadToolsReady { get; set; }
+        [DataMember(Name = "bound_count")]
+        public int BoundCount { get; set; }
 
         [DataMember(Name = "error")]
         public string Error { get; set; } = string.Empty;
@@ -136,7 +129,7 @@ namespace CadGpt.AutoCad.Stage0
             }
             catch
             {
-                // Pair persistence is convenience only; live pair still works.
+                // Pair persistence is convenience only.
             }
         }
 
@@ -154,53 +147,30 @@ namespace CadGpt.AutoCad.Stage0
             }
         }
 
-        public Task<AddinPairResponse> StartPairAsync(
+        public Task<AddinBindingResponse> StartPairAsync(
             CancellationToken token)
         {
-            return SendAsync<AddinPairResponse>(
+            return SendAsync<AddinBindingResponse>(
                 "POST",
                 "/addin-control/pair/start",
-                null,
                 token);
         }
 
-        public Task<AddinPairResponse> GetPairStatusAsync(
+        public Task<AddinBindingResponse> GetBindingStatusAsync(
             string pairId,
             CancellationToken token)
         {
-            return SendAsync<AddinPairResponse>(
+            return SendAsync<AddinBindingResponse>(
                 "GET",
-                "/addin-control/pair/" +
+                "/addin-control/binding/" +
                 Uri.EscapeDataString(pairId),
-                null,
                 token);
-        }
-
-        public Task<AddinConnectResponse> ConnectDrawingAsync(
-            string pairId,
-            string drawingSelector,
-            CancellationToken token)
-        {
-            var body =
-                "{\"pair_id\":" + JsonString(pairId) +
-                ",\"drawing_selector\":" +
-                JsonString(drawingSelector) +
-                "}";
-
-            return SendAsync<AddinConnectResponse>(
-                "POST",
-                "/addin-control/drawing/connect",
-                body,
-                token,
-                45000);
         }
 
         private async Task<T> SendAsync<T>(
             string method,
             string relativePath,
-            string? body,
-            CancellationToken token,
-            int timeoutMilliseconds = 10000)
+            CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
             var descriptor = ReadDescriptor();
@@ -209,28 +179,11 @@ namespace CadGpt.AutoCad.Stage0
                 descriptor.Port +
                 relativePath);
             request.Method = method;
-            request.Timeout = timeoutMilliseconds;
-            request.ReadWriteTimeout = timeoutMilliseconds;
+            request.Timeout = 5000;
+            request.ReadWriteTimeout = 5000;
             request.Headers["x-cadgpt-addin-secret"] =
                 descriptor.Secret;
             request.Accept = "application/json";
-
-            if (body != null)
-            {
-                var bytes = Encoding.UTF8.GetBytes(body);
-                request.ContentType = "application/json";
-                request.ContentLength = bytes.Length;
-                using (var stream =
-                    await request.GetRequestStreamAsync())
-                {
-                    token.ThrowIfCancellationRequested();
-                    await stream.WriteAsync(
-                        bytes,
-                        0,
-                        bytes.Length,
-                        token);
-                }
-            }
 
             try
             {
@@ -307,7 +260,7 @@ namespace CadGpt.AutoCad.Stage0
                     }
 
                     var payload =
-                        Deserialize<AddinPairResponse>(
+                        Deserialize<AddinBindingResponse>(
                             stream);
                     return string.IsNullOrWhiteSpace(
                         payload.Error)
@@ -333,17 +286,6 @@ namespace CadGpt.AutoCad.Stage0
 
             throw new InvalidDataException(
                 "Invalid CadGPT add-in control response.");
-        }
-
-        private static string JsonString(string value)
-        {
-            return "\"" +
-                value
-                    .Replace("\\", "\\\\")
-                    .Replace("\"", "\\\"")
-                    .Replace("\r", "\\r")
-                    .Replace("\n", "\\n") +
-                "\"";
         }
     }
 }
