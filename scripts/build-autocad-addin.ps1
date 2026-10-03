@@ -86,7 +86,7 @@ if (-not (Test-Path $dll)) {
     exit 3
 }
 
-$stageRoot = Join-Path $repoRoot "addins\cadgpt-autocad\bin\stage0-bundle\CadGPT.Stage0.bundle"
+$stageRoot = Join-Path $repoRoot "addins\cadgpt-autocad\bin\bundle\CadGPT.bundle"
 $stageContents = Join-Path $stageRoot "Contents\Windows"
 
 if (Test-Path $stageRoot) {
