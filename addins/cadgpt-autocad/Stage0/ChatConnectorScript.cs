@@ -1,21 +1,13 @@
-using System;
-using System.Text;
-
 namespace CadGpt.AutoCad.Stage0
 {
     internal static class ChatConnectorScript
     {
-        public const string AdapterVersion = "single-chat-mention-v1";
+        public const string AdapterVersion = "single-chat-mention-v2";
 
-        public static string BuildSendTurnScript(string instruction)
+        public static string BuildInvokeCadGptScript()
         {
-            var encoded = Convert.ToBase64String(
-                Encoding.UTF8.GetBytes(instruction ?? string.Empty));
-
             return @"(async () => {
 try {
-  const suffixBytes = Uint8Array.from(atob('" + encoded + @"'), c => c.charCodeAt(0));
-  const suffix = new TextDecoder('utf-8').decode(suffixBytes);
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const visible = (el) => {
     const rect = el.getBoundingClientRect();
@@ -110,35 +102,6 @@ try {
 
   composer = composerList[0];
   composer.focus();
-  if (suffix) {
-    const text = ' ' + suffix;
-    let inserted = false;
-    try {
-      inserted = document.execCommand('insertText', false, text);
-    } catch (_) {
-      inserted = false;
-    }
-
-    if (!inserted) {
-      if (composer.tagName.toLowerCase() === 'textarea') {
-        const setter = Object.getOwnPropertyDescriptor(
-          HTMLTextAreaElement.prototype,
-          'value'
-        )?.set;
-        if (!setter) return { success:false, code:'COMPOSER_APPEND_UNAVAILABLE' };
-        setter.call(composer, (composer.value || '') + text);
-      } else {
-        composer.textContent = (composer.textContent || '') + text;
-      }
-      composer.dispatchEvent(new InputEvent('input', {
-        bubbles:true,
-        inputType:'insertText',
-        data:text
-      }));
-    }
-  }
-
-  await wait(120);
 
   const sendCandidates = [...document.querySelectorAll('button,[role=""button""]')]
     .filter(visible)
@@ -162,8 +125,7 @@ try {
   return {
     success:true,
     code:'OK',
-    method:'mention-exact',
-    url:location.href
+    method:'mention-exact'
   };
 } catch (error) {
   return {
