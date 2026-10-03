@@ -51,7 +51,7 @@ namespace CadGpt.AutoCad
                 Size = new Size(520, 760)
             };
 
-            palette.AddVisual("ChatGPT", view);
+            palette.AddVisual("ChatGPT", view, true);
             _view = view;
             _palette = palette;
         }
@@ -77,7 +77,15 @@ namespace CadGpt.AutoCad
             if (palette != null)
             {
                 palette.Visible = false;
-                palette.Dispose();
+                while (palette.Count > 0)
+                {
+                    palette.Remove(0);
+                }
+
+                if (palette is IDisposable disposable)
+                {
+                    disposable.Dispose();
+                }
             }
         }
     }
