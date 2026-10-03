@@ -138,6 +138,83 @@ return { success:true, code:'OK', method:connectorMethod, url:location.href };
 ");
         }
 
+        public static string ContinuationProbe()
+        {
+            return Wrap(@"
+const visible = (el) => {
+  const r = el.getBoundingClientRect();
+  const s = window.getComputedStyle(el);
+  return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+};
+const norm = (v) => (v || '').replace(/\s+/g, ' ').trim().toLowerCase();
+const label = (el) => norm(el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent);
+const controls = [...document.querySelectorAll('button,[role=""button""]')].filter(visible);
+const toolButtons = controls.filter((el) => {
+  const v = label(el);
+  return v === 'tools' || v === 'use tools' || v === 'connectors' || v === 'apps';
+});
+if (toolButtons.length !== 1) {
+  return { success:false, code:toolButtons.length === 0 ? 'TOOLS_BUTTON_NOT_FOUND' : 'TOOLS_BUTTON_AMBIGUOUS', count:toolButtons.length };
+}
+toolButtons[0].click();
+await new Promise((resolve) => setTimeout(resolve, 350));
+const connectorCandidates = [...document.querySelectorAll('[role=""menuitem""],[role=""option""],button,a')]
+  .filter(visible)
+  .filter((el) => {
+    const v = label(el);
+    return v === 'cg' || v === 'cadgpt';
+  });
+if (connectorCandidates.length !== 1) {
+  return { success:false, code:connectorCandidates.length === 0 ? 'CONNECTOR_NOT_FOUND' : 'CONNECTOR_AMBIGUOUS', count:connectorCandidates.length };
+}
+connectorCandidates[0].click();
+await new Promise((resolve) => setTimeout(resolve, 250));
+
+const composerCandidates = [...document.querySelectorAll('textarea,[contenteditable=""true""]')]
+  .filter(visible)
+  .filter((el) => {
+    const role = norm(el.getAttribute('role'));
+    const placeholder = norm(el.getAttribute('placeholder'));
+    const dataId = norm(el.getAttribute('data-testid'));
+    return (
+      el.tagName.toLowerCase() === 'textarea' ||
+      role === 'textbox' ||
+      placeholder.includes('message') ||
+      placeholder.includes('prompt') ||
+      dataId.includes('composer')
+    );
+  });
+if (composerCandidates.length !== 1) {
+  return { success:false, code:composerCandidates.length === 0 ? 'COMPOSER_NOT_FOUND' : 'COMPOSER_AMBIGUOUS', count:composerCandidates.length };
+}
+const composer = composerCandidates[0];
+const prompt = 'Use CadGPT to call job_list once and show the job names. Do not call cadgpt_admission, start work, select a drawing, or execute a job.';
+composer.focus();
+if (composer.tagName.toLowerCase() === 'textarea') {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+  if (!setter) return { success:false, code:'COMPOSER_SETTER_UNAVAILABLE' };
+  setter.call(composer, prompt);
+} else {
+  composer.textContent = prompt;
+}
+composer.dispatchEvent(new InputEvent('input', { bubbles:true, inputType:'insertText', data:prompt }));
+await new Promise((resolve) => setTimeout(resolve, 150));
+
+const sendCandidates = [...document.querySelectorAll('button,[role=""button""]')]
+  .filter(visible)
+  .filter((el) => {
+    const v = label(el);
+    const testId = norm(el.getAttribute('data-testid'));
+    return v === 'send' || v === 'send message' || testId === 'send-button';
+  });
+if (sendCandidates.length !== 1) {
+  return { success:false, code:sendCandidates.length === 0 ? 'SEND_NOT_FOUND' : 'SEND_AMBIGUOUS', count:sendCandidates.length };
+}
+sendCandidates[0].click();
+return { success:true, code:'OK', method:'tools-menu-exact-probe', url:location.href };
+");
+        }
+
         private static string Wrap(string body)
         {
             return "(async () => { try { " + body +
