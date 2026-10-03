@@ -588,7 +588,6 @@ namespace CadGpt.AutoCad
             }
 
             _actionCts.Dispose();
-            _pairGate.Dispose();
             CancelInitialization();
             Browser.Dispose();
             _lifecycle.CompleteDispose(
