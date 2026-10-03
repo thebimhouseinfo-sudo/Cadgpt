@@ -1,0 +1,84 @@
+using System;
+using System.Drawing;
+using Autodesk.AutoCAD.Windows;
+
+namespace CadGpt.AutoCad
+{
+    internal static class PaletteController
+    {
+        private static readonly Guid PaletteId = new Guid("34F319C7-C59A-46A4-83A1-33B1B919BEE6");
+        private static PaletteSet? _palette;
+        private static ChatView? _view;
+
+        public static void Show()
+        {
+            EnsureCreated();
+            if (_palette != null)
+            {
+                _palette.Visible = true;
+            }
+        }
+
+        public static void Recreate()
+        {
+            DisposeCurrent();
+            EnsureCreated();
+            if (_palette != null)
+            {
+                _palette.Visible = true;
+            }
+        }
+
+        public static void Shutdown()
+        {
+            DisposeCurrent();
+        }
+
+        private static void EnsureCreated()
+        {
+            if (_palette != null && _view != null)
+            {
+                return;
+            }
+
+            var view = new ChatView();
+            view.RecreateRequested += OnRecreateRequested;
+
+            var palette = new PaletteSet("CadGPT Stage 0", PaletteId)
+            {
+                DockEnabled = DockSides.Left | DockSides.Right,
+                MinimumSize = new Size(360, 480),
+                Size = new Size(520, 760)
+            };
+
+            palette.AddVisual("ChatGPT", view);
+            _view = view;
+            _palette = palette;
+        }
+
+        private static void OnRecreateRequested(object? sender, EventArgs e)
+        {
+            Recreate();
+        }
+
+        private static void DisposeCurrent()
+        {
+            var view = _view;
+            var palette = _palette;
+            _view = null;
+            _palette = null;
+
+            if (view != null)
+            {
+                view.RecreateRequested -= OnRecreateRequested;
+                view.Dispose();
+            }
+
+            if (palette != null)
+            {
+                palette.Visible = false;
+                palette.Dispose();
+            }
+        }
+    }
+}
