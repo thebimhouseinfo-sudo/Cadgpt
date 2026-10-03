@@ -42,7 +42,7 @@ namespace CadGpt.AutoCad
             }
 
             var view = new ChatView();
-             var palette = new PaletteSet("CADGPT", PaletteId)
+            var palette = new PaletteSet("CadGPT", PaletteId)
             {
                 DockEnabled = DockSides.Left | DockSides.Right,
                 MinimumSize = new Size(360, 480),
@@ -53,7 +53,7 @@ namespace CadGpt.AutoCad
                 KeepFocus = true
             };
 
-            palette.AddVisual("CADGPT", view, true);
+            palette.AddVisual("CadGPT", view, true);
             _view = view;
             _palette = palette;
         }
