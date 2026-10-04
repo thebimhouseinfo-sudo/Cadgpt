@@ -5,7 +5,7 @@ Implementation primitives for CadGPT Observator.
 Current foundation:
 
 - `engine.ts` bridges the explicitly bound drawing to CAD MCP Observation capture, lightweight candidate finalization, direct-property reads, and the generic log writer.
-- `log-store.ts` appends caller-selected JSON records under `AppData/drawings/<drawing_id>/observator/`; callers are responsible for obtaining a persistent `drawing_id` from the shared Drawing Anchor helper when persistent drawing storage is required.
+- `log-store.ts` appends caller-selected JSON records under `AppData/drawings/<drawing_id>/observator/`; callers are responsible for resolving or creating the canonical Drawing Anchor when persistent drawing storage is required.
 - CAD MCP exposes `cad_observation_capture_start`, `cad_observation_capture_status`, `cad_observation_capture_finish`, and `cad_observation_capture_cancel`.
 - `cad_read_entity_properties` resolves requested handles directly with `HandleToObject`; it no longer enumerates ModelSpace/PaperSpace to find them.
 
@@ -75,7 +75,7 @@ Also validate cancellation, drawing mismatch protection, listener cleanup, and r
 
 ## Drawing persistence boundary
 
-Observator capture does not own drawing identity. A Job that needs persistent drawing-scoped data must use the shared CadGPT Drawing Anchor helper before using drawing-scoped storage.
+Observator capture does not own drawing identity. A Job that needs persistent drawing-scoped data must check the canonical CadGPT Drawing Anchor and create it when absent before using drawing-scoped storage.
 
 Canonical identity contract:
 
