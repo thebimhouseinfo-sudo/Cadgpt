@@ -16,7 +16,8 @@ CadGPT owns the authoring workflow, not the user's original library folder.
 resources/cad/internal-lisp/**         repo-bundled/internal read-only Lisp (including TBH Tool Kit)
 appdata/libraries/lisp/**              user-created/imported managed Lisp Libraries
 appdata/workspace/lisp-draft/**        write-lisp working copies
-appdata/runtime/dynamic-lisp/**        temporary AI-derived variants
+appdata/runtime/dynamic-lisp/**        temporary ad-hoc AI-derived variants
+appdata/libraries/jobs/**/dynamic-lisp/** persistent Job-owned derivatives (controlled by Job tools)
 appdata/data/runs/**                    generated evidence/reports
 skills/write-lisp/**                   internal read-only skill knowledge
 ```
@@ -164,6 +165,7 @@ resources/cad/**
 appdata/libraries/lisp/**
 appdata/workspace/lisp-draft/**
 appdata/runtime/dynamic-lisp/**
+appdata/libraries/jobs/**/dynamic-lisp/**
 ```
 
 A result with `loaded: true` is required. Queued `SendCommand` is not proof of load success. Do not open a second AutoCAD instance just to test the file.
@@ -194,9 +196,11 @@ Promotion re-validates with the target library's authoring profile, writes the m
 
 Do not write to the original external import source.
 
-## Dynamic runtime variants
+## Dynamic variants
 
-For `ai_mode=dynamic`, temporary variants live under `appdata/runtime/dynamic-lisp/**` and should retain source registry id, applied parameters, hash and run/session provenance. The permanent managed source remains ordinary AutoLISP.
+For ad-hoc/session-only `ai_mode=dynamic`, temporary variants live under `appdata/runtime/dynamic-lisp/**` and should retain source registry id, applied parameters, hash and run/session provenance. The permanent managed source remains ordinary AutoLISP.
+
+For a **reusable Job** that repeatedly changes only data/ranges/sections of an already-working Lisp, the preferred model is different: keep the shared source in its Lisp Library, seed a byte-for-byte Job-owned derivative once under `appdata/libraries/jobs/<library-id>/<job-name>/dynamic-lisp/**`, then reuse and exact-patch that derivative through `job_dynamic_lisp_prepare` / `job_dynamic_lisp_patch`. Do not create a wrapper/adapter around the original command and do not recopy the source every run. If the Lisp logic itself must change, return to the normal `write-lisp` checkout/test/promote lifecycle for the shared source.
 
 ## Debug loop
 

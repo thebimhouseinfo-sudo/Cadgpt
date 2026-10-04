@@ -123,6 +123,23 @@ Use the most suitable executor that preserves the step semantics.
 ### Existing LISP
 Use a registered Lisp capability when reusable AutoLISP already performs the required work reliably and its registry semantics are sufficiently reviewed for the intended use.
 
+### Job-owned dynamic Lisp derivative
+When a Job needs the **same proven Lisp logic with changing data/ranges/sections**, prefer a persistent derivative owned by that Job:
+
+```text
+registered working Lisp source
+→ seed once into <job>/dynamic-lisp/**
+→ on later runs reuse that same Job copy
+→ exact-replace only declared dynamic section(s)
+→ syntax validate
+→ verified load
+→ run original command
+```
+
+Use `job_dynamic_lisp_prepare` to make the initial byte-for-byte copy or reuse the existing copy. Use `job_dynamic_lisp_patch` for hash-guarded exact replacements. The patch may add/remove rows or sections when the Job input requires it, but code outside the declared dynamic area must remain unchanged.
+
+Do **not** solve this case by generating an adapter/wrapper that feeds or shadows the old command. Do **not** recopy the source on every run. A changed upstream source is reported as provenance drift; it does not silently overwrite the Job-owned derivative.
+
 ### `write-lisp` Skill
 Use when required AutoLISP does not exist, is insufficient, is broken, or requires a controlled patch. Work happens in AppData workspace; imported source folders and permanent managed libraries are not edited by generic file tools.
 
@@ -183,7 +200,13 @@ Direct:    appdata/libraries/jobs/<library-id>/<job-name>/<job-name>.py
 
 Supporting reusable data may live beside the Job entrypoint when that data belongs to the Job contract. Runtime/test evidence belongs under managed data/run locations rather than being silently mixed into the permanent Job definition.
 
-Reusable AutoLISP belongs to a managed Lisp Library, not inside the Job folder.
+Shared reusable AutoLISP logic belongs to a managed Lisp Library. A **Job-owned dynamic derivative** is the explicit exception and lives under:
+
+```text
+appdata/libraries/jobs/<library-id>/<job-name>/dynamic-lisp/*.lsp
+```
+
+It must originate from a registered working Lisp source, retain provenance, reuse the persisted Job copy on later executions, and mutate only declared dynamic data/sections through the controlled Job dynamic-Lisp path. It is not separately registered as a shared Lisp capability.
 
 ## Transitional Jobs
 

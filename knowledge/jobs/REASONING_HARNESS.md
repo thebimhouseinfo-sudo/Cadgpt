@@ -26,6 +26,7 @@ Rules:
 - The review may add, remove, defer, or narrow actions when evidence is uncertain.
 - If an item is uncertain but the Job can safely continue without it, defer/skip that item and keep running the workflow.
 - Re-read the drawing after mutation whenever the next step depends on the resulting state.
+- When a step uses dynamic Lisp derived from an already-working command, call `job_dynamic_lisp_prepare` first. If it returns `reused=true`, continue from that persisted Job copy; do not recopy the base source. Patch only the declared changing data/section with `job_dynamic_lisp_patch`, then verified-load that Job-owned Lisp and run the original command. Do not invent an adapter/wrapper around the source command.
 - Repeat PLAN/REVIEW as many times as the workflow needs.
 - Ask the user only when the Job cannot make a safe domain decision from its rules/evidence, or when the requested action requires an explicit user choice.
 - Finish the whole Job when possible, then report completed actions, deferred/unresolved items, and final verification.

@@ -35,6 +35,7 @@ import { registerCadGptControlTool } from "./tools/control.js";
 import { registerWorkControlTools } from "./tools/work-control.js";
 import { registerLibraryDiscoveryTools, registerLibraryMutationTools } from "./tools/libraries.js";
 import { registerJobDiscoveryTools, registerJobAuthoringTools } from "./tools/jobs.js";
+import { registerJobDynamicLispTools } from "./tools/job-dynamic-lisp.js";
 import { registerSkillTools } from "./tools/skills.js";
 import { registerCapabilityRegistryTools } from "./tools/registry.js";
 import { registerFilesystemTools } from "./tools/filesystem.js";
@@ -186,6 +187,7 @@ function registerStableProductionSurface(server: McpServer): void {
   registerLibraryMutationTools(server);
   registerJobDiscoveryTools(server);
   registerJobAuthoringTools(server);
+  registerJobDynamicLispTools(server);
   registerSkillTools(server);
   registerCapabilityRegistryTools(server);
   registerFilesystemTools(server);

@@ -183,6 +183,7 @@ async function resolveLispSourceForCommandDiscovery(
     path.resolve(getAppDataRoot(), "libraries", "lisp"),
     path.resolve(getAppDataRoot(), "workspace", "lisp-draft"),
     path.resolve(getAppDataRoot(), "runtime", "dynamic-lisp"),
+    path.resolve(getAppDataRoot(), "libraries", "jobs"),
   ];
 
   let candidate: string;
@@ -211,6 +212,9 @@ async function resolveLispSourceForCommandDiscovery(
     } else if (lower.startsWith("appdata/runtime/dynamic-lisp/")) {
       root = approvedRoots[3];
       suffix = normalized.slice("appdata/runtime/dynamic-lisp/".length);
+    } else if (lower.startsWith("appdata/libraries/jobs/")) {
+      root = approvedRoots[4];
+      suffix = normalized.slice("appdata/libraries/jobs/".length);
     } else {
       throw new Error(
         "LISP_COMMAND_SCOPE: unsupported Lisp path. Use an approved CadGPT Lisp namespace or an absolute path inside an approved Lisp root."
@@ -226,6 +230,17 @@ async function resolveLispSourceForCommandDiscovery(
   const real = await fs.promises.realpath(candidate);
   if (!approvedRoots.some((root) => isPathInside(real, root))) {
     throw new Error("LISP_COMMAND_SCOPE: Lisp real path escapes its approved root.");
+  }
+  if (isPathInside(real, approvedRoots[4])) {
+    const jobRelative = path
+      .relative(approvedRoots[4], real)
+      .replaceAll("\\", "/")
+      .toLowerCase();
+    if (!jobRelative.split("/").includes("dynamic-lisp")) {
+      throw new Error(
+        "LISP_COMMAND_SCOPE: Job-library Lisp is loadable only from a Job-owned dynamic-lisp/** folder."
+      );
+    }
   }
   if (path.extname(real).toLowerCase() !== ".lsp") {
     throw new Error("LISP_COMMAND_SCOPE: only .lsp files are supported.");

@@ -10,6 +10,7 @@ Allowed load namespaces:
 - appdata/libraries/lisp/**               managed user Lisp libraries
 - appdata/workspace/lisp-draft/**         write-lisp working drafts
 - appdata/runtime/dynamic-lisp/**         parameterized/session-only artifacts
+- appdata/libraries/jobs/**/dynamic-lisp/** persistent Job-owned dynamic derivatives
 
 External user source folders are never accepted here. They must first be
 imported into managed AppData through the outer library_import workflow.
@@ -71,6 +72,7 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
         (os.path.realpath(os.path.join(_appdata_root(), "libraries", "lisp")), "appdata/libraries/lisp"),
         (os.path.realpath(os.path.join(_appdata_root(), "workspace", "lisp-draft")), "appdata/workspace/lisp-draft"),
         (os.path.realpath(os.path.join(_appdata_root(), "runtime", "dynamic-lisp")), "appdata/runtime/dynamic-lisp"),
+        (os.path.realpath(os.path.join(_appdata_root(), "libraries", "jobs")), "appdata/libraries/jobs"),
     ]
 
     if os.path.isabs(raw):
@@ -95,15 +97,25 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
         elif lower.startswith("appdata/runtime/dynamic-lisp/"):
             suffix = normalized[len("appdata/runtime/dynamic-lisp/") :]
             root, virtual_prefix = roots[3]
+        elif lower.startswith("appdata/libraries/jobs/"):
+            suffix = normalized[len("appdata/libraries/jobs/") :]
+            root, virtual_prefix = roots[4]
         else:
             raise LispServiceError(
                 "LISP path must be under resources/cad/**, appdata/libraries/lisp/**, "
-                "appdata/workspace/lisp-draft/**, or appdata/runtime/dynamic-lisp/**"
+                "appdata/workspace/lisp-draft/**, appdata/runtime/dynamic-lisp/**, "
+                "or appdata/libraries/jobs/**/dynamic-lisp/**"
             )
 
         candidate = os.path.realpath(os.path.join(root, suffix))
         if not _inside(candidate, root):
             raise LispServiceError(f"LISP path escapes the {virtual_prefix}/** sandbox")
+    if virtual_prefix == "appdata/libraries/jobs":
+        job_relative = os.path.relpath(candidate, root).replace("\\", "/")
+        if "dynamic-lisp" not in [part.lower() for part in job_relative.split("/")]:
+            raise LispServiceError(
+                "Job-library LISP is loadable only from a Job-owned dynamic-lisp/** folder"
+            )
     if os.path.splitext(candidate)[1].lower() != ".lsp":
         raise LispServiceError("only .lsp files can be loaded")
     if not os.path.isfile(candidate):

@@ -42,10 +42,13 @@ Do not invent tool names, Lisp commands or Skills.
 Prefer:
 
 1. an existing registered capability that already matches the step;
-2. a direct CAD MCP tool for small explicit CAD operations;
-3. structured reasoning over retrieved CAD/file data when the step is a decision;
-4. `write-lisp` when reusable AutoLISP must be created or patched;
-5. file tools for managed AppData data/output work.
+2. when an existing working Lisp has variable data/sections, a **Job-owned dynamic derivative** seeded once from that real source and patched in place with `job_dynamic_lisp_prepare` / `job_dynamic_lisp_patch`;
+3. a direct CAD MCP tool for small explicit CAD operations;
+4. structured reasoning over retrieved CAD/file data when the step is a decision;
+5. `write-lisp` when reusable/shared AutoLISP logic itself must be created or repaired;
+6. file tools for managed AppData data/output work.
+
+Do not create an adapter/wrapper merely to inject changing values into a working Lisp if the Job can safely replace the declared data/section in its persisted derivative while preserving the rest of the source.
 
 The Job defines the required result; the executor is replaceable only when the alternative preserves that result and validation contract.
 

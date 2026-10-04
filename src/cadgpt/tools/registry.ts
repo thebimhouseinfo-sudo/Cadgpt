@@ -72,6 +72,8 @@ const CORE_TOOLS = [
   { name: "job_checkout", class: "workflow.authoring", summary: "Copy a registered Job into the Job workspace for controlled refinement." },
   { name: "job_draft_validate", class: "workflow.authoring", summary: "Validate a Job workspace draft against the canonical structural contract." },
   { name: "job_promote_draft", class: "workflow.authoring", summary: "Promote a tested Job draft into a managed Job Library and synchronize User Registry." },
+  { name: "job_dynamic_lisp_prepare", class: "workflow.jobs", summary: "Seed a persistent Job-owned dynamic Lisp from a registered working Lisp source once, then reuse the Job copy." },
+  { name: "job_dynamic_lisp_patch", class: "workflow.jobs", summary: "Hash-guarded exact replacement of declared dynamic data/sections in a persistent Job-owned Lisp copy." },
   { name: "skill_list", class: "skills", summary: "List internal CadGPT system skills." },
   { name: "skill_get", class: "skills", summary: "Load one internal CadGPT skill resource." },
   { name: "lisp_scaffold", class: "lisp.authoring", summary: "Create a canonical AutoLISP draft for a user-managed library; bundled Internal Registry library ids are read-only." },

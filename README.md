@@ -201,6 +201,8 @@ CadGPT supports:
 - **Direct Jobs** — fixed local implementations without model planning;
 - **Reasoning Jobs** — sequential READ → PLAN → REVIEW → EXEC → READBACK workflows.
 
+When a reusable Job needs a dynamic form of an already-working Lisp, CadGPT seeds a byte-for-byte copy once under the Job's own `dynamic-lisp/` folder, patches only declared data/sections with hash-guarded exact replacements, and reuses that persisted copy on later runs. Shared Lisp logic stays in the Lisp Library; Job-owned derivatives are not adapter commands.
+
 Job authoring guidance lives under:
 
 ```text

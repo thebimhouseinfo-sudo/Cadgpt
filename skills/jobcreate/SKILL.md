@@ -18,7 +18,7 @@ It is **not** a generic autonomous agent and it must not invent missing business
 knowledge/jobs/**                         internal Job contract/rules
 skills/jobcreate/**                       internal read-only authoring skill
 appdata/workspace/job-draft/**            Job working drafts
-appdata/libraries/jobs/<library-id>/**     promoted reusable Jobs
+appdata/libraries/jobs/<library-id>/**     promoted reusable Jobs + Job-owned dynamic-lisp assets
 appdata/registry/user/**                   promoted Job registry metadata
 appdata/data/runs/**                       test/evidence outputs when applicable
 ```
@@ -180,7 +180,32 @@ job_draft_validate
 
 before real execution. It validates reasoning structure for `.md` and Python syntax for `.py`, and returns the exact draft SHA-256. For a direct `.py` draft, execute the pre-promotion test with `job_run_direct_draft(draft_path, expected_sha256=<that hash>)`; never promote a direct Job that was only syntax-checked. A source-valid draft does not proceed to promotion until its real execution path is tested.
 
-#### B3. Implement missing capabilities only when required
+#### B3. Dynamic Lisp — derive from proven source, do not wrap
+
+When a Job needs a Lisp whose **data/ranges/sections vary per execution** but the command logic already works, prefer a Job-owned dynamic derivative instead of creating an adapter around the old command.
+
+Required behavior:
+
+```text
+registered working Lisp source
+→ job_dynamic_lisp_prepare
+   ├─ first run: byte-for-byte copy into <job>/dynamic-lisp/**
+   └─ later runs: reuse existing Job copy; do not recopy
+→ identify the declared dynamic data/section(s)
+→ job_dynamic_lisp_patch with exact old_text/new_text + sha256
+→ syntax validation is part of the patch gate
+→ verified AutoCAD load of the Job-owned .lsp
+→ run the original command
+→ verify Job postcondition
+```
+
+The dynamic file is a **derivative owned by that Job**, not a new shared Lisp capability. Preserve the source command and all code outside the declared dynamic sections. Changing the number of data rows/sections is allowed when that is part of the Job input; replace the data block itself rather than building a wrapper that feeds the old command.
+
+Example: an FDT-update-style Job should seed from the known-working FDT Lisp, replace the sizing table/range section directly (including adding/removing ranges), keep the rest of the FDT implementation unchanged, and persist that Job copy for the next run.
+
+Use `appdata/runtime/dynamic-lisp/**` only for ad-hoc/session variants that do **not** belong to a reusable Job.
+
+#### B4. Implement missing capabilities only when required
 
 If a planned step requires a capability that does not exist:
 
@@ -190,7 +215,7 @@ If a planned step requires a capability that does not exist:
 
 After a called Skill completes its own gate, return to the interrupted Job step.
 
-#### B4. Real execution/test — mandatory
+#### B5. Real execution/test — mandatory
 
 If the current work_handle is FILE-only and the approved test needs AutoCAD, call `cadgpt_work_upgrade` with that FILE handle plus the exact user-approved drawing name/full path, or `drawing_selector="CREATE_TEST"` for an isolated blank test drawing. The returned HYBRID handle supersedes the FILE handle; use only the new credentials afterward. Never call `drawing_*` or `cad__*` with a FILE handle and never default to ActiveDocument/first-open drawing.
 
@@ -210,7 +235,7 @@ If a step is interactive, the user may perform the required manual interaction, 
 
 Record concise test evidence and final-validation evidence suitable for the promotion call.
 
-#### B5. Refine loop
+#### B6. Refine loop
 
 If the real test exposes a problem:
 
@@ -225,7 +250,7 @@ identify failing step
 
 Do not promote a Job with known failing or untested required paths.
 
-#### B6. Promotion gate
+#### B7. Promotion gate
 
 A reusable Job may be promoted to:
 
@@ -273,7 +298,7 @@ Do not rewrite unaffected steps for cosmetic consistency.
 
 `jobcreate` owns workflow authoring. `write-lisp` owns AutoLISP engineering.
 
-A Job step may invoke `write-lisp` when Lisp creation or repair is part of the approved implementation plan. `jobcreate` must not absorb AutoLISP-specific coding rules into the Job definition.
+A Job step may invoke `write-lisp` when Lisp creation or repair is part of the approved implementation plan. For **dynamic reuse of an already-working Lisp**, the Job should normally seed and patch its own persisted derivative with `job_dynamic_lisp_prepare` / `job_dynamic_lisp_patch` instead of asking `write-lisp` to create an adapter or a fresh copy every run. `jobcreate` must not absorb unrelated AutoLISP-specific coding rules into the Job definition.
 
 ## Required supporting knowledge
 

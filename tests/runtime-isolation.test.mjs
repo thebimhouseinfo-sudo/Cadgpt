@@ -2879,6 +2879,8 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
       "job_run_direct",
       "job_draft_validate",
       "job_promote_draft",
+      "job_dynamic_lisp_prepare",
+      "job_dynamic_lisp_patch",
       "lisp_scaffold",
       "library_import",
       "asset_import",
