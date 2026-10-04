@@ -1,10 +1,19 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { adoptSessionAdmission, assertSessionClaimed } from "./admission.js";
 
 export type WorkOwnerType = "skill" | "job" | "direct-cad" | "file";
 export type ExecutionPath = "file" | "cad" | "hybrid";
+
+export interface HumanPowerGrant {
+  grantId: string;
+  task: string;
+  reason: string;
+  errorDescription: string;
+  expectedBehavior: string;
+  activatedAt: string;
+}
 
 export interface WorkRegistration {
   executionId: string;
@@ -20,6 +29,7 @@ export interface WorkRegistration {
   callSequence: number;
   createdAt: string;
   lastActivityAt: string;
+  humanPower?: HumanPowerGrant;
   closing?: boolean;
 }
 
@@ -52,6 +62,7 @@ const generationBySession = new Map<string, number>();
 const stoppedBySession = new Set<string>();
 const leaseStorage = new AsyncLocalStorage<ToolLease>();
 const activeLeases = new Map<string, ToolLease>();
+const humanPowerCleanupPending = new Map<string, HumanPowerGrant>();
 let expirationHandler: ((executionId: string) => void | Promise<void>) | null = null;
 
 function safeId(value: string): string {
@@ -77,6 +88,8 @@ function assertFamilyAllowedForWork(
   work: WorkRegistration,
   family: string
 ): void {
+  if (work.humanPower) return;
+
   if (
     FILE_FAMILIES.has(family) &&
     work.executionPath !== "file" &&
@@ -214,7 +227,14 @@ export function createWorkRegistration(input: {
       "WORK_BUSY: current CadGPT work still has an active ToolLease; wait for it to finish before replacing work."
     );
   }
-  if (priorId) registrations.delete(priorId);
+  if (priorId) {
+    registrations.delete(priorId);
+    if (expirationHandler) {
+      void Promise.resolve(expirationHandler(priorId)).catch(
+        () => undefined
+      );
+    }
+  }
 
   const generation = (generationBySession.get(input.sessionKey) || 0) + 1;
   generationBySession.set(input.sessionKey, generation);
@@ -287,6 +307,9 @@ export function createSuccessorWorkRegistration(input: {
     ...(previous.jobId ? { jobId: previous.jobId } : {}),
     executionPath: input.executionPath,
     capabilities: [...previous.capabilities],
+    ...(previous.humanPower
+      ? { humanPower: { ...previous.humanPower } }
+      : {}),
     driverEpoch: DRIVER_EPOCH,
     generation,
     callSequence: 0,
@@ -338,10 +361,97 @@ export function commitSuccessorWorkRegistration(input: {
     );
   }
 
+  if (previous.humanPower) {
+    humanPowerCleanupPending.delete(previous.executionId);
+    humanPowerCleanupPending.set(
+      successor.executionId,
+      { ...previous.humanPower }
+    );
+  }
   registrations.delete(previous.executionId);
   activeBySession.set(input.sessionKey, successor.executionId);
   successor.lastActivityAt = new Date().toISOString();
   return { ...successor, capabilities: [...successor.capabilities] };
+}
+
+export function activateHumanPower(input: {
+  task: string;
+  reason: string;
+  errorDescription: string;
+  expectedBehavior: string;
+}): HumanPowerGrant {
+  const lease = currentToolLease();
+  const work = registrations.get(lease.workId);
+  if (!work || work.closing) {
+    throw new Error("NO_ACTIVE_WORK: Human Power requires the current active work execution.");
+  }
+  if (work.humanPower) {
+    throw new Error(
+      `HUMAN_POWER_ALREADY_ACTIVE: grant ${work.humanPower.grantId} already owns this execution.`
+    );
+  }
+  const grant: HumanPowerGrant = {
+    grantId: `hp_${randomUUID()}`,
+    task: input.task.trim(),
+    reason: input.reason.trim(),
+    errorDescription: input.errorDescription.trim(),
+    expectedBehavior: input.expectedBehavior.trim(),
+    activatedAt: new Date().toISOString(),
+  };
+  if (
+    !grant.task ||
+    !grant.reason ||
+    !grant.errorDescription ||
+    !grant.expectedBehavior
+  ) {
+    throw new Error(
+      "HUMAN_POWER_CONTEXT_REQUIRED: task, reason, error_description and expected_behavior are required."
+    );
+  }
+  work.humanPower = grant;
+  humanPowerCleanupPending.set(work.executionId, { ...grant });
+  work.lastActivityAt = new Date().toISOString();
+  return { ...grant };
+}
+
+export function humanPowerForExecution(
+  executionId: string
+): HumanPowerGrant | null {
+  cleanup();
+  const work = registrations.get(executionId);
+  return work?.humanPower ? { ...work.humanPower } : null;
+}
+
+export function isHumanPowerActive(executionId: string): boolean {
+  return humanPowerForExecution(executionId) !== null;
+}
+
+export function consumeHumanPowerCleanup(
+  executionId: string
+): HumanPowerGrant | null {
+  const grant = humanPowerCleanupPending.get(executionId) ?? null;
+  humanPowerCleanupPending.delete(executionId);
+  return grant ? { ...grant } : null;
+}
+
+export function currentHumanPower(): HumanPowerGrant | null {
+  try {
+    const lease = currentToolLease();
+    return humanPowerForExecution(lease.workId);
+  } catch {
+    return null;
+  }
+}
+
+export function deactivateHumanPower(): HumanPowerGrant | null {
+  const lease = currentToolLease();
+  const work = registrations.get(lease.workId);
+  if (!work || work.closing) return null;
+  const prior = work.humanPower ? { ...work.humanPower } : null;
+  delete work.humanPower;
+  humanPowerCleanupPending.delete(work.executionId);
+  work.lastActivityAt = new Date().toISOString();
+  return prior;
 }
 
 export function enableWorkCapability(
@@ -535,6 +645,14 @@ export function workStatus(
       owner_id: active.ownerId,
       execution_path: active.executionPath,
       capabilities: [...active.capabilities],
+      human_power: active.humanPower
+        ? {
+            active: true,
+            grant_id: active.humanPower.grantId,
+            task: active.humanPower.task,
+            activated_at: active.humanPower.activatedAt,
+          }
+        : { active: false },
       generation: active.generation,
       last_activity_at: active.lastActivityAt,
       idle_timeout_ms: WORK_IDLE_MS,
@@ -549,6 +667,14 @@ export function workStatus(
     owner_id: active.ownerId,
     execution_path: active.executionPath,
     capabilities: [...active.capabilities],
+    human_power: active.humanPower
+      ? {
+          active: true,
+          grant_id: active.humanPower.grantId,
+          task: active.humanPower.task,
+          activated_at: active.humanPower.activatedAt,
+        }
+      : { active: false },
     generation: active.generation,
     last_activity_at: active.lastActivityAt,
     idle_timeout_ms: WORK_IDLE_MS,

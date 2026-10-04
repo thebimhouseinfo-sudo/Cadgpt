@@ -45,6 +45,7 @@ import { registerUserAssetTools } from "./tools/user-assets.js";
 import { registerCadProxyTools } from "./tools/cad-proxy.js";
 import { registerObservatorTools } from "./tools/observator.js";
 import { registerDrawingPersistenceTools } from "./tools/drawing-persistence.js";
+import { registerHumanPowerTools } from "./tools/human-power.js";
 import { registerCadMcpDevTools } from "./tools/cad-mcp-dev.js";
 import {
   prepareCadLaunch,
@@ -199,6 +200,7 @@ function registerStableProductionSurface(server: McpServer): void {
   registerCadProxyTools(server);
   registerObservatorTools(server);
   registerDrawingPersistenceTools(server);
+  registerHumanPowerTools(server);
 
   if (isDevelopmentBuild()) {
     registerCadMcpDevTools(server);

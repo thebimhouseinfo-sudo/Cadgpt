@@ -1,18 +1,14 @@
 # CadGPT Job Rules
 
-## Human workflow bypass
+## Human Power interaction
 
-A Human Bypass is an explicit exception for a Job authoring/reasoning **workflow gate** that is temporarily wrong, incomplete, or too strict for the real task.
+Human Power is a CadGPT **execution-level emergency capability**, not Job state.
 
-Rules:
+A Job does not become a bypassed/flagged Job merely because Human Power was used while diagnosing or repairing CadGPT during that execution. If a platform blocker interrupts Job authoring/testing, the human may explicitly enable Human Power for the current work execution, repair the CadGPT/runtime issue, then continue the same Job. Human Power automatically ends with that work execution or may be stopped explicitly.
 
-- Only the human may authorize a bypass, and the approval must identify the concrete blocked workflow/gate.
-- Before continuing, the AI must call `job_human_bypass_record` with the observed behavior, expected behavior, error evidence, reason, and any temporary workaround.
-- The bypass is recorded in the managed workflow-bypass error log and the Job draft is flagged `workflow_bypass = ACTIVE`.
-- An ACTIVE bypass follows the Job into the User Registry when the Job is promoted. `job_list` / `job_get` must surface the flag so the Job cannot silently become "clean".
-- The bypass permits continuation only around the recorded workflow/harness gate. It **never** bypasses runtime sandbox/path policy, tool authority, drawing binding, destructive-scope approval, source syntax validity, or other hard safety/security boundaries.
-- After the platform workflow is corrected, refine/retest the Job without relying on the exception, call `job_human_bypass_clear` with fix + validation evidence and explicit human approval, then re-promote the Job. The new promotion removes the Registry bypass flag.
-- Bypass history remains append-only in the error log even after the active flag is cleared.
+Source-code changes made under Human Power are recorded in the managed Human Power error log with the original error context, expected behavior, fix description, target file and before/after hashes.
+
+Normal Job validation, real execution, user acceptance and promotion requirements still apply to the Job result.
 
 ## Purpose
 

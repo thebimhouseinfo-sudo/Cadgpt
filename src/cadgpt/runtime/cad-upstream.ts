@@ -4,6 +4,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { getRepoRoot } from "../lib/path-security.js";
+import {
+  currentHumanPower,
+  currentToolLease,
+} from "../lib/work-registration.js";
 
 export type CadUpstreamPhase = "sleeping" | "active";
 
@@ -112,11 +116,37 @@ class CadUpstream {
     if (force) await this.shutdown();
 
     this.connecting = (async () => {
-      const client = new Client({ name: "cadgpt-cad-upstream", version: "0.1.0" });
+      const client = new Client({
+        name: "cadgpt-cad-upstream",
+        version: "0.1.0",
+      });
+      const humanPower = currentHumanPower();
+      let humanPowerExecutionId = "";
+      if (humanPower) {
+        try {
+          humanPowerExecutionId = currentToolLease().workId;
+        } catch {
+          humanPowerExecutionId = "";
+        }
+      }
+      const childEnv = Object.fromEntries(
+        Object.entries(process.env).filter(
+          (entry): entry is [string, string] =>
+            typeof entry[1] === "string"
+        )
+      );
+      childEnv.CADGPT_HUMAN_POWER = humanPower ? "1" : "0";
+      if (humanPowerExecutionId) {
+        childEnv.CADGPT_HUMAN_POWER_EXECUTION_ID =
+          humanPowerExecutionId;
+      } else {
+        delete childEnv.CADGPT_HUMAN_POWER_EXECUTION_ID;
+      }
       const transport = new StdioClientTransport({
         command: this.python,
         args: [this.entry],
         cwd: getRepoRoot(),
+        env: childEnv,
         stderr: "pipe",
       });
       let stderrTail = "";

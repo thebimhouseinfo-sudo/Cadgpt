@@ -82,3 +82,16 @@ status = OPEN | TRIAGED | FIXED | KNOWLEDGE_PROMOTED
 **Candidate improvement:** Store `CADGPT_DRAWING_ANCHOR` inside a CadGPT-owned hard-owner dictionary under the Named Objects Dictionary; probe read-only before generation/write and migrate any valid legacy anchor without changing its value.
 
 **Status:** FIXED in source; awaiting live AutoCAD verification.
+
+
+---
+
+## 2026-10-05 — Repeated minor runtime blockers forced disruptive restart cycles
+
+**Observed behavior:** Small CadGPT/runtime defects during real Job work repeatedly required stopping the workflow, editing/pulling source, restarting CadGPT and reopening/rebinding AutoCAD context. The Create System development/test flow was interrupted many times even when the Job itself did not need source changes.
+
+**Expected behavior:** A human should be able to explicitly unlock the current work execution, repair a CadGPT platform defect in-place when needed, reload only the affected child runtime where possible, and then continue the original task.
+
+**Improvement:** Replace persistent Job-level Human Bypass with execution-scoped **Human Power**. Human Power expires with the current WorkRegistration. Repository source mutations require structured error/fix audit evidence. CAD-MCP Python changes reload only the CAD-MCP child process.
+
+**Status:** IMPLEMENTING.

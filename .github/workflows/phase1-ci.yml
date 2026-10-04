@@ -252,7 +252,8 @@ jobs:
             $initialNames = @($initial.result.tools | ForEach-Object { $_.name })
             foreach ($required in @(
               "cadgpt_control","cadgpt_admission","cadgpt_work_start","cadgpt_work_status","cadgpt_work_stop","cadgpt_work_upgrade",
-              "library_list","library_create","library_import","registry_list","job_list","job_get","job_run_direct","job_run_direct_draft","job_draft_new","job_checkout","job_human_bypass_record","job_human_bypass_clear","job_draft_validate","job_promote_draft",
+              "library_list","library_create","library_import","registry_list","job_list","job_get","job_run_direct","job_run_direct_draft","job_draft_new","job_checkout","job_draft_validate","job_promote_draft",
+              "human_power_start","human_power_status","human_power_stop",
               "file_roots","file_create","file_edit","lisp_scaffold","lisp_checkout","asset_import","asset_export",
               "drawing_list","cad_status","cad__cad_list_layers","cad_invoke_manifest_tool"
             )) {
@@ -326,6 +327,53 @@ jobs:
             $blockedRead = Invoke-Work "file_read" @{ path="package.json" }
             if ($blockedRead.result.isError -ne $true) { throw "Sandbox allowed package.json" }
 
+            $hpStart = Invoke-Work "human_power_start" @{
+              task="CI Human Power source repair"
+              reason="Exercise one-task execution privilege"
+              error_description="CI fixture simulates a CadGPT runtime source blocker"
+              expected_behavior="Human Power permits one audited source repair and then normal sandbox returns"
+              human_approved=$true
+            }
+            if ($hpStart.result.isError -eq $true -or $hpStart.result.structuredContent.data.active -ne $true) {
+              throw "Human Power did not activate"
+            }
+            $hpStatus = Invoke-Work "human_power_status"
+            if ($hpStatus.result.structuredContent.data.active -ne $true) { throw "Human Power status not active" }
+
+            $hpSourcePath = Join-Path "${{ github.workspace }}" "runtimes\cad-mcp\__human_power_ci__.py"
+            Remove-Item $hpSourcePath -Force -ErrorAction SilentlyContinue
+            $hpMissingAudit = Invoke-Work "file_create" @{
+              path=$hpSourcePath
+              content="print('human power ci')"
+            }
+            if ($hpMissingAudit.result.isError -ne $true -or $hpMissingAudit.result.structuredContent.data.error -notmatch "HUMAN_POWER_SOURCE_FIX_REQUIRED") {
+              throw "Human Power source mutation did not require fix audit"
+            }
+
+            $hpCreate = Invoke-Work "file_create" @{
+              path=$hpSourcePath
+              content="print('human power ci')"
+              human_power_fix="Create a CI-only source fixture to prove audited repository mutation under the current Human Power grant."
+            }
+            if ($hpCreate.result.isError -eq $true) { throw "Audited Human Power source mutation failed" }
+            if ($hpCreate.result.structuredContent.data.human_power_source_mutation -ne $true) { throw "Human Power source mutation flag missing" }
+
+            $hpLog = Join-Path $managedRoot "logs\human-power-error-log.jsonl"
+            if (-not (Test-Path $hpLog)) { throw "Human Power audit log was not created" }
+            $hpLogText = Get-Content $hpLog -Raw
+            foreach ($requiredEvent in @("HUMAN_POWER_STARTED","HUMAN_POWER_SOURCE_CHANGED")) {
+              if ($hpLogText -notmatch $requiredEvent) { throw "Human Power log missing event: $requiredEvent" }
+            }
+
+            $hpStop = Invoke-Work "human_power_stop" @{ outcome="CI repair verified; restore normal CadGPT policy." }
+            if ($hpStop.result.isError -eq $true -or $hpStop.result.structuredContent.data.active -ne $false) {
+              throw "Human Power did not stop"
+            }
+            Remove-Item $hpSourcePath -Force -ErrorAction SilentlyContinue
+
+            $blockedAfterHp = Invoke-Work "file_read" @{ path=(Join-Path "${{ github.workspace }}" "package.json") }
+            if ($blockedAfterHp.result.isError -ne $true) { throw "Human Power leaked after stop; repo read remained unlocked" }
+
             $registry = Invoke-Discovery "registry_list" @{ limit=500 }
             $entries = @($registry.result.structuredContent.data.entries)
             if (@($entries | Where-Object { $_.registry -eq "internal" -and $_.kind -eq "tool" }).Count -lt 1) { throw "Internal tool registry empty" }
@@ -338,6 +386,23 @@ jobs:
 
             $relativeCreate = Invoke-Work "file_create" @{ path="workspace/reject.txt"; content="reject" }
             if ($relativeCreate.result.isError -ne $true -or $relativeCreate.result.structuredContent.data.error -notmatch "ABSOLUTE_PATH_REQUIRED") { throw "Relative file mutation was not rejected" }
+
+            $hpAgain = Invoke-Work "human_power_start" @{
+              task="CI implicit Human Power cleanup"
+              reason="Verify Human Power cannot survive its owning work execution"
+              error_description="CI fixture for implicit cleanup"
+              expected_behavior="cadgpt_work_stop consumes the grant and restores normal runtime state"
+              human_approved=$true
+            }
+            if ($hpAgain.result.isError -eq $true) { throw "Second Human Power activation failed" }
+
+            $stopWork = Invoke-Tool "cadgpt_work_stop"
+            if ($stopWork.result.isError -eq $true -or $stopWork.result.structuredContent.data.stopped -ne $true) {
+              throw "Work stop failed during Human Power cleanup test"
+            }
+            if ($stopWork.result.structuredContent.data.cleanup.human_power_cleared -ne $true) {
+              throw "Work stop did not clear Human Power"
+            }
 
             Write-Host "Stable tool surface + session/work authority + lazy runtime + managed sandbox smoke passed"
           }
@@ -427,7 +492,17 @@ jobs:
           $outside = Join-Path $env:RUNNER_TEMP "cadgpt-outside-load.lsp"
           Set-Content -LiteralPath $outside -Value "(princ)" -NoNewline
           $env:CADGPT_LISP_OUTSIDE = $outside
+          Remove-Item Env:CADGPT_HUMAN_POWER -ErrorAction SilentlyContinue
           python -c "import os; from services.lisp_service import _resolve_lisp_path; _resolve_lisp_path(os.environ['CADGPT_LISP_OUTSIDE'])" 2>$null
-          if ($LASTEXITCODE -eq 0) { throw "outside absolute Lisp path was accepted" }
-          Write-Host "outside absolute Lisp path rejected"
+          if ($LASTEXITCODE -eq 0) { throw "outside absolute Lisp path was accepted without Human Power" }
+          Write-Host "outside absolute Lisp path rejected without Human Power"
+
+          $env:CADGPT_HUMAN_POWER = "1"
+          python -c "import os; from services.lisp_service import _resolve_lisp_path; p,v=_resolve_lisp_path(os.environ['CADGPT_LISP_OUTSIDE']); assert p==os.path.realpath(os.environ['CADGPT_LISP_OUTSIDE']); assert v.startswith('human-power/'); print('Human Power Lisp scope unlock OK:', v)"
+          if ($LASTEXITCODE -ne 0) { throw "Human Power did not unlock absolute Lisp path" }
+          Remove-Item Env:CADGPT_HUMAN_POWER -ErrorAction SilentlyContinue
+
+          python -c "import os; from services.lisp_service import _resolve_lisp_path; _resolve_lisp_path(os.environ['CADGPT_LISP_OUTSIDE'])" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "Human Power Lisp scope leaked after flag removal" }
+          Write-Host "Human Power Lisp scope closes when grant flag is absent"
           exit 0

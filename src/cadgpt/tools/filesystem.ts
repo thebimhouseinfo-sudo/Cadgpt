@@ -4,9 +4,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { getAllowedRoots, getWritableRoots, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
+import { getAppDataRoot } from "../lib/appdata.js";
+import { getAllowedRoots, getRepoRoot, getWritableRoots, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
-import { currentToolLease } from "../lib/work-registration.js";
+import { currentHumanPower, currentToolLease } from "../lib/work-registration.js";
+import {
+  auditHumanPowerSourceMutation,
+  isCadGptSourcePath,
+} from "../runtime/human-power.js";
 import { drawingMetadataRootsForExecution } from "../runtime/drawing-persistence.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
@@ -21,11 +26,29 @@ function currentDrawingMetadataRoots(): string[] {
 }
 
 function currentReadableRoots(): string[] {
-  return [...new Set([...getAllowedRoots(), ...currentDrawingMetadataRoots()])];
+  const humanPowerRoots = currentHumanPower()
+    ? [getAppDataRoot(), getRepoRoot()]
+    : [];
+  return [
+    ...new Set([
+      ...getAllowedRoots(),
+      ...currentDrawingMetadataRoots(),
+      ...humanPowerRoots,
+    ]),
+  ];
 }
 
 function currentWritableRoots(): string[] {
-  return [...new Set([...getWritableRoots(), ...currentDrawingMetadataRoots()])];
+  const humanPowerRoots = currentHumanPower()
+    ? [getAppDataRoot(), getRepoRoot()]
+    : [];
+  return [
+    ...new Set([
+      ...getWritableRoots(),
+      ...currentDrawingMetadataRoots(),
+      ...humanPowerRoots,
+    ]),
+  ];
 }
 
 function sha256(content: string | Buffer): string {
@@ -33,8 +56,29 @@ function sha256(content: string | Buffer): string {
 }
 
 function assertTextExtension(target: string): void {
+  if (currentHumanPower()) return;
   const ext = path.extname(target).toLowerCase();
-  if (!TEXT_EXTENSIONS.has(ext)) throw new Error(`Unsupported CadGPT text asset type: ${ext || "<no extension>"}`);
+  if (!TEXT_EXTENSIONS.has(ext)) {
+    throw new Error(
+      `Unsupported CadGPT text asset type: ${ext || "<no extension>"}`
+    );
+  }
+}
+
+async function reloadCadMcpChildIfNeeded(target: string): Promise<boolean> {
+  const runtimeRoot = path.resolve(getRepoRoot(), "runtimes", "cad-mcp");
+  const normalized = path.resolve(target);
+  if (
+    normalized !== runtimeRoot &&
+    !normalized.startsWith(runtimeRoot + path.sep)
+  ) {
+    return false;
+  }
+  const { cadUpstream } = await import("../runtime/cad-upstream.js");
+  if (cadUpstream.status().enabled || cadUpstream.status().connected) {
+    await cadUpstream.deactivate();
+  }
+  return true;
 }
 
 async function atomicWrite(target: string, content: string): Promise<void> {
@@ -211,27 +255,78 @@ export function registerFilesystemTools(server: McpServer): void {
     {
       title: "Create CadGPT Managed Text File",
       description: "Create a new text asset inside generic writable AppData roots (workspace/data plus the execution-authorized drawing metadata root). path MUST be an absolute filesystem path. Permanent managed libraries are not writable through this tool.",
-      inputSchema: { path: z.string(), content: z.string() },
+      inputSchema: {
+        path: z.string(),
+        content: z.string(),
+        human_power_fix: z.string().max(6000).optional(),
+      },
     },
-    async ({ path: input, content }) => {
+    async ({ path: input, content, human_power_fix }) => {
       try {
-        const target = await resolveAbsoluteMutationPath(input, { forCreate: true, allowedRoots: currentWritableRoots(), label: "execution-authorized writable AppData" });
+        const target = await resolveAbsoluteMutationPath(input, {
+          forCreate: true,
+          allowedRoots: currentWritableRoots(),
+          label: currentHumanPower()
+            ? "Human Power writable scope"
+            : "execution-authorized writable AppData",
+        });
         assertTextExtension(target);
+        const sourceMutation = isCadGptSourcePath(target);
+        if (sourceMutation && !currentHumanPower()) {
+          throw new Error(
+            "HUMAN_POWER_REQUIRED: CadGPT source creation requires active Human Power."
+          );
+        }
+        if (sourceMutation && !human_power_fix?.trim()) {
+          throw new Error(
+            "HUMAN_POWER_SOURCE_FIX_REQUIRED: source creation must explain how this change fixes the recorded Human Power error."
+          );
+        }
         return await withFileMutationLocks([target], async () => {
           await fs.mkdir(path.dirname(target), { recursive: true });
           try {
-            await fs.writeFile(target, content, { encoding: "utf8", flag: "wx" });
+            await fs.writeFile(target, content, {
+              encoding: "utf8",
+              flag: "wx",
+            });
+            if (sourceMutation) {
+              try {
+                await auditHumanPowerSourceMutation({
+                  executionId: currentToolLease().workId,
+                  target,
+                  action: "create",
+                  fixSummary: human_power_fix || "",
+                  sha256Before: null,
+                  sha256After: sha256(content),
+                });
+              } catch (auditError) {
+                await fs.rm(target, { force: true });
+                throw auditError;
+              }
+            }
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-              throw new Error(`Target already exists: ${toCadgptPath(target)}`);
+              throw new Error(
+                `Target already exists: ${toCadgptPath(target)}`
+              );
             }
             throw error;
           }
-          console.log(`[AUDIT] file_create ${toCadgptPath(target)} bytes=${Buffer.byteLength(content)}`);
+          const cadMcpChildReloaded =
+            sourceMutation && (await reloadCadMcpChildIfNeeded(target));
+          console.log(
+            `[AUDIT] file_create ${toCadgptPath(target)} bytes=${Buffer.byteLength(content)}`
+          );
           return toolResult("file_create", {
             path: toCadgptPath(target),
             absolute_path: target,
             bytes: Buffer.byteLength(content),
+            human_power_source_mutation: sourceMutation,
+            cad_mcp_child_reloaded: cadMcpChildReloaded,
+            runtime_effect:
+              sourceMutation && !cadMcpChildReloaded
+                ? "source_changed; non-CAD-MCP core changes require normal CadGPT rebuild/restart before they take effect"
+                : "active",
           });
         });
       } catch (error) {
@@ -251,12 +346,36 @@ export function registerFilesystemTools(server: McpServer): void {
         old_text: z.string(),
         new_text: z.string(),
         replace_all: z.boolean().optional().default(false),
+        human_power_fix: z.string().max(6000).optional(),
       },
     },
-    async ({ path: input, expected_sha256, old_text, new_text, replace_all }) => {
+    async ({
+      path: input,
+      expected_sha256,
+      old_text,
+      new_text,
+      replace_all,
+      human_power_fix,
+    }) => {
       try {
-        const target = await resolveAbsoluteMutationPath(input, { allowedRoots: currentWritableRoots(), label: "execution-authorized writable AppData" });
+        const target = await resolveAbsoluteMutationPath(input, {
+          allowedRoots: currentWritableRoots(),
+          label: currentHumanPower()
+            ? "Human Power writable scope"
+            : "execution-authorized writable AppData",
+        });
         assertTextExtension(target);
+        const sourceMutation = isCadGptSourcePath(target);
+        if (sourceMutation && !currentHumanPower()) {
+          throw new Error(
+            "HUMAN_POWER_REQUIRED: CadGPT source editing requires active Human Power."
+          );
+        }
+        if (sourceMutation && !human_power_fix?.trim()) {
+          throw new Error(
+            "HUMAN_POWER_SOURCE_FIX_REQUIRED: source edits must explain how the patch fixes the recorded Human Power error."
+          );
+        }
         return await withFileMutationLocks([target], async () => {
           const original = await fs.readFile(target, "utf8");
           const currentHash = sha256(original);
@@ -279,15 +398,41 @@ export function registerFilesystemTools(server: McpServer): void {
           }
 
           await atomicWrite(target, updated);
-          console.log(`[AUDIT] file_edit ${toCadgptPath(target)} replace_all=${replace_all}`);
+          const updatedHash = sha256(updated);
+          if (sourceMutation) {
+            try {
+              await auditHumanPowerSourceMutation({
+                executionId: currentToolLease().workId,
+                target,
+                action: "edit",
+                fixSummary: human_power_fix || "",
+                sha256Before: currentHash,
+                sha256After: updatedHash,
+              });
+            } catch (auditError) {
+              await atomicWrite(target, original);
+              throw auditError;
+            }
+          }
+          const cadMcpChildReloaded =
+            sourceMutation && (await reloadCadMcpChildIfNeeded(target));
+          console.log(
+            `[AUDIT] file_edit ${toCadgptPath(target)} replace_all=${replace_all}`
+          );
           return toolResult("file_edit", {
             path: toCadgptPath(target),
             absolute_path: target,
             changed: true,
             sha256_before: currentHash,
-            sha256_after: sha256(updated),
+            sha256_after: updatedHash,
             bytes_before: Buffer.byteLength(original),
             bytes_after: Buffer.byteLength(updated),
+            human_power_source_mutation: sourceMutation,
+            cad_mcp_child_reloaded: cadMcpChildReloaded,
+            runtime_effect:
+              sourceMutation && !cadMcpChildReloaded
+                ? "source_changed; non-CAD-MCP core changes require normal CadGPT rebuild/restart before they take effect"
+                : "active",
           });
         });
       } catch (error) {

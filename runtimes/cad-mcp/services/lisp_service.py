@@ -56,6 +56,15 @@ def _appdata_root() -> str:
     return get_cadgpt_appdata_root()
 
 
+def _human_power_enabled() -> bool:
+    return (os.environ.get("CADGPT_HUMAN_POWER") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _inside(candidate: str, root: str) -> bool:
     try:
         common = os.path.commonpath([candidate, root])
@@ -96,18 +105,30 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
 
     if os.path.isabs(raw):
         candidate = os.path.realpath(raw)
-        match = next(((root, prefix) for root, prefix in roots if _inside(candidate, root)), None)
-        if not match:
-            approved = ", ".join(
-                f"{prefix}={root}"
+        match = next(
+            (
+                (root, prefix)
                 for root, prefix in roots
-            )
-            raise LispServiceError(
-                "absolute LISP path is outside approved CadGPT Lisp roots; "
-                f"candidate={candidate}; appdata_root={_appdata_root()}; "
-                f"approved_roots=[{approved}]"
-            )
-        root, virtual_prefix = match
+                if _inside(candidate, root)
+            ),
+            None,
+        )
+        if not match:
+            if _human_power_enabled():
+                root = os.path.dirname(candidate)
+                virtual_prefix = "human-power"
+            else:
+                approved = ", ".join(
+                    f"{prefix}={root}"
+                    for root, prefix in roots
+                )
+                raise LispServiceError(
+                    "absolute LISP path is outside approved CadGPT Lisp roots; "
+                    f"candidate={candidate}; appdata_root={_appdata_root()}; "
+                    f"approved_roots=[{approved}]"
+                )
+        else:
+            root, virtual_prefix = match
     else:
         normalized = normalized[2:] if normalized.startswith("./") else normalized
         lower = normalized.lower()
@@ -131,16 +152,24 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
             suffix = normalized[len("appdata/libraries/jobs/") :]
             root, virtual_prefix = roots[5]
         else:
-            raise LispServiceError(
-                "LISP path must be under resources/cad/**, appdata/libraries/lisp/**, "
-                "appdata/workspace/lisp-draft/**, appdata/runtime/dynamic-lisp/**, "
-                "appdata/workspace/job-draft/**/(lisp|dynamic-lisp)/**, or "
-                "appdata/libraries/jobs/**/(lisp|dynamic-lisp)/**"
-            )
+            if _human_power_enabled():
+                root = _repo_root()
+                virtual_prefix = "human-power/repo"
+                suffix = normalized
+            else:
+                raise LispServiceError(
+                    "LISP path must be under resources/cad/**, appdata/libraries/lisp/**, "
+                    "appdata/workspace/lisp-draft/**, appdata/runtime/dynamic-lisp/**, "
+                    "appdata/workspace/job-draft/**/(lisp|dynamic-lisp)/**, or "
+                    "appdata/libraries/jobs/**/(lisp|dynamic-lisp)/**"
+                )
 
         candidate = os.path.realpath(os.path.join(root, suffix))
         if not _inside(candidate, root):
-            raise LispServiceError(f"LISP path escapes the {virtual_prefix}/** sandbox")
+            if not _human_power_enabled():
+                raise LispServiceError(
+                    f"LISP path escapes the {virtual_prefix}/** sandbox"
+                )
     if virtual_prefix in {
         "appdata/workspace/job-draft",
         "appdata/libraries/jobs",
@@ -152,7 +181,7 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
     if os.path.splitext(candidate)[1].lower() != ".lsp":
         raise LispServiceError("only .lsp files can be loaded")
     if not os.path.isfile(candidate):
-        raise LispServiceError(f"LISP file was not found: {virtual_prefix}/{suffix}")
+        raise LispServiceError(f"LISP file was not found: {candidate}")
 
     relative_suffix = os.path.relpath(candidate, root).replace("\\", "/")
     return candidate, f"{virtual_prefix}/{relative_suffix}"

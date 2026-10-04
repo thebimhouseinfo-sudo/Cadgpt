@@ -36,29 +36,12 @@ Rules:
 A `.py` Job is not processed by this harness. It is a direct Job: resolve the registered script and dispatch it through the direct Job runner without model planning between its internal operations.
 
 
-## Human Bypass
+## Human Power
 
-When a real Job is blocked by a workflow/harness rule that the human explicitly judges incorrect or not yet mature:
+Human Power is not part of the Job workflow and is not a Job PASS condition.
 
-```text
-human explicitly approves bypass of named gate
-→ job_human_bypass_record
-→ append detailed incident to workflow-bypass error log
-→ mark draft/Job workflow_bypass = ACTIVE
-→ continue only around that named workflow gate
-→ keep all hard runtime/safety/tool boundaries enforced
-```
+If the Job is blocked by a defect or inappropriate CadGPT platform gate, the human may explicitly activate `human_power_start` for the **current work execution only**. CadGPT may then repair the platform/runtime and continue the same task without turning the Job into a permanent bypass variant.
 
-An ACTIVE bypass is technical debt, not a PASS. Reports and promotion must surface it.
+When the task is finished, call `human_power_stop` when practical. Work stop/release/expiry/replacement also removes the grant automatically.
 
-After the platform workflow is updated:
-
-```text
-checkout/refine flagged Job
-→ execute the corrected normal workflow
-→ validate without relying on bypass
-→ human approves bypass removal
-→ job_human_bypass_clear
-→ re-promote Job
-→ Registry flag removed; historical log retained
-```
+If Human Power changes CadGPT source, the mutation must include a fix summary and is written to the Human Power error log together with the error/expected behavior recorded at activation.

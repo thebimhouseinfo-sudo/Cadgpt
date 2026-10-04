@@ -1,9 +1,13 @@
 import { runtimeStateSnapshot } from "../lib/runtime-state.js";
-import { hasActiveCadWork } from "../lib/work-registration.js";
+import {
+  consumeHumanPowerCleanup,
+  hasActiveCadWork,
+} from "../lib/work-registration.js";
 
 export interface ExecutionCleanupResult {
   execution_id: string;
   candidate_released: boolean;
+  human_power_cleared: boolean;
   drawing_metadata_cleaned: boolean;
   drawing_metadata_cleanup?: Record<string, unknown>;
   cad_state_cleared: boolean;
@@ -24,6 +28,7 @@ export async function cleanupExecutionState(
   const result: ExecutionCleanupResult = {
     execution_id: executionId,
     candidate_released: false,
+    human_power_cleared: false,
     drawing_metadata_cleaned: false,
     cad_state_cleared: false,
     cad_mcp_dev_restored: false,
@@ -31,6 +36,34 @@ export async function cleanupExecutionState(
     cad_backend_slept: false,
     errors: [],
   };
+
+  const humanPower = consumeHumanPowerCleanup(executionId);
+  if (humanPower) {
+    try {
+      const [{ logHumanPowerStop }, { cadUpstream }] =
+        await Promise.all([
+          import("./human-power.js"),
+          import("./cad-upstream.js"),
+        ]);
+      await logHumanPowerStop(
+        executionId,
+        humanPower,
+        "Work execution ended; Human Power automatically stopped."
+      );
+      if (
+        cadUpstream.status().enabled ||
+        cadUpstream.status().connected
+      ) {
+        await cadUpstream.deactivate();
+      }
+      result.human_power_cleared = true;
+      result.cad_backend_slept = true;
+    } catch (error) {
+      result.errors.push(
+        `Human Power cleanup: ${errorText(error)}`
+      );
+    }
+  }
 
   try {
     const { releaseCadCandidateForExecution } = await import("./cad-candidate.js");

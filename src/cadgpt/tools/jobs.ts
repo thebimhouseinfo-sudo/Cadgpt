@@ -7,7 +7,6 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import {
-  getAppDataPath,
   getJobDraftRoot,
   getJobLibrariesRoot,
   getUserCapabilitiesPath,
@@ -45,34 +44,12 @@ interface JobEntry {
   summary?: string;
   status?: string;
   risk?: string;
-  workflow_bypass?: boolean;
-  workflow_bypass_record?: WorkflowBypassRecord;
 }
 
 interface UserRegistry {
   version: number;
   entries: Array<Record<string, unknown>>;
 }
-
-interface WorkflowBypassRecord {
-  bypass_id: string;
-  status: "ACTIVE" | "CLEARED";
-  job_id: string;
-  workflow_gate: string;
-  reason: string;
-  observed_behavior: string;
-  expected_behavior: string;
-  error_evidence: string;
-  workaround?: string;
-  approved_at: string;
-  approved_by: "human";
-  draft_path: string;
-  cleared_at?: string;
-  workflow_fix_evidence?: string;
-  final_validation_evidence?: string;
-}
-
-const WORKFLOW_BYPASS_SIDECAR = ".cadgpt-workflow-bypass.json";
 
 function sha256(content: string | Buffer): string {
   return createHash("sha256").update(content).digest("hex");
@@ -89,9 +66,15 @@ const jobMetadataSchema = z.object({
   risk: z.enum(["low", "medium", "high"]).default("medium"),
 });
 
-async function atomicWrite(target: string, content: string): Promise<void> {
+async function atomicWrite(
+  target: string,
+  content: string
+): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true });
-  const temp = path.join(path.dirname(target), `.${path.basename(target)}.${randomUUID()}.tmp`);
+  const temp = path.join(
+    path.dirname(target),
+    `.${path.basename(target)}.${randomUUID()}.tmp`
+  );
   try {
     await fs.writeFile(temp, content, "utf8");
     await fs.rename(temp, target);
@@ -100,57 +83,18 @@ async function atomicWrite(target: string, content: string): Promise<void> {
   }
 }
 
-async function readJson<T>(target: string, fallback: T): Promise<T> {
+async function readJson<T>(
+  target: string,
+  fallback: T
+): Promise<T> {
   try {
     return JSON.parse(await fs.readFile(target, "utf8")) as T;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return fallback;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return fallback;
+    }
     throw error;
   }
-}
-
-function workflowBypassSidecarPath(jobFilePath: string): string {
-  return path.join(path.dirname(jobFilePath), WORKFLOW_BYPASS_SIDECAR);
-}
-
-async function readWorkflowBypassState(
-  jobFilePath: string
-): Promise<WorkflowBypassRecord | null> {
-  const sidecar = workflowBypassSidecarPath(jobFilePath);
-  const parsed = await readJson<Partial<WorkflowBypassRecord> | null>(
-    sidecar,
-    null
-  );
-  if (
-    !parsed ||
-    !parsed.bypass_id ||
-    !["ACTIVE", "CLEARED"].includes(String(parsed.status))
-  ) {
-    return null;
-  }
-  return parsed as WorkflowBypassRecord;
-}
-
-async function readWorkflowBypass(
-  jobFilePath: string
-): Promise<WorkflowBypassRecord | null> {
-  const state = await readWorkflowBypassState(jobFilePath);
-  return state?.status === "ACTIVE" ? state : null;
-}
-
-async function appendWorkflowBypassLog(
-  event: Record<string, unknown>
-): Promise<string> {
-  const logPath = getAppDataPath("logs", "workflow-bypass.jsonl");
-  await fs.mkdir(path.dirname(logPath), { recursive: true });
-  return withFileMutationLocks([logPath], async () => {
-    await fs.appendFile(
-      logPath,
-      `${JSON.stringify(event)}\n`,
-      "utf8"
-    );
-    return logPath;
-  });
 }
 
 async function loadRegistry(): Promise<UserRegistry> {
@@ -400,14 +344,6 @@ export function registerJobDiscoveryTools(server: McpServer): void {
             ...(job.summary ? { summary: job.summary } : {}),
             ...(job.status ? { status: job.status } : {}),
             ...(job.risk ? { risk: job.risk } : {}),
-            ...(job.workflow_bypass
-              ? {
-                  workflow_bypass: true,
-                  workflow_bypass_status: "ACTIVE",
-                  workflow_bypass_id:
-                    job.workflow_bypass_record?.bypass_id ?? null,
-                }
-              : {}),
           })),
         ];
         if (library_id) {
@@ -482,14 +418,6 @@ export function registerJobDiscoveryTools(server: McpServer): void {
           ...(executionMode === "reasoning"
             ? { harness: "knowledge/jobs/REASONING_HARNESS.md" }
             : {}),
-          ...(entry.workflow_bypass
-            ? {
-                workflow_bypass: true,
-                workflow_bypass_status: "ACTIVE",
-                workflow_bypass_record:
-                  entry.workflow_bypass_record ?? null,
-              }
-            : { workflow_bypass: false }),
           rules: "knowledge/jobs/JOB_RULES.md",
         });
       } catch (error) {
@@ -877,9 +805,8 @@ export function registerJobAuthoringTools(server: McpServer): void {
           );
         }
 
-        const bypassSidecar = workflowBypassSidecarPath(draft);
         return await withFileMutationLocks(
-          [draft, bypassSidecar],
+          [draft],
           async () => {
           let previousDraft: string | null = null;
           try {
@@ -897,17 +824,6 @@ export function registerJobAuthoringTools(server: McpServer): void {
           }
 
           await atomicWrite(draft, content);
-          if (
-            entry.workflow_bypass &&
-            entry.workflow_bypass_record?.status === "ACTIVE"
-          ) {
-            await atomicWrite(
-              bypassSidecar,
-              `${JSON.stringify(entry.workflow_bypass_record, null, 2)}\n`
-            );
-          } else {
-            await fs.rm(bypassSidecar, { force: true });
-          }
           const validation = await validateJobDraft(draft, content);
           return toolResult("job_checkout", {
             registry_id: entry.id,
@@ -918,172 +834,12 @@ export function registerJobAuthoringTools(server: McpServer): void {
             draft_display_path: toCadgptPath(draft),
             source_contract_valid: validation.valid,
             diagnostics: validation.diagnostics,
-            workflow_bypass: Boolean(entry.workflow_bypass),
-            workflow_bypass_record:
-              entry.workflow_bypass_record ?? null,
             managed_source_unchanged: true,
           });
           }
         );
       } catch (error) {
         return toolError("job_checkout", error);
-      }
-    }
-  );
-
-  server.registerTool(
-    "job_human_bypass_record",
-    {
-      title: "Record Human Workflow Bypass",
-      description:
-        "Record an explicit human-approved bypass of one Job workflow/harness gate. This never bypasses runtime security, sandbox/path authority, destructive-scope approval, drawing binding, tool authorization, or source syntax validity. The draft is flagged ACTIVE and the incident is appended to the managed workflow-bypass error log.",
-      inputSchema: {
-        draft_path: z.string().min(1),
-        job_id: z.string().min(1).max(160),
-        workflow_gate: z.string().min(1).max(120),
-        reason: z.string().min(1).max(2000),
-        observed_behavior: z.string().min(1).max(4000),
-        expected_behavior: z.string().min(1).max(4000),
-        error_evidence: z.string().min(1).max(8000),
-        workaround: z.string().max(4000).optional(),
-        human_approved: z.literal(true),
-      },
-    },
-    async ({
-      draft_path,
-      job_id,
-      workflow_gate,
-      reason,
-      observed_behavior,
-      expected_behavior,
-      error_evidence,
-      workaround,
-      human_approved,
-    }) => {
-      try {
-        if (!human_approved) {
-          throw new Error(
-            "HUMAN_BYPASS_REQUIRES_EXPLICIT_APPROVAL"
-          );
-        }
-        assertDraftVirtualPath(draft_path);
-        const draft = await resolveAllowedPath(draft_path);
-        const stat = await fs.stat(draft);
-        if (!stat.isFile()) {
-          throw new Error("Human bypass target must be a Job draft file.");
-        }
-
-        const bypass: WorkflowBypassRecord = {
-          bypass_id: `wbp_${Date.now()}_${randomUUID().slice(0, 8)}`,
-          status: "ACTIVE",
-          job_id,
-          workflow_gate,
-          reason,
-          observed_behavior,
-          expected_behavior,
-          error_evidence,
-          ...(workaround ? { workaround } : {}),
-          approved_at: new Date().toISOString(),
-          approved_by: "human",
-          draft_path: toCadgptPath(draft),
-        };
-        const sidecar = workflowBypassSidecarPath(draft);
-        await withFileMutationLocks([sidecar], async () => {
-          await atomicWrite(
-            sidecar,
-            `${JSON.stringify(bypass, null, 2)}\n`
-          );
-        });
-        const logPath = await appendWorkflowBypassLog({
-          event: "HUMAN_BYPASS_ACTIVATED",
-          ...bypass,
-        });
-
-        return toolResult("job_human_bypass_record", {
-          workflow_bypass: true,
-          workflow_bypass_status: "ACTIVE",
-          bypass,
-          sidecar_path: toCadgptPath(sidecar),
-          error_log_path: toCadgptPath(logPath),
-          note:
-            "Continue only around the explicitly recorded workflow gate. Hard runtime/safety/tool authority boundaries remain enforced.",
-        });
-      } catch (error) {
-        return toolError("job_human_bypass_record", error);
-      }
-    }
-  );
-
-  server.registerTool(
-    "job_human_bypass_clear",
-    {
-      title: "Clear Human Workflow Bypass",
-      description:
-        "Clear an ACTIVE Job workflow-bypass flag after the underlying workflow has been corrected and the Job has been revalidated without relying on the bypass. The clear event is appended to the managed workflow-bypass error log.",
-      inputSchema: {
-        draft_path: z.string().min(1),
-        bypass_id: z.string().min(1),
-        workflow_fix_evidence: z.string().min(1).max(6000),
-        final_validation_evidence: z.string().min(1).max(6000),
-        human_approved: z.literal(true),
-      },
-    },
-    async ({
-      draft_path,
-      bypass_id,
-      workflow_fix_evidence,
-      final_validation_evidence,
-      human_approved,
-    }) => {
-      try {
-        if (!human_approved) {
-          throw new Error(
-            "HUMAN_BYPASS_CLEAR_REQUIRES_EXPLICIT_APPROVAL"
-          );
-        }
-        assertDraftVirtualPath(draft_path);
-        const draft = await resolveAllowedPath(draft_path);
-        const active = await readWorkflowBypass(draft);
-        if (!active) {
-          throw new Error("NO_ACTIVE_WORKFLOW_BYPASS");
-        }
-        if (active.bypass_id !== bypass_id) {
-          throw new Error(
-            "WORKFLOW_BYPASS_ID_MISMATCH: active bypass changed."
-          );
-        }
-
-        const sidecar = workflowBypassSidecarPath(draft);
-        const clearedAt = new Date().toISOString();
-        const cleared: WorkflowBypassRecord = {
-          ...active,
-          status: "CLEARED",
-          cleared_at: clearedAt,
-          workflow_fix_evidence,
-          final_validation_evidence,
-        };
-        await withFileMutationLocks([sidecar], async () => {
-          await atomicWrite(
-            sidecar,
-            `${JSON.stringify(cleared, null, 2)}\n`
-          );
-        });
-        const logPath = await appendWorkflowBypassLog({
-          event: "HUMAN_BYPASS_CLEARED",
-          ...cleared,
-        });
-
-        return toolResult("job_human_bypass_clear", {
-          workflow_bypass: false,
-          workflow_bypass_status: "CLEARED",
-          bypass_id,
-          sidecar_path: toCadgptPath(sidecar),
-          error_log_path: toCadgptPath(logPath),
-          note:
-            "Re-promote the refined Job to remove the persistent Registry bypass flag. The CLEARED tombstone remains with the draft as proof of intentional resolution.",
-        });
-      } catch (error) {
-        return toolError("job_human_bypass_clear", error);
       }
     }
   );
@@ -1101,22 +857,12 @@ export function registerJobAuthoringTools(server: McpServer): void {
         const target = await resolveAllowedPath(input);
         const content = await fs.readFile(target, "utf8");
         const validation = await validateJobDraft(target, content);
-        const workflowBypassState =
-          await readWorkflowBypassState(target);
-        const workflowBypass =
-          workflowBypassState?.status === "ACTIVE"
-            ? workflowBypassState
-            : null;
         return toolResult(
           "job_draft_validate",
           {
             path: toCadgptPath(target),
             sha256: sha256(content),
             ...validation,
-            workflow_bypass: Boolean(workflowBypass),
-            workflow_bypass_status:
-              workflowBypassState?.status ?? "NONE",
-            workflow_bypass_record: workflowBypassState,
             rules: "knowledge/jobs/JOB_RULES.md",
           },
           validation.valid ? "Job draft validation passed" : "Job draft validation failed"
@@ -1162,12 +908,6 @@ export function registerJobAuthoringTools(server: McpServer): void {
         const draft = await resolveAllowedPath(draft_path);
         const content = await fs.readFile(draft, "utf8");
         const validation = await validateJobDraft(draft, content);
-        const workflowBypassState =
-          await readWorkflowBypassState(draft);
-        const workflowBypass =
-          workflowBypassState?.status === "ACTIVE"
-            ? workflowBypassState
-            : null;
         if (!validation.valid) {
           throw new Error(`Job draft contract failed: ${validation.diagnostics.join(" ")}`);
         }
@@ -1226,32 +966,6 @@ export function registerJobAuthoringTools(server: McpServer): void {
           throw error;
         });
         const registry = await loadRegistry();
-        const previousJobEntry = registry.entries.find(
-          (entry) =>
-            entry.kind === "job" &&
-            String(entry.id || "") === metadata.id
-        );
-        if (
-          previousJobEntry?.workflow_bypass === true &&
-          !workflowBypass
-        ) {
-          const previousBypass =
-            previousJobEntry.workflow_bypass_record as
-              | Partial<WorkflowBypassRecord>
-              | undefined;
-          if (
-            workflowBypassState?.status !== "CLEARED" ||
-            !previousBypass?.bypass_id ||
-            workflowBypassState.bypass_id !==
-              previousBypass.bypass_id ||
-            !workflowBypassState.workflow_fix_evidence ||
-            !workflowBypassState.final_validation_evidence
-          ) {
-            throw new Error(
-              "WORKFLOW_BYPASS_CLEAR_REQUIRED: this registered Job is flagged ACTIVE. Use job_human_bypass_clear after normal revalidation before re-promotion."
-            );
-          }
-        }
         for (const entry of registry.entries) {
           const id = String(entry.id || "");
           const sameTarget = entry.kind === "job" && String(entry.library_id || "") === library_id && String(entry.relative_path || "").toLowerCase() === normalizedRelative.toLowerCase();
@@ -1276,13 +990,6 @@ export function registerJobAuthoringTools(server: McpServer): void {
           semantic_status: "curated",
           last_test_evidence: test_evidence,
           last_validation_evidence: final_validation_evidence,
-          ...(workflowBypass
-            ? {
-                workflow_bypass: true,
-                workflow_bypass_status: "ACTIVE",
-                workflow_bypass_record: workflowBypass,
-              }
-            : {}),
         };
         const nextEntries = registry.entries.filter((entry) => String(entry.id || "") !== metadata.id);
         nextEntries.push(newEntry);
@@ -1336,9 +1043,6 @@ export function registerJobAuthoringTools(server: McpServer): void {
           draft_retained: true,
           test_evidence_recorded: true,
           final_validation_evidence_recorded: true,
-          workflow_bypass: Boolean(workflowBypass),
-          workflow_bypass_status:
-            workflowBypassState?.status ?? "NONE",
             });
           }
         );
