@@ -469,6 +469,7 @@ export function createMcpServer(sessionKey: string): McpServer {
         return {
           drawing: null,
           bound_count: 0,
+          human_power: false,
         };
       }
 
@@ -489,6 +490,7 @@ export function createMcpServer(sessionKey: string): McpServer {
       return {
         drawing,
         bound_count: drawings.length,
+        human_power: Boolean(work.humanPower),
       };
     }
   );

@@ -152,6 +152,33 @@ test("normal CadGPT browser binding flow is preserved", () => {
   );
 });
 
+test("Human Power header derives directly from work state and does not keep a bridge flag", () => {
+  assert.match(
+    serverFactory,
+    /human_power:\s*Boolean\(work\.humanPower\)/
+  );
+  assert.match(
+    client,
+    /DataMember\(Name = "human_power"\)/
+  );
+  assert.match(
+    code,
+    /status\.SessionReady\s*&&\s*status\.HumanPower/
+  );
+  assert.match(
+    code,
+    /"HUMAN POWER ON"/
+  );
+  assert.match(
+    code,
+    /Color\.FromRgb\(\s*34, 211, 238\)/
+  );
+  assert.doesNotMatch(
+    code,
+    /_humanPower|_human_power|humanPowerMode/
+  );
+});
+
 test("header is a drawing-context indicator with no transport timeout semantics", () => {
   assert.match(
     code,

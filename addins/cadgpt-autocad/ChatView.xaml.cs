@@ -44,7 +44,7 @@ namespace CadGpt.AutoCad
                 "dark",
                 StringComparison.OrdinalIgnoreCase);
 
-            ApplyChromeTheme();
+            ApplyChromeTheme(false);
 
             Loaded += OnLoaded;
             Browser.PreviewMouseDown += Browser_PreviewMouseDown;
@@ -248,11 +248,6 @@ namespace CadGpt.AutoCad
                 return;
             }
 
-            // Header state is drawing context only. Refresh it from AutoCAD
-            // before any network poll so closing/switching drawings is visible
-            // even while the ChatGPT/MCP transport is idle or unavailable.
-            RefreshHeaderFromLocalContext();
-
             if (string.IsNullOrWhiteSpace(_pairId))
             {
                 await EnsurePairWindowAsync(token);
@@ -260,6 +255,7 @@ namespace CadGpt.AutoCad
 
             if (string.IsNullOrWhiteSpace(_pairId))
             {
+                RefreshHeaderFromLocalContext(false);
                 return;
             }
 
@@ -283,7 +279,9 @@ namespace CadGpt.AutoCad
                             status.Drawing;
                     }
 
-                    RefreshHeaderFromLocalContext();
+                    RefreshHeaderFromLocalContext(
+                        status.SessionReady &&
+                        status.HumanPower);
                     return;
                 }
 
@@ -297,15 +295,14 @@ namespace CadGpt.AutoCad
                     await EnsurePairWindowAsync(token);
                 }
 
-                RefreshHeaderFromLocalContext();
+                RefreshHeaderFromLocalContext(false);
             }
             catch (AddinControlException)
             {
-                // Header has no timeout semantics. Keep the last confirmed
-                // bound drawing and derive yellow/orange only from AutoCAD's
-                // currently open/active documents.
-                RefreshHeaderFromLocalContext();
-
+                // Header has no timeout semantics. Do not infer Human Power
+                // OFF from a transport/control-plane failure. The header
+                // changes mode only from observed WorkRegistration state
+                // returned by add-in control.
                 if (_pairExpiresUtc == DateTime.MinValue)
                 {
                     _pairId = null;
@@ -315,8 +312,21 @@ namespace CadGpt.AutoCad
             }
         }
 
-        private void RefreshHeaderFromLocalContext()
+        private void RefreshHeaderFromLocalContext(
+            bool humanPower)
         {
+            if (humanPower)
+            {
+                BoundDrawingText.Text =
+                    "HUMAN POWER ON";
+                BoundDrawingText.ToolTip =
+                    "Human Power is active for the current CadGPT task.";
+                _boundDrawingClosed = false;
+                _bindingMismatch = false;
+                ApplyChromeTheme(true);
+                return;
+            }
+
             var bound =
                 _lastConfirmedBoundDrawing;
             var active =
@@ -356,7 +366,7 @@ namespace CadGpt.AutoCad
                 active != null &&
                 !DrawingMatches(bound, active);
 
-            ApplyChromeTheme();
+            ApplyChromeTheme(false);
         }
 
         private static bool BoundDrawingIsOpen(
@@ -462,19 +472,35 @@ namespace CadGpt.AutoCad
             };
         }
 
-        private void ThemeButton_Click(
+        private async void ThemeButton_Click(
             object sender,
             RoutedEventArgs e)
         {
             _darkChrome = !_darkChrome;
-            ApplyChromeTheme();
+            ApplyBaseChromeTheme();
             WebViewProfile.TrySaveChromeTheme(
                 _darkChrome
                     ? "dark"
                     : "light");
+
+            try
+            {
+                await PollBindingStatusAsync(
+                    _actionCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+            }
         }
 
-        private void ApplyChromeTheme()
+        private void ApplyChromeTheme(
+            bool humanPower)
+        {
+            ApplyBaseChromeTheme();
+            ApplyHeaderTheme(humanPower);
+        }
+
+        private void ApplyBaseChromeTheme()
         {
             var rootBackground =
                 new SolidColorBrush(
@@ -483,36 +509,6 @@ namespace CadGpt.AutoCad
                             24, 24, 24)
                         : Color.FromRgb(
                             255, 255, 255));
-            var normalHeader =
-                new SolidColorBrush(
-                    _darkChrome
-                        ? Color.FromRgb(
-                            24, 24, 24)
-                        : Color.FromRgb(
-                            255, 255, 255));
-            var headerWarning =
-                _boundDrawingClosed ||
-                _bindingMismatch;
-            var headerBackground =
-                _boundDrawingClosed
-                    ? new SolidColorBrush(
-                        Color.FromRgb(
-                            250, 204, 21))
-                    : _bindingMismatch
-                        ? new SolidColorBrush(
-                            Color.FromRgb(
-                                245, 158, 11))
-                        : normalHeader;
-            var headerForeground =
-                new SolidColorBrush(
-                    headerWarning
-                        ? Color.FromRgb(
-                            20, 20, 20)
-                        : _darkChrome
-                            ? Color.FromRgb(
-                                245, 245, 245)
-                            : Color.FromRgb(
-                                30, 30, 30));
             var buttonBackground =
                 new SolidColorBrush(
                     _darkChrome
@@ -536,11 +532,7 @@ namespace CadGpt.AutoCad
                             220, 220, 220));
 
             RootGrid.Background = rootBackground;
-            ToolbarBorder.Background =
-                headerBackground;
             ToolbarBorder.BorderBrush = border;
-            BoundDrawingText.Foreground =
-                headerForeground;
 
             ThemeButton.Background =
                 buttonBackground;
@@ -551,6 +543,51 @@ namespace CadGpt.AutoCad
                 _darkChrome
                     ? "Light"
                     : "Dark";
+        }
+
+        private void ApplyHeaderTheme(
+            bool humanPower)
+        {
+            var normalHeader =
+                new SolidColorBrush(
+                    _darkChrome
+                        ? Color.FromRgb(
+                            24, 24, 24)
+                        : Color.FromRgb(
+                            255, 255, 255));
+            var headerWarning =
+                _boundDrawingClosed ||
+                _bindingMismatch;
+            var headerBackground =
+                humanPower
+                    ? new SolidColorBrush(
+                        Color.FromRgb(
+                            34, 211, 238))
+                    : _boundDrawingClosed
+                        ? new SolidColorBrush(
+                            Color.FromRgb(
+                                250, 204, 21))
+                        : _bindingMismatch
+                            ? new SolidColorBrush(
+                                Color.FromRgb(
+                                    245, 158, 11))
+                            : normalHeader;
+            var headerForeground =
+                new SolidColorBrush(
+                    humanPower ||
+                    headerWarning
+                        ? Color.FromRgb(
+                            20, 20, 20)
+                        : _darkChrome
+                            ? Color.FromRgb(
+                                245, 245, 245)
+                            : Color.FromRgb(
+                                30, 30, 30));
+
+            ToolbarBorder.Background =
+                headerBackground;
+            BoundDrawingText.Foreground =
+                headerForeground;
         }
 
         private void Browser_PreviewMouseDown(

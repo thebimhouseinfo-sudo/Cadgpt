@@ -59,6 +59,9 @@ namespace CadGpt.AutoCad.Stage0
         [DataMember(Name = "bound_count")]
         public int BoundCount { get; set; }
 
+        [DataMember(Name = "human_power")]
+        public bool HumanPower { get; set; }
+
         [DataMember(Name = "error")]
         public string Error { get; set; } = string.Empty;
     }

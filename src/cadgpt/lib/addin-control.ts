@@ -34,6 +34,7 @@ interface SessionObserver {
   getBinding: () => Promise<{
     drawing: AddinBoundDrawing | null;
     bound_count: number;
+    human_power: boolean;
   }>;
 }
 
@@ -161,6 +162,7 @@ export async function addinBindingStatus(
   session_ready: boolean;
   drawing: AddinBoundDrawing | null;
   bound_count: number;
+  human_power: boolean;
 }> {
   const pair = pairedPanels.get(pairId);
   if (!pair) {
@@ -169,6 +171,7 @@ export async function addinBindingStatus(
       session_ready: false,
       drawing: null,
       bound_count: 0,
+      human_power: false,
     };
   }
 
@@ -180,6 +183,7 @@ export async function addinBindingStatus(
       session_ready: false,
       drawing: null,
       bound_count: 0,
+      human_power: false,
     };
   }
 
@@ -189,6 +193,7 @@ export async function addinBindingStatus(
     session_ready: true,
     drawing: binding.drawing,
     bound_count: binding.bound_count,
+    human_power: binding.human_power,
   };
 }
 

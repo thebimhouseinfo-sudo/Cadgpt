@@ -48,6 +48,7 @@ test("paired panel reads bound drawing without receiving work authority", async 
           full_name: "C:\\Drawings\\B.dwg",
         },
         bound_count: 1,
+        human_power: false,
       })
     );
 
@@ -69,6 +70,7 @@ test("paired panel reads bound drawing without receiving work authority", async 
       full_name: "C:\\Drawings\\B.dwg",
     },
     bound_count: 1,
+    human_power: false,
   });
 
   const serialized = JSON.stringify(status);
@@ -83,6 +85,38 @@ test("paired panel reads bound drawing without receiving work authority", async 
 
   addin.unregisterAddinSessionObserver(
     "session-A",
+    observerId
+  );
+});
+
+test("paired panel forwards Human Power as read-only observed state", async () => {
+  const observerId =
+    addin.registerAddinSessionObserver(
+      "session-human-power",
+      async () => ({
+        drawing: {
+          name: "HP.dwg",
+          full_name: "C:\\Drawings\\HP.dwg",
+        },
+        bound_count: 1,
+        human_power: true,
+      })
+    );
+
+  const pair = addin.startAddinPairing();
+  addin.completePendingAddinPair(
+    "session-human-power"
+  );
+
+  const status =
+    await addin.addinBindingStatus(
+      pair.pair_id
+    );
+  assert.equal(status.human_power, true);
+  assert.equal(status.drawing?.name, "HP.dwg");
+
+  addin.unregisterAddinSessionObserver(
+    "session-human-power",
     observerId
   );
 });
@@ -102,6 +136,7 @@ test("paired panel reports session not ready when observer is gone", async () =>
       session_ready: false,
       drawing: null,
       bound_count: 0,
+      human_power: false,
     }
   );
 });
@@ -118,6 +153,7 @@ test("normal user-invoked CadGPT admission consumes a pending panel pair", async
         async () => ({
           drawing: null,
           bound_count: 0,
+          human_power: false,
         })
       );
 
@@ -186,5 +222,6 @@ test("detached MCP transport keeps add-in binding observer until logical session
     session_ready: false,
     drawing: null,
     bound_count: 0,
+    human_power: false,
   });
 });
