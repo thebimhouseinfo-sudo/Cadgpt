@@ -43,8 +43,18 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
       JSON.stringify({
         version: 1,
         libraries: [
-          { id: "working-lisp", kind: "lisp", enabled: true },
-          { id: "project-jobs", kind: "job", enabled: true },
+          {
+            id: "working-lisp",
+            kind: "lisp",
+            enabled: true,
+            managed_path: "appdata/libraries/lisp/working-lisp",
+          },
+          {
+            id: "project-jobs",
+            kind: "job",
+            enabled: true,
+            managed_path: "appdata/libraries/jobs/project-jobs",
+          },
         ],
       }),
       "utf8"
