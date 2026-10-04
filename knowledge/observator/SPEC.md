@@ -241,7 +241,7 @@ If a concrete Job using Observator capture needs persistent drawing-scoped metad
 knowledge/drawing/DRAWING_ANCHOR.md
 ```
 
-That shared primitive resolves or creates the stable `drawing_id` and the matching `AppData/drawings/<drawing_id>/` root. Observator may then be used only for its capture/read/log behavior as requested by the Job.
+The concrete Job resolves or creates the stable `drawing_id` according to the shared Drawing Anchor contract and then uses the matching `AppData/drawings/<drawing_id>/` root. Observator may then be used only for its capture/read/log behavior if requested by that Job.
 
 Observation-specific revision/branch semantics are not part of this V1 Observator capture contract and must not be stored in or inferred from the shared Drawing Anchor.
 
@@ -267,7 +267,7 @@ drawing_id
 
 The engine does not choose which properties should be persisted. A Job may receive a complete direct snapshot for a relevant candidate and write only a small projection of it.
 
-During the current foundation slice, the low-level logger may still receive `drawing_id` directly from its caller. A real Job requiring persistent drawing storage must resolve `drawing_id` through the shared Drawing Anchor helper instead of treating file path/name as drawing identity.
+During the current foundation slice, the low-level logger may still receive `drawing_id` directly from its caller. A real Job requiring persistent drawing storage must resolve or create the canonical Drawing Anchor instead of treating file path/name as drawing identity.
 
 ## Explicit non-responsibilities
 
