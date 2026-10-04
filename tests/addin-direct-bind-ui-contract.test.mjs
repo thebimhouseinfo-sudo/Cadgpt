@@ -152,7 +152,7 @@ test("normal CadGPT browser binding flow is preserved", () => {
   );
 });
 
-test("header polls bound drawing and becomes orange when active drawing differs", () => {
+test("header is a drawing-context indicator with no transport timeout semantics", () => {
   assert.match(
     code,
     /DispatcherTimer/
@@ -163,15 +163,39 @@ test("header polls bound drawing and becomes orange when active drawing differs"
   );
   assert.match(
     code,
-    /ActiveDrawingIdentity\(\)/
+    /_lastConfirmedBoundDrawing/
   );
   assert.match(
     code,
-    /DrawingMismatch\(bound, active\)/
+    /if \(status\.SessionReady\)[\s\S]*_lastConfirmedBoundDrawing\s*=\s*status\.Drawing/
+  );
+  assert.match(
+    code,
+    /BoundDrawingIsOpen\(bound\)/
+  );
+  assert.match(
+    code,
+    /foreach \(AcDocument document in[\s\S]*AcApplication\.DocumentManager/
+  );
+  assert.match(
+    code,
+    /!DrawingMatches\(bound, active\)/
+  );
+  assert.match(
+    code,
+    /Color\.FromRgb\(\s*250, 204, 21\)/
   );
   assert.match(
     code,
     /Color\.FromRgb\(\s*245, 158, 11\)/
+  );
+  assert.match(
+    code,
+    /Header has no timeout semantics/
+  );
+  assert.doesNotMatch(
+    code,
+    /catch \(AddinControlException\)[\s\S]{0,600}_lastConfirmedBoundDrawing\s*=\s*null/
   );
   assert.match(
     code,

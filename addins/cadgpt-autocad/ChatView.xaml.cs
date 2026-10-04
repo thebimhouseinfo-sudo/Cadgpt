@@ -10,6 +10,7 @@ using System.Windows.Threading;
 using CadGpt.AutoCad.Stage0;
 using Microsoft.Web.WebView2.Core;
 using AcApplication = Autodesk.AutoCAD.ApplicationServices.Application;
+using AcDocument = Autodesk.AutoCAD.ApplicationServices.Document;
 
 namespace CadGpt.AutoCad
 {
@@ -29,6 +30,8 @@ namespace CadGpt.AutoCad
         private bool _disposed;
         private bool _darkChrome;
         private bool _pollInProgress;
+        private AddinDrawingSummary? _lastConfirmedBoundDrawing;
+        private bool _boundDrawingClosed;
         private bool _bindingMismatch;
 
         public ChatView()
@@ -245,7 +248,10 @@ namespace CadGpt.AutoCad
                 return;
             }
 
-            var active = ActiveDrawingIdentity();
+            // Header state is drawing context only. Refresh it from AutoCAD
+            // before any network poll so closing/switching drawings is visible
+            // even while the ChatGPT/MCP transport is idle or unavailable.
+            RefreshHeaderFromLocalContext();
 
             if (string.IsNullOrWhiteSpace(_pairId))
             {
@@ -254,7 +260,6 @@ namespace CadGpt.AutoCad
 
             if (string.IsNullOrWhiteSpace(_pairId))
             {
-                UpdateHeader(null, active);
                 return;
             }
 
@@ -268,16 +273,22 @@ namespace CadGpt.AutoCad
                 if (status.Paired)
                 {
                     _control.SavePairId(_pairId!);
-                    UpdateHeader(
-                        status.SessionReady
-                            ? status.Drawing
-                            : null,
-                        active);
+
+                    if (status.SessionReady)
+                    {
+                        // session_ready=true is authoritative binding evidence.
+                        // A temporary session/transport gap must never clear the
+                        // last drawing that the add-in knows is bound.
+                        _lastConfirmedBoundDrawing =
+                            status.Drawing;
+                    }
+
+                    RefreshHeaderFromLocalContext();
                     return;
                 }
 
-                UpdateHeader(null, active);
-
+                // An invalid/old pair may be renewed, but it is not evidence
+                // that the drawing binding itself disappeared.
                 if (_pairExpiresUtc == DateTime.MinValue ||
                     DateTime.UtcNow >= _pairExpiresUtc)
                 {
@@ -285,14 +296,16 @@ namespace CadGpt.AutoCad
                     _control.ClearSavedPairId();
                     await EnsurePairWindowAsync(token);
                 }
+
+                RefreshHeaderFromLocalContext();
             }
             catch (AddinControlException)
             {
-                UpdateHeader(null, active);
+                // Header has no timeout semantics. Keep the last confirmed
+                // bound drawing and derive yellow/orange only from AutoCAD's
+                // currently open/active documents.
+                RefreshHeaderFromLocalContext();
 
-                // A saved pair belongs to a previous runtime if the current
-                // runtime cannot resolve it. Drop it and silently open a new
-                // observation window; this never sends anything to ChatGPT.
                 if (_pairExpiresUtc == DateTime.MinValue)
                 {
                     _pairId = null;
@@ -302,10 +315,13 @@ namespace CadGpt.AutoCad
             }
         }
 
-        private void UpdateHeader(
-            AddinDrawingSummary? bound,
-            ActiveDrawingInfo? active)
+        private void RefreshHeaderFromLocalContext()
         {
+            var bound =
+                _lastConfirmedBoundDrawing;
+            var active =
+                ActiveDrawingIdentity();
+
             var displayName =
                 bound?.Name;
 
@@ -330,41 +346,80 @@ namespace CadGpt.AutoCad
                     ? bound!.FullName
                     : BoundDrawingText.Text;
 
+            _boundDrawingClosed =
+                bound != null &&
+                !BoundDrawingIsOpen(bound);
+
             _bindingMismatch =
-                DrawingMismatch(bound, active);
+                bound != null &&
+                !_boundDrawingClosed &&
+                active != null &&
+                !DrawingMatches(bound, active);
+
             ApplyChromeTheme();
         }
 
-        private static bool DrawingMismatch(
-            AddinDrawingSummary? bound,
-            ActiveDrawingInfo? active)
+        private static bool BoundDrawingIsOpen(
+            AddinDrawingSummary bound)
         {
-            if (bound == null)
+            try
             {
-                return active != null;
-            }
+                foreach (AcDocument document in
+                    AcApplication.DocumentManager)
+                {
+                    try
+                    {
+                        if (DrawingMatches(
+                            bound,
+                            DocumentIdentity(document)))
+                        {
+                            return true;
+                        }
+                    }
+                    catch
+                    {
+                        // A document can disappear while AutoCAD is closing it.
+                    }
+                }
 
-            if (active == null)
+                return false;
+            }
+            catch
             {
+                // Failure to inspect AutoCAD documents is not proof that the
+                // drawing closed. Preserve the last confirmed bound state.
                 return true;
+            }
+        }
+
+        private static bool DrawingMatches(
+            AddinDrawingSummary bound,
+            ActiveDrawingInfo? drawing)
+        {
+            if (drawing == null)
+            {
+                return false;
             }
 
             if (!string.IsNullOrWhiteSpace(
                     bound.FullName) &&
                 !string.IsNullOrWhiteSpace(
-                    active.FullName) &&
-                string.Equals(
-                    bound.FullName,
-                    active.FullName,
-                    StringComparison.OrdinalIgnoreCase))
+                    drawing.FullName))
             {
-                return false;
+                return string.Equals(
+                    bound.FullName,
+                    drawing.FullName,
+                    StringComparison.OrdinalIgnoreCase);
             }
 
-            return !string.Equals(
-                bound.Name,
-                active.Name,
-                StringComparison.OrdinalIgnoreCase);
+            return !string.IsNullOrWhiteSpace(
+                    bound.Name) &&
+                !string.IsNullOrWhiteSpace(
+                    drawing.Name) &&
+                string.Equals(
+                    bound.Name,
+                    drawing.Name,
+                    StringComparison.OrdinalIgnoreCase);
         }
 
         private static ActiveDrawingInfo?
@@ -375,31 +430,36 @@ namespace CadGpt.AutoCad
                 var document =
                     AcApplication.DocumentManager
                         .MdiActiveDocument;
-                if (document == null)
-                {
-                    return null;
-                }
-
-                var filename =
-                    document.Database.Filename;
-                return new ActiveDrawingInfo
-                {
-                    Name =
-                        string.IsNullOrWhiteSpace(
-                            document.Name)
-                            ? null
-                            : document.Name.Trim(),
-                    FullName =
-                        string.IsNullOrWhiteSpace(
-                            filename)
-                            ? null
-                            : filename.Trim(),
-                };
+                return document == null
+                    ? null
+                    : DocumentIdentity(document);
             }
             catch
             {
                 return null;
             }
+        }
+
+        private static ActiveDrawingInfo
+            DocumentIdentity(
+                AcDocument document)
+        {
+            var filename =
+                document.Database.Filename;
+
+            return new ActiveDrawingInfo
+            {
+                Name =
+                    string.IsNullOrWhiteSpace(
+                        document.Name)
+                        ? null
+                        : document.Name.Trim(),
+                FullName =
+                    string.IsNullOrWhiteSpace(
+                        filename)
+                        ? null
+                        : filename.Trim(),
+            };
         }
 
         private void ThemeButton_Click(
@@ -430,15 +490,22 @@ namespace CadGpt.AutoCad
                             24, 24, 24)
                         : Color.FromRgb(
                             255, 255, 255));
+            var headerWarning =
+                _boundDrawingClosed ||
+                _bindingMismatch;
             var headerBackground =
-                _bindingMismatch
+                _boundDrawingClosed
                     ? new SolidColorBrush(
                         Color.FromRgb(
-                            245, 158, 11))
-                    : normalHeader;
+                            250, 204, 21))
+                    : _bindingMismatch
+                        ? new SolidColorBrush(
+                            Color.FromRgb(
+                                245, 158, 11))
+                        : normalHeader;
             var headerForeground =
                 new SolidColorBrush(
-                    _bindingMismatch
+                    headerWarning
                         ? Color.FromRgb(
                             20, 20, 20)
                         : _darkChrome
