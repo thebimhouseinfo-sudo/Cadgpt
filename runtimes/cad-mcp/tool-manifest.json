@@ -237,7 +237,7 @@
     },
     {
       "name": "cad_load_lisp_file",
-      "description": "Load and verify one sandboxed `.lsp` file.\n\nAccepted inputs are the CadGPT virtual Lisp namespaces or canonical\nabsolute paths that resolve inside those same approved roots:\n`resources/cad/**`, `appdata/libraries/lisp/**`,\n`appdata/workspace/lisp-draft/**`, and\n`appdata/runtime/dynamic-lisp/**`. External user source folders and\nabsolute paths outside those roots are rejected.\n\nThe tool waits for an AutoCAD load sentinel and returns `loaded`, error\nevidence, and command-log tail when available. `loaded: false` blocks\ncommand execution and must be debugged before handoff.",
+      "description": "Load and verify one sandboxed `.lsp` file.\\n\\nAccepted inputs are the CadGPT virtual Lisp namespaces or canonical\\nabsolute paths that resolve inside those same approved roots:\\n`resources/cad/**`, `appdata/libraries/lisp/**`,\\n`appdata/workspace/lisp-draft/**`,\\n`appdata/runtime/dynamic-lisp/**`,\\nJob-owned `appdata/workspace/job-draft/**/(lisp|dynamic-lisp)/**`,\\nand promoted `appdata/libraries/jobs/**/(lisp|dynamic-lisp)/**`.\\nExternal user source folders and absolute paths outside those roots are\\nrejected.\\n\\nThe tool waits for an AutoCAD load sentinel and returns `loaded`, error\\nevidence, and command-log tail when available. `loaded: false` blocks\\ncommand execution and must be debugged before handoff.",
       "inputSchema": {
         "type": "object",
         "properties": {

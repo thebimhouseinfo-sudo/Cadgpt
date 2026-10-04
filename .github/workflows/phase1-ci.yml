@@ -387,6 +387,29 @@ jobs:
           $bundled = "resources/cad/internal-lisp/tbh-toolkit/TBH Tool Kit/Setup Xref/CleanATT.lsp"
           python -c "from services.lisp_service import _resolve_lisp_path; p,v=_resolve_lisp_path(r'''$bundled'''); assert v.replace('\\','/').startswith('resources/cad/internal-lisp/'); print('internal Lisp namespace OK:', v)"
 
+          $managed = Join-Path $env:RUNNER_TEMP "CadGPT-job-lisp-policy"
+          $env:CADGPT_APPDATA_ROOT = $managed
+
+          $draftStatic = Join-Path $managed "workspace\job-draft\create-system\create-system\lisp\system-collector.lsp"
+          New-Item -ItemType Directory -Force -Path (Split-Path -Parent $draftStatic) | Out-Null
+          Set-Content -LiteralPath $draftStatic -Value "(princ)" -NoNewline
+          $env:CADGPT_JOB_DRAFT_STATIC = $draftStatic
+          python -c "import os; from services.lisp_service import _resolve_lisp_path; p,v=_resolve_lisp_path(os.environ['CADGPT_JOB_DRAFT_STATIC']); assert v.replace('\\','/').startswith('appdata/workspace/job-draft/'); assert '/lisp/' in v.replace('\\','/'); print('Job draft static Lisp path OK:', v)"
+
+          $libraryStatic = Join-Path $managed "libraries\jobs\create-system\lisp\system-collector.lsp"
+          New-Item -ItemType Directory -Force -Path (Split-Path -Parent $libraryStatic) | Out-Null
+          Set-Content -LiteralPath $libraryStatic -Value "(princ)" -NoNewline
+          $env:CADGPT_JOB_LIBRARY_STATIC = $libraryStatic
+          python -c "import os; from services.lisp_service import _resolve_lisp_path; p,v=_resolve_lisp_path(os.environ['CADGPT_JOB_LIBRARY_STATIC']); assert v.replace('\\','/').startswith('appdata/libraries/jobs/'); assert '/lisp/' in v.replace('\\','/'); print('Job library static Lisp path OK:', v)"
+
+          $blockedJobLisp = Join-Path $managed "workspace\job-draft\create-system\create-system\notes\should-block.lsp"
+          New-Item -ItemType Directory -Force -Path (Split-Path -Parent $blockedJobLisp) | Out-Null
+          Set-Content -LiteralPath $blockedJobLisp -Value "(princ)" -NoNewline
+          $env:CADGPT_JOB_BLOCKED_LISP = $blockedJobLisp
+          python -c "import os; from services.lisp_service import _resolve_lisp_path; _resolve_lisp_path(os.environ['CADGPT_JOB_BLOCKED_LISP'])" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "Job Lisp outside lisp/** or dynamic-lisp/** was accepted" }
+          Write-Host "Job Lisp outside owned helper folders rejected"
+
           $outside = Join-Path $env:RUNNER_TEMP "cadgpt-outside-load.lsp"
           Set-Content -LiteralPath $outside -Value "(princ)" -NoNewline
           $env:CADGPT_LISP_OUTSIDE = $outside

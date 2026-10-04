@@ -218,9 +218,10 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
       "utf8"
     );
     assert.match(serviceSource, /appdata\/libraries\/jobs/);
+    assert.match(serviceSource, /appdata\/workspace\/job-draft/);
     assert.match(
       serviceSource,
-      /Job-library LISP is loadable only from a Job-owned dynamic-lisp/
+      /Job-owned LISP is loadable only from a Job lisp\/\*\* or dynamic-lisp\/\*\* folder/
     );
   } finally {
     if (previousRoot === undefined) delete process.env.CADGPT_APPDATA_ROOT;
