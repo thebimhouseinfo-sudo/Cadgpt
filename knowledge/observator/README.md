@@ -1,13 +1,12 @@
 # Observator
 
-CadGPT Observator is the generic CAD entity observation foundation used by future Observation Jobs.
+CadGPT Observator is an experimental/generic CAD entity observation foundation that may be used by Jobs needing append-event capture. It is not the owner of drawing identity or persistent drawing storage.
 
-The engine has four infrastructure responsibilities:
+The engine has three observation responsibilities:
 
 1. capture the identities of database objects appended while an Observation Job is active;
 2. at Job end, reduce those identities to surviving top-level drawing entities and read only the candidates the Job considers relevant;
-3. write Job-selected records to drawing-scoped AppData logs;
-4. own the minimal Drawing Anchor that binds AppData metadata to a DWG copy.
+3. write Job-selected records to drawing-scoped AppData logs when a Job chooses to use this engine.
 
 Observator does **not** discover Job changes by snapshotting or rescanning the whole drawing. While a Job is active, the CAD host uses a lightweight database append listener/reactor and records identity only. Full property inspection is deferred until Job finalization.
 
@@ -36,13 +35,9 @@ V1 does not traverse block definitions or nested entities. If the user creates m
 
 The engine does **not** define HVAC/system semantics, business predicates, property projections, or other concrete Observation Job behavior.
 
-The Drawing Anchor is created lazily: a normal drawing has no reason to contain one until Observator first needs metadata for that drawing. The anchor is the **only CAD database object Observator may create or modify**.
-
-A successful Observation Job finalizes its AppData result first, then updates the Drawing Anchor exactly once as the Job checkpoint carried by the current DWG state. Anchor maintenance must not depend on application shutdown, AutoCAD save timing, cache flushes, or an external background engine.
-
-The anchor does **not** prove that AutoCAD saved the latest in-memory drawing to disk. When an older DWG copy is opened intentionally, the older anchor revision in that copy remains valid context for that copy even when AppData contains newer observation history.
+Drawing identity and drawing-folder resolution are shared CadGPT infrastructure, not Observator-owned behavior. Any Job—including one that uses Observator capture—must follow `knowledge/drawing/DRAWING_ANCHOR.md` when it needs persistent drawing-scoped data.
 
 See:
 
 - `SPEC.md` — normative Observator engine and capture contract;
-- `DRAWING_ANCHOR.md` — drawing identity and Job-checkpoint contract.
+- `../drawing/DRAWING_ANCHOR.md` — canonical shared drawing identity and persistent drawing-folder contract.
