@@ -160,13 +160,15 @@ Required behavior:
 
 ```text
 persistent drawing product required
-→ resolve/create shared Drawing Anchor
+→ check canonical Drawing Anchor
 → obtain anchor.drawing_id
 → resolve/create AppData/drawings/<drawing_id>/
 → write the Job-defined metadata/result beneath that drawing root
 ```
 
-If the bound DWG already contains an anchor, its `drawing_id` is authoritative even after rename, move, copy, or Save As. If no anchor exists, the shared Drawing Anchor helper creates it and initializes the matching drawing folder.
+If the bound DWG already contains an anchor, its `drawing_id` is authoritative even after rename, move, copy, or Save As. If no anchor exists, the Job must create a canonical anchor and initialize the matching drawing folder before writing persistent data.
+
+Anchor handling does not require a separately promoted/shared capability. A Job may implement the check/create operation with its own Job-private helper, provided it follows the canonical Drawing Anchor format exactly.
 
 Jobs must not derive a replacement id from file name/path, runtime drawing id, active document, or their own Job folder. Missing anchor support is an implementation blocker, not permission to invent another identity scheme.
 
@@ -245,7 +247,7 @@ Reasoning: appdata/libraries/jobs/<library-id>/<job-name>/JOB.md
 Direct:    appdata/libraries/jobs/<library-id>/<job-name>/<job-name>.py
 ```
 
-Supporting reusable definition assets may live beside the Job entrypoint when they belong to the Job contract. This includes Job-owned internal helpers under `<job-root>/lisp/**` and Job-owned dynamic derivatives under `<job-root>/dynamic-lisp/**`. Persistent runtime products about a drawing do **not** belong beside the Job entrypoint; they belong under `AppData/drawings/<drawing_id>/**` after resolving the shared Drawing Anchor. Runtime/test evidence belongs under managed data/run locations rather than being silently mixed into the permanent Job definition.
+Supporting reusable definition assets may live beside the Job entrypoint when they belong to the Job contract. This includes Job-owned internal helpers under `<job-root>/lisp/**` and Job-owned dynamic derivatives under `<job-root>/dynamic-lisp/**`. Persistent runtime products about a drawing do **not** belong beside the Job entrypoint; they belong under `AppData/drawings/<drawing_id>/**` after resolving the canonical Drawing Anchor. Runtime/test evidence belongs under managed data/run locations rather than being silently mixed into the permanent Job definition.
 
 Shared reusable AutoLISP logic belongs to a managed Lisp Library. A **Job-owned dynamic derivative** is the explicit exception and lives under:
 
