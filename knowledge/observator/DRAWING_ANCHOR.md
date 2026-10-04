@@ -102,6 +102,50 @@ copy / rename / move / Save As
 → same logical drawing
 ```
 
+## Job-facing drawing identity contract
+
+Drawing Anchor is owned and mutated only by Observator, but its `drawing_id` is the canonical identity service for any CadGPT Job that needs persistent **drawing-scoped** AppData.
+
+A Job must never derive persistent drawing identity from the current file name, full path, active tab, runtime binding id, or a Job-local folder. Before the first persistent drawing-scoped write, Job orchestration must resolve the Drawing Anchor through the Observator anchor helper.
+
+Canonical flow:
+
+```text
+Job needs persistent drawing-scoped metadata
+→ Observator resolve Drawing Anchor
+   ├─ anchor exists
+   │  → read anchor.drawing_id
+   │  → resolve AppData/drawings/<drawing_id>/
+   │  → write Job product metadata under that exact drawing root
+   └─ anchor missing
+      → Observator creates drawing_id from current drawing name + local creation timestamp
+      → initialize anchor state
+      → insert Drawing Anchor into the bound DWG
+      → create AppData/drawings/<drawing_id>/
+      → return drawing_id + drawing root to the Job
+      → Job writes its product metadata under that drawing root
+```
+
+The Job consumes this identity; it does not own the anchor. Only the Observator helper may create, repair/normalize, or update the Drawing Anchor.
+
+The runtime product of a Job and the source/assets of that Job therefore have different ownership:
+
+```text
+Job package
+→ workflow definition
+→ Job-owned internal tools/helpers
+→ Job-owned dynamic derivatives
+
+Drawing root
+→ persistent metadata/results produced for that logical drawing
+```
+
+Persistent Job product data must not be stored inside the Job library merely because the Job produced it. The concrete Job may define its own subfolder/schema below `AppData/drawings/<drawing_id>/`, but the drawing root itself is always selected from the anchor `drawing_id`.
+
+If the Observator anchor helper is unavailable, a Job requiring persistent drawing-scoped identity is **blocked**. It must not work around the missing primitive by inventing a new id, using the DWG name/path as identity, or registering a private helper as an unrelated shared capability.
+
+Anchor revision/update semantics remain owned by Observator. A Job that only needs stable drawing identity must not directly mutate `last_revision`; Observation Job completion follows the revision rules defined below.
+
 ## Revision meaning
 
 `last_revision` is not a global "latest wins" pointer. It identifies the Observation revision from which this particular DWG copy is continuing.
