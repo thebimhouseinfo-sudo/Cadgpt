@@ -38,6 +38,7 @@ class LispServiceError(RuntimeError):
 _COMMAND_NAME = re.compile(r"^[A-Za-z0-9_+\-.$:]+$")
 _LOAD_POLL_INTERVAL = 0.10
 _LOAD_TIMEOUT_SECONDS = 8.0
+_CALL_TIMEOUT_SECONDS = 8.0
 
 
 def _repo_root() -> str:
@@ -155,6 +156,91 @@ def _serialize_arg(value) -> str:
             return f'"{escaped}"'
         return value
     return str(value)
+
+
+def _serialize_lisp_value(value) -> str:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise LispServiceError("Lisp function args may contain only strings or numbers")
+    if isinstance(value, str):
+        if any(ch in value for ch in ("\n", "\r", "\x00")):
+            raise LispServiceError("Lisp function string args cannot contain line breaks or NUL")
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return str(value)
+
+
+def run_lisp_function_sync(
+    name: str,
+    args: list | None = None,
+    timeout_seconds: float = _CALL_TIMEOUT_SECONDS,
+) -> str:
+    """Call one already-loaded Lisp function and synchronously return its string result.
+
+    This is an internal runtime bridge, not an MCP surface. Result/error transfer
+    uses USERS5 only for the duration of the call and restores the previous value.
+    """
+    if not isinstance(name, str) or not name.strip():
+        raise LispServiceError("Lisp function name is required")
+    function_name = name.strip()
+    if not _COMMAND_NAME.fullmatch(function_name):
+        raise LispServiceError("Lisp function name contains unsupported characters")
+
+    values = [] if args is None else args
+    if not isinstance(values, (list, tuple)):
+        raise LispServiceError("Lisp function args must be a list")
+    serialized = [_serialize_lisp_value(value) for value in values]
+    arg_list = "(list" + ((" " + " ".join(serialized)) if serialized else "") + ")"
+
+    doc = get_active_document()
+    token = uuid.uuid4().hex[:12]
+    pending = f"CADGPT_SYNC_PENDING:{token}"
+    ok_prefix = f"CADGPT_SYNC_OK:{token}:"
+    err_prefix = f"CADGPT_SYNC_ERR:{token}:"
+    previous_users5 = _safe_getvar(doc, "USERS5", "")
+
+    expression = (
+        "(progn "
+        "(vl-load-com) "
+        f"(setq *cadgpt-sync-result* (vl-catch-all-apply '{function_name} {arg_list})) "
+        "(cond "
+        "((vl-catch-all-error-p *cadgpt-sync-result*) "
+        f"(setvar \"USERS5\" (strcat \"{err_prefix}\" (substr (vl-catch-all-error-message *cadgpt-sync-result*) 1 160)))) "
+        "((= (type *cadgpt-sync-result*) 'STR) "
+        f"(setvar \"USERS5\" (strcat \"{ok_prefix}\" *cadgpt-sync-result*))) "
+        "(T "
+        f"(setvar \"USERS5\" \"{err_prefix}Lisp function did not return a string\"))) "
+        "(princ))"
+    )
+
+    _safe_setvar(doc, "USERS5", pending)
+    try:
+        _send(expression)
+        deadline = time.monotonic() + max(0.25, float(timeout_seconds))
+        result = pending
+        while time.monotonic() < deadline:
+            time.sleep(_LOAD_POLL_INTERVAL)
+            result = str(_safe_getvar(doc, "USERS5", pending) or "")
+            if result.startswith(ok_prefix) or result.startswith(err_prefix):
+                break
+
+        if result.startswith(ok_prefix):
+            return result[len(ok_prefix) :]
+        if result.startswith(err_prefix):
+            raise LispServiceError(
+                result[len(err_prefix) :].strip()
+                or "AutoLISP function returned an unspecified error"
+            )
+        raise LispServiceError(
+            "AutoCAD did not return the Lisp function result before timeout."
+        )
+    finally:
+        _safe_setvar(
+            doc,
+            "USERS5",
+            previous_users5
+            if isinstance(previous_users5, str)
+            else str(previous_users5 or ""),
+        )
 
 
 def _safe_getvar(doc, name: str, default=None):

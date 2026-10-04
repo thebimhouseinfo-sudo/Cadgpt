@@ -86,6 +86,18 @@ drawing_anchor
 
 No Job/business metadata belongs in the anchor.
 
+### Core-private storage adapter
+
+CadGPT performs the actual dictionary/XRecord mutation through:
+
+```text
+resources/cad/core-lisp/drawing-anchor.lsp
+```
+
+This Lisp is a core-private implementation detail, not a Registry capability and not a Job-owned helper. Python/CAD MCP activates the exact bound drawing, generates or reuses the candidate `drawing_anchor`, verified-loads this Lisp, calls its internal ensure function, and accepts only the Lisp read-back result.
+
+The Lisp owns native DWG dictionary/XRecord read/write. Python must not construct XRecord SAFEARRAY/VARIANT payloads through COM for Drawing Anchor persistence.
+
 This representation must remain:
 
 - non-graphical;
