@@ -151,3 +151,40 @@ test("normal user-invoked CadGPT admission consumes a pending panel pair", async
     );
   }
 });
+
+
+test("detached MCP transport keeps add-in binding observer until logical session disposal", async () => {
+  const {
+    createMcpServer,
+    disposeLogicalSessionState,
+    disposeMcpServerRuntime,
+  } = await import("../dist/cadgpt/server-factory.js");
+
+  const sessionKey = "session-addin-idle-transport-gap";
+  const server = createMcpServer(sessionKey);
+  const pair = addin.startAddinPairing();
+  addin.completePendingAddinPair(sessionKey);
+
+  const beforeDetach = await addin.addinBindingStatus(pair.pair_id);
+  assert.equal(beforeDetach.paired, true);
+  assert.equal(beforeDetach.session_ready, true);
+
+  await disposeMcpServerRuntime(server, { preserveSessionState: true });
+
+  const duringTransportGap = await addin.addinBindingStatus(pair.pair_id);
+  assert.equal(duringTransportGap.paired, true);
+  assert.equal(
+    duringTransportGap.session_ready,
+    true,
+    "transport cleanup must not make a preserved logical CAD session look disconnected"
+  );
+
+  await disposeLogicalSessionState(sessionKey);
+
+  assert.deepEqual(await addin.addinBindingStatus(pair.pair_id), {
+    paired: false,
+    session_ready: false,
+    drawing: null,
+    bound_count: 0,
+  });
+});

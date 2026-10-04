@@ -56,6 +56,7 @@ import { withCadHostLock } from "./runtime/cad-scheduler.js";
 import { getRepoRoot } from "./lib/path-security.js";
 import {
   clearAddinPairingsForSession,
+  clearAddinSessionObserver,
   registerAddinSessionObserver,
   unregisterAddinSessionObserver,
 } from "./lib/addin-control.js";
@@ -748,6 +749,7 @@ export async function disposeLogicalSessionState(
   }
   revokeSessionAdmissions(sessionKey);
   clearCadPrepare(sessionKey);
+  clearAddinSessionObserver(sessionKey);
   clearAddinPairingsForSession(sessionKey);
 }
 
@@ -764,7 +766,13 @@ export async function disposeMcpServerRuntime(
 
   const addinObserverId = addinObserverIdByServer.get(server);
   if (addinObserverId) {
-    unregisterAddinSessionObserver(sessionKey, addinObserverId);
+    // A transport may be detached/finalized while its logical ChatGPT session,
+    // work registration, and drawing binding intentionally remain alive.
+    // Keep the session observer in that case so the AutoCAD panel does not
+    // falsely render the still-bound drawing as disconnected during idle.
+    if (!options.preserveSessionState) {
+      unregisterAddinSessionObserver(sessionKey, addinObserverId);
+    }
     addinObserverIdByServer.delete(server);
   }
 

@@ -148,6 +148,12 @@ export function unregisterAddinSessionObserver(
   }
 }
 
+export function clearAddinSessionObserver(
+  sessionKey: string
+): void {
+  observers.delete(sessionKey);
+}
+
 export async function addinBindingStatus(
   pairId: string
 ): Promise<{
