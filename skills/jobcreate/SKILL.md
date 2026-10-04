@@ -232,18 +232,18 @@ AppData/drawings/<drawing_id>/**
 
 It does **not** belong inside the Job package.
 
-Before the first persistent drawing-scoped write, read `knowledge/observator/DRAWING_ANCHOR.md` and require this flow:
+Before the first persistent drawing-scoped write, read `knowledge/drawing/DRAWING_ANCHOR.md` and require this flow:
 
 ```text
-resolve Drawing Anchor through Observator
+resolve shared Drawing Anchor
 ├─ anchor exists → use anchor.drawing_id → resolve matching drawing root
-└─ no anchor     → Observator creates anchor + matching drawing root
+└─ no anchor     → create shared anchor + matching drawing root
 → Job writes its own metadata/result below that drawing root
 ```
 
-The Job must never manufacture a persistent `drawing_id` from current DWG name/path or from its work/binding id. It must not mutate the anchor directly.
+The Job must never manufacture a persistent `drawing_id` from current DWG name/path or from its work/binding id. Anchor creation/update must go through the shared Drawing Anchor helper rather than Job-specific anchor code.
 
-If the Observator anchor helper does not yet exist, stop implementation at that step and surface a platform blocker. Do not use filename matching, a Job-local folder, or a separately registered helper as a substitute.
+If the shared Drawing Anchor helper does not yet exist, stop implementation at that step and surface a platform blocker. Do not use filename matching, a Job-local folder, or a separately registered helper as a substitute.
 
 #### B4. Implement missing capabilities only when required
 
@@ -346,7 +346,7 @@ Read as needed:
 
 ```text
 knowledge/jobs/JOB_RULES.md
-knowledge/observator/DRAWING_ANCHOR.md   when the Job persists drawing-scoped metadata
+knowledge/drawing/DRAWING_ANCHOR.md      when the Job persists drawing-scoped metadata
 skills/jobcreate/job-skills/workflow-planning.md
 skills/jobcreate/job-skills/tool-mapping.md
 skills/jobcreate/job-skills/implementation-testing.md
