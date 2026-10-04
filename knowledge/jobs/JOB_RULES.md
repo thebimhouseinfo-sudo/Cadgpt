@@ -123,6 +123,53 @@ Use the most suitable executor that preserves the step semantics.
 ### Existing LISP
 Use a registered Lisp capability when reusable AutoLISP already performs the required work reliably and its registry semantics are sufficiently reviewed for the intended use.
 
+### Job-owned internal helper assets
+When a Job needs code that exists only to implement that Job, the helper is part of the Job package rather than a shared CadGPT capability.
+
+For AutoLISP, the canonical ownership is:
+
+```text
+<job-root>/lisp/*.lsp
+```
+
+A Job-owned internal Lisp helper:
+
+- is authored, versioned, tested, checked out and promoted with its owning Job;
+- is declared locally by the Job contract so the Job can resolve and load it;
+- is loaded on demand only when that Job requires it;
+- is not added to the global/user Lisp Registry;
+- is not discoverable as an independent reusable Lisp capability;
+- must not be moved into a shared Lisp Library merely to bypass missing Job-bundle tooling.
+
+This differs from a Job-owned dynamic derivative: an internal helper is authored specifically for the Job, while a dynamic derivative is seeded from a registered proven Lisp and then changes only declared dynamic sections.
+
+If current runtime authoring/promotion/loading cannot preserve a required Job-owned helper inside the Job bundle, that is a platform blocker. Do not replace the intended ownership model with a registry workaround.
+
+### Drawing-scoped persistent Job products
+Job source/assets and Job runtime products have different ownership.
+
+When a Job produces persistent metadata about a drawing, the product belongs to the logical drawing, not to the Job library:
+
+```text
+AppData/drawings/<drawing_id>/**
+```
+
+Before writing such data, the Job must resolve the current drawing through the Observator Drawing Anchor contract in `knowledge/observator/DRAWING_ANCHOR.md`.
+
+Required behavior:
+
+```text
+persistent drawing product required
+→ resolve/create Drawing Anchor through Observator
+→ obtain anchor.drawing_id
+→ resolve/create AppData/drawings/<drawing_id>/
+→ write the Job-defined metadata/result beneath that drawing root
+```
+
+If the bound DWG already contains an anchor, its `drawing_id` is authoritative even after rename, move, copy, or Save As. If no anchor exists, only the Observator helper may create it and initialize the matching drawing folder.
+
+Jobs must not derive a replacement id from file name/path, runtime drawing id, active document, or their own Job folder. Missing anchor support is an implementation blocker, not permission to invent another identity scheme.
+
 ### Job-owned dynamic Lisp derivative
 When a Job needs the **same proven Lisp logic with changing data/ranges/sections**, prefer a persistent derivative owned by that Job:
 
@@ -198,7 +245,7 @@ Reasoning: appdata/libraries/jobs/<library-id>/<job-name>/JOB.md
 Direct:    appdata/libraries/jobs/<library-id>/<job-name>/<job-name>.py
 ```
 
-Supporting reusable data may live beside the Job entrypoint when that data belongs to the Job contract. Runtime/test evidence belongs under managed data/run locations rather than being silently mixed into the permanent Job definition.
+Supporting reusable definition assets may live beside the Job entrypoint when they belong to the Job contract. This includes Job-owned internal helpers under `<job-root>/lisp/**` and Job-owned dynamic derivatives under `<job-root>/dynamic-lisp/**`. Persistent runtime products about a drawing do **not** belong beside the Job entrypoint; they belong under `AppData/drawings/<drawing_id>/**` after resolving the Observator Drawing Anchor. Runtime/test evidence belongs under managed data/run locations rather than being silently mixed into the permanent Job definition.
 
 Shared reusable AutoLISP logic belongs to a managed Lisp Library. A **Job-owned dynamic derivative** is the explicit exception and lives under:
 
