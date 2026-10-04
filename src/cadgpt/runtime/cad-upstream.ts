@@ -55,6 +55,8 @@ class CadUpstream {
   private tools: Tool[] = [];
   private lastError: string | null = null;
   private connecting: Promise<void> | null = null;
+  private connectedExecutionId: string | null = null;
+  private connectedHumanPower = false;
 
   private get python(): string {
     const configured =
@@ -111,6 +113,32 @@ class CadUpstream {
     if (this.phase === "sleeping") {
       throw new Error("CAD MCP is sleeping. It activates only after confirmed CAD work; AutoCAD must already be running.");
     }
+
+    let requestedExecutionId: string | null = null;
+    let requestedHumanPower = false;
+    try {
+      const lease = currentToolLease();
+      requestedExecutionId = lease.workId;
+      requestedHumanPower = Boolean(currentHumanPower());
+    } catch {
+      requestedExecutionId = null;
+      requestedHumanPower = false;
+    }
+
+    const contextChanged =
+      Boolean(this.client && this.transport) &&
+      Boolean(requestedExecutionId) &&
+      (
+        this.connectedHumanPower !== requestedHumanPower ||
+        (
+          this.connectedExecutionId !== null &&
+          this.connectedExecutionId !== requestedExecutionId
+        )
+      );
+    if (contextChanged) {
+      await this.shutdown();
+    }
+
     if (this.client && this.transport && !force) return;
     if (this.connecting && !force) return this.connecting;
     if (force) await this.shutdown();
@@ -174,6 +202,8 @@ class CadUpstream {
         this.client = client;
         this.transport = transport;
         this.tools = listed.tools ?? [];
+        this.connectedExecutionId = requestedExecutionId;
+        this.connectedHumanPower = requestedHumanPower;
         this.lastError = null;
         console.log(`[CAD MCP] connected; ${this.tools.length} tool(s) discovered`);
       } catch (error) {
@@ -240,6 +270,8 @@ class CadUpstream {
     this.client = null;
     this.transport = null;
     this.tools = [];
+    this.connectedExecutionId = null;
+    this.connectedHumanPower = false;
     if (transport) await transport.close().catch(() => undefined);
   }
 }

@@ -170,10 +170,13 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
                 raise LispServiceError(
                     f"LISP path escapes the {virtual_prefix}/** sandbox"
                 )
-    if virtual_prefix in {
-        "appdata/workspace/job-draft",
-        "appdata/libraries/jobs",
-    }:
+    if (
+        virtual_prefix in {
+            "appdata/workspace/job-draft",
+            "appdata/libraries/jobs",
+        }
+        and not _human_power_enabled()
+    ):
         if not _is_job_owned_lisp_path(candidate, root):
             raise LispServiceError(
                 "Job-owned LISP is loadable only from a Job lisp/** or dynamic-lisp/** folder"

@@ -40,6 +40,14 @@ test("Human Power is execution-scoped and replaces Job-level bypass", async () =
   assert.match(fileSource, /human_power_fix/);
   assert.match(fileSource, /auditHumanPowerSourceMutation/);
   assert.match(fileSource, /reloadCadMcpChildIfNeeded/);
+
+  const upstreamSource = await fs.readFile(
+    new URL("../src/cadgpt/runtime/cad-upstream.ts", import.meta.url),
+    "utf8"
+  );
+  assert.match(upstreamSource, /connectedExecutionId/);
+  assert.match(upstreamSource, /connectedHumanPower/);
+  assert.match(upstreamSource, /contextChanged/);
 });
 
 test("CAD MCP loader has explicit Human Power scope override", async () => {
