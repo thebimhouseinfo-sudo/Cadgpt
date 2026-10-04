@@ -4,7 +4,7 @@ Status: **canonical shared drawing-persistence contract**
 
 ## Purpose
 
-Drawing Anchor is CadGPT's generic persistent identity primitive for a DWG.
+Drawing Anchor is CadGPT's generic persistent identity contract for a DWG.
 
 Any Job that needs to save persistent metadata or results for a drawing must use the Drawing Anchor to resolve the drawing's stable AppData folder. This rule is independent of any specific Job, Skill, or higher-level concept.
 
@@ -54,7 +54,9 @@ Job needs persistent drawing-scoped data
       → Job writes its metadata/result below that drawing root
 ```
 
-Anchor check/create plus drawing-folder resolution is one shared CadGPT primitive. Jobs consume this primitive; they must not implement parallel identity schemes.
+Anchor check/create plus drawing-folder resolution is a shared CadGPT **contract**, not a separately promoted capability.
+
+Each Job that needs persistent drawing-scoped data is responsible for enforcing this contract during its own execution. The Job may use its own Job-private implementation/helper to read or create the anchor, but every Job must use the same canonical anchor format and drawing-folder rules. Jobs must not implement parallel identity schemes.
 
 ## Anchor payload
 
@@ -89,7 +91,7 @@ The current file name/path is never authoritative persistent identity after the 
 Any Job that needs persistent drawing metadata must:
 
 1. target the explicitly bound drawing;
-2. call the shared Drawing Anchor resolve/create primitive;
+2. check the canonical Drawing Anchor in the bound DWG;
 3. use the returned `drawing_id`;
 4. resolve/create `%LOCALAPPDATA%\CadGPT\drawings\<drawing_id>\`;
 5. write only its own data beneath that drawing root.
@@ -117,7 +119,7 @@ A copied DWG therefore initially represents the same logical drawing identity. A
 
 ## Physical representation
 
-The physical AutoCAD representation is an implementation detail of the shared Drawing Anchor helper.
+The physical AutoCAD representation is part of the shared Drawing Anchor format. Jobs may implement read/create through their own private code, but the physical representation must remain compatible across Jobs.
 
 It must be:
 
@@ -128,8 +130,28 @@ It must be:
 
 Jobs must not implement their own physical anchor representation.
 
-## Missing helper behavior
+## Lazy existence and Job responsibility
 
-If the shared Drawing Anchor helper is not yet available, any Job that requires persistent drawing-scoped storage is blocked at that step.
+A drawing with no anchor is normal. It means no Job has yet needed persistent drawing-scoped metadata for that DWG.
 
-Do not work around the missing helper by using filename/path matching, Job-local folders, a separately registered Lisp, or another ad-hoc identity mechanism.
+CadGPT must not create or promote an anchor capability merely because a drawing is opened, bound, or available.
+
+When a Job first needs persistent drawing-scoped storage:
+
+```text
+Job needs persistence
+→ check canonical Drawing Anchor
+   ├─ exists
+   │  → use drawing_id
+   │  → resolve/create drawings/<drawing_id>/
+   └─ missing
+      → Job creates a canonical Drawing Anchor
+      → Job creates drawings/<drawing_id>/
+      → continue persistence
+```
+
+The Job may perform anchor read/create with its own Job-owned private Lisp/helper or another approved executor. That implementation remains private to the Job unless there is an independent reason to make it reusable.
+
+No global Lisp Registry entry, separate Job registration, or standalone promotion is required for anchor handling itself.
+
+If a Job requires persistent drawing metadata but cannot read/create the canonical anchor correctly, that Job is incomplete and must stop rather than falling back to filename/path identity or another ad-hoc scheme.
