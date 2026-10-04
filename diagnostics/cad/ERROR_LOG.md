@@ -53,3 +53,32 @@ status = OPEN | TRIAGED | FIXED | KNOWLEDGE_PROMOTED
 **Candidate lesson:** Do not automatically bypass a failed Internal Direct Job with lower-level CAD/Lisp tools.
 
 **Status:** PROMOTED to `WORKING_KNOWLEDGE.md`.
+
+
+---
+
+## 2026-10-05 — CAD MCP Lisp loader resolved a different AppData root than CadGPT core
+
+**Observed behavior:** `cad_load_lisp_file` rejected a real Job-owned Lisp under `%LOCALAPPDATA%\CadGPT\workspace\job-draft\...\lisp\...` as outside approved roots even though the whitelist included Job-owned Lisp folders.
+
+**Expected behavior:** TypeScript core, Tray, and Python CAD-MCP must resolve the same canonical AppData root. On Windows, unset/legacy `CADGPT_APPDATA_ROOT` resolves to `%LOCALAPPDATA%\CadGPT`.
+
+**Root cause:** Python `lisp_service.py` still defaulted to repository-local `appdata` when the environment override was absent, while the rest of CadGPT had migrated to LocalAppData.
+
+**Candidate improvement:** Keep one canonical AppData resolver contract across runtimes and regression-test the unset-environment Windows path.
+
+**Status:** FIXED in source; awaiting live AutoCAD verification.
+
+---
+
+## 2026-10-05 — Drawing Anchor regenerated across admissions
+
+**Observed behavior:** The same open DWG produced different `drawing_anchor` values on later CadGPT admissions.
+
+**Expected behavior:** Drawing Anchor is write-once/read-many. Once present in the DWG, later binds only read it and never replace it.
+
+**Root cause:** The first native storage adapter used a NOD extension-dictionary layout that did not provide reliable persistence evidence in live admission testing.
+
+**Candidate improvement:** Store `CADGPT_DRAWING_ANCHOR` inside a CadGPT-owned hard-owner dictionary under the Named Objects Dictionary; probe read-only before generation/write and migrate any valid legacy anchor without changing its value.
+
+**Status:** FIXED in source; awaiting live AutoCAD verification.

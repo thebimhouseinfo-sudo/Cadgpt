@@ -61,15 +61,17 @@ The value is generated once. Rename, move, copy, or Save As must not regenerate 
 
 ## Physical representation
 
-V1 is stored as a non-graphical XRecord in the extension dictionary attached to AutoCAD's Named Objects Dictionary / Dictionaries root.
+V1 is stored as a non-graphical XRecord inside CadGPT's own dictionary under AutoCAD's Named Objects Dictionary.
 
 ```text
 Named Objects Dictionary
-└── Extension Dictionary
+└── CADGPT_PERSISTENCE          [DICTIONARY, hard-owner entries]
     └── CADGPT_DRAWING_ANCHOR   [XRecord]
         ├── DXF 90 → schema_version = 1
         └── DXF 1  → drawing_anchor
 ```
+
+The canonical dictionary uses DXF group 280 = 1 so its entries are treated as hard-owned. The XRecord is therefore owned by CadGPT's persistence dictionary instead of being a loose drawing entity.
 
 Canonical XRecord key:
 
@@ -94,7 +96,9 @@ CadGPT performs the actual dictionary/XRecord mutation through:
 resources/cad/core-lisp/drawing-anchor.lsp
 ```
 
-This Lisp is a core-private implementation detail, not a Registry capability and not a Job-owned helper. Python/CAD MCP activates the exact bound drawing, generates or reuses the candidate `drawing_anchor`, verified-loads this Lisp, calls its internal ensure function, and accepts only the Lisp read-back result.
+This Lisp is a core-private implementation detail, not a Registry capability and not a Job-owned helper. Python/CAD MCP activates the exact bound drawing, verified-loads this Lisp, and performs a read-only anchor probe first. If the canonical anchor already exists, the existing value is returned and no write occurs. Only when the anchor is missing does CadGPT generate/reuse a candidate and call the Lisp ensure function.
+
+The previous NOD-extension-dictionary layout is migration-only. If a valid legacy anchor is found, CadGPT writes that same value once into the canonical `CADGPT_PERSISTENCE` dictionary. Migration must never generate a replacement identity for a drawing that already carries a valid legacy anchor.
 
 The Lisp owns native DWG dictionary/XRecord read/write. Python must not construct XRecord SAFEARRAY/VARIANT payloads through COM for Drawing Anchor persistence.
 
@@ -106,7 +110,7 @@ This representation must remain:
 - readable without scanning drawing geometry;
 - compatible with AutoCAD ObjectARX/.NET/ActiveX/AutoLISP dictionary/XRecord access.
 
-CadGPT must never toggle AutoCAD's global UNDO mode as a workaround. Bind and metadata resolution always read back/re-ensure the anchor. If the same live bound context temporarily loses its XRecord, its cached `drawing_anchor` is supplied as the preferred value so the same identity is restored rather than generating a different one.
+CadGPT must never toggle AutoCAD's global UNDO mode as a workaround. The normal contract is write-once/read-many: every bind first reads the anchor; an existing canonical anchor is never rewritten. If no anchor exists, CadGPT creates it once and verifies the read-back. If the same live bound context truly loses its XRecord, its cached `drawing_anchor` may be supplied as the preferred value so recovery preserves identity instead of generating a different one.
 
 ## External metadata root
 

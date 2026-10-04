@@ -34,3 +34,31 @@ Rules:
 ## Direct Jobs
 
 A `.py` Job is not processed by this harness. It is a direct Job: resolve the registered script and dispatch it through the direct Job runner without model planning between its internal operations.
+
+
+## Human Bypass
+
+When a real Job is blocked by a workflow/harness rule that the human explicitly judges incorrect or not yet mature:
+
+```text
+human explicitly approves bypass of named gate
+→ job_human_bypass_record
+→ append detailed incident to workflow-bypass error log
+→ mark draft/Job workflow_bypass = ACTIVE
+→ continue only around that named workflow gate
+→ keep all hard runtime/safety/tool boundaries enforced
+```
+
+An ACTIVE bypass is technical debt, not a PASS. Reports and promotion must surface it.
+
+After the platform workflow is updated:
+
+```text
+checkout/refine flagged Job
+→ execute the corrected normal workflow
+→ validate without relying on bypass
+→ human approves bypass removal
+→ job_human_bypass_clear
+→ re-promote Job
+→ Registry flag removed; historical log retained
+```

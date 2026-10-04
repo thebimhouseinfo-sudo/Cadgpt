@@ -110,6 +110,27 @@ Then call `job_promote_draft` with `user_accepted=true`, test evidence and final
 
 Generic file tools must never be used to edit `appdata/libraries/jobs/**` directly.
 
+## Human Bypass contract
+
+A human may explicitly bypass a JobCreate workflow gate when the gate itself is known to be incomplete or inappropriate for the real task.
+
+The agent must not treat conversational convenience as approval. The human must explicitly authorize the named bypass.
+
+Before continuing, call `job_human_bypass_record`. This creates an ACTIVE Job flag and appends detailed evidence to the managed workflow-bypass error log.
+
+A bypass may relax only the named JobCreate/reasoning workflow gate. It cannot override:
+
+- sandbox or path restrictions;
+- tool/work authority;
+- drawing binding/identity checks;
+- destructive scope approval;
+- source syntax/parse validity;
+- capability security boundaries.
+
+Promotion is allowed for a human-accepted flagged Job, but the Registry must retain `workflow_bypass = true` until the platform workflow is fixed and the Job is revalidated normally.
+
+To remove the flag, the human explicitly approves removal after normal revalidation, then `job_human_bypass_clear` records fix evidence and the Job is re-promoted.
+
 ## Mandatory stop conditions
 
 Stop and ask/resolve instead of guessing when:

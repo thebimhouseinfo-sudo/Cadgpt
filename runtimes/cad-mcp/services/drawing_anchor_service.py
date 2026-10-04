@@ -22,6 +22,7 @@ from services.lisp_service import (
 
 ANCHOR_KEY = "CADGPT_DRAWING_ANCHOR"
 ANCHOR_LISP_PATH = "resources/cad/core-lisp/drawing-anchor.lsp"
+ANCHOR_LISP_READ_FUNCTION = "cadgpt-drawing-anchor-read"
 ANCHOR_LISP_FUNCTION = "cadgpt-drawing-anchor-ensure"
 SCHEMA_VERSION = 1
 
@@ -84,7 +85,7 @@ def _parse_lisp_result(raw: str) -> dict:
         )
 
     drawing_anchor = _validate_anchor(anchor_text)
-    if state not in {"created", "existing"}:
+    if state not in {"created", "existing", "legacy", "migrated"}:
         raise DrawingAnchorServiceError(
             "Drawing Anchor Lisp returned an invalid state"
         )
@@ -93,6 +94,8 @@ def _parse_lisp_result(raw: str) -> dict:
         "schema_version": schema_version,
         "drawing_anchor": drawing_anchor,
         "created": state == "created",
+        "migrated": state == "migrated",
+        "state": state,
     }
 
 
@@ -107,17 +110,36 @@ def ensure_drawing_anchor(
             document_name or None,
             runtime_document_id or None,
         )
-        candidate = (
-            _validate_anchor(preferred_anchor)
-            if preferred_anchor
-            else _new_anchor(doc)
-        )
-
         loaded = load_lisp_file(ANCHOR_LISP_PATH)
         if not loaded.get("loaded"):
             raise DrawingAnchorServiceError(
                 "Could not load internal Drawing Anchor Lisp: "
                 + str(loaded.get("error") or "unknown load failure")
+            )
+
+        read_raw = run_lisp_function_sync(
+            ANCHOR_LISP_READ_FUNCTION,
+            [],
+        )
+        if read_raw != "MISSING":
+            read_payload = _parse_lisp_result(read_raw)
+            if read_payload["state"] == "existing":
+                return {
+                    **read_payload,
+                    "xrecord_key": ANCHOR_KEY,
+                    "storage": (
+                        "named_objects_dictionary_"
+                        "hard_owned_dictionary_xrecord"
+                    ),
+                    "adapter": "internal_autolisp",
+                    "lisp_path": ANCHOR_LISP_PATH,
+                }
+            candidate = read_payload["drawing_anchor"]
+        else:
+            candidate = (
+                _validate_anchor(preferred_anchor)
+                if preferred_anchor
+                else _new_anchor(doc)
             )
 
         raw = run_lisp_function_sync(
@@ -130,7 +152,7 @@ def ensure_drawing_anchor(
             "xrecord_key": ANCHOR_KEY,
             "storage": (
                 "named_objects_dictionary_"
-                "extension_dictionary_xrecord"
+                "hard_owned_dictionary_xrecord"
             ),
             "adapter": "internal_autolisp",
             "lisp_path": ANCHOR_LISP_PATH,

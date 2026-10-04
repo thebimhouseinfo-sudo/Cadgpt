@@ -22,8 +22,12 @@ test("Drawing Anchor adapter is a core-private valid AutoLISP file", async () =>
   assert.match(source, /defun\s+cadgpt-drawing-anchor-ensure/i);
   assert.doesNotMatch(source, /defun\s+c:/i);
   assert.match(source, /CADGPT_DRAWING_ANCHOR/);
+  assert.match(source, /CADGPT_PERSISTENCE/);
+  assert.match(source, /\(280 \. 1\)/);
+  assert.match(source, /defun\s+cadgpt-drawing-anchor-read/i);
   assert.match(source, /dictadd/);
   assert.match(source, /entmakex/);
+  assert.match(source, /HasExtensionDictionary/);
 });
 
 test("Drawing Anchor adapter is not promoted into the bundled Lisp Registry", async () => {
@@ -49,6 +53,8 @@ test("Python Drawing Anchor service delegates DWG mutation to internal AutoLISP"
 
   assert.match(source, /load_lisp_file\(ANCHOR_LISP_PATH\)/);
   assert.match(source, /run_lisp_function_sync/);
+  assert.match(source, /ANCHOR_LISP_READ_FUNCTION/);
+  assert.match(source, /if read_raw != "MISSING"/);
   assert.match(source, /internal_autolisp/);
   assert.doesNotMatch(source, /pythoncom|VARIANT|win32com|SetXRecordData|GetXRecordData/);
 });

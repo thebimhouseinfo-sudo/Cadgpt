@@ -1,5 +1,19 @@
 # CadGPT Job Rules
 
+## Human workflow bypass
+
+A Human Bypass is an explicit exception for a Job authoring/reasoning **workflow gate** that is temporarily wrong, incomplete, or too strict for the real task.
+
+Rules:
+
+- Only the human may authorize a bypass, and the approval must identify the concrete blocked workflow/gate.
+- Before continuing, the AI must call `job_human_bypass_record` with the observed behavior, expected behavior, error evidence, reason, and any temporary workaround.
+- The bypass is recorded in the managed workflow-bypass error log and the Job draft is flagged `workflow_bypass = ACTIVE`.
+- An ACTIVE bypass follows the Job into the User Registry when the Job is promoted. `job_list` / `job_get` must surface the flag so the Job cannot silently become "clean".
+- The bypass permits continuation only around the recorded workflow/harness gate. It **never** bypasses runtime sandbox/path policy, tool authority, drawing binding, destructive-scope approval, source syntax validity, or other hard safety/security boundaries.
+- After the platform workflow is corrected, refine/retest the Job without relying on the exception, call `job_human_bypass_clear` with fix + validation evidence and explicit human approval, then re-promote the Job. The new promotion removes the Registry bypass flag.
+- Bypass history remains append-only in the error log even after the active flag is cleared.
+
 ## Purpose
 
 A **Job** in CadGPT is a small, repeatable CAD workflow: a known sequence of steps executed under one explicit CadGPT WorkRegistration to produce a concrete result.

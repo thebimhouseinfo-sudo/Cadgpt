@@ -31,6 +31,7 @@ import uuid
 
 import pywintypes
 
+from config import get_cadgpt_appdata_root
 from connection.acad import get_active_document
 
 
@@ -52,10 +53,7 @@ def _repo_root() -> str:
 
 
 def _appdata_root() -> str:
-    configured = (os.environ.get("CADGPT_APPDATA_ROOT") or "appdata").strip() or "appdata"
-    if os.path.isabs(configured):
-        return os.path.realpath(configured)
-    return os.path.realpath(os.path.join(_repo_root(), configured))
+    return get_cadgpt_appdata_root()
 
 
 def _inside(candidate: str, root: str) -> bool:
