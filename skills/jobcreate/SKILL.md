@@ -205,6 +205,46 @@ Example: an FDT-update-style Job should seed from the known-working FDT Lisp, re
 
 Use `appdata/runtime/dynamic-lisp/**` only for ad-hoc/session variants that do **not** belong to a reusable Job.
 
+#### B3a. Job-owned internal helpers
+
+When the approved Job design needs a private helper that exists only for that Job, keep it inside the Job bundle rather than creating a shared Registry capability.
+
+For a private AutoLISP helper:
+
+```text
+draft:     <job-draft-root>/<library-id>/<job-name>/lisp/*.lsp
+permanent: <job-library-root>/<library-id>/<job-name>/lisp/*.lsp
+```
+
+The helper is Job-private, declared by the owning Job, loaded on demand, and is **not** registered in the global/user Lisp Registry. Do not promote it through the shared Lisp library path merely because current bundle tooling is incomplete.
+
+A private Job helper differs from `dynamic-lisp/**`: the private helper is authored specifically for the Job; a dynamic derivative is seeded from a registered working Lisp and preserves that source logic outside declared dynamic sections.
+
+If the current draft/promotion/load primitives cannot preserve the required Job-owned helper with the Job, report the missing platform primitive as a blocker. Do not change ownership as a workaround.
+
+#### B3b. Drawing Anchor gate for persistent drawing products
+
+When a Job produces persistent metadata/results tied to a logical drawing, the product belongs under:
+
+```text
+AppData/drawings/<drawing_id>/**
+```
+
+It does **not** belong inside the Job package.
+
+Before the first persistent drawing-scoped write, read `knowledge/observator/DRAWING_ANCHOR.md` and require this flow:
+
+```text
+resolve Drawing Anchor through Observator
+├─ anchor exists → use anchor.drawing_id → resolve matching drawing root
+└─ no anchor     → Observator creates anchor + matching drawing root
+→ Job writes its own metadata/result below that drawing root
+```
+
+The Job must never manufacture a persistent `drawing_id` from current DWG name/path or from its work/binding id. It must not mutate the anchor directly.
+
+If the Observator anchor helper does not yet exist, stop implementation at that step and surface a platform blocker. Do not use filename matching, a Job-local folder, or a separately registered helper as a substitute.
+
 #### B4. Implement missing capabilities only when required
 
 If a planned step requires a capability that does not exist:
@@ -306,6 +346,7 @@ Read as needed:
 
 ```text
 knowledge/jobs/JOB_RULES.md
+knowledge/observator/DRAWING_ANCHOR.md   when the Job persists drawing-scoped metadata
 skills/jobcreate/job-skills/workflow-planning.md
 skills/jobcreate/job-skills/tool-mapping.md
 skills/jobcreate/job-skills/implementation-testing.md
