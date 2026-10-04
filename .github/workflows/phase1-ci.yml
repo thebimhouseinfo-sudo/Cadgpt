@@ -397,6 +397,10 @@ jobs:
           $env:CADGPT_CANONICAL_JOB_DRAFT = $canonicalDraft
           python -c "import os; from config import get_cadgpt_appdata_root; from services.lisp_service import _resolve_lisp_path; root=get_cadgpt_appdata_root(); assert os.path.normcase(root)==os.path.normcase(os.path.join(os.environ['LOCALAPPDATA'],'CadGPT')); p,v=_resolve_lisp_path(os.environ['CADGPT_CANONICAL_JOB_DRAFT']); assert v.replace('\\','/').startswith('appdata/workspace/job-draft/'); print('Canonical LocalAppData Job Lisp root OK:', root, v)"
 
+          $caseVariant = $canonicalDraft.ToLowerInvariant()
+          $env:CADGPT_CASE_VARIANT_JOB_DRAFT = $caseVariant
+          python -c "import os; from services.lisp_service import _resolve_lisp_path; p,v=_resolve_lisp_path(os.environ['CADGPT_CASE_VARIANT_JOB_DRAFT']); assert v.replace('\\','/').startswith('appdata/workspace/job-draft/'); print('Windows case-insensitive Job Lisp root OK:', v)"
+
           $managed = Join-Path $env:RUNNER_TEMP "CadGPT-job-lisp-policy"
           $env:CADGPT_APPDATA_ROOT = $managed
 

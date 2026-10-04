@@ -58,7 +58,8 @@ def _appdata_root() -> str:
 
 def _inside(candidate: str, root: str) -> bool:
     try:
-        return os.path.commonpath([candidate, root]) == root
+        common = os.path.commonpath([candidate, root])
+        return os.path.normcase(common) == os.path.normcase(root)
     except ValueError:
         return False
 
@@ -97,7 +98,15 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
         candidate = os.path.realpath(raw)
         match = next(((root, prefix) for root, prefix in roots if _inside(candidate, root)), None)
         if not match:
-            raise LispServiceError("absolute LISP path is outside approved CadGPT Lisp roots")
+            approved = ", ".join(
+                f"{prefix}={root}"
+                for root, prefix in roots
+            )
+            raise LispServiceError(
+                "absolute LISP path is outside approved CadGPT Lisp roots; "
+                f"candidate={candidate}; appdata_root={_appdata_root()}; "
+                f"approved_roots=[{approved}]"
+            )
         root, virtual_prefix = match
     else:
         normalized = normalized[2:] if normalized.startswith("./") else normalized
