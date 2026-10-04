@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { getJobLibrariesRoot, getUserCapabilitiesPath } from "../lib/appdata.js";
+import { getUserCapabilitiesPath } from "../lib/appdata.js";
 import { isPathInside, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
@@ -124,8 +124,7 @@ async function jobTarget(
   const jobRoot = path.dirname(entrypoint);
   const relative = safeDynamicRelative(relativePath);
   const target = path.resolve(jobRoot, relative);
-  const libraryRoot = path.resolve(getJobLibrariesRoot(), job.library_id);
-  if (!isPathInside(jobRoot, libraryRoot) || !isPathInside(target, jobRoot)) {
+  if (!isPathInside(target, jobRoot)) {
     throw new Error("JOB_DYNAMIC_LISP_PATH: dynamic Lisp path escapes the owning Job folder");
   }
   return { job_root: jobRoot, target, relative_path: relative };
