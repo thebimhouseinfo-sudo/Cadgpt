@@ -33,6 +33,7 @@ const INTERNAL_UPSTREAM_TOOLS = new Set([
   "acad_list_open_documents",
   "acad_set_active_document",
   "acad_create_blank_test_document",
+  "cad_ensure_drawing_anchor",
 
   // Outer Observator owns capture lifecycle, execution ownership and cleanup.
   "cad_observation_capture_start",
@@ -971,6 +972,10 @@ export function registerCadProxyTools(server: McpServer): void {
             throw new Error("New test drawing has no usable identity");
           }
           const drawing = await bindDrawing(identity);
+          const { ensureDrawingAnchorForBinding } = await import(
+            "../runtime/drawing-persistence.js"
+          );
+          await ensureDrawingAnchorForBinding(drawing);
           recordCadCandidateSuccess(currentToolLease().workId, "drawing_create_test");
           return toolResult("drawing_create_test", {
             created: true,
@@ -1007,6 +1012,10 @@ export function registerCadProxyTools(server: McpServer): void {
         await ensureCadRuntimeActive();
         return await withCadHostLock("autocad", async () => {
           const drawing = await bindDrawing(document);
+          const { ensureDrawingAnchorForBinding } = await import(
+            "../runtime/drawing-persistence.js"
+          );
+          await ensureDrawingAnchorForBinding(drawing);
           recordCadCandidateSuccess(currentToolLease().workId, "drawing_bind");
           return toolResult("drawing_bind", { bound: true, drawing });
         });

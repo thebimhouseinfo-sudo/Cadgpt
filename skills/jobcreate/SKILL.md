@@ -222,30 +222,25 @@ A private Job helper differs from `dynamic-lisp/**`: the private helper is autho
 
 If the current draft/promotion/load primitives cannot preserve the required Job-owned helper with the Job, report the missing platform primitive as a blocker. Do not change ownership as a workaround.
 
-#### B3b. Drawing Anchor gate for persistent drawing products
+#### B3b. Drawing-scoped persistent metadata
 
-When a Job produces persistent metadata/results tied to a logical drawing, the product belongs under:
+If the approved Job needs persistent drawing-scoped metadata, do not make the Job invent or implement drawing identity/path resolution.
 
-```text
-AppData/drawings/<drawing_id>/**
-```
-
-It does **not** belong inside the Job package.
-
-Before the first persistent drawing-scoped write, read `knowledge/drawing/DRAWING_ANCHOR.md` and require this flow:
+CadGPT ensures `drawing_anchor` when the drawing is bound. At the step that needs persistence, the Job must call:
 
 ```text
-check canonical Drawing Anchor
-├─ anchor exists → use anchor.drawing_id → resolve matching drawing root
-└─ no anchor     → Job creates canonical anchor + matching drawing root
-→ Job writes its own metadata/result below that drawing root
+drawing_metadata_location
 ```
 
-The Job must never manufacture a persistent `drawing_id` from current DWG name/path or from its work/binding id.
+The tool returns the exact canonical drawing root:
 
-Anchor read/create may be implemented by Job-specific private code when needed, but that code must follow the canonical Drawing Anchor format and folder contract exactly.
+```text
+%LOCALAPPDATA%\CadGPT\drawings\<drawing_anchor>\
+```
 
-Do not create or promote an unnecessary global anchor helper. If the Job needs persistence, its implementation must be capable of checking the canonical anchor and creating it when absent. If it cannot do so correctly, stop implementation at that step rather than using filename matching, a Job-local data folder, or another identity workaround.
+and authorizes that exact root for `file_*` access in the current execution.
+
+The Job must use the returned absolute path. It must never substitute filename/path matching, runtime `drawing_id`, Job-local output folders, or a separately registered helper.
 
 #### B4. Implement missing capabilities only when required
 

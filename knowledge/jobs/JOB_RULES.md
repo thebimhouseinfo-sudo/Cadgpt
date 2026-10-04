@@ -148,29 +148,21 @@ If current runtime authoring/promotion/loading cannot preserve a required Job-ow
 ### Drawing-scoped persistent Job products
 Job source/assets and Job runtime products have different ownership.
 
-When a Job produces persistent metadata about a drawing, the product belongs to the logical drawing, not to the Job library:
+CadGPT ensures a durable `drawing_anchor` whenever a drawing is successfully bound. The execution-scoped runtime `drawing_id` remains separate and must never be used as persistent identity.
+
+When a Job needs persistent metadata about the bound drawing, it must call the shared `drawing_metadata_location` tool. The tool re-validates the anchor, resolves or creates:
 
 ```text
-AppData/drawings/<drawing_id>/**
+%LOCALAPPDATA%\CadGPT\drawings\<drawing_anchor>\
 ```
 
-Before writing such data, the Job must resolve the current drawing through the shared CadGPT Drawing Anchor contract in `knowledge/drawing/DRAWING_ANCHOR.md`.
+and returns the canonical absolute path.
 
-Required behavior:
+The Job/model must not assemble this path itself. Generic `file_*` access to `drawings/**` is allowed only for the exact drawing root authorized by `drawing_metadata_location` for the current execution.
 
-```text
-persistent drawing product required
-→ check canonical Drawing Anchor
-→ obtain anchor.drawing_id
-→ resolve/create AppData/drawings/<drawing_id>/
-→ write the Job-defined metadata/result beneath that drawing root
-```
+If the tool created an empty drawing root and the execution ends without writing metadata, CadGPT cleanup removes that one registered empty directory. A non-empty directory is retained.
 
-If the bound DWG already contains an anchor, its `drawing_id` is authoritative even after rename, move, copy, or Save As. If no anchor exists, the Job must create a canonical anchor and initialize the matching drawing folder before writing persistent data.
-
-Anchor handling does not require a separately promoted/shared capability. A Job may implement the check/create operation with its own Job-private helper, provided it follows the canonical Drawing Anchor format exactly.
-
-Jobs must not derive a replacement id from file name/path, runtime drawing id, active document, or their own Job folder. Missing anchor support is an implementation blocker, not permission to invent another identity scheme.
+Jobs must not derive a replacement identity from filename/path, runtime `drawing_id`, ActiveDocument, work/session identity, or their own Job folder.
 
 ### Job-owned dynamic Lisp derivative
 When a Job needs the **same proven Lisp logic with changing data/ranges/sections**, prefer a persistent derivative owned by that Job:
@@ -247,7 +239,7 @@ Reasoning: appdata/libraries/jobs/<library-id>/<job-name>/JOB.md
 Direct:    appdata/libraries/jobs/<library-id>/<job-name>/<job-name>.py
 ```
 
-Supporting reusable definition assets may live beside the Job entrypoint when they belong to the Job contract. This includes Job-owned internal helpers under `<job-root>/lisp/**` and Job-owned dynamic derivatives under `<job-root>/dynamic-lisp/**`. Persistent runtime products about a drawing do **not** belong beside the Job entrypoint; they belong under `AppData/drawings/<drawing_id>/**` after resolving the canonical Drawing Anchor. Runtime/test evidence belongs under managed data/run locations rather than being silently mixed into the permanent Job definition.
+Supporting reusable definition assets may live beside the Job entrypoint when they belong to the Job contract. This includes Job-owned internal helpers under `<job-root>/lisp/**` and Job-owned dynamic derivatives under `<job-root>/dynamic-lisp/**`. Persistent runtime products about a drawing do **not** belong beside the Job entrypoint; they belong under `AppData/drawings/<drawing_anchor>/**` after resolving the canonical Drawing Anchor. Runtime/test evidence belongs under managed data/run locations rather than being silently mixed into the permanent Job definition.
 
 Shared reusable AutoLISP logic belongs to a managed Lisp Library. A **Job-owned dynamic derivative** is the explicit exception and lives under:
 

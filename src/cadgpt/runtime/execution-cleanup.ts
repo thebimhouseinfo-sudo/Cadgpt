@@ -4,6 +4,8 @@ import { hasActiveCadWork } from "../lib/work-registration.js";
 export interface ExecutionCleanupResult {
   execution_id: string;
   candidate_released: boolean;
+  drawing_metadata_cleaned: boolean;
+  drawing_metadata_cleanup?: Record<string, unknown>;
   cad_state_cleared: boolean;
   cad_mcp_dev_restored: boolean;
   recovery_required: boolean;
@@ -22,6 +24,7 @@ export async function cleanupExecutionState(
   const result: ExecutionCleanupResult = {
     execution_id: executionId,
     candidate_released: false,
+    drawing_metadata_cleaned: false,
     cad_state_cleared: false,
     cad_mcp_dev_restored: false,
     recovery_required: false,
@@ -35,6 +38,17 @@ export async function cleanupExecutionState(
     result.candidate_released = true;
   } catch (error) {
     result.errors.push(`candidate cleanup: ${errorText(error)}`);
+  }
+
+  try {
+    const { cleanupDrawingMetadataForExecution } = await import(
+      "./drawing-persistence.js"
+    );
+    result.drawing_metadata_cleanup =
+      await cleanupDrawingMetadataForExecution(executionId);
+    result.drawing_metadata_cleaned = true;
+  } catch (error) {
+    result.errors.push(`drawing metadata cleanup: ${errorText(error)}`);
   }
 
   if (loaded.has("cad")) {

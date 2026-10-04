@@ -18,15 +18,11 @@ It is infrastructure for future Observation Jobs. This specification deliberatel
 
 > Observator reads direct properties only. V1 performs no nested entity traversal.
 
-> The Drawing Anchor is the only CAD database object Observator may create or modify.
+> Observator does not own or mutate Drawing Anchor identity. CadGPT ensures `drawing_anchor` at drawing bind.
 
-> A completed Observation Job writes/finalizes its AppData result, then updates the Drawing Anchor `last_revision` exactly once.
+> Observation persistence uses the shared `drawing_metadata_location` boundary; revision/business state belongs in external Job-owned metadata, never in the shared Drawing Anchor.
 
-> `last_revision` is the revision carried by the opened DWG copy, not a global "latest wins" marker.
-
-> Observation revision labels are hierarchical strings such as `12.01`, never floating-point numbers.
-
-> Anchor state is independent of AutoCAD save state. Observator does not certify that the latest in-memory DWG or anchor update has been persisted to disk.
+> Anchor state is independent of AutoCAD save state. Observator does not certify that the latest in-memory DWG or anchor creation has been persisted to disk.
 
 ## Engine responsibilities
 
@@ -38,9 +34,8 @@ Observator V1 provides the following foundation capabilities:
 4. Read lightweight candidate headers/type first.
 5. Read complete direct properties for one or many Job-approved candidates.
 6. Append caller-selected records to a drawing-scoped AppData JSONL log.
-7. Resolve the Drawing Anchor for an observed drawing.
-8. Lazily create the Drawing Anchor when Observator first needs persistent metadata for a drawing that has no anchor.
-9. Update the Drawing Anchor `last_revision` once at successful Observation Job completion.
+7. Resolve external persistence through the shared `drawing_metadata_location` boundary when a concrete Job requests a persistent log.
+8. Use the bound drawing's durable `drawing_anchor` as external storage identity; runtime `drawing_id` remains only the execution context selector.
 
 Single-object and multi-object property reads use the same engine contract. The only difference is the number of entity references supplied by the caller.
 
@@ -118,7 +113,7 @@ stage = finalizing
 → Job applies its relevance predicate
 → deep-read direct properties only for relevant candidates
 → Job writes/finalizes its result
-→ update Drawing Anchor last_revision once
+→ Job finalizes any external metadata through the shared drawing root
 → stage = complete
 ```
 
@@ -233,17 +228,17 @@ If a direct property value is itself a COM object, the reader returns only a sha
 
 ## Drawing persistence boundary
 
-Observator does not own Drawing Anchor, drawing identity, or drawing-folder lifecycle.
+Observator does not own Drawing Anchor, durable drawing identity, or drawing-folder lifecycle.
 
-If a concrete Job using Observator capture needs persistent drawing-scoped metadata, that Job must first use the shared CadGPT Drawing Anchor contract:
+CadGPT has already ensured the drawing's `drawing_anchor` at bind time. If a concrete Observation Job needs persistent data, it resolves the exact external root through:
 
 ```text
-knowledge/drawing/DRAWING_ANCHOR.md
+drawing_metadata_location
 ```
 
-The concrete Job resolves or creates the stable `drawing_id` according to the shared Drawing Anchor contract and then uses the matching `AppData/drawings/<drawing_id>/` root. Observator may then be used only for its capture/read/log behavior if requested by that Job.
+The runtime `drawing_id` is used only to select the bound context. The returned external root is keyed by `drawing_anchor`.
 
-Observation-specific revision/branch semantics are not part of this V1 Observator capture contract and must not be stored in or inferred from the shared Drawing Anchor.
+Observation-specific revision/branch semantics are not part of the shared Drawing Anchor and must live in external Job-owned metadata.
 
 ## AppData log boundary
 
@@ -252,7 +247,7 @@ Persistent Observator logs are drawing-scoped:
 ```text
 appdata/
 └─ drawings/
-   └─ <drawing_id>/
+   └─ <drawing_anchor>/
       └─ observator/
          └─ <log_name>.jsonl
 ```
@@ -261,13 +256,13 @@ Each appended record receives only the minimal storage envelope:
 
 ```text
 recorded_at
-drawing_id
+drawing_anchor
 <caller supplied payload>
 ```
 
 The engine does not choose which properties should be persisted. A Job may receive a complete direct snapshot for a relevant candidate and write only a small projection of it.
 
-During the current foundation slice, the low-level logger may still receive `drawing_id` directly from its caller. A real Job requiring persistent drawing storage must resolve or create the canonical Drawing Anchor instead of treating file path/name as drawing identity.
+The public Observator tool may still receive runtime `drawing_id` to select the bound drawing context. The log writer resolves that context to `drawing_anchor` before writing external data.
 
 ## Explicit non-responsibilities
 
@@ -302,8 +297,8 @@ Observator direct-property reader
         ↓
 Job-selected AppData records
 
-CAD mutation exception:
-Observator has no ownership exception for Drawing Anchor.
+CAD mutation boundary:
+Observator does not create or update Drawing Anchor. Shared CadGPT binding/persistence infrastructure owns that responsibility.
 ```
 
 ## Future Job usage
@@ -312,7 +307,7 @@ A future Observation Job may conceptually do this:
 
 ```text
 Job starts
-→ Job resolves/creates shared Drawing Anchor
+→ drawing is already bound with shared drawing_anchor ensured
 → start appended-object capture
 
 user works manually in AutoCAD
@@ -324,8 +319,8 @@ Job ends
 → lightweight type/header read
 → Job filters candidates
 → full direct-property read only for relevant candidates
-→ allocate hierarchical revision with parent_revision = parent
-→ Job writes/finalizes AppData result
+→ Job resolves drawing_metadata_location if persistence is required
+→ Job writes/finalizes AppData result below the returned drawing root
 → Job completes
 ```
 

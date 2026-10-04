@@ -87,6 +87,27 @@
       }
     },
     {
+      "name": "cad_ensure_drawing_anchor",
+      "description": "Ensure the canonical CadGPT Drawing Anchor exists on one explicitly identified AutoCAD document and return it.\\n\\nThis low-level primitive stores schema_version + drawing_anchor in the\\nNamed Objects Dictionary extension dictionary as\\nCADGPT_DRAWING_ANCHOR XRecord. Existing valid anchors are never\\nreplaced.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "document_name": {
+            "type": "string",
+            "default": ""
+          },
+          "runtime_document_id": {
+            "type": "string",
+            "default": ""
+          },
+          "preferred_anchor": {
+            "type": "string",
+            "default": ""
+          }
+        }
+      }
+    },
+    {
       "name": "cad_execute_delete_preview",
       "description": "Delete the exact entity snapshot represented by a one-shot preview token.\n\nThe token expires, is tied to the previewed drawing, and is consumed\nbefore deletion starts. If execution is uncertain or interrupted, do not\nretry the same token; preview again and verify current drawing state.",
       "inputSchema": {

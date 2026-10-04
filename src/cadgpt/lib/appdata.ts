@@ -12,6 +12,7 @@ export type AppDataArea =
   | "registry"
   | "workspace"
   | "runtime"
+  | "drawings"
   | "state"
   | "logs";
 
@@ -102,6 +103,10 @@ export function getRunDataRoot(): string {
   return getAppDataPath("data", "runs");
 }
 
+export function getDrawingStorageRoot(): string {
+  return getAppDataPath("drawings");
+}
+
 export async function ensureAppDataLayout(): Promise<void> {
   const directories = [
     getAppDataRoot(),
@@ -112,7 +117,7 @@ export async function ensureAppDataLayout(): Promise<void> {
     getLispDraftRoot(),
     getJobDraftRoot(),
     getDynamicLispRoot(),
-    path.join(getAppDataRoot(), "drawings"),
+    getDrawingStorageRoot(),
     getAppDataPath("state"),
     getAppDataPath("logs"),
   ];

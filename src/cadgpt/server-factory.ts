@@ -44,6 +44,7 @@ import { registerLispWorkspaceTools } from "./tools/lisp-workspace.js";
 import { registerUserAssetTools } from "./tools/user-assets.js";
 import { registerCadProxyTools } from "./tools/cad-proxy.js";
 import { registerObservatorTools } from "./tools/observator.js";
+import { registerDrawingPersistenceTools } from "./tools/drawing-persistence.js";
 import { registerCadMcpDevTools } from "./tools/cad-mcp-dev.js";
 import {
   prepareCadLaunch,
@@ -197,6 +198,7 @@ function registerStableProductionSurface(server: McpServer): void {
   registerUserAssetTools(server);
   registerCadProxyTools(server);
   registerObservatorTools(server);
+  registerDrawingPersistenceTools(server);
 
   if (isDevelopmentBuild()) {
     registerCadMcpDevTools(server);
@@ -389,7 +391,12 @@ export function createMcpServer(sessionKey: string): McpServer {
         const selector = drawing.full_name || drawing.name;
         const bound = await withCadHostLock("autocad", async () => {
           await cadUpstream.activate();
-          return bindDrawingForExecution(work.executionId, selector);
+          const binding = await bindDrawingForExecution(work.executionId, selector);
+          const { ensureDrawingAnchorForBinding } = await import(
+            "./runtime/drawing-persistence.js"
+          );
+          await ensureDrawingAnchorForBinding(binding);
+          return binding;
         });
 
         const { listRegisteredJobs } = await import("./tools/jobs.js");
@@ -677,10 +684,17 @@ export function createMcpServer(sessionKey: string): McpServer {
           targetSelector = String(matches[0].full_name || matches[0].name || "");
         }
 
-        const bound = await bindDrawingForExecution(
-          successor.executionId,
-          targetSelector
-        );
+        const bound = await withCadHostLock("autocad", async () => {
+          const binding = await bindDrawingForExecution(
+            successor.executionId,
+            targetSelector
+          );
+          const { ensureDrawingAnchorForBinding } = await import(
+            "./runtime/drawing-persistence.js"
+          );
+          await ensureDrawingAnchorForBinding(binding);
+          return binding;
+        });
 
         const work = commitSuccessorWorkRegistration({
           previousExecutionId: previousWork.executionId,

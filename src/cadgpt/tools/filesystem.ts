@@ -6,9 +6,27 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { getAllowedRoots, getWritableRoots, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { currentToolLease } from "../lib/work-registration.js";
+import { drawingMetadataRootsForExecution } from "../runtime/drawing-persistence.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
 const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".py"]);
+
+function currentDrawingMetadataRoots(): string[] {
+  try {
+    return drawingMetadataRootsForExecution(currentToolLease().workId);
+  } catch {
+    return [];
+  }
+}
+
+function currentReadableRoots(): string[] {
+  return [...new Set([...getAllowedRoots(), ...currentDrawingMetadataRoots()])];
+}
+
+function currentWritableRoots(): string[] {
+  return [...new Set([...getWritableRoots(), ...currentDrawingMetadataRoots()])];
+}
 
 function sha256(content: string | Buffer): string {
   return createHash("sha256").update(content).digest("hex");
@@ -47,14 +65,14 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_roots",
     {
       title: "CadGPT Managed File Roots",
-      description: "Show managed AppData roots readable by generic file tools and the narrower roots writable by them. Permanent libraries are read-only here and change only through controlled import/promotion tools.",
+      description: "Show managed AppData roots readable/writable by generic file tools. Drawing metadata roots appear only after drawing_metadata_location authorizes the exact drawing folder for this execution.",
       inputSchema: {},
     },
     async () => toolResult("file_roots", {
-      roots: getAllowedRoots().map(toCadgptPath),
-      absolute_roots: getAllowedRoots(),
-      writable_roots: getWritableRoots().map(toCadgptPath),
-      absolute_writable_roots: getWritableRoots(),
+      roots: currentReadableRoots().map(toCadgptPath),
+      absolute_roots: currentReadableRoots(),
+      writable_roots: currentWritableRoots().map(toCadgptPath),
+      absolute_writable_roots: currentWritableRoots(),
       managed_libraries_write_policy: "read-only to generic file tools; mutate through library_import/lisp_promote_draft/job_promote_draft",
     })
   );
@@ -72,7 +90,7 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ path: input, recursive, max_entries }) => {
       try {
-        const target = await resolveAllowedPath(input);
+        const target = await resolveAllowedPath(input, { allowedRoots: currentReadableRoots() });
         const stat = await fs.stat(target);
         if (stat.isFile()) return toolResult("file_list", { entries: [{ path: toCadgptPath(target), absolute_path: target, type: "file" }] });
 
@@ -114,7 +132,7 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ path: input, start_line, end_line }) => {
       try {
-        const target = await resolveAllowedPath(input);
+        const target = await resolveAllowedPath(input, { allowedRoots: currentReadableRoots() });
         assertTextExtension(target);
         const content = await fs.readFile(target, "utf8");
         const lines = content.split(/\r?\n/);
@@ -141,7 +159,7 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_search",
     {
       title: "Search CadGPT Managed Files",
-      description: "Search text inside managed AppData libraries/workspaces/data without accessing arbitrary machine paths.",
+      description: "Search text inside managed AppData libraries/workspaces/data or the execution-authorized drawing metadata root without accessing arbitrary machine paths.",
       inputSchema: {
         query: z.string().min(1),
         path: z.string().optional().default("appdata/libraries"),
@@ -152,7 +170,7 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ query, path: input, regex, case_sensitive, max_results }) => {
       try {
-        const target = await resolveAllowedPath(input);
+        const target = await resolveAllowedPath(input, { allowedRoots: currentReadableRoots() });
         const candidates: string[] = [];
         const stat = await fs.stat(target);
         if (stat.isFile()) candidates.push(target);
@@ -192,12 +210,12 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_create",
     {
       title: "Create CadGPT Managed Text File",
-      description: "Create a new text asset inside generic writable AppData roots (workspace/data). path MUST be an absolute filesystem path. Permanent managed libraries are not writable through this tool.",
+      description: "Create a new text asset inside generic writable AppData roots (workspace/data plus the execution-authorized drawing metadata root). path MUST be an absolute filesystem path. Permanent managed libraries are not writable through this tool.",
       inputSchema: { path: z.string(), content: z.string() },
     },
     async ({ path: input, content }) => {
       try {
-        const target = await resolveAbsoluteMutationPath(input, { forCreate: true, allowedRoots: getWritableRoots(), label: "generic writable AppData" });
+        const target = await resolveAbsoluteMutationPath(input, { forCreate: true, allowedRoots: currentWritableRoots(), label: "execution-authorized writable AppData" });
         assertTextExtension(target);
         return await withFileMutationLocks([target], async () => {
           await fs.mkdir(path.dirname(target), { recursive: true });
@@ -226,7 +244,7 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_edit",
     {
       title: "Edit CadGPT Managed Text File",
-      description: "Apply an exact text replacement inside generic writable AppData roots (workspace/data). path MUST be an absolute filesystem path. Permanent managed libraries must use controlled promotion/import tools.",
+      description: "Apply an exact text replacement inside generic writable AppData roots (workspace/data plus the execution-authorized drawing metadata root). path MUST be an absolute filesystem path. Permanent managed libraries must use controlled promotion/import tools.",
       inputSchema: {
         path: z.string(),
         expected_sha256: z.string().length(64).describe("sha256 returned by file_read; prevents silent overwrite if another execution changed the file"),
@@ -237,7 +255,7 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ path: input, expected_sha256, old_text, new_text, replace_all }) => {
       try {
-        const target = await resolveAbsoluteMutationPath(input, { allowedRoots: getWritableRoots(), label: "generic writable AppData" });
+        const target = await resolveAbsoluteMutationPath(input, { allowedRoots: currentWritableRoots(), label: "execution-authorized writable AppData" });
         assertTextExtension(target);
         return await withFileMutationLocks([target], async () => {
           const original = await fs.readFile(target, "utf8");

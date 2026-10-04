@@ -1289,9 +1289,10 @@ export function registerCadMcpDevTools(server: McpServer): void {
             "import pathlib",
             `root = pathlib.Path(${runtimePathLiteral})`,
             "files = sorted(p for p in root.rglob('*.py') if '__pycache__' not in p.parts)",
-            "for p in files: compile(p.read_text(encoding='utf-8'), str(p), 'exec')",
+            "for p in files:",
+            "    compile(p.read_text(encoding='utf-8'), str(p), 'exec')",
             "print(f'compiled {len(files)} python files in-memory')",
-          ].join("; ");
+          ].join("\n");
           results.compile = await runPython(["-c", compileCode], runtimeRoot());
         }
         if (action === "runtime_import" || action === "all") {

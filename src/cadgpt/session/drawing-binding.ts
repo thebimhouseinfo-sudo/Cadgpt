@@ -5,6 +5,8 @@ import { currentToolLease } from "../lib/work-registration.js";
 
 export interface BoundDrawing {
   drawing_id: string;
+  drawing_anchor?: string;
+  anchor_schema_version?: number;
   execution_id: string;
   name: string;
   full_name: string;
@@ -297,6 +299,16 @@ export async function drawingBindingStatus(
       ? { drawing: drawings[0], available: drawings[0].available }
       : {}),
   };
+}
+
+export function removeDrawingContextForExecution(
+  executionId: string,
+  drawingId: string
+): void {
+  const map = contexts.get(executionId);
+  if (!map) return;
+  map.delete(drawingId);
+  if (map.size === 0) contexts.delete(executionId);
 }
 
 export function clearExecutionDrawingContexts(executionId: string): void {

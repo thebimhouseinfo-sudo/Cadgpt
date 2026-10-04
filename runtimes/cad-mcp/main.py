@@ -11,6 +11,7 @@ from tools import (
     block_tools,
     destructive_tools,
     document_tools,
+    drawing_anchor_tools,
     entity_tools,
     geometry_tools,
     host_tools,
@@ -26,6 +27,7 @@ log = get_logger(__name__)
 mcp = FastMCP("cad-mcp")
 
 document_tools.register(mcp)
+drawing_anchor_tools.register(mcp)
 inventory_tools.register(mcp)
 layer_tools.register(mcp)
 entity_tools.register(mcp)

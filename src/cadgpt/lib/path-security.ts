@@ -100,7 +100,12 @@ function resolveVirtualPath(inputPath: string): string {
  */
 export async function resolveAllowedPath(
   inputPath: string,
-  options: { forCreate?: boolean; forWrite?: boolean } = {}
+  options: {
+    forCreate?: boolean;
+    forWrite?: boolean;
+    allowedRoots?: string[];
+    writableRoots?: string[];
+  } = {}
 ): Promise<string> {
   const trimmed = inputPath.trim();
   if (!trimmed) throw new Error("Path is empty");
@@ -109,8 +114,12 @@ export async function resolveAllowedPath(
     ? path.resolve(trimmed)
     : resolveVirtualPath(trimmed);
 
-  const readableRoots = getAllowedRoots();
-  const writableRoots = getWritableRoots();
+  const readableRoots = (options.allowedRoots ?? getAllowedRoots()).map((root) =>
+    path.resolve(root)
+  );
+  const writableRoots = (options.writableRoots ?? getWritableRoots()).map(
+    (root) => path.resolve(root)
+  );
 
   // First enforce lexical scope so a request cannot escape before any
   // filesystem canonicalization. Then compare canonical identities so Windows

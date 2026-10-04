@@ -13,6 +13,7 @@ import {
   appendObservationRecords,
   type ObservationLogRecord,
 } from "./log-store.js";
+import { prepareDrawingMetadataLocation } from "../runtime/drawing-persistence.js";
 
 function isToolErrorResult(value: unknown): boolean {
   return Boolean(
@@ -221,8 +222,20 @@ export async function writeObservationLog(
   records: ObservationLogRecord[],
   logName = "entities"
 ) {
+  await ensureCadAvailable();
+  const lease = currentToolLease();
   const binding = resolveDrawingContext(drawingId);
-  return appendObservationRecords(binding.drawing_id, records, logName);
+  return withCadHostLock(binding.host, async () => {
+    const location = await prepareDrawingMetadataLocation(
+      lease.workId,
+      binding
+    );
+    return appendObservationRecords(
+      String(location.drawing_anchor),
+      records,
+      logName
+    );
+  });
 }
 
 export async function releaseObservationForExecution(executionId: string): Promise<void> {

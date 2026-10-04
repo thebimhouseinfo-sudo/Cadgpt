@@ -151,7 +151,7 @@ export function registerObservatorTools(server: McpServer): void {
     {
       title: "Append Observator Log",
       description:
-        "Append Job-selected entity records to AppData/drawings/<drawing_id>/observator/<log_name>.jsonl. The caller decides which candidates and properties are persisted.",
+        "Append Job-selected entity records below the canonical AppData/drawings/<drawing_anchor>/observator/<log_name>.jsonl root. drawing_id selects the runtime bound context; CadGPT resolves drawing_anchor and the external metadata root.",
       inputSchema: {
         drawing_id: z.string().min(1),
         records: z.array(z.object({}).passthrough()).min(1),
