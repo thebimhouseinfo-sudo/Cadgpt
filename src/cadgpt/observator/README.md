@@ -5,11 +5,11 @@ Implementation primitives for CadGPT Observator.
 Current foundation:
 
 - `engine.ts` bridges the explicitly bound drawing to CAD MCP Observation capture, lightweight candidate finalization, direct-property reads, and the generic log writer.
-- `log-store.ts` appends caller-selected JSON records under `AppData/drawings/<drawing_id>/observator/`.
+- `log-store.ts` appends caller-selected JSON records under `AppData/drawings/<drawing_id>/observator/`; callers are responsible for obtaining a persistent `drawing_id` from the shared Drawing Anchor helper when persistent drawing storage is required.
 - CAD MCP exposes `cad_observation_capture_start`, `cad_observation_capture_status`, `cad_observation_capture_finish`, and `cad_observation_capture_cancel`.
 - `cad_read_entity_properties` resolves requested handles directly with `HandleToObject`; it no longer enumerates ModelSpace/PaperSpace to find them.
 
-The remaining major engine primitive is Drawing Anchor support.
+Drawing Anchor support is shared CadGPT drawing infrastructure and is not owned by this engine.
 
 ## Implemented capture model
 
@@ -73,25 +73,14 @@ bind an explicit test drawing
 
 Also validate cancellation, drawing mismatch protection, listener cleanup, and repeated start/finish cycles before treating the capture primitive as production-ready.
 
-## Drawing Anchor boundary
+## Drawing persistence boundary
 
-The anchor is created lazily when Observator first needs metadata for a drawing, and it is the only CAD database object Observator may create or modify.
+Observator capture does not own drawing identity. A Job that needs persistent drawing-scoped data must use the shared CadGPT Drawing Anchor helper before using drawing-scoped storage.
 
-A successful Observation Job follows this boundary:
+Canonical identity contract:
 
-```text
-Job finalizes candidate inspection and AppData result
-→ Observator updates Drawing Anchor exactly once
-→ Job completes
-```
+- `knowledge/drawing/DRAWING_ANCHOR.md`
 
-The anchor update records the Observation Job checkpoint carried by the current DWG state. It is not a save operation and does not certify that AutoCAD persisted the current drawing to disk.
-
-Anchor update is not a shutdown/save/cache-flush task and must not be delegated to an external background engine.
-
-No concrete Observation Job lives here. Job-specific type filters, property projection, semantics, relevance rules, and lifecycle intent belong to Job Runtime.
-
-Normative design contracts:
+Observator-specific capture contract:
 
 - `knowledge/observator/SPEC.md`
-- `knowledge/observator/DRAWING_ANCHOR.md`
