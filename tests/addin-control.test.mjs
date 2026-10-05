@@ -189,6 +189,102 @@ test("normal user-invoked CadGPT admission consumes a pending panel pair", async
 });
 
 
+test("paired add-in work survives idle timeout while ordinary browser work still expires", async () => {
+  const {
+    checkAdmission,
+    revokeSessionAdmissions: revokeAdmissions,
+  } = await import(
+    "../dist/cadgpt/lib/admission.js"
+  );
+  const {
+    activeExecutionForSession,
+    createWorkRegistration,
+    getWorkIdleTimeoutMs,
+    releaseSessionWork,
+    sweepExpiredWork,
+  } = await import(
+    "../dist/cadgpt/lib/work-registration.js"
+  );
+
+  const addinSession =
+    "session-addin-no-idle-timeout";
+  const browserSession =
+    "session-browser-normal-idle-timeout";
+
+  checkAdmission(
+    addinSession,
+    "@cg",
+    "mention"
+  );
+  checkAdmission(
+    browserSession,
+    "@cg",
+    "mention"
+  );
+
+  const pair = addin.startAddinPairing();
+  addin.completePendingAddinPair(
+    addinSession
+  );
+
+  const addinWork =
+    createWorkRegistration({
+      sessionKey: addinSession,
+      ownerType: "direct-cad",
+      ownerId: "drawing-workspace",
+      executionPath: "hybrid",
+    });
+  const browserWork =
+    createWorkRegistration({
+      sessionKey: browserSession,
+      ownerType: "direct-cad",
+      ownerId: "drawing-workspace",
+      executionPath: "hybrid",
+    });
+
+  const realNow = Date.now;
+  const wakeTime =
+    realNow() +
+    getWorkIdleTimeoutMs() +
+    8 * 60 * 60 * 1000;
+
+  try {
+    Date.now = () => wakeTime;
+    sweepExpiredWork();
+  } finally {
+    Date.now = realNow;
+  }
+
+  assert.equal(
+    activeExecutionForSession(addinSession),
+    addinWork.executionId,
+    "paired add-in work must survive wall-clock idle time such as Windows sleep"
+  );
+  assert.equal(
+    activeExecutionForSession(browserSession),
+    null,
+    "ordinary browser work must retain the normal idle-timeout policy"
+  );
+
+  const cleanupId =
+    releaseSessionWork(addinSession);
+  assert.equal(
+    cleanupId,
+    addinWork.executionId
+  );
+  assert.notEqual(
+    browserWork.executionId,
+    addinWork.executionId
+  );
+
+  addin.clearAddinPairingsForSession(
+    addinSession
+  );
+  revokeAdmissions(addinSession);
+  revokeAdmissions(browserSession);
+});
+
+
 test("detached MCP transport keeps add-in binding observer until logical session disposal", async () => {
   const {
     createMcpServer,
