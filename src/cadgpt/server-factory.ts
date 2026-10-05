@@ -203,6 +203,11 @@ function configureToolRegistration(server: McpServer, sessionKey: string): void 
             "AUTHORITY_CONFLICT: use either tool_id or execution_id + authority_token, never both."
           );
         }
+        if (!toolId) {
+          throw new Error(
+            "SYSTEM_LEASE_ID_REQUIRED: tool_id is required."
+          );
+        }
         const systemLease = getJobSystemLease(
           toolId,
           sessionKey
