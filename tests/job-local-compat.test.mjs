@@ -164,6 +164,25 @@ test("Job local compatibility fast path reads only the small epoch state and lea
       }),
       "utf8"
     );
+    await fs.writeFile(
+      path.join(
+        registryRoot,
+        "libraries.json"
+      ),
+      JSON.stringify({
+        version: 1,
+        libraries: [
+          {
+            id: "fixture-lib",
+            kind: "job",
+            enabled: true,
+            managed_path:
+              "appdata/libraries/jobs/fixture-lib",
+          },
+        ],
+      }),
+      "utf8"
+    );
 
     const getJob = callbacks.get("job_get");
     const scanRead = await getJob({
