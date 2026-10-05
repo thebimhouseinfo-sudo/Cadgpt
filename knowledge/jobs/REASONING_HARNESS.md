@@ -2,6 +2,10 @@
 
 Markdown Jobs are sequential reasoning workflows. The Job file defines the workflow order; the current drawing state determines the concrete action at each step.
 
+Before a normal User Reasoning Job starts, call `job_local_compat_status`. If it returns `update_required=true`, do not start the normal Job yet: route through `jobcreate` **CONTRACT UPDATE** mode, complete/report the local scan, then mark the compatibility epoch checked. When the status is already current, this check is only the small state comparison; do not inspect all Job packages.
+
+At the start of the actual Reasoning Job run, call `job_runtime_prepare(id=<registered-job-id>)`. Use the returned `runtime_root` for all raw/intermediate working data. A new run resets that runtime; it is not a history store.
+
 ## Runtime loop
 
 For each Job step:
@@ -26,6 +30,9 @@ Rules:
 - The review may add, remove, defer, or narrow actions when evidence is uncertain.
 - If an item is uncertain but the Job can safely continue without it, defer/skip that item and keep running the workflow.
 - Re-read the drawing after mutation whenever the next step depends on the resulting state.
+- After every filesystem/CAD mutation, re-read the actual target/postcondition before advancing; do not treat the intended path/action as proof of success.
+- When the Job needs a final persistent drawing result, call `drawing_job_result_location` and write only the final result under the returned `jobs/<job-name>-result` path. Never construct or guess the drawing root. Keep raw/intermediate files under the Job runtime.
+- Call `job_runtime_finish` when the Reasoning Job run/test is complete so execution-scoped Job write authority is released and empty result namespaces can be cleaned.
 - When a step uses dynamic Lisp derived from an already-working command, call `job_dynamic_lisp_prepare` first. If it returns `reused=true`, continue from that persisted Job copy; do not recopy the base source. Patch only the declared changing data/section with `job_dynamic_lisp_patch`, then verified-load that Job-owned Lisp and run the original command. Do not invent an adapter/wrapper around the source command.
 - Repeat PLAN/REVIEW as many times as the workflow needs.
 - Ask the user only when the Job cannot make a safe domain decision from its rules/evidence, or when the requested action requires an explicit user choice.
@@ -34,6 +41,8 @@ Rules:
 ## Direct Jobs
 
 A `.py` Job is not processed by this harness. It is a direct Job: resolve the registered script and dispatch it through the direct Job runner without model planning between its internal operations.
+
+The Direct Job runner performs the same ownership setup automatically: it resets `<job-root>/runtime`, runs the child with that directory as CWD, supplies `CADGPT_JOB_RUNTIME_ROOT`, and when a drawing is bound supplies `CADGPT_JOB_RESULT_ROOT` for `<drawing-root>/jobs/<job-name>-result`. Empty Job result namespaces are cleaned when the Job runtime finishes.
 
 
 ## Human Power
