@@ -553,6 +553,8 @@ async function executeDirectJobScript(
     ...process.env,
     CADGPT_EXECUTION_ID: lease.workId,
     CADGPT_JOB_ID: jobId,
+    CADGPT_JOB_ROOT:
+      runtime.job_root,
     CADGPT_JOB_RUNTIME_ROOT:
       runtime.runtime_root,
     CADGPT_REPO_ROOT: getRepoRoot(),
