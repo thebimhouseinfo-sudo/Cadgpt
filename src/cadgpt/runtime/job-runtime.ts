@@ -19,6 +19,18 @@ export interface JobRuntimeContext {
   job_root: string;
   runtime_root: string;
   result_roots: Set<string>;
+  runtime_reset: boolean;
+  runtime_created: boolean;
+  runtime_existing_entries: number;
+  recovery_pending: boolean;
+}
+
+export interface PrepareJobRuntimeOptions {
+  /**
+   * Direct Jobs require deterministic clean scratch for every dispatch.
+   * Reasoning Jobs preserve runtime bytes so interrupted raw queues can resume.
+   */
+  resetRuntime?: boolean;
 }
 
 const contextsByExecution =
@@ -236,7 +248,8 @@ export async function cleanupJobRuntimeForExecution(
 export async function prepareJobRuntimeForExecution(
   executionId: string,
   jobId: string,
-  jobFile: string
+  jobFile: string,
+  options: PrepareJobRuntimeOptions = {}
 ): Promise<JobRuntimeContext> {
   const jobRoot =
     await managedJobRootForFile(jobFile);
@@ -282,21 +295,51 @@ export async function prepareJobRuntimeForExecution(
       }
 
       // Claim before the first filesystem await. The per-root mutation
-      // lock keeps another execution from observing an unclaimed gap
-      // while this shared Job runtime is reset.
+      // lock keeps another execution from observing an unclaimed gap while
+      // runtime ownership changes. Reasoning Jobs preserve runtime bytes for
+      // crash/relaunch recovery; Direct Jobs explicitly request a reset.
       executionByJobRoot.set(
         rootKey,
         executionId
       );
       try {
-        await fs.rm(runtimeRoot, {
-          recursive: true,
-          force: true,
-        });
-        await fs.mkdir(runtimeRoot, {
-          recursive: true,
-        });
+        const resetRuntime =
+          options.resetRuntime === true;
+        let runtimeCreated = false;
 
+        if (resetRuntime) {
+          await fs.rm(runtimeRoot, {
+            recursive: true,
+            force: true,
+          });
+          await fs.mkdir(runtimeRoot, {
+            recursive: true,
+          });
+          runtimeCreated = true;
+        } else {
+          try {
+            const stat = await fs.stat(runtimeRoot);
+            if (!stat.isDirectory()) {
+              throw new Error(
+                "JOB_RUNTIME_CONFLICT: runtime path exists but is not a directory."
+              );
+            }
+          } catch (error) {
+            if (
+              (error as NodeJS.ErrnoException)
+                .code !== "ENOENT"
+            ) {
+              throw error;
+            }
+            await fs.mkdir(runtimeRoot, {
+              recursive: true,
+            });
+            runtimeCreated = true;
+          }
+        }
+
+        const runtimeEntries =
+          await fs.readdir(runtimeRoot);
         const context: JobRuntimeContext = {
           execution_id: executionId,
           job_id: jobId,
@@ -304,6 +347,13 @@ export async function prepareJobRuntimeForExecution(
           job_root: jobRoot,
           runtime_root: runtimeRoot,
           result_roots: new Set<string>(),
+          runtime_reset: resetRuntime,
+          runtime_created: runtimeCreated,
+          runtime_existing_entries:
+            runtimeEntries.length,
+          recovery_pending:
+            !resetRuntime &&
+            runtimeEntries.length > 0,
         };
         contextsByExecution.set(
           executionId,
