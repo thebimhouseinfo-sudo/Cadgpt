@@ -456,9 +456,6 @@ export function registerJobDiscoveryTools(server: McpServer): void {
           });
         }
 
-        await assertJobLocalCompatReady(
-          "running a User Job"
-        );
         const jobs = await loadJobs();
         const entry = jobs.find(
           (job) => job.id.toLowerCase() === id.trim().toLowerCase()
@@ -884,6 +881,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
           });
         }
 
+        await assertJobLocalCompatReady(
+          "running a User Job"
+        );
         const jobs = await loadJobs();
         const entry = jobs.find(
           (job) => job.id.toLowerCase() === id.trim().toLowerCase()
