@@ -40,6 +40,9 @@ import {
   jobSystemLeaseForSession,
   releaseJobSystemLease,
 } from "../runtime/system-lease.js";
+import {
+  releasePriorJobAuthorityForStart,
+} from "../runtime/job-transition.js";
 import { resolveRegisteredAssetPath } from "./user-assets.js";
 import {
   getBundledLispLibrariesRoot,
@@ -557,7 +560,8 @@ async function executeDirectJobScript(
     await prepareJobRuntimeForExecution(
       lease.workId,
       jobId,
-      script
+      script,
+      { resetRuntime: true }
     );
 
   let jobResultRoot: string | null = null;
@@ -756,7 +760,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Prepare Job Runtime",
       description:
-        "Reset and authorize the owning Job package runtime/ directory for one reasoning Job execution/test. Supply exactly one registered User Job id or one absolute managed Job draft path. Runtime scratch is reset at the start of each Job run; permanent source, tools, lisp and dynamic-lisp are not modified.",
+        "Authorize the owning Job package runtime/ directory for one reasoning Job execution/test. Starting a new reasoning Job releases stale prior Job authority in this logical chat but preserves prior runtime bytes. Existing runtime files are reused as recovery evidence instead of being reset. Supply exactly one registered User Job id or one absolute managed Job draft path.",
       inputSchema: {
         id: z.string().min(1).optional(),
         draft_path: z
@@ -817,11 +821,19 @@ export function registerJobAuthoringTools(server: McpServer): void {
         }
 
         const lease = currentToolLease();
+        const transition =
+          await releasePriorJobAuthorityForStart({
+            executionId:
+              lease.workId,
+            sessionKey:
+              lease.sessionKey,
+          });
         const runtime =
           await prepareJobRuntimeForExecution(
             lease.workId,
             jobId,
-            jobFile
+            jobFile,
+            { resetRuntime: false }
           );
         return toolResult(
           "job_runtime_prepare",
@@ -835,7 +847,16 @@ export function registerJobAuthoringTools(server: McpServer): void {
               toCadgptPath(
                 runtime.runtime_root
               ),
-            reset: true,
+            reset:
+              runtime.runtime_reset,
+            runtime_created:
+              runtime.runtime_created,
+            runtime_existing_entries:
+              runtime.runtime_existing_entries,
+            recovery_pending:
+              runtime.recovery_pending,
+            prior_job_transition:
+              transition,
           }
         );
       } catch (error) {
@@ -852,7 +873,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Finish Job Runtime",
       description:
-        "Finish the current reasoning Job runtime context, remove empty Job result folders, and release execution-scoped Job file-write restrictions. Scratch runtime bytes are left in place only until the next run resets them.",
+        "Finish the current reasoning Job runtime context, remove empty Job result folders, and release execution-scoped Job file-write restrictions. Runtime bytes are preserved; successful Jobs should delete processed raw/intermediate files explicitly, while remaining files are recovery evidence for a later relaunch.",
       inputSchema: {},
     },
     async () => {
@@ -1034,6 +1055,15 @@ export function registerJobAuthoringTools(server: McpServer): void {
     },
     async ({ id, args }) => {
       try {
+        const callLease =
+          currentToolLease();
+        await releasePriorJobAuthorityForStart({
+          executionId:
+            callLease.workId,
+          sessionKey:
+            callLease.sessionKey,
+        });
+
         const internal = getInternalJob(id);
         if (internal) {
           const executed = await executeInternalDirectJob(internal, args);
@@ -1097,6 +1127,15 @@ export function registerJobAuthoringTools(server: McpServer): void {
     },
     async ({ draft_path, expected_sha256, args }) => {
       try {
+        const callLease =
+          currentToolLease();
+        await releasePriorJobAuthorityForStart({
+          executionId:
+            callLease.workId,
+          sessionKey:
+            callLease.sessionKey,
+        });
+
         if (!path.isAbsolute(draft_path)) {
           throw new Error(
             "ABSOLUTE_PATH_REQUIRED: job_run_direct_draft draft_path must be absolute"
