@@ -140,7 +140,7 @@ A reusable User Job package owns its private executable assets and its current-r
 └─ runtime/
 ```
 
-The first four entries are permanent Job definition/executable assets. `runtime/**` is different: it is mutable scratch owned by that Job, reset at the start of every new Job run, and never retained as run history. Raw inputs collected during execution, temporary inventories, mappings, intermediate JSON/CSV and other working files belong there.
+The first four entries are permanent Job definition/executable assets. `runtime/**` is different: it is mutable working/recovery state owned by that Job and never retained as permanent Job history. Reasoning Jobs preserve existing runtime bytes across relaunch so interrupted raw queues can resume; successful processing must delete completed raw/intermediate files explicitly. Direct Jobs keep deterministic clean-scratch semantics and reset runtime at dispatch. Raw inputs collected during execution, temporary inventories, mappings, intermediate JSON/CSV and other working files belong there.
 
 `runtime/**` is never part of the promoted Job bundle, never copied by checkout/promotion and never included in the permanent bundle hash. Changing `runtime/**` therefore cannot create a Job version/conflict. `dynamic-lisp/**`, despite its name, is a persistent executable derivative and is **not** scratch runtime.
 
@@ -288,7 +288,7 @@ Reasoning: appdata/libraries/jobs/<library-id>/<job-name>/JOB.md
 Direct:    appdata/libraries/jobs/<library-id>/<job-name>/<job-name>.py
 ```
 
-Supporting reusable definition assets live beside the Job entrypoint when they belong only to that Job. This includes `<job-root>/lisp/**`, `<job-root>/dynamic-lisp/**` and `<job-root>/tools/**`. Current-run working data lives in `<job-root>/runtime/**`, is reset on the next run and is excluded from the permanent bundle/hash. Final drawing-scoped Job products live only in the tool-returned `<drawing-root>/jobs/<job-name>-result/**` namespace.
+Supporting reusable definition assets live beside the Job entrypoint when they belong only to that Job. This includes `<job-root>/lisp/**`, `<job-root>/dynamic-lisp/**` and `<job-root>/tools/**`. Current-run working/recovery data lives in `<job-root>/runtime/**` and is excluded from the permanent bundle/hash. Reasoning Jobs preserve pending runtime data across relaunch; Direct Jobs reset runtime on each dispatch.
 
 Shared reusable AutoLISP logic belongs to a managed Lisp Library. A **Job-owned dynamic derivative** is the explicit exception and lives under:
 
