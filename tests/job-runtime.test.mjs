@@ -100,6 +100,16 @@ test("active Job runtime resets scratch and narrows file writes to its runtime/r
       )
     );
 
+    await assert.rejects(
+      () =>
+        jobRuntime.prepareJobRuntimeForExecution(
+          "another-execution",
+          "job-a",
+          jobA
+        ),
+      /JOB_RUNTIME_BUSY/
+    );
+
     await fs.writeFile(
       path.join(runtime.runtime_root, "stale.txt"),
       "stale",
