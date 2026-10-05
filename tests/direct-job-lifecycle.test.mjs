@@ -131,6 +131,7 @@ test("direct Python Job drafts validate and promote through the controlled Job l
       [
         "from pathlib import Path",
         "Path('raw.json').write_text('raw', encoding='utf-8')",
+        "Path(__file__).with_name('beside.json').write_text('raw', encoding='utf-8')",
         "print('done')",
         "",
       ].join("\n"),
@@ -164,7 +165,14 @@ test("direct Python Job drafts validate and promote through the controlled Job l
         .stat(path.join(path.dirname(dataDraft), "raw.json"))
         .then(() => true, () => false),
       false,
-      "Direct Job output must not persist beside its definition"
+      "Direct Job CWD output must not persist beside its definition"
+    );
+    assert.equal(
+      await fs
+        .stat(path.join(path.dirname(dataDraft), "beside.json"))
+        .then(() => true, () => false),
+      false,
+      "Direct Job __file__ output must resolve inside disposable scratch rather than beside its definition"
     );
     const scratchRoot = path.join(
       tempRoot,
