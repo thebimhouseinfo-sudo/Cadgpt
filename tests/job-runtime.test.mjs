@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-test("active Job runtime resets scratch and narrows file writes to its runtime/result roots", async () => {
+test("Reasoning Job runtime preserves pending scratch and narrows file writes to its runtime/result roots", async () => {
   const tempRoot = await fs.mkdtemp(
     path.join(os.tmpdir(), "cadgpt-job-runtime-")
   );
@@ -122,29 +122,45 @@ test("active Job runtime resets scratch and narrows file writes to its runtime/r
       "stale",
       "utf8"
     );
-    const reset =
+    const resumed =
       await jobRuntime.prepareJobRuntimeForExecution(
         work.executionId,
         "job-a",
-        jobA
+        jobA,
+        { resetRuntime: false }
       );
     assert.equal(
-      await fs.stat(
-        path.join(reset.runtime_root, "stale.txt")
-      ).then(() => true, () => false),
+      await fs.readFile(
+        path.join(
+          resumed.runtime_root,
+          "stale.txt"
+        ),
+        "utf8"
+      ),
+      "stale"
+    );
+    assert.equal(
+      resumed.runtime_reset,
       false
+    );
+    assert.equal(
+      resumed.recovery_pending,
+      true
+    );
+    assert.ok(
+      resumed.runtime_existing_entries >= 1
     );
 
     const runtimeLease = acquireToolLease({
       tool: "file_create",
       family: "filesystem",
-      targetId: reset.runtime_root,
+      targetId: resumed.runtime_root,
       executionId: work.executionId,
       authorityToken: work.authorityToken,
       sessionKey,
     });
     const runtimeFile = path.join(
-      reset.runtime_root,
+      resumed.runtime_root,
       "raw.json"
     );
     const created = await runWithToolLease(
