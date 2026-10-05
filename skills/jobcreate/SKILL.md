@@ -59,7 +59,7 @@ When a domain decision is missing, ask the user or mark it explicitly as unresol
 
 ### CONTRACT UPDATE — compatibility-only local repair
 
-This mode is not ordinary feature/refinement planning. It executes only when `job_local_compat_status.update_required=true`.
+This mode is not ordinary feature/refinement planning. It executes only when `job_local_compat_status.update_required=true`. Before scanning, read `knowledge/jobs/LOCAL_COMPAT_UPDATE.md`; that file contains the detector, repair, validation and report instructions for the current compatibility epoch.
 
 ```text
 job_local_compat_status
@@ -374,6 +374,7 @@ Read as needed:
 
 ```text
 knowledge/jobs/JOB_RULES.md
+knowledge/jobs/LOCAL_COMPAT_UPDATE.md      only when local compatibility epoch changed
 knowledge/drawing/DRAWING_ANCHOR.md      when the Job persists drawing-scoped metadata
 skills/jobcreate/job-skills/workflow-planning.md
 skills/jobcreate/job-skills/tool-mapping.md
