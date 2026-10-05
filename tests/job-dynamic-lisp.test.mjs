@@ -157,6 +157,27 @@ test("Job dynamic Lisp uses current-run workspace, exact patches, and fresh next
       );
     };
 
+    const missingWorkspace = await invoke(
+      "job_dynamic_lisp_prepare",
+      {
+        job_id: "fdt-update",
+        source_lisp_id: "fdt-source",
+      }
+    );
+    assert.equal(
+      missingWorkspace.isError,
+      true,
+      JSON.stringify(missingWorkspace)
+    );
+    assert.match(
+      JSON.stringify(missingWorkspace),
+      /JOB_WORKSPACE_REQUIRED/
+    );
+
+    await beginJobWorkspaceForExecution(
+      work.executionId,
+      "fdt-update"
+    );
     const seeded = await invoke("job_dynamic_lisp_prepare", {
       job_id: "fdt-update",
       source_lisp_id: "fdt-source",
