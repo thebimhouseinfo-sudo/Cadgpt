@@ -234,7 +234,7 @@ test("header is a drawing-context indicator with debounced local-state warnings"
   );
   assert.match(
     code,
-    /if \(status\.SessionReady\)[\s\S]*_lastConfirmedBoundDrawing\s*=\s*status\.Drawing/
+    /if \(status\.SessionReady\)[\s\S]*SetConfirmedBoundDrawing\(\s*status\.Drawing\s*\)/
   );
   assert.match(
     code,
