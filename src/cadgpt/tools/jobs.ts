@@ -362,7 +362,7 @@ export function registerJobDiscoveryTools(server: McpServer): void {
               ? "deep_scan_required"
               : "fast_path",
             instruction: status.update_required
-              ? "Job build contract affecting local Custom Jobs changed. Before normal User Job create/run/update work, use jobcreate CONTRACT UPDATE mode: enumerate User Registry Jobs, inspect package/source only then, repair affected Jobs through the normal checkout/validate/test/promote lifecycle, report any blocked external action, then mark the epoch checked."
+              ? "Job build contract affecting local Custom Jobs changed. Before normal User Job create/run/update work, read knowledge/jobs/LOCAL_COMPAT_UPDATE.md and use jobcreate CONTRACT UPDATE mode: enumerate User Registry Jobs, inspect package/source only then, repair affected Jobs through the normal checkout/validate/test/promote lifecycle, report any blocked external action, then mark the epoch checked."
               : "Compatibility signal matches. Do not deep-scan local Job packages.",
           }
         );
