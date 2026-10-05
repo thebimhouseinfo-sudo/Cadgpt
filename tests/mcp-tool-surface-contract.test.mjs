@@ -25,6 +25,7 @@ test("production MCP stable surface registers all Job/runtime helper capabilitie
       "human_power_start",
       "human_power_status",
       "human_power_stop",
+      "file_delete",
       "job_dynamic_lisp_patch",
       "job_dynamic_lisp_prepare",
       "job_local_compat_mark_checked",

@@ -470,4 +470,98 @@ export function registerFilesystemTools(server: McpServer): void {
       }
     }
   );
+  server.registerTool(
+    "file_delete",
+    {
+      title: "Delete CadGPT Managed Text File",
+      description:
+        "Delete one text file inside the current execution-authorized writable scope. Intended for Job runtime/result cleanup after successful persist/verify. Directories and CadGPT source files are never deleted by this generic tool. expected_sha256 must match the current file bytes to prevent stale cleanup.",
+      inputSchema: {
+        path: z.string(),
+        expected_sha256: z
+          .string()
+          .length(64)
+          .describe(
+            "sha256 returned by file_read; deletion is refused if the file changed after verification"
+          ),
+      },
+    },
+    async ({ path: input, expected_sha256 }) => {
+      try {
+        const target =
+          await resolveAbsoluteMutationPath(input, {
+            allowedRoots:
+              currentWritableRoots(),
+            label:
+              "execution-authorized writable AppData",
+          });
+        assertTextExtension(target);
+        if (isCadGptSourcePath(target)) {
+          throw new Error(
+            "SOURCE_DELETE_UNSUPPORTED: generic file_delete never deletes CadGPT source files."
+          );
+        }
+
+        return await withFileMutationLocks(
+          [target],
+          async () => {
+            const stat = await fs.stat(target);
+            if (!stat.isFile()) {
+              throw new Error(
+                "FILE_DELETE_FILE_REQUIRED: file_delete accepts files only; directories are not allowed."
+              );
+            }
+
+            const original =
+              await fs.readFile(target, "utf8");
+            const currentHash =
+              sha256(original);
+            if (
+              currentHash !== expected_sha256
+            ) {
+              throw new Error(
+                `RESOURCE_CONFLICT: expected sha256 ${expected_sha256}, current ${currentHash}`
+              );
+            }
+
+            const latest =
+              await fs.readFile(target, "utf8");
+            if (
+              sha256(latest) !==
+              currentHash
+            ) {
+              throw new Error(
+                "RESOURCE_CONFLICT: file changed during delete preparation"
+              );
+            }
+
+            await fs.unlink(target);
+            console.log(
+              `[AUDIT] file_delete ${toCadgptPath(target)} bytes=${Buffer.byteLength(original)}`
+            );
+            return toolResult(
+              "file_delete",
+              {
+                path:
+                  toCadgptPath(target),
+                absolute_path: target,
+                deleted: true,
+                sha256: currentHash,
+                bytes:
+                  Buffer.byteLength(
+                    original
+                  ),
+              }
+            );
+          }
+        );
+      } catch (error) {
+        return toolError(
+          "file_delete",
+          error
+        );
+      }
+    }
+  );
+
 }

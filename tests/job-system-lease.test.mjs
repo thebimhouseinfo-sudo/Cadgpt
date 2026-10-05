@@ -260,6 +260,7 @@ test("SYSTEM filesystem authority writes only own runtime/result and can read dr
     try {
       const create = callbacks.get("file_create");
       const read = callbacks.get("file_read");
+      const deleteFile = callbacks.get("file_delete");
 
       const created =
         await system.runWithJobSystemLease(
@@ -277,6 +278,105 @@ test("SYSTEM filesystem authority writes only own runtime/result and can read dr
         created.isError,
         undefined,
         JSON.stringify(created)
+      );
+
+      const ownRead =
+        await system.runWithJobSystemLease(
+          lease,
+          () =>
+            read({
+              path: path.join(
+                runtimeRoot,
+                "work.json"
+              ),
+            })
+        );
+      const ownHash =
+        ownRead.structuredContent?.data?.sha256;
+      assert.equal(
+        typeof ownHash,
+        "string"
+      );
+
+      const staleDelete =
+        await system.runWithJobSystemLease(
+          lease,
+          () =>
+            deleteFile({
+              path: path.join(
+                runtimeRoot,
+                "work.json"
+              ),
+              expected_sha256:
+                "0".repeat(64),
+            })
+        );
+      assert.equal(staleDelete.isError, true);
+      assert.equal(
+        await fs.readFile(
+          path.join(
+            runtimeRoot,
+            "work.json"
+          ),
+          "utf8"
+        ),
+        "{}\n"
+      );
+
+      const deleted =
+        await system.runWithJobSystemLease(
+          lease,
+          () =>
+            deleteFile({
+              path: path.join(
+                runtimeRoot,
+                "work.json"
+              ),
+              expected_sha256:
+                ownHash,
+            })
+        );
+      assert.equal(
+        deleted.isError,
+        undefined,
+        JSON.stringify(deleted)
+      );
+      await assert.rejects(
+        fs.stat(
+          path.join(
+            runtimeRoot,
+            "work.json"
+          )
+        ),
+        /ENOENT/
+      );
+
+      const directoryLikeFile =
+        path.join(
+          runtimeRoot,
+          "folder.json"
+        );
+      await fs.mkdir(
+        directoryLikeFile,
+        { recursive: true }
+      );
+      const directoryDelete =
+        await system.runWithJobSystemLease(
+          lease,
+          () =>
+            deleteFile({
+              path: directoryLikeFile,
+              expected_sha256:
+                "0".repeat(64),
+            })
+        );
+      assert.equal(
+        directoryDelete.isError,
+        true
+      );
+      assert.match(
+        JSON.stringify(directoryDelete),
+        /FILE_DELETE_FILE_REQUIRED/
       );
 
       const crossWrite =
@@ -312,6 +412,36 @@ test("SYSTEM filesystem authority writes only own runtime/result and can read dr
       assert.match(
         crossRead.structuredContent?.data?.content ?? "",
         /other/
+      );
+
+      const otherHash =
+        crossRead.structuredContent?.data?.sha256;
+      const crossDelete =
+        await system.runWithJobSystemLease(
+          lease,
+          () =>
+            deleteFile({
+              path: path.join(
+                otherResult,
+                "result.json"
+              ),
+              expected_sha256:
+                otherHash,
+            })
+        );
+      assert.equal(
+        crossDelete.isError,
+        true
+      );
+      assert.equal(
+        await fs.readFile(
+          path.join(
+            otherResult,
+            "result.json"
+          ),
+          "utf8"
+        ),
+        "{\"other\":true}\n"
       );
     } finally {
       system.releaseJobSystemLease(
