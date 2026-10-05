@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import { getUserCapabilitiesPath } from "../lib/appdata.js";
 import { isPathInside, toCadgptPath } from "../lib/path-security.js";
 import {
   currentToolLease,
@@ -17,7 +18,7 @@ import {
 } from "../runtime/job-workspace.js";
 import { drawingMetadataRootsForExecution } from "../runtime/drawing-persistence.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
-import { listRegisteredJobs } from "./jobs.js";
+import { getInternalJob } from "../lib/internal-jobs.js";
 
 function sha256(content: Buffer): string {
   return createHash("sha256").update(content).digest("hex");
@@ -38,12 +39,37 @@ function safeResultRelative(value: string): string {
 }
 
 async function assertRegisteredReasoningJob(jobId: string): Promise<void> {
-  const jobs = await listRegisteredJobs();
-  const match = jobs.find(
-    (job) => job.id.toLowerCase() === jobId.trim().toLowerCase()
+  if (getInternalJob(jobId)) {
+    throw new Error(
+      "DIRECT_JOB_NO_DATA: Internal Direct Jobs do not own runtime working data."
+    );
+  }
+
+  let entries: Array<Record<string, unknown>> = [];
+  try {
+    const parsed = JSON.parse(
+      await fs.readFile(getUserCapabilitiesPath(), "utf8")
+    ) as { entries?: Array<Record<string, unknown>> };
+    entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  const needle = jobId.trim().toLowerCase();
+  const match = entries.find(
+    (entry) =>
+      entry.kind === "job" &&
+      String(entry.id || "").trim().toLowerCase() === needle
   );
   if (!match) {
     throw new Error(`JOB_NOT_FOUND: ${jobId}`);
+  }
+  if (
+    path.extname(String(match.relative_path || "")).toLowerCase() === ".py"
+  ) {
+    throw new Error(
+      "DIRECT_JOB_NO_DATA: Direct Jobs are execution-only and do not own runtime working storage."
+    );
   }
 }
 
