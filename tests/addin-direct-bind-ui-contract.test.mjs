@@ -80,10 +80,10 @@ const indexSource = await fs.readFile(
   "utf8"
 );
 
-test("CADGPT panel header contains only bound drawing name and theme button", () => {
+test("CADGPT panel keeps one header, one background Job ticker row and the browser", () => {
   assert.equal(
     (xaml.match(/<RowDefinition/g) ?? []).length,
-    2
+    3
   );
   assert.match(
     xaml,
@@ -93,6 +93,14 @@ test("CADGPT panel header contains only bound drawing name and theme button", ()
     xaml,
     /x:Name="ThemeButton"/
   );
+  assert.match(
+    xaml,
+    /x:Name="JobTickerBorder"/
+  );
+  assert.match(
+    xaml,
+    /x:Name="JobTickerText"/
+  );
   assert.doesNotMatch(
     xaml,
     /ConnectButton|RefreshButton|RetryButton|RecreateButton/
@@ -100,6 +108,38 @@ test("CADGPT panel header contains only bound drawing name and theme button", ()
   assert.doesNotMatch(
     xaml,
     /Connect this drawing|Refresh|Retry/
+  );
+});
+
+
+test("background Job status is a single-row ticker and only successful polls update it", () => {
+  assert.match(
+    client,
+    /DataMember\(Name = "background_jobs"\)/
+  );
+  assert.match(
+    code,
+    /RefreshBackgroundJobs\(\s*status\.BackgroundJobs\s*\)/
+  );
+  assert.match(
+    code,
+    /" — Processing"/
+  );
+  assert.match(
+    code,
+    /" — Done"/
+  );
+  assert.match(
+    code,
+    /RepeatBehavior\.Forever/
+  );
+  assert.match(
+    code,
+    /labels\.Count > 1/
+  );
+  assert.doesNotMatch(
+    code,
+    /catch \(AddinControlException\)[\s\S]{0,500}RefreshBackgroundJobs/
   );
 });
 
