@@ -321,15 +321,15 @@ namespace CadGpt.AutoCad
                     return;
                 }
 
-                // An invalid/old pair may be renewed, but it is not evidence
-                // that the drawing binding itself disappeared.
-                if (_pairExpiresUtc == DateTime.MinValue ||
-                    DateTime.UtcNow >= _pairExpiresUtc)
-                {
-                    _pairId = null;
-                    _control.ClearSavedPairId();
-                    await EnsurePairWindowAsync(token);
-                }
+                // paired=false is authoritative only for this pair id.
+                // Renew immediately after control-plane restart, but preserve
+                // the last confirmed drawing until a new session reports its
+                // binding so the header never turns into a transport warning.
+                _pairId = null;
+                _pairExpiresUtc =
+                    DateTime.MinValue;
+                _control.ClearSavedPairId();
+                await EnsurePairWindowAsync(token);
 
                 RefreshHeaderFromLocalContext(false);
             }
