@@ -8,8 +8,10 @@ test("direct Python Job drafts validate and promote through the controlled Job l
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-direct-job-"));
   const previousRoot = process.env.CADGPT_APPDATA_ROOT;
   const previousPython = process.env.CAD_MCP_PYTHON;
+  const previousSecret = process.env.CADGPT_DIRECT_JOB_TEST_SECRET;
   process.env.CADGPT_APPDATA_ROOT = tempRoot;
   process.env.CAD_MCP_PYTHON = "python";
+  process.env.CADGPT_DIRECT_JOB_TEST_SECRET = "must-not-leak";
 
   const { getAppDataRoot } = await import("../dist/cadgpt/lib/appdata.js");
   assert.equal(path.resolve(getAppDataRoot()), path.resolve(tempRoot));
@@ -60,6 +62,7 @@ test("direct Python Job drafts validate and promote through the controlled Job l
         "import os",
         "drawing = os.environ.get('CADGPT_DRAWING_PATH')",
         "print(drawing or 'no-drawing')",
+        "print('secret=' + str(os.environ.get('CADGPT_DIRECT_JOB_TEST_SECRET')))",
         "",
       ].join("\n"),
       "utf8"
@@ -102,7 +105,77 @@ test("direct Python Job drafts validate and promote through the controlled Job l
       })
     );
     assert.equal(draftRun.structuredContent?.data?.validation_passed, true);
-    assert.match(String(draftRun.structuredContent?.data?.stdout ?? ""), /no-drawing/);
+    const directStdout = String(
+      draftRun.structuredContent?.data?.stdout ?? ""
+    );
+    assert.match(directStdout, /no-drawing/);
+    assert.match(directStdout, /secret=None/);
+    assert.equal(
+      draftRun.structuredContent?.data?.file_output,
+      "forbidden"
+    );
+    assert.equal(
+      draftRun.structuredContent?.data?.scratch_cleaned,
+      true
+    );
+
+    const dataDraft = path.join(
+      draftRoot,
+      "direct-lib",
+      "writes-data",
+      "writes-data.py"
+    );
+    await fs.mkdir(path.dirname(dataDraft), { recursive: true });
+    await fs.writeFile(
+      dataDraft,
+      [
+        "from pathlib import Path",
+        "Path('raw.json').write_text('raw', encoding='utf-8')",
+        "print('done')",
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+    const dataValid = await validate({ path: dataDraft });
+    assert.equal(dataValid.structuredContent?.data?.valid, true);
+    const dataLease = acquireToolLease({
+      tool: "job_run_direct_draft",
+      family: "job-authoring",
+      targetId: dataDraft,
+      executionId: work.executionId,
+      authorityToken: work.authorityToken,
+      sessionKey,
+    });
+    const dataRun = await runWithToolLease(dataLease, () =>
+      runDraft({
+        draft_path: dataDraft,
+        expected_sha256:
+          dataValid.structuredContent.data.sha256,
+        args: [],
+      })
+    );
+    assert.equal(dataRun.isError, true, JSON.stringify(dataRun));
+    assert.match(
+      JSON.stringify(dataRun),
+      /DIRECT_JOB_DATA_FORBIDDEN/
+    );
+    assert.equal(
+      await fs
+        .stat(path.join(path.dirname(dataDraft), "raw.json"))
+        .then(() => true, () => false),
+      false,
+      "Direct Job output must not persist beside its definition"
+    );
+    const scratchRoot = path.join(
+      tempRoot,
+      "runtime",
+      "direct-job"
+    );
+    assert.deepEqual(
+      await fs.readdir(scratchRoot),
+      [],
+      "Direct Job scratch must be removed even when file output is rejected"
+    );
 
     const invalidDraft = path.join(
       draftRoot,
@@ -233,6 +306,11 @@ test("direct Python Job drafts validate and promote through the controlled Job l
     else process.env.CADGPT_APPDATA_ROOT = previousRoot;
     if (previousPython === undefined) delete process.env.CAD_MCP_PYTHON;
     else process.env.CAD_MCP_PYTHON = previousPython;
+    if (previousSecret === undefined) {
+      delete process.env.CADGPT_DIRECT_JOB_TEST_SECRET;
+    } else {
+      process.env.CADGPT_DIRECT_JOB_TEST_SECRET = previousSecret;
+    }
     await fs.rm(tempRoot, { recursive: true, force: true });
   }
 });
