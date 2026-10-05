@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { adoptSessionAdmission, assertSessionClaimed } from "./admission.js";
+import { isAddinManagedSession } from "./addin-control.js";
 
 export type WorkOwnerType = "skill" | "job" | "direct-cad" | "file";
 export type ExecutionPath = "file" | "cad" | "hybrid";
@@ -134,6 +135,10 @@ function hasActiveLeaseForWork(executionId: string): boolean {
 function cleanup(): void {
   const now = Date.now();
   for (const [executionId, work] of registrations) {
+    // AutoCAD add-in WebView sessions own a persistent logical chat while the
+    // pair remains registered. Windows sleep pauses the add-in poll timer, so
+    // elapsed wall-clock idle time is not evidence that this work ended.
+    if (isAddinManagedSession(work.sessionKey)) continue;
     if (now - Date.parse(work.lastActivityAt) <= WORK_IDLE_MS) continue;
     if (hasActiveLeaseForWork(executionId)) continue;
     registrations.delete(executionId);
