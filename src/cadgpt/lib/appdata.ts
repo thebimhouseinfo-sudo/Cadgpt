@@ -95,6 +95,10 @@ export function getJobDraftRoot(): string {
   return path.join(getWorkspaceRoot(), "job-draft");
 }
 
+export function getJobRunRoot(): string {
+  return path.join(getWorkspaceRoot(), "job-run");
+}
+
 export function getDynamicLispRoot(): string {
   return getAppDataPath("runtime", "dynamic-lisp");
 }
@@ -116,6 +120,7 @@ export async function ensureAppDataLayout(): Promise<void> {
     getRunDataRoot(),
     getLispDraftRoot(),
     getJobDraftRoot(),
+    getJobRunRoot(),
     getDynamicLispRoot(),
     getDrawingStorageRoot(),
     getAppDataPath("state"),

@@ -12,6 +12,8 @@ Allowed load namespaces:
 - appdata/runtime/dynamic-lisp/**         parameterized/session-only artifacts
 - appdata/workspace/job-draft/**/lisp/**   Job-owned static helpers under authoring
 - appdata/workspace/job-draft/**/dynamic-lisp/** Job-owned dynamic derivatives under authoring
+- appdata/workspace/job-run/**/lisp/**     current-run Job-owned static/generated helpers
+- appdata/workspace/job-run/**/dynamic-lisp/** current-run Job-owned dynamic derivatives
 - appdata/libraries/jobs/**/lisp/**        promoted Job-owned static helpers
 - appdata/libraries/jobs/**/dynamic-lisp/** promoted Job-owned dynamic derivatives
 
@@ -100,6 +102,7 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
         (os.path.realpath(os.path.join(_appdata_root(), "workspace", "lisp-draft")), "appdata/workspace/lisp-draft"),
         (os.path.realpath(os.path.join(_appdata_root(), "runtime", "dynamic-lisp")), "appdata/runtime/dynamic-lisp"),
         (os.path.realpath(os.path.join(_appdata_root(), "workspace", "job-draft")), "appdata/workspace/job-draft"),
+        (os.path.realpath(os.path.join(_appdata_root(), "workspace", "job-run")), "appdata/workspace/job-run"),
         (os.path.realpath(os.path.join(_appdata_root(), "libraries", "jobs")), "appdata/libraries/jobs"),
     ]
 
@@ -148,9 +151,12 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
         elif lower.startswith("appdata/workspace/job-draft/"):
             suffix = normalized[len("appdata/workspace/job-draft/") :]
             root, virtual_prefix = roots[4]
+        elif lower.startswith("appdata/workspace/job-run/"):
+            suffix = normalized[len("appdata/workspace/job-run/") :]
+            root, virtual_prefix = roots[5]
         elif lower.startswith("appdata/libraries/jobs/"):
             suffix = normalized[len("appdata/libraries/jobs/") :]
-            root, virtual_prefix = roots[5]
+            root, virtual_prefix = roots[6]
         else:
             if _human_power_enabled():
                 root = _repo_root()
@@ -160,7 +166,8 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
                 raise LispServiceError(
                     "LISP path must be under resources/cad/**, appdata/libraries/lisp/**, "
                     "appdata/workspace/lisp-draft/**, appdata/runtime/dynamic-lisp/**, "
-                    "appdata/workspace/job-draft/**/(lisp|dynamic-lisp)/**, or "
+                    "appdata/workspace/job-draft/**/(lisp|dynamic-lisp)/**, "
+                    "appdata/workspace/job-run/**/(lisp|dynamic-lisp)/**, or "
                     "appdata/libraries/jobs/**/(lisp|dynamic-lisp)/**"
                 )
 
@@ -173,6 +180,7 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
     if (
         virtual_prefix in {
             "appdata/workspace/job-draft",
+            "appdata/workspace/job-run",
             "appdata/libraries/jobs",
         }
         and not _human_power_enabled()

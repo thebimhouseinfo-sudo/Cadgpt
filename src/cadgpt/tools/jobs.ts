@@ -7,13 +7,17 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import {
+  getAppDataPath,
   getJobDraftRoot,
   getJobLibrariesRoot,
   getUserCapabilitiesPath,
   getUserLibrariesManifestPath,
 } from "../lib/appdata.js";
 import { getRepoRoot, isPathInside, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
-import { currentToolLease } from "../lib/work-registration.js";
+import {
+  currentToolLease,
+  isWorkExecutionActive,
+} from "../lib/work-registration.js";
 import { getBoundDrawingsForExecution } from "../session/drawing-binding.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
@@ -468,6 +472,112 @@ async function assertDirectJobPythonReady(python: string): Promise<void> {
   }
 }
 
+function directJobEnvironment(): NodeJS.ProcessEnv {
+  const allowed = new Set([
+    "path",
+    "pathext",
+    "systemroot",
+    "windir",
+    "temp",
+    "tmp",
+    "comspec",
+    "userprofile",
+    "home",
+    "lang",
+    "lc_all",
+  ]);
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && allowed.has(key.toLowerCase())) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
+async function directJobScratchEntries(root: string): Promise<string[]> {
+  const entries: string[] = [];
+  const walk = async (current: string): Promise<void> => {
+    const children = await fs.readdir(current, { withFileTypes: true });
+    for (const child of children) {
+      const absolute = path.join(current, child.name);
+      const relative = path.relative(root, absolute).replaceAll("\\", "/");
+      entries.push(relative);
+      if (child.isDirectory()) await walk(absolute);
+    }
+  };
+  await walk(root);
+  return entries;
+}
+
+const DIRECT_JOB_SCRATCH_MARKER = ".cadgpt-direct-job.json";
+
+function directJobProcessIsAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (
+      (error as NodeJS.ErrnoException).code === "EPERM"
+    );
+  }
+}
+
+async function pruneDirectJobScratchRoot(
+  scratchRoot: string
+): Promise<void> {
+  let entries: Array<import("node:fs").Dirent>;
+  try {
+    entries = await fs.readdir(scratchRoot, {
+      withFileTypes: true,
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith("run-")) {
+      continue;
+    }
+    const candidate = path.join(scratchRoot, entry.name);
+    let executionId = "";
+    let ownerPid = 0;
+    try {
+      const marker = JSON.parse(
+        await fs.readFile(
+          path.join(candidate, DIRECT_JOB_SCRATCH_MARKER),
+          "utf8"
+        )
+      ) as {
+        execution_id?: unknown;
+        process_id?: unknown;
+      };
+      executionId =
+        typeof marker.execution_id === "string"
+          ? marker.execution_id
+          : "";
+      ownerPid = Number(marker.process_id || 0);
+    } catch {
+      executionId = "";
+      ownerPid = 0;
+    }
+
+    const activeHere =
+      executionId && isWorkExecutionActive(executionId);
+    const activeElsewhere =
+      ownerPid !== process.pid &&
+      directJobProcessIsAlive(ownerPid);
+    if (activeHere || activeElsewhere) continue;
+    await fs.rm(candidate, {
+      recursive: true,
+      force: true,
+    });
+  }
+}
+
 async function executeDirectJobScript(
   script: string,
   args: string[],
@@ -483,11 +593,13 @@ async function executeDirectJobScript(
   }
   const drawing = drawings[0];
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...directJobEnvironment(),
     CADGPT_EXECUTION_ID: lease.workId,
     CADGPT_JOB_ID: jobId,
     CADGPT_REPO_ROOT: getRepoRoot(),
     CADGPT_BUNDLED_LISP_ROOT: getBundledLispLibrariesRoot(),
+    CADGPT_DIRECT_JOB_NO_FILE_OUTPUT: "1",
+    PYTHONDONTWRITEBYTECODE: "1",
     ...(drawing
       ? {
           CADGPT_DRAWING_ID: drawing.drawing_id,
@@ -499,28 +611,85 @@ async function executeDirectJobScript(
       : {}),
   };
 
-  const execute = () =>
-    execFileAsync(python, [script, ...args], {
-      cwd: path.dirname(script),
-      env,
-      windowsHide: true,
-      timeout: 5 * 60 * 1000,
-      maxBuffer: 4 * 1024 * 1024,
-    });
-  const result = drawing
-    ? await withCadHostLock(drawing.host, execute)
-    : await execute();
+  const scratchRoot = getAppDataPath("runtime", "direct-job");
+  await fs.mkdir(scratchRoot, { recursive: true });
+  await pruneDirectJobScratchRoot(scratchRoot);
+  const scratchContainer = await fs.mkdtemp(
+    path.join(scratchRoot, "run-")
+  );
+  await fs.writeFile(
+    path.join(
+      scratchContainer,
+      DIRECT_JOB_SCRATCH_MARKER
+    ),
+    JSON.stringify(
+      {
+        version: 1,
+        execution_id: lease.workId,
+        job_id: jobId,
+        process_id: process.pid,
+      },
+      null,
+      2
+    ) + "\n",
+    "utf8"
+  );
+  const scratchCwd = path.join(scratchContainer, "cwd");
+  await fs.mkdir(scratchCwd);
+  const scratchScript = path.join(
+    scratchCwd,
+    path.basename(script)
+  );
+  await fs.copyFile(script, scratchScript);
 
-  return {
-    script,
-    execution_mode: "direct",
-    exit_code: 0,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    drawing: drawing
-      ? { drawing_id: drawing.drawing_id, name: drawing.name, full_name: drawing.full_name }
-      : null,
-  };
+  try {
+    const execute = () =>
+      execFileAsync(python, [scratchScript, ...args], {
+        cwd: scratchCwd,
+        env,
+        windowsHide: true,
+        timeout: 5 * 60 * 1000,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+    const result = drawing
+      ? await withCadHostLock(drawing.host, execute)
+      : await execute();
+
+    const allowedScratchEntries = new Set([
+      DIRECT_JOB_SCRATCH_MARKER,
+      "cwd",
+      `cwd/${path.basename(scratchScript)}`,
+    ]);
+    const scratchEntries = (
+      await directJobScratchEntries(scratchContainer)
+    ).filter(
+      (entry) => !allowedScratchEntries.has(entry)
+    );
+    if (scratchEntries.length > 0) {
+      throw new Error(
+        "DIRECT_JOB_DATA_FORBIDDEN: Direct Jobs are execution-only and must not leave file/directory output. Use a Reasoning/Dynamic Job when runtime data is required. Created: " +
+          scratchEntries.slice(0, 20).join(", ")
+      );
+    }
+
+    return {
+      script,
+      execution_mode: "direct",
+      exit_code: 0,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      file_output: "forbidden",
+      scratch_cleaned: true,
+      drawing: drawing
+        ? { drawing_id: drawing.drawing_id, name: drawing.name, full_name: drawing.full_name }
+        : null,
+    };
+  } finally {
+    await fs.rm(scratchContainer, {
+      recursive: true,
+      force: true,
+    });
+  }
 }
 
 const TBH_LOADER_PATH =

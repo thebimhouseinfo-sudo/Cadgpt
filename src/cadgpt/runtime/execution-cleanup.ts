@@ -8,6 +8,8 @@ export interface ExecutionCleanupResult {
   execution_id: string;
   candidate_released: boolean;
   human_power_cleared: boolean;
+  job_workspace_cleaned: boolean;
+  job_workspace_cleanup?: Record<string, unknown>;
   drawing_metadata_cleaned: boolean;
   drawing_metadata_cleanup?: Record<string, unknown>;
   cad_state_cleared: boolean;
@@ -29,6 +31,7 @@ export async function cleanupExecutionState(
     execution_id: executionId,
     candidate_released: false,
     human_power_cleared: false,
+    job_workspace_cleaned: false,
     drawing_metadata_cleaned: false,
     cad_state_cleared: false,
     cad_mcp_dev_restored: false,
@@ -71,6 +74,17 @@ export async function cleanupExecutionState(
     result.candidate_released = true;
   } catch (error) {
     result.errors.push(`candidate cleanup: ${errorText(error)}`);
+  }
+
+  try {
+    const { cleanupJobWorkspaceForExecution } = await import(
+      "./job-workspace.js"
+    );
+    result.job_workspace_cleanup =
+      await cleanupJobWorkspaceForExecution(executionId);
+    result.job_workspace_cleaned = true;
+  } catch (error) {
+    result.errors.push(`Job workspace cleanup: ${errorText(error)}`);
   }
 
   try {

@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { getAppDataRoot } from "../lib/appdata.js";
+import { getAppDataPath, getAppDataRoot } from "../lib/appdata.js";
 import { getAllowedRoots, getRepoRoot, getWritableRoots, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { currentHumanPower, currentToolLease } from "../lib/work-registration.js";
@@ -13,6 +13,10 @@ import {
   isCadGptSourcePath,
 } from "../runtime/human-power.js";
 import { drawingMetadataRootsForExecution } from "../runtime/drawing-persistence.js";
+import {
+  jobWorkspaceForExecution,
+  jobWorkspaceReadableRootsForExecution,
+} from "../runtime/job-workspace.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
 const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".py"]);
@@ -25,28 +29,76 @@ function currentDrawingMetadataRoots(): string[] {
   }
 }
 
+function currentJobWorkspaceRoot(): string | null {
+  try {
+    const lease = currentToolLease();
+    return jobWorkspaceForExecution(lease.workId)?.root ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function currentReadableRoots(): string[] {
-  const humanPowerRoots = currentHumanPower()
-    ? [getAppDataRoot(), getRepoRoot()]
-    : [];
+  if (currentHumanPower()) {
+    return [
+      ...new Set([
+        ...getAllowedRoots(),
+        ...currentDrawingMetadataRoots(),
+        getAppDataRoot(),
+        getRepoRoot(),
+      ]),
+    ];
+  }
+
+  const jobRoot = currentJobWorkspaceRoot();
+  if (jobRoot) {
+    let jobReadableRoots = [jobRoot];
+    try {
+      jobReadableRoots =
+        jobWorkspaceReadableRootsForExecution(
+          currentToolLease().workId
+        );
+    } catch {
+      // Keep the active Job work root as the minimum readable scope.
+    }
+    return [
+      ...new Set([
+        getAppDataPath("libraries"),
+        ...jobReadableRoots,
+        ...currentDrawingMetadataRoots(),
+      ]),
+    ];
+  }
+
   return [
     ...new Set([
       ...getAllowedRoots(),
       ...currentDrawingMetadataRoots(),
-      ...humanPowerRoots,
     ]),
   ];
 }
 
 function currentWritableRoots(): string[] {
-  const humanPowerRoots = currentHumanPower()
-    ? [getAppDataRoot(), getRepoRoot()]
-    : [];
+  if (currentHumanPower()) {
+    return [
+      ...new Set([
+        ...getWritableRoots(),
+        ...currentDrawingMetadataRoots(),
+        getAppDataRoot(),
+        getRepoRoot(),
+      ]),
+    ];
+  }
+
+  const jobRoot = currentJobWorkspaceRoot();
+  if (jobRoot) {
+    return [jobRoot];
+  }
+
   return [
     ...new Set([
       ...getWritableRoots(),
       ...currentDrawingMetadataRoots(),
-      ...humanPowerRoots,
     ]),
   ];
 }

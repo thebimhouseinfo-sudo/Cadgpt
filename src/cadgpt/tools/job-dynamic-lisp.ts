@@ -7,7 +7,9 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getUserCapabilitiesPath } from "../lib/appdata.js";
 import { isPathInside, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { currentToolLease } from "../lib/work-registration.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
+import { jobWorkspaceForExecution } from "../runtime/job-workspace.js";
 import { listBundledLispEntries, resolveBundledLispPath } from "../lib/bundled-assets.js";
 import { resolveRegisteredAssetPath } from "./user-assets.js";
 import { validateLispSource } from "./lisp-harness.js";
@@ -116,16 +118,26 @@ async function jobTarget(
   job: JobEntry,
   relativePath: string
 ): Promise<{ job_root: string; target: string; relative_path: string }> {
-  const entrypoint = await resolveRegisteredAssetPath(
-    "job",
-    job.library_id,
-    job.relative_path
-  );
-  const jobRoot = path.dirname(entrypoint);
+  const lease = currentToolLease();
+  const workspace = jobWorkspaceForExecution(lease.workId);
+  if (!workspace) {
+    throw new Error(
+      "JOB_WORKSPACE_REQUIRED: call job_working_location before using Job dynamic Lisp."
+    );
+  }
+  if (
+    workspace.job_id.toLowerCase() !==
+    job.id.trim().toLowerCase()
+  ) {
+    throw new Error(
+      `JOB_WORKSPACE_OWNER_MISMATCH: active runtime belongs to '${workspace.job_id}', not '${job.id}'.`
+    );
+  }
+  const jobRoot = workspace.root;
   const relative = safeDynamicRelative(relativePath);
   const target = path.resolve(jobRoot, relative);
   if (!isPathInside(target, jobRoot)) {
-    throw new Error("JOB_DYNAMIC_LISP_PATH: dynamic Lisp path escapes the owning Job folder");
+    throw new Error("JOB_DYNAMIC_LISP_PATH: dynamic Lisp path escapes the active Job working folder");
   }
   return { job_root: jobRoot, target, relative_path: relative };
 }
@@ -246,7 +258,7 @@ export function registerJobDynamicLispTools(server: McpServer): void {
     {
       title: "Prepare or Reuse Job-owned Dynamic Lisp",
       description:
-        "Seed a persistent Job-owned dynamic Lisp from a registered working Lisp source exactly once. Later calls reuse the existing Job copy instead of copying the base source again.",
+        "Seed a current-run Job-owned dynamic Lisp from a registered working Lisp source. Repeated calls in the same Job run reuse the current working copy; a new Job run starts from a fresh source seed.",
       inputSchema: {
         job_id: z.string().min(1),
         source_lisp_id: z.string().min(1),
@@ -254,7 +266,7 @@ export function registerJobDynamicLispTools(server: McpServer): void {
           .string()
           .optional()
           .describe(
-            "Optional path under dynamic-lisp/** inside the Job folder. Defaults to dynamic-lisp/<source filename>."
+            "Optional path under dynamic-lisp/** inside the active Job working folder. Defaults to dynamic-lisp/<source filename>."
           ),
       },
     },
@@ -286,7 +298,7 @@ export function registerJobDynamicLispTools(server: McpServer): void {
               });
               if (!validation.valid) {
                 throw new Error(
-                  "JOB_DYNAMIC_LISP_EXISTING_INVALID: persistent Job copy failed syntax validation: " +
+                  "JOB_DYNAMIC_LISP_EXISTING_INVALID: current-run Job copy failed syntax validation: " +
                     validation.diagnostics
                       .filter((item) => item.severity === "error")
                       .map((item) => item.code)
@@ -315,7 +327,7 @@ export function registerJobDynamicLispTools(server: McpServer): void {
                   seededHash !== null && seededHash !== seed.sha256,
                 provenance: provenance ?? null,
                 rule:
-                  "Reuse the existing Job-owned dynamic Lisp. Do not recopy the base source on normal runs.",
+                  "Reuse the current-run Job-owned dynamic Lisp. A new Job run receives a fresh working seed.",
               });
             }
 
@@ -372,13 +384,13 @@ export function registerJobDynamicLispTools(server: McpServer): void {
     {
       title: "Patch Job-owned Dynamic Lisp",
       description:
-        "Apply hash-guarded exact replacements to a persistent Job-owned dynamic Lisp. Untouched source remains unchanged and the result must pass AutoLISP syntax validation before write.",
+        "Apply hash-guarded exact replacements to the current-run Job-owned dynamic Lisp. Untouched source remains unchanged and the result must pass AutoLISP syntax validation before write.",
       inputSchema: {
         job_id: z.string().min(1),
         relative_path: z
           .string()
           .min(1)
-          .describe("Path under dynamic-lisp/** inside the registered Job folder."),
+          .describe("Path under dynamic-lisp/** inside the active Job working folder."),
         expected_sha256: z.string().length(64),
         replacements: z
           .array(
@@ -503,7 +515,7 @@ export function registerJobDynamicLispTools(server: McpServer): void {
               applied,
               preserved_unmatched_source: true,
               rule:
-                "Only exact declared dynamic sections were replaced; reuse this persisted Job copy on the next run.",
+                "Only exact declared dynamic sections were replaced; reuse this current-run Job copy only within the same run.",
             });
           }
         );

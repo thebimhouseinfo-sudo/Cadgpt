@@ -2,6 +2,22 @@
 
 Markdown Jobs are sequential reasoning workflows. The Job file defines the workflow order; the current drawing state determines the concrete action at each step.
 
+## Runtime storage gate
+
+Before executing the first Reasoning/Dynamic Job step, call:
+
+```text
+job_working_location(job_id=<registered Job id>)
+```
+
+For a pre-promotion Reasoning Job draft, also pass its absolute `draft_path` pointing to `appdata/workspace/job-draft/**/JOB.md`. Direct `.py` drafts are not eligible for Job runtime working storage.
+
+This begins a fresh current-run workspace. All raw/intermediate/generated file data belongs there. If the Job needs drawing-scoped persistence, call `drawing_metadata_location` only to resolve/authorize the exact drawing root, then use `job_publish_result` for explicit **final** result files. Generic file writes from an active Job runtime must not write to drawing storage.
+
+At terminal Job completion/failure, call `job_runtime_end` so current-run raw state is removed. Work stop/replacement/expiry also performs cleanup.
+
+Direct Jobs do not use this runtime-data gate; they are execution-only/no-persistent-data Jobs.
+
 ## Runtime loop
 
 For each Job step:
@@ -26,14 +42,14 @@ Rules:
 - The review may add, remove, defer, or narrow actions when evidence is uncertain.
 - If an item is uncertain but the Job can safely continue without it, defer/skip that item and keep running the workflow.
 - Re-read the drawing after mutation whenever the next step depends on the resulting state.
-- When a step uses dynamic Lisp derived from an already-working command, call `job_dynamic_lisp_prepare` first. If it returns `reused=true`, continue from that persisted Job copy; do not recopy the base source. Patch only the declared changing data/section with `job_dynamic_lisp_patch`, then verified-load that Job-owned Lisp and run the original command. Do not invent an adapter/wrapper around the source command.
+- When a step uses dynamic Lisp derived from an already-working command, call `job_dynamic_lisp_prepare` first. It seeds the active Job working directory from the proven source; repeated calls within the same run may return `reused=true`. Patch only the declared changing data/section with `job_dynamic_lisp_patch`, then verified-load that current-run Job Lisp and run the original command. A new Job run receives a fresh seed. Do not invent an adapter/wrapper around the source command.
 - Repeat PLAN/REVIEW as many times as the workflow needs.
 - Ask the user only when the Job cannot make a safe domain decision from its rules/evidence, or when the requested action requires an explicit user choice.
 - Finish the whole Job when possible, then report completed actions, deferred/unresolved items, and final verification.
 
 ## Direct Jobs
 
-A `.py` Job is not processed by this harness. It is a direct Job: resolve the registered script and dispatch it through the direct Job runner without model planning between its internal operations.
+A `.py` Job is not processed by this harness. It is a direct Job: resolve the registered script and dispatch it through the direct Job runner without model planning between its internal operations. Direct Jobs are execution-only and must not leave persistent file/directory output; CadGPT runs them in disposable scratch CWD with a minimal child environment.
 
 
 ## Human Power

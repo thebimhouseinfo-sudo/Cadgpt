@@ -9,7 +9,8 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { cadUpstream } from "../runtime/cad-upstream.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
-import { getRepoRoot } from "../lib/path-security.js";
+import { getJobRunRoot } from "../lib/appdata.js";
+import { getRepoRoot, isPathInside } from "../lib/path-security.js";
 import { listBundledLispEntries } from "../lib/bundled-assets.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import {
@@ -17,6 +18,7 @@ import {
   currentToolLease,
 } from "../lib/work-registration.js";
 import { resolveCadGptLispPath } from "../lib/lisp-path-policy.js";
+import { jobWorkspaceForExecution } from "../runtime/job-workspace.js";
 import {
   assertCadRuntimeGenerationAccess,
   recordCadCandidateSuccess,
@@ -177,9 +179,45 @@ function lispCommandSet(workId: string, drawingId: string): Set<string> {
 export async function resolveLispSourceForCommandDiscovery(
   requestedPath: string
 ): Promise<string> {
-  return resolveCadGptLispPath(requestedPath, {
-    humanPower: Boolean(currentHumanPower()),
+  const humanPower = Boolean(currentHumanPower());
+  const resolved = await resolveCadGptLispPath(requestedPath, {
+    humanPower,
   });
+
+  const lexicalJobRunRoot = getJobRunRoot();
+  const canonicalJobRunRoot = await fs.promises
+    .realpath(lexicalJobRunRoot)
+    .catch(() => path.resolve(lexicalJobRunRoot));
+
+  if (
+    !humanPower &&
+    isPathInside(resolved, canonicalJobRunRoot)
+  ) {
+    let workId: string;
+    try {
+      workId = currentToolLease().workId;
+    } catch {
+      throw new Error(
+        "JOB_RUNTIME_LISP_SCOPE: current-run Job Lisp requires an active CadGPT ToolLease."
+      );
+    }
+    const workspace = jobWorkspaceForExecution(workId);
+    const canonicalWorkspaceRoot = workspace
+      ? await fs.promises
+          .realpath(workspace.root)
+          .catch(() => path.resolve(workspace.root))
+      : null;
+    if (
+      !canonicalWorkspaceRoot ||
+      !isPathInside(resolved, canonicalWorkspaceRoot)
+    ) {
+      throw new Error(
+        "JOB_RUNTIME_LISP_SCOPE: current-run Job Lisp must belong to the active Job workspace for this execution."
+      );
+    }
+  }
+
+  return resolved;
 }
 
 async function discoverLispCommands(virtualPath: string): Promise<string[]> {
@@ -201,14 +239,16 @@ export async function loadVerifiedLispForCurrentWork(
 }> {
   await ensureCadRuntimeActive();
   const binding = resolveDrawingContext(drawingId);
+  const resolvedLispPath =
+    await resolveLispSourceForCommandDiscovery(lispPath);
   const commands = ownedCommands
     ? [...new Set(ownedCommands.map((command) => command.toUpperCase()))].sort()
-    : await discoverLispCommands(lispPath);
+    : await discoverLispCommands(resolvedLispPath);
 
   return withCadHostLock(binding.host, async () => {
     await activateDrawingContext(binding);
     const result = await cadUpstream.callTool("cad_load_lisp_file", {
-      path: lispPath,
+      path: resolvedLispPath,
     });
     const loaded =
       !isToolErrorResult(result) &&
