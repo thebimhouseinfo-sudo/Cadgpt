@@ -8,6 +8,7 @@ import {
 export const JOB_BUNDLE_ASSET_DIRS = [
   "lisp",
   "dynamic-lisp",
+  "tools",
 ] as const;
 
 export interface JobBundleInspection {
