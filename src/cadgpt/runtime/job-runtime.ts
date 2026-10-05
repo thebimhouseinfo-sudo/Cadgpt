@@ -105,39 +105,40 @@ export async function cleanupJobRuntimeForExecution(
     };
   }
 
-  if (
-    executionByJobRoot.get(
-      jobRootKey(context.job_root)
-    ) ===
-    executionId
-  ) {
-    executionByJobRoot.delete(
-      jobRootKey(context.job_root)
-    );
-  }
-
   let removedEmptyResultRoots = 0;
   const jobsParents = new Set<string>();
-  for (const resultRoot of context.result_roots) {
-    jobsParents.add(path.dirname(resultRoot));
-    if (await removeIfEmpty(resultRoot)) {
-      removedEmptyResultRoots += 1;
+  try {
+    for (const resultRoot of context.result_roots) {
+      jobsParents.add(path.dirname(resultRoot));
+      if (await removeIfEmpty(resultRoot)) {
+        removedEmptyResultRoots += 1;
+      }
     }
-  }
-  for (const jobsRoot of jobsParents) {
-    if (path.basename(jobsRoot) === "jobs") {
-      await removeIfEmpty(jobsRoot);
+    for (const jobsRoot of jobsParents) {
+      if (path.basename(jobsRoot) === "jobs") {
+        await removeIfEmpty(jobsRoot);
+      }
     }
-  }
 
-  return {
-    active: true,
-    job_id: context.job_id,
-    job_name: context.job_name,
-    runtime_root: context.runtime_root,
-    removed_empty_result_roots:
-      removedEmptyResultRoots,
-  };
+    return {
+      active: true,
+      job_id: context.job_id,
+      job_name: context.job_name,
+      runtime_root: context.runtime_root,
+      removed_empty_result_roots:
+        removedEmptyResultRoots,
+    };
+  } finally {
+    const rootKey = jobRootKey(
+      context.job_root
+    );
+    if (
+      executionByJobRoot.get(rootKey) ===
+      executionId
+    ) {
+      executionByJobRoot.delete(rootKey);
+    }
+  }
 }
 
 export async function prepareJobRuntimeForExecution(
@@ -152,7 +153,8 @@ export async function prepareJobRuntimeForExecution(
 
   if (
     current &&
-    current.job_root !== jobRoot
+    jobRootKey(current.job_root) !==
+      jobRootKey(jobRoot)
   ) {
     await cleanupJobRuntimeForExecution(
       executionId
@@ -175,8 +177,11 @@ export async function prepareJobRuntimeForExecution(
       }
 
       if (
-        contextsByExecution.get(executionId)
-          ?.job_root === jobRoot
+        contextsByExecution.get(executionId) &&
+        jobRootKey(
+          contextsByExecution.get(executionId)!
+            .job_root
+        ) === jobRootKey(jobRoot)
       ) {
         await cleanupJobRuntimeForExecution(
           executionId
