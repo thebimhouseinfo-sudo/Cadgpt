@@ -43,8 +43,10 @@ function processIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return (
+      (error as NodeJS.ErrnoException).code === "EPERM"
+    );
   }
 }
 
@@ -84,11 +86,24 @@ async function pruneStaleJobWorkspaces(): Promise<void> {
         ownerPid = 0;
       }
 
+      const activeMappedHere = [
+        ...jobWorkspaceByExecution.values(),
+      ].some(
+        (state) =>
+          path.resolve(state.root) === path.resolve(candidate) &&
+          isWorkExecutionActive(state.execution_id)
+      );
       const activeHere =
         executionId && isWorkExecutionActive(executionId);
       const activeElsewhere =
         ownerPid !== process.pid && processIsAlive(ownerPid);
-      if (activeHere || activeElsewhere) continue;
+      if (
+        activeMappedHere ||
+        activeHere ||
+        activeElsewhere
+      ) {
+        continue;
+      }
       await fs.rm(candidate, { recursive: true, force: true });
     }
     await removeIfEmpty(jobRoot);
