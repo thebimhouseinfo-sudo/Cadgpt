@@ -24,6 +24,23 @@ active WorkRegistration
 
 The WorkRegistration boundary is mandatory because it is what guarantees Human Power cannot leak into another task/chat/execution.
 
+
+### Stable connector control path
+
+The dedicated `human_power_start/status/stop` tools remain the native surface when the connector catalog exposes them.
+
+Because an already-open ChatGPT connector can retain an older MCP tool catalog across a runtime update, Human Power must also be controllable through the always-present `cadgpt_admission` tool:
+
+```text
+human power on
+human power status
+human power off
+```
+
+Clear Vietnamese equivalents (`bật/tắt/trạng thái Human Power`) follow the same route.
+
+This fallback mutates the same `WorkRegistration.humanPower` field as the dedicated tools. It is not a bridge flag or parallel state. The AutoCAD add-in header and all policy gates continue to derive Human Power directly from that one authoritative state.
+
 ## Authority
 
 While active, Human Power may bypass CadGPT policy restrictions that would otherwise block the current task, including execution-family restrictions, managed-path restrictions and runtime loader scope checks.

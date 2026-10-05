@@ -82,6 +82,8 @@ export async function ensureDrawingAnchorForBinding(
   drawing_anchor: string;
   schema_version: number;
   created: boolean;
+  state: string;
+  verified_readback: boolean;
 }> {
   try {
     await activateDrawingContext(binding);
@@ -105,12 +107,25 @@ export async function ensureDrawingAnchorForBinding(
       );
     }
 
+    const anchorState = String(
+      payloadField(payload, "state") ?? ""
+    );
+    const verifiedReadback =
+      payloadField(payload, "verified_readback") ===
+        true ||
+      anchorState === "existing";
     binding.drawing_anchor = drawingAnchor;
     binding.anchor_schema_version = schemaVersion;
+    binding.anchor_state = anchorState || "unknown";
+    binding.anchor_verified_readback =
+      verifiedReadback;
     return {
       drawing_anchor: drawingAnchor,
       schema_version: schemaVersion,
-      created: payloadField(payload, "created") === true,
+      created:
+        payloadField(payload, "created") === true,
+      state: binding.anchor_state,
+      verified_readback: verifiedReadback,
     };
   } catch (error) {
     removeDrawingContextForExecution(

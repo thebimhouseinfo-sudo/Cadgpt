@@ -5,6 +5,8 @@ allow CAD MCP to resolve an explicit open drawing by a lifetime-stable runtime
 document identity instead of trusting AutoCAD ActiveDocument or filename alone.
 """
 
+import time
+
 from connection.acad import get_acad_app, get_active_document
 
 
@@ -90,10 +92,32 @@ def get_document(
 def activate_document(
     document_name: str | None = None,
     runtime_id: str | None = None,
+    timeout_seconds: float = 3.0,
 ):
     doc = get_document(document_name, runtime_id)
+    expected_runtime_id = runtime_document_id(doc)
     doc.Activate()
-    return doc
+
+    deadline = time.monotonic() + max(
+        0.25,
+        float(timeout_seconds),
+    )
+    last_runtime_id = ""
+    while time.monotonic() < deadline:
+        try:
+            active = get_active_document()
+            last_runtime_id = runtime_document_id(active)
+            if last_runtime_id == expected_runtime_id:
+                return doc
+        except Exception:
+            last_runtime_id = ""
+        time.sleep(0.05)
+
+    raise RuntimeError(
+        "AutoCAD did not activate the explicitly bound document before timeout; "
+        f"expected_runtime_document_id={expected_runtime_id}; "
+        f"active_runtime_document_id={last_runtime_id or '(unavailable)'}"
+    )
 
 
 def document_identity(doc) -> dict:

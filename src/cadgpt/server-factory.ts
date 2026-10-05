@@ -10,11 +10,14 @@ import { assertSessionClaimed, revokeSessionAdmissions } from "./lib/admission.j
 import {
   activeExecutionForSession,
   activeWorkForSession,
+  activateHumanPowerForExecution,
   acquireToolLease,
   createWorkRegistration,
   createSuccessorWorkRegistration,
   commitSuccessorWorkRegistration,
   clearSessionWorkStopBarrier,
+  deactivateHumanPowerForExecution,
+  humanPowerForExecution,
   markSessionWorkStopped,
   releaseWorkRegistration,
   releaseSessionWork,
@@ -46,6 +49,11 @@ import { registerCadProxyTools } from "./tools/cad-proxy.js";
 import { registerObservatorTools } from "./tools/observator.js";
 import { registerDrawingPersistenceTools } from "./tools/drawing-persistence.js";
 import { registerHumanPowerTools } from "./tools/human-power.js";
+import {
+  humanPowerErrorLogPath,
+  logHumanPowerStart,
+  logHumanPowerStop,
+} from "./runtime/human-power.js";
 import { registerCadMcpDevTools } from "./tools/cad-mcp-dev.js";
 import {
   prepareCadLaunch,
@@ -356,6 +364,7 @@ export function createMcpServer(sessionKey: string): McpServer {
         "Never assume AutoCAD ActiveDocument is the target; use explicit drawing contexts.",
         "All file mutations require absolute canonical target paths and allowed-root verification. Relative/CWD-authorized mutation is forbidden.",
         "Human Power is an explicit human-only emergency capability for the CURRENT active work execution. Never self-activate it. Use it only after the human explicitly authorizes Human Power for the current task. It expires with work stop/release/expiry/replacement or human_power_stop. It is platform recovery state, never Job metadata.",
+        "HUMAN POWER CONTROL ROUTING — stable fallback: if an already-admitted CadGPT user explicitly says 'human power on', 'human power off', 'human power status' (or clear Vietnamese equivalents bật/tắt/trạng thái Human Power), call cadgpt_admission again with the EXACT current user turn. Use invocation_source=mention only when the current turn literally contains @cadgpt/@cg; otherwise use plugin for the active CadGPT connector. This is the stable control path even when the connector tool catalog has not refreshed to expose human_power_start/status/stop. Do not search the tool namespace and give up first.",
         "When Human Power edits CadGPT repository source, file_create/file_edit must include human_power_fix explaining how the patch fixes the recorded activation error. The managed Human Power error log is mandatory. CAD-MCP Python source changes reload only the CAD-MCP child; outer TypeScript core changes still require the normal build/runtime replacement before they take effect.",
         "cad-mcp-dev remains development-only; ordinary Human Power source repair uses the audited generic file tools and does not turn the user's Job into a development workflow.",
       ].join("\n"),
@@ -549,6 +558,138 @@ export function createMcpServer(sessionKey: string): McpServer {
   });
   registerAdmissionTool(server, {
     sessionKey,
+    onHumanPowerControl: async ({
+      action,
+      userTurn,
+    }) => {
+      const work = activeWorkForSession(sessionKey);
+      if (!work) {
+        throw new Error(
+          "NO_ACTIVE_WORK: Human Power requires an active CadGPT task/work execution."
+        );
+      }
+
+      if (action === "status") {
+        const grant = humanPowerForExecution(
+          work.executionId
+        );
+        return {
+          action,
+          active: Boolean(grant),
+          execution_id: work.executionId,
+          grant: grant
+            ? {
+                grant_id: grant.grantId,
+                task: grant.task,
+                activated_at: grant.activatedAt,
+              }
+            : null,
+          error_log_path: humanPowerErrorLogPath(),
+        };
+      }
+
+      if (action === "start") {
+        const existing = humanPowerForExecution(
+          work.executionId
+        );
+        if (existing) {
+          return {
+            action,
+            active: true,
+            already_active: true,
+            execution_id: work.executionId,
+            grant_id: existing.grantId,
+            error_log_path:
+              humanPowerErrorLogPath(),
+          };
+        }
+
+        const grant =
+          activateHumanPowerForExecution(
+            work.executionId,
+            {
+              task:
+                `Human-authorized recovery for ${work.ownerId}`,
+              reason:
+                "Explicit Human Power ON command in the current CadGPT conversation.",
+              errorDescription:
+                userTurn.trim(),
+              expectedBehavior:
+                "Temporarily unlock CadGPT policy/workflow blockers only for this active task. Any CadGPT source edit must include a detailed human_power_fix describing the concrete error and how the patch fixes it.",
+            }
+          );
+        try {
+          const logPath =
+            await logHumanPowerStart(
+              work.executionId,
+              grant
+            );
+          const { cadUpstream } = await import(
+            "./runtime/cad-upstream.js"
+          );
+          if (
+            cadUpstream.status().enabled ||
+            cadUpstream.status().connected
+          ) {
+            await cadUpstream.deactivate();
+          }
+          return {
+            action,
+            active: true,
+            execution_id: work.executionId,
+            grant_id: grant.grantId,
+            task: grant.task,
+            error_log_path: logPath,
+            scope:
+              "current active work only",
+          };
+        } catch (error) {
+          deactivateHumanPowerForExecution(
+            work.executionId
+          );
+          throw error;
+        }
+      }
+
+      const grant = humanPowerForExecution(
+        work.executionId
+      );
+      if (!grant) {
+        return {
+          action,
+          active: false,
+          already_stopped: true,
+          execution_id: work.executionId,
+          error_log_path:
+            humanPowerErrorLogPath(),
+        };
+      }
+      const logPath = await logHumanPowerStop(
+        work.executionId,
+        grant,
+        userTurn.trim()
+      );
+      deactivateHumanPowerForExecution(
+        work.executionId
+      );
+      const { cadUpstream } = await import(
+        "./runtime/cad-upstream.js"
+      );
+      if (
+        cadUpstream.status().enabled ||
+        cadUpstream.status().connected
+      ) {
+        await cadUpstream.deactivate();
+      }
+      return {
+        action,
+        active: false,
+        stopped: true,
+        execution_id: work.executionId,
+        grant_id: grant.grantId,
+        error_log_path: logPath,
+      };
+    },
     onActive: async ({ bareLaunch }) => {
       await loadDiscoveryFamily(server);
       if (!bareLaunch) return;

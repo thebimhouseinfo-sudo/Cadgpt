@@ -102,6 +102,11 @@ The previous NOD-extension-dictionary layout is migration-only. If a valid legac
 
 The Lisp owns native DWG dictionary/XRecord read/write. Python must not construct XRecord SAFEARRAY/VARIANT payloads through COM for Drawing Anchor persistence.
 
+
+The entire anchor transaction is pinned to the exact bound AutoCAD document lifetime. CadGPT activates the document identified by `runtime_document_id`, waits until AutoCAD reports that exact document as `ActiveDocument`, and then passes that same COM document object through Lisp load, read, ensure and verification. Those internal steps must not independently re-resolve whichever document happens to be active at that moment.
+
+After create or migration, CadGPT performs an independent second read on the same document object and requires the same schema + anchor before accepting the binding. The bound context records the returned anchor state/read-back evidence for live acceptance testing.
+
 This representation must remain:
 
 - non-graphical;

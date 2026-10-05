@@ -51,10 +51,35 @@ test("Python Drawing Anchor service delegates DWG mutation to internal AutoLISP"
     "utf8"
   );
 
-  assert.match(source, /load_lisp_file\(ANCHOR_LISP_PATH\)/);
+  assert.match(source, /load_lisp_file\([\s\S]*document=doc/);
   assert.match(source, /run_lisp_function_sync/);
   assert.match(source, /ANCHOR_LISP_READ_FUNCTION/);
   assert.match(source, /if read_raw != "MISSING"/);
+  assert.match(source, /verify_raw = run_lisp_function_sync/);
+  assert.match(source, /document=doc/);
+  assert.match(source, /Drawing Anchor changed during the same exact-document transaction/);
   assert.match(source, /internal_autolisp/);
   assert.doesNotMatch(source, /pythoncom|VARIANT|win32com|SetXRecordData|GetXRecordData/);
+
+  const sessionSource = await fs.readFile(
+    new URL(
+      "../runtimes/cad-mcp/connection/session.py",
+      import.meta.url
+    ),
+    "utf8"
+  );
+  assert.match(sessionSource, /expected_runtime_id = runtime_document_id\(doc\)/);
+  assert.match(sessionSource, /last_runtime_id == expected_runtime_id/);
+  assert.match(sessionSource, /did not activate the explicitly bound document before timeout/);
+
+  const lispServiceSource = await fs.readFile(
+    new URL(
+      "../runtimes/cad-mcp/services/lisp_service.py",
+      import.meta.url
+    ),
+    "utf8"
+  );
+  assert.match(lispServiceSource, /def _send\(command: str, document=None\)/);
+  assert.match(lispServiceSource, /def load_lisp_file\(path: str, document=None\)/);
+  assert.match(lispServiceSource, /document if document is not None else get_active_document\(\)/);
 });

@@ -374,16 +374,19 @@ export function commitSuccessorWorkRegistration(input: {
   return { ...successor, capabilities: [...successor.capabilities] };
 }
 
-export function activateHumanPower(input: {
-  task: string;
-  reason: string;
-  errorDescription: string;
-  expectedBehavior: string;
-}): HumanPowerGrant {
-  const lease = currentToolLease();
-  const work = registrations.get(lease.workId);
-  if (!work || work.closing) {
-    throw new Error("NO_ACTIVE_WORK: Human Power requires the current active work execution.");
+function activateHumanPowerOnWork(
+  work: WorkRegistration,
+  input: {
+    task: string;
+    reason: string;
+    errorDescription: string;
+    expectedBehavior: string;
+  }
+): HumanPowerGrant {
+  if (work.closing) {
+    throw new Error(
+      "NO_ACTIVE_WORK: Human Power requires the current active work execution."
+    );
   }
   if (work.humanPower) {
     throw new Error(
@@ -394,8 +397,10 @@ export function activateHumanPower(input: {
     grantId: `hp_${randomUUID()}`,
     task: input.task.trim(),
     reason: input.reason.trim(),
-    errorDescription: input.errorDescription.trim(),
-    expectedBehavior: input.expectedBehavior.trim(),
+    errorDescription:
+      input.errorDescription.trim(),
+    expectedBehavior:
+      input.expectedBehavior.trim(),
     activatedAt: new Date().toISOString(),
   };
   if (
@@ -409,9 +414,45 @@ export function activateHumanPower(input: {
     );
   }
   work.humanPower = grant;
-  humanPowerCleanupPending.set(work.executionId, { ...grant });
-  work.lastActivityAt = new Date().toISOString();
+  humanPowerCleanupPending.set(
+    work.executionId,
+    { ...grant }
+  );
+  work.lastActivityAt =
+    new Date().toISOString();
   return { ...grant };
+}
+
+export function activateHumanPowerForExecution(
+  executionId: string,
+  input: {
+    task: string;
+    reason: string;
+    errorDescription: string;
+    expectedBehavior: string;
+  }
+): HumanPowerGrant {
+  cleanup();
+  const work = registrations.get(executionId);
+  if (!work) {
+    throw new Error(
+      "NO_ACTIVE_WORK: Human Power requires the current active work execution."
+    );
+  }
+  return activateHumanPowerOnWork(work, input);
+}
+
+export function activateHumanPower(input: {
+  task: string;
+  reason: string;
+  errorDescription: string;
+  expectedBehavior: string;
+}): HumanPowerGrant {
+  const lease = currentToolLease();
+  return activateHumanPowerForExecution(
+    lease.workId,
+    input
+  );
 }
 
 export function humanPowerForExecution(
@@ -419,17 +460,23 @@ export function humanPowerForExecution(
 ): HumanPowerGrant | null {
   cleanup();
   const work = registrations.get(executionId);
-  return work?.humanPower ? { ...work.humanPower } : null;
+  return work?.humanPower
+    ? { ...work.humanPower }
+    : null;
 }
 
-export function isHumanPowerActive(executionId: string): boolean {
+export function isHumanPowerActive(
+  executionId: string
+): boolean {
   return humanPowerForExecution(executionId) !== null;
 }
 
 export function consumeHumanPowerCleanup(
   executionId: string
 ): HumanPowerGrant | null {
-  const grant = humanPowerCleanupPending.get(executionId) ?? null;
+  const grant =
+    humanPowerCleanupPending.get(executionId) ??
+    null;
   humanPowerCleanupPending.delete(executionId);
   return grant ? { ...grant } : null;
 }
@@ -443,15 +490,29 @@ export function currentHumanPower(): HumanPowerGrant | null {
   }
 }
 
+export function deactivateHumanPowerForExecution(
+  executionId: string
+): HumanPowerGrant | null {
+  cleanup();
+  const work = registrations.get(executionId);
+  if (!work || work.closing) return null;
+  const prior = work.humanPower
+    ? { ...work.humanPower }
+    : null;
+  delete work.humanPower;
+  humanPowerCleanupPending.delete(
+    work.executionId
+  );
+  work.lastActivityAt =
+    new Date().toISOString();
+  return prior;
+}
+
 export function deactivateHumanPower(): HumanPowerGrant | null {
   const lease = currentToolLease();
-  const work = registrations.get(lease.workId);
-  if (!work || work.closing) return null;
-  const prior = work.humanPower ? { ...work.humanPower } : null;
-  delete work.humanPower;
-  humanPowerCleanupPending.delete(work.executionId);
-  work.lastActivityAt = new Date().toISOString();
-  return prior;
+  return deactivateHumanPowerForExecution(
+    lease.workId
+  );
 }
 
 export function enableWorkCapability(

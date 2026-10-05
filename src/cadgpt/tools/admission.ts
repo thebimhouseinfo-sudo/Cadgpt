@@ -6,11 +6,55 @@ import { toolResult } from "../lib/tool-result.js";
 import { isBareCadGptLaunch } from "../lib/quickstart.js";
 import { completePendingAddinPair } from "../lib/addin-control.js";
 
+export type HumanPowerControlAction =
+  | "start"
+  | "stop"
+  | "status";
+
+export function parseHumanPowerControl(
+  userTurn: string
+): HumanPowerControlAction | null {
+  const value = userTurn
+    .trim()
+    .toLowerCase();
+  if (!/human\s+power/.test(value)) {
+    return null;
+  }
+  if (
+    /(?:\bon\b|\bstart\b|\benable\b|bật)/i.test(
+      value
+    )
+  ) {
+    return "start";
+  }
+  if (
+    /(?:\boff\b|\bstop\b|\bdisable\b|tắt)/i.test(
+      value
+    )
+  ) {
+    return "stop";
+  }
+  if (
+    /(?:\bstatus\b|\bstate\b|trạng\s+thái)/i.test(
+      value
+    )
+  ) {
+    return "status";
+  }
+  return null;
+}
+
 export function registerAdmissionTool(
   server: McpServer,
   options: {
     sessionKey: string;
-    onActive: (input: { bareLaunch: boolean }) => Promise<Record<string, unknown> | void>;
+    onActive: (input: {
+      bareLaunch: boolean;
+    }) => Promise<Record<string, unknown> | void>;
+    onHumanPowerControl?: (input: {
+      action: HumanPowerControlAction;
+      userTurn: string;
+    }) => Promise<Record<string, unknown>>;
   }
 ): void {
   server.registerTool(
@@ -32,9 +76,24 @@ export function registerAdmissionTool(
     },
     async ({ user_turn, invocation_source }) => {
       const decision = checkAdmission(options.sessionKey, user_turn, invocation_source);
-      const bareLaunch = isBareCadGptLaunch(user_turn, invocation_source);
+      const bareLaunch = isBareCadGptLaunch(
+        user_turn,
+        invocation_source
+      );
+      const humanPowerAction =
+        parseHumanPowerControl(user_turn);
+      const humanPowerControl =
+        decision.mode === "active" &&
+        humanPowerAction &&
+        options.onHumanPowerControl
+          ? await options.onHumanPowerControl({
+              action: humanPowerAction,
+              userTurn: user_turn,
+            })
+          : undefined;
       const launch =
-        decision.mode === "active"
+        decision.mode === "active" &&
+        !humanPowerControl
           ? await options.onActive({ bareLaunch })
           : undefined;
       const welcome =
@@ -51,12 +110,20 @@ export function registerAdmissionTool(
         render_to_user: Boolean(welcome),
         ...decision,
         ...(launch ?? {}),
+        ...(humanPowerControl
+          ? {
+              human_power_control:
+                humanPowerControl,
+            }
+          : {}),
         ...(welcome ? { welcome_text: welcome } : {}),
         instruction:
           decision.mode === "inactive"
             ? "STOP CadGPT. Do not call discovery/work/CAD tools. Continue ordinary ChatGPT or use the provider the user actually invoked."
             : decision.mode === "control"
               ? "Route the exact CadGPT control command through cadgpt_control. CONTROL never starts FILE/CAD work."
+              : humanPowerControl
+              ? "Human Power control was handled through the stable cadgpt_admission surface. Continue the current CadGPT work with the same work_handle unless the result reports no active work."
               : welcome
                 ? "Return welcome_text verbatim. If launch_mode is auto_bind, the sole drawing is already bound: reuse the returned work_handle for CAD calls. If launch_mode is cad_prepare, preserve confirmation_token privately and wait for the user's workspace confirmation before calling cadgpt_cad_confirm."
                 : "CadGPT session is ready. If the user requested real FILE/CAD work, start or reuse a compatible work_handle; otherwise continue conversationally.",

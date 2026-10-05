@@ -190,8 +190,8 @@ def _resolve_lisp_path(input_path: str) -> tuple[str, str]:
     return candidate, f"{virtual_prefix}/{relative_suffix}"
 
 
-def _send(command: str) -> None:
-    doc = get_active_document()
+def _send(command: str, document=None) -> None:
+    doc = document if document is not None else get_active_document()
     text = command if command.endswith(("\n", "\r", " ")) else command + "\n"
     last_error = None
     for attempt in range(3):
@@ -237,6 +237,7 @@ def run_lisp_function_sync(
     name: str,
     args: list | None = None,
     timeout_seconds: float = _CALL_TIMEOUT_SECONDS,
+    document=None,
 ) -> str:
     """Call one already-loaded Lisp function and synchronously return its string result.
 
@@ -255,7 +256,7 @@ def run_lisp_function_sync(
     serialized = [_serialize_lisp_value(value) for value in values]
     arg_list = "(list" + ((" " + " ".join(serialized)) if serialized else "") + ")"
 
-    doc = get_active_document()
+    doc = document if document is not None else get_active_document()
     token = uuid.uuid4().hex[:12]
     pending = f"CADGPT_SYNC_PENDING:{token}"
     ok_prefix = f"CADGPT_SYNC_OK:{token}:"
@@ -278,7 +279,7 @@ def run_lisp_function_sync(
 
     _safe_setvar(doc, "USERS5", pending)
     try:
-        _send(expression)
+        _send(expression, document=doc)
         deadline = time.monotonic() + max(0.25, float(timeout_seconds))
         result = pending
         while time.monotonic() < deadline:
@@ -365,11 +366,11 @@ def _verified_load_expression(lisp_path: str, token: str) -> str:
     )
 
 
-def load_lisp_file(path: str) -> dict:
+def load_lisp_file(path: str, document=None) -> dict:
     """Load one sandboxed Lisp file and verify AutoCAD reached a success sentinel."""
     absolute, relative = _resolve_lisp_path(path)
     lisp_path = absolute.replace("\\", "/")
-    doc = get_active_document()
+    doc = document if document is not None else get_active_document()
 
     token = uuid.uuid4().hex[:12]
     pending = f"CADGPT_PENDING:{token}"
@@ -385,7 +386,10 @@ def load_lisp_file(path: str) -> dict:
     _safe_setvar(doc, "USERS5", pending)
 
     try:
-        _send(_verified_load_expression(lisp_path, token))
+        _send(
+            _verified_load_expression(lisp_path, token),
+            document=doc,
+        )
         deadline = time.monotonic() + _LOAD_TIMEOUT_SECONDS
         result = pending
         while time.monotonic() < deadline:

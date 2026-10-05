@@ -7,6 +7,8 @@ export interface BoundDrawing {
   drawing_id: string;
   drawing_anchor?: string;
   anchor_schema_version?: number;
+  anchor_state?: string;
+  anchor_verified_readback?: boolean;
   execution_id: string;
   name: string;
   full_name: string;

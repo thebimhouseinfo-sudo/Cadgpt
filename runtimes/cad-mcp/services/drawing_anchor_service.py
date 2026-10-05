@@ -110,7 +110,10 @@ def ensure_drawing_anchor(
             document_name or None,
             runtime_document_id or None,
         )
-        loaded = load_lisp_file(ANCHOR_LISP_PATH)
+        loaded = load_lisp_file(
+            ANCHOR_LISP_PATH,
+            document=doc,
+        )
         if not loaded.get("loaded"):
             raise DrawingAnchorServiceError(
                 "Could not load internal Drawing Anchor Lisp: "
@@ -120,6 +123,7 @@ def ensure_drawing_anchor(
         read_raw = run_lisp_function_sync(
             ANCHOR_LISP_READ_FUNCTION,
             [],
+            document=doc,
         )
         if read_raw != "MISSING":
             read_payload = _parse_lisp_result(read_raw)
@@ -145,8 +149,30 @@ def ensure_drawing_anchor(
         raw = run_lisp_function_sync(
             ANCHOR_LISP_FUNCTION,
             [candidate],
+            document=doc,
         )
         payload = _parse_lisp_result(raw)
+
+        verify_raw = run_lisp_function_sync(
+            ANCHOR_LISP_READ_FUNCTION,
+            [],
+            document=doc,
+        )
+        if verify_raw == "MISSING":
+            raise DrawingAnchorServiceError(
+                "Drawing Anchor disappeared immediately after ensure/read-back"
+            )
+        verified = _parse_lisp_result(verify_raw)
+        if (
+            verified["drawing_anchor"]
+            != payload["drawing_anchor"]
+            or verified["schema_version"]
+            != payload["schema_version"]
+        ):
+            raise DrawingAnchorServiceError(
+                "Drawing Anchor changed during the same exact-document transaction"
+            )
+
         return {
             **payload,
             "xrecord_key": ANCHOR_KEY,
@@ -156,6 +182,9 @@ def ensure_drawing_anchor(
             ),
             "adapter": "internal_autolisp",
             "lisp_path": ANCHOR_LISP_PATH,
+            "verified_readback": True,
+            "runtime_document_id": runtime_document_id,
+            "document_name": str(getattr(doc, "Name", "") or document_name),
         }
     except (
         AutoCADNotRunningError,
