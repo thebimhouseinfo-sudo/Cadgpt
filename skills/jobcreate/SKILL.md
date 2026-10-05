@@ -19,7 +19,7 @@ knowledge/jobs/**                         internal Job contract/rules
 skills/jobcreate/**                       internal read-only authoring skill
 appdata/workspace/job-draft/**            Job working drafts
 appdata/libraries/jobs/<library-id>/**     promoted reusable Job package (entrypoint + lisp/ + dynamic-lisp/ + tools/)
-<job-root>/runtime/**                       current-run scratch; reset next run; never promoted/hashed
+<job-root>/runtime/**                       Job working/recovery state; Reasoning preserves pending data, Direct resets; never promoted/hashed
 appdata/registry/user/**                   promoted Job registry metadata
 <drawing-root>/jobs/<job-name>-result/**   final persistent drawing result only
 ```
