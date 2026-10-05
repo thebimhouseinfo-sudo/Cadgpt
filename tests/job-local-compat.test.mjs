@@ -126,6 +126,30 @@ test("Job local compatibility fast path reads only the small epoch state and lea
       /not valid json/
     );
 
+    const prepareRuntime = callbacks.get(
+      "job_runtime_prepare"
+    );
+    assert.equal(
+      typeof prepareRuntime,
+      "function"
+    );
+    const blockedReasoning =
+      await prepareRuntime({
+        id: "custom-job",
+      });
+    assert.equal(
+      blockedReasoning.isError,
+      true
+    );
+    assert.match(
+      JSON.stringify(blockedReasoning),
+      /JOB_LOCAL_COMPAT_UPDATE_REQUIRED/
+    );
+    assert.doesNotMatch(
+      JSON.stringify(blockedReasoning),
+      /not valid json/
+    );
+
     const managedJob = path.join(
       tempRoot,
       "libraries",
