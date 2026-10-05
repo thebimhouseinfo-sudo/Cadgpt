@@ -49,12 +49,22 @@ test("outer Lisp policy accepts Job-owned static/dynamic helpers and rejects unr
       "dynamic-lisp",
       "fdt.lsp"
     );
+    const runtimeDynamic = path.join(
+      tempRoot,
+      "workspace",
+      "job-run",
+      "fdt-update",
+      "execution-scope",
+      "dynamic-lisp",
+      "fdt.lsp"
+    );
 
     for (const file of [
       draftStatic,
       draftInvalid,
       promotedStatic,
       promotedDynamic,
+      runtimeDynamic,
     ]) {
       await fs.mkdir(path.dirname(file), {
         recursive: true,
@@ -85,6 +95,12 @@ test("outer Lisp policy accepts Job-owned static/dynamic helpers and rejects unr
         promotedDynamic
       ),
       await fs.realpath(promotedDynamic)
+    );
+    assert.equal(
+      await resolveLispSourceForCommandDiscovery(
+        runtimeDynamic
+      ),
+      await fs.realpath(runtimeDynamic)
     );
 
     await assert.rejects(
@@ -218,6 +234,10 @@ test("outer Lisp policy accepts Job-owned static/dynamic helpers and rejects unr
     assert.match(
       pythonSource,
       /appdata\/workspace\/job-draft/
+    );
+    assert.match(
+      pythonSource,
+      /appdata\/workspace\/job-run/
     );
     assert.match(
       pythonSource,
