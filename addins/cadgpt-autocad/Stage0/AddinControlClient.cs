@@ -47,6 +47,19 @@ namespace CadGpt.AutoCad.Stage0
     }
 
     [DataContract]
+    internal sealed class AddinReleaseResponse
+    {
+        [DataMember(Name = "ok")]
+        public bool Ok { get; set; }
+
+        [DataMember(Name = "pair_id")]
+        public string PairId { get; set; } = string.Empty;
+
+        [DataMember(Name = "released")]
+        public bool Released { get; set; }
+    }
+
+    [DataContract]
     internal sealed class AddinBindingResponse
     {
         [DataMember(Name = "ok")]
@@ -185,6 +198,17 @@ namespace CadGpt.AutoCad.Stage0
                 token);
         }
 
+        public Task<AddinReleaseResponse> ReleasePairAsync(
+            string pairId,
+            CancellationToken token)
+        {
+            return SendAsync<AddinReleaseResponse>(
+                "POST",
+                "/addin-control/pair/release/" +
+                Uri.EscapeDataString(pairId),
+                token);
+        }
+
         private async Task<T> SendAsync<T>(
             string method,
             string relativePath,
@@ -203,36 +227,62 @@ namespace CadGpt.AutoCad.Stage0
                 descriptor.Secret;
             request.Accept = "application/json";
 
-            try
+            using (var timeoutCts =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    token))
             {
-                using (var response =
-                    (HttpWebResponse)await request.GetResponseAsync())
-                using (var stream = response.GetResponseStream())
-                {
-                    token.ThrowIfCancellationRequested();
-                    if (stream == null)
+                timeoutCts.CancelAfter(
+                    TimeSpan.FromSeconds(5));
+                using (timeoutCts.Token.Register(
+                    () =>
                     {
-                        throw new AddinControlException(
-                            "ADDIN_CONTROL_EMPTY_RESPONSE",
-                            response.StatusCode);
-                    }
+                        try
+                        {
+                            request.Abort();
+                        }
+                        catch
+                        {
+                        }
+                    }))
+                {
+                    try
+                    {
+                        using (var response =
+                            (HttpWebResponse)await request.GetResponseAsync())
+                        using (var stream = response.GetResponseStream())
+                        {
+                            token.ThrowIfCancellationRequested();
+                            if (stream == null)
+                            {
+                                throw new AddinControlException(
+                                    "ADDIN_CONTROL_EMPTY_RESPONSE",
+                                    response.StatusCode);
+                            }
 
-                    return Deserialize<T>(stream);
+                            return Deserialize<T>(stream);
+                        }
+                    }
+                    catch (WebException error)
+                    {
+                        if (token.IsCancellationRequested)
+                        {
+                            throw new OperationCanceledException(
+                                token);
+                        }
+
+                        var response =
+                            error.Response as HttpWebResponse;
+                        var message =
+                            timeoutCts.IsCancellationRequested
+                                ? "ADDIN_CONTROL_TIMEOUT"
+                                : response == null
+                                    ? "ADDIN_CONTROL_UNAVAILABLE"
+                                    : ReadError(response);
+                        throw new AddinControlException(
+                            message,
+                            response?.StatusCode);
+                    }
                 }
-            }
-            catch (WebException error)
-            {
-                var response =
-                    error.Response as HttpWebResponse;
-                var message =
-                    error.Status == WebExceptionStatus.Timeout
-                        ? "ADDIN_CONTROL_TIMEOUT"
-                        : response == null
-                            ? "ADDIN_CONTROL_UNAVAILABLE"
-                            : ReadError(response);
-                throw new AddinControlException(
-                    message,
-                    response?.StatusCode);
             }
         }
 

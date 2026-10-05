@@ -21,6 +21,7 @@ namespace CadGpt.AutoCad
 
         public static void Recreate()
         {
+            _view?.PreservePairForRecreate();
             DisposeCurrent();
             EnsureCreated();
             if (_palette != null)

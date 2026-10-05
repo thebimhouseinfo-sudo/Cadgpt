@@ -19,6 +19,8 @@ import { continuityDiagnosticsPath } from "./cadgpt/lib/continuity-diagnostics.j
 import {
   addinBindingStatus,
   addinControlSecretMatches,
+  isAddinManagedSession,
+  releaseAddinPairing,
   removeAddinControlDescriptor,
   startAddinPairing,
   writeAddinControlDescriptor,
@@ -47,7 +49,13 @@ app.use(express.json({ limit: "20mb" }));
 
 const mcpPaths = [`/mcp/${MCP_TOKEN}`];
 const mcpPathSet = new Set(mcpPaths);
-const sessions = createSessionManager(PORT);
+const sessions = createSessionManager(
+  PORT,
+  {
+    isLogicalSessionPinned:
+      isAddinManagedSession,
+  }
+);
 sessions.startCleanup();
 await writeAddinControlDescriptor(PORT);
 
@@ -133,6 +141,17 @@ function authorizeAddinControl(
 app.post("/addin-control/pair/start", (req, res) => {
   if (!authorizeAddinControl(req, res)) return;
   res.json({ ok: true, ...startAddinPairing() });
+});
+
+app.post("/addin-control/pair/release/:pairId", (req, res) => {
+  if (!authorizeAddinControl(req, res)) return;
+  res.json({
+    ok: true,
+    pair_id: req.params.pairId,
+    released: releaseAddinPairing(
+      req.params.pairId
+    ),
+  });
 });
 
 app.get("/addin-control/binding/:pairId", async (req, res) => {

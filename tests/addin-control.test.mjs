@@ -122,6 +122,61 @@ test("paired panel forwards Human Power as read-only observed state", async () =
   );
 });
 
+
+test("explicit add-in pair release stops pinning the logical session", async () => {
+  const observerId =
+    addin.registerAddinSessionObserver(
+      "session-release",
+      async () => ({
+        drawing: {
+          name: "Release.dwg",
+          full_name:
+            "C:\\Drawings\\Release.dwg",
+        },
+        bound_count: 1,
+        human_power: false,
+      })
+    );
+
+  const pair =
+    addin.startAddinPairing();
+  addin.completePendingAddinPair(
+    "session-release"
+  );
+
+  assert.equal(
+    addin.isAddinManagedSession(
+      "session-release"
+    ),
+    true
+  );
+  assert.equal(
+    addin.releaseAddinPairing(
+      pair.pair_id
+    ),
+    true
+  );
+  assert.equal(
+    addin.isAddinManagedSession(
+      "session-release"
+    ),
+    false
+  );
+  assert.equal(
+    (
+      await addin.addinBindingStatus(
+        pair.pair_id
+      )
+    ).paired,
+    false
+  );
+
+  addin.unregisterAddinSessionObserver(
+    "session-release",
+    observerId
+  );
+});
+
 test("paired panel reports session not ready when observer is gone", async () => {
   const pair = addin.startAddinPairing();
   addin.completePendingAddinPair(

@@ -219,7 +219,7 @@ test("Human Power header derives directly from work state and does not keep a br
   );
 });
 
-test("header is a drawing-context indicator with no transport timeout semantics", () => {
+test("header is a drawing-context indicator with debounced local-state warnings", () => {
   assert.match(
     code,
     /DispatcherTimer/
@@ -234,19 +234,27 @@ test("header is a drawing-context indicator with no transport timeout semantics"
   );
   assert.match(
     code,
-    /if \(status\.SessionReady\)[\s\S]*_lastConfirmedBoundDrawing\s*=\s*status\.Drawing/
+    /if \(status\.SessionReady\)[\s\S]*SetConfirmedBoundDrawing\(\s*status\.Drawing\s*\)/
   );
   assert.match(
     code,
-    /BoundDrawingIsOpen\(bound\)/
+    /TryDrawingSnapshot\(/
   );
   assert.match(
     code,
-    /foreach \(AcDocument document in[\s\S]*AcApplication\.DocumentManager/
+    /_boundMissingPolls\s*>=\s*3/
   );
   assert.match(
     code,
-    /!DrawingMatches\(bound, active\)/
+    /_bindingMismatchPolls\s*>=\s*2/
+  );
+  assert.match(
+    code,
+    /UNKNOWN local AutoCAD state/
+  );
+  assert.match(
+    code,
+    /DrawingIdentityMatcher\.NormalizePath/
   );
   assert.match(
     code,
@@ -267,6 +275,68 @@ test("header is a drawing-context indicator with no transport timeout semantics"
   assert.match(
     code,
     /BoundDrawingText\.Text/
+  );
+});
+
+
+test("panel self-recovers WebView lifecycle without restarting AutoCAD", () => {
+  assert.match(
+    code,
+    /CoreWebView2\.ProcessFailed/
+  );
+  assert.match(
+    code,
+    /RecoverAfterSuspensionAsync/
+  );
+  assert.match(
+    code,
+    /TimeSpan\.FromSeconds\(15\)/
+  );
+  assert.match(
+    code,
+    /Browser\.CoreWebView2\.Reload\(\)/
+  );
+  assert.match(
+    code,
+    /PaletteController\.Recreate\(\)/
+  );
+  assert.match(
+    palette,
+    /PreservePairForRecreate\(\)/
+  );
+});
+
+test("panel releases its pair only on real disposal, not recovery recreation", () => {
+  assert.match(
+    client,
+    /ReleasePairAsync/
+  );
+  assert.match(
+    code,
+    /_preservePairOnDispose/
+  );
+  assert.match(
+    code,
+    /ReleasePairAsync/
+  );
+  assert.match(
+    palette,
+    /_view\?\.PreservePairForRecreate\(\)/
+  );
+});
+
+test("add-in control async requests are cancellation-bound across sleep", () => {
+  assert.match(
+    client,
+    /CreateLinkedTokenSource/
+  );
+  assert.match(
+    client,
+    /CancelAfter\(\s*TimeSpan\.FromSeconds\(5\)\s*\)/
+  );
+  assert.match(
+    client,
+    /request\.Abort\(\)/
   );
 });
 

@@ -37,6 +37,9 @@ export interface SessionManagerOptions {
   sessionTtlMs?: number;
   cleanupMs?: number;
   deleteGraceMs?: number;
+  isLogicalSessionPinned?: (
+    sessionKey: string
+  ) => boolean;
 }
 
 export interface SessionManager {
@@ -147,6 +150,9 @@ export function createSessionManager(
   const sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
   const cleanupMs = options.cleanupMs ?? DEFAULT_CLEANUP_MS;
   const deleteGraceMs = options.deleteGraceMs ?? DEFAULT_DELETE_GRACE_MS;
+  const isLogicalSessionPinned =
+    options.isLogicalSessionPinned ??
+    (() => false);
   const sessions = new Map<string, McpSession>();
   const pending = new Map<string, McpSession>();
   const detached = new Map<string, McpSession>();
@@ -425,6 +431,115 @@ export function createSessionManager(
     return flight;
   }
 
+  async function ensureColdRecovered(
+    id: string,
+    logicalKey: string,
+    route: string,
+    protocolVersion: string,
+    sourceReq: Request
+  ): Promise<McpSession | undefined> {
+    const already = sessions.get(id);
+    if (already) {
+      return already.logicalSessionKey ===
+        logicalKey
+        ? already
+        : undefined;
+    }
+
+    const inFlight =
+      recoveryFlights.get(id);
+    if (inFlight) {
+      const recovered =
+        await inFlight;
+      return recovered?.logicalSessionKey ===
+        logicalKey
+        ? recovered
+        : undefined;
+    }
+
+    let flight!: Promise<
+      McpSession | undefined
+    >;
+    flight = (async () => {
+      const replacement =
+        await build(
+          id,
+          logicalKey,
+          true
+        );
+      pending.set(id, replacement);
+      transportLogical.set(
+        id,
+        logicalKey
+      );
+      transportIdentityBound.set(
+        id,
+        true
+      );
+
+      try {
+        if (
+          !(await warmup(
+            id,
+            route,
+            protocolVersion,
+            sourceReq
+          ))
+        ) {
+          removeTransport(
+            id,
+            "cold recovery warmup failed",
+            replacement.transport,
+            true
+          );
+          return undefined;
+        }
+
+        const recovered =
+          sessions.get(id);
+        if (
+          !recovered ||
+          recovered.transport !==
+            replacement.transport
+        ) {
+          return undefined;
+        }
+
+        touchTransport(id);
+        logContinuityDiagnostic(
+          "session_cold_recovered",
+          {
+            transport_session:
+              continuityFingerprint(id),
+            logical_session:
+              continuityFingerprint(
+                logicalKey
+              ),
+          }
+        );
+        return recovered;
+      } catch (error) {
+        removeTransport(
+          id,
+          "cold recovery exception",
+          replacement.transport,
+          true
+        );
+        throw error;
+      } finally {
+        if (
+          recoveryFlights.get(id) ===
+          flight
+        ) {
+          recoveryFlights.delete(id);
+        }
+      }
+    })();
+
+    recoveryFlights.set(id, flight);
+    return flight;
+  }
+
   function matchesTransportIdentity(id: string, req: Request): boolean {
     if (transportIdentityBound.get(id) !== true) return true;
     const expectedLogicalKey =
@@ -560,15 +675,66 @@ export function createSessionManager(
         recovery_target: continuityFingerprint(id),
       });
       if (isInitializeRequest(body)) return false;
-      if (!transportLogical.has(id) && !sessions.has(id) && !pending.has(id) && !detached.has(id)) {
-        return false;
-      }
-      const protocol = negotiateProtocol(req.headers["mcp-protocol-version"] as string | undefined);
+
+      const protocol = negotiateProtocol(
+        req.headers["mcp-protocol-version"] as
+          | string
+          | undefined
+      );
       const route = req.path || "/mcp";
-      const recovered = await ensureRecovered(id, route, protocol, req);
+      const known =
+        transportLogical.has(id) ||
+        sessions.has(id) ||
+        pending.has(id) ||
+        detached.has(id);
+
+      let recovered: McpSession | undefined;
+      if (known) {
+        recovered =
+          await ensureRecovered(
+            id,
+            route,
+            protocol,
+            req
+          );
+      } else {
+        const logicalKey =
+          logicalConversationKeyFromRequest(req);
+        if (!logicalKey) {
+          logContinuityRequest(
+            req,
+            "session_manager_cold_recovery_identity_missing",
+            {
+              recovery_target:
+                continuityFingerprint(id),
+            }
+          );
+          return false;
+        }
+
+        recovered =
+          await ensureColdRecovered(
+            id,
+            logicalKey,
+            route,
+            protocol,
+            req
+          );
+      }
+
       if (!recovered) return false;
-      const patched = patchSessionHeaders(req, id, protocol);
-      await enqueue(id, async () => recovered.transport.handleRequest(patched, res, body));
+      const patched = patchSessionHeaders(
+        req,
+        id,
+        protocol
+      );
+      await enqueue(id, async () =>
+        recovered!.transport.handleRequest(
+          patched,
+          res,
+          body
+        )
+      );
       touchTransport(id);
       return true;
     },
@@ -649,6 +815,13 @@ export function createSessionManager(
       cleanupTimer = setInterval(() => {
         const now = Date.now();
         for (const [logicalKey, lastAccessedAt] of logicalLastAccess) {
+          if (
+            isLogicalSessionPinned(
+              logicalKey
+            )
+          ) {
+            continue;
+          }
           if (now - lastAccessedAt <= sessionTtlMs) continue;
           void expireLogical(logicalKey);
         }

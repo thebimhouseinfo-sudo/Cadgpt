@@ -36,6 +36,12 @@ namespace CadGpt.AutoCad
         private AddinDrawingSummary? _lastConfirmedBoundDrawing;
         private bool _boundDrawingClosed;
         private bool _bindingMismatch;
+        private int _boundMissingPolls;
+        private int _bindingMismatchPolls;
+        private DateTime _lastBindingTickUtc =
+            DateTime.UtcNow;
+        private bool _browserRecoveryInProgress;
+        private bool _preservePairOnDispose;
         private readonly Dictionary<string, string>
             _activeBackgroundJobs =
                 new Dictionary<string, string>(
@@ -110,6 +116,10 @@ namespace CadGpt.AutoCad
                     Browser_NavigationCompleted;
                 Browser.NavigationCompleted +=
                     Browser_NavigationCompleted;
+                Browser.CoreWebView2.ProcessFailed -=
+                    Browser_ProcessFailed;
+                Browser.CoreWebView2.ProcessFailed +=
+                    Browser_ProcessFailed;
 
                 Browser.CoreWebView2.Navigate(
                     WebViewProfile.StartupUrl);
@@ -190,6 +200,19 @@ namespace CadGpt.AutoCad
             object? sender,
             EventArgs e)
         {
+            var now = DateTime.UtcNow;
+            var suspendedGap =
+                now - _lastBindingTickUtc;
+            _lastBindingTickUtc = now;
+
+            if (
+                !_disposed &&
+                suspendedGap >
+                    TimeSpan.FromSeconds(15))
+            {
+                _ = RecoverAfterSuspensionAsync();
+            }
+
             if (_disposed || _pollInProgress)
             {
                 return;
@@ -286,8 +309,8 @@ namespace CadGpt.AutoCad
                         // session_ready=true is authoritative binding evidence.
                         // A temporary session/transport gap must never clear the
                         // last drawing that the add-in knows is bound.
-                        _lastConfirmedBoundDrawing =
-                            status.Drawing;
+                        SetConfirmedBoundDrawing(
+                            status.Drawing);
                     }
 
                     RefreshHeaderFromLocalContext(
@@ -298,15 +321,15 @@ namespace CadGpt.AutoCad
                     return;
                 }
 
-                // An invalid/old pair may be renewed, but it is not evidence
-                // that the drawing binding itself disappeared.
-                if (_pairExpiresUtc == DateTime.MinValue ||
-                    DateTime.UtcNow >= _pairExpiresUtc)
-                {
-                    _pairId = null;
-                    _control.ClearSavedPairId();
-                    await EnsurePairWindowAsync(token);
-                }
+                // paired=false is authoritative only for this pair id.
+                // Renew immediately after control-plane restart, but preserve
+                // the last confirmed drawing until a new session reports its
+                // binding so the header never turns into a transport warning.
+                _pairId = null;
+                _pairExpiresUtc =
+                    DateTime.MinValue;
+                _control.ClearSavedPairId();
+                await EnsurePairWindowAsync(token);
 
                 RefreshHeaderFromLocalContext(false);
             }
@@ -498,15 +521,14 @@ namespace CadGpt.AutoCad
                     "Human Power is active for the current CadGPT task.";
                 _boundDrawingClosed = false;
                 _bindingMismatch = false;
+                _boundMissingPolls = 0;
+                _bindingMismatchPolls = 0;
                 ApplyChromeTheme(true);
                 return;
             }
 
             var bound =
                 _lastConfirmedBoundDrawing;
-            var active =
-                ActiveDrawingIdentity();
-
             var displayName =
                 bound?.Name;
 
@@ -531,97 +553,205 @@ namespace CadGpt.AutoCad
                     ? bound!.FullName
                     : BoundDrawingText.Text;
 
-            _boundDrawingClosed =
-                bound != null &&
-                !BoundDrawingIsOpen(bound);
+            if (bound == null)
+            {
+                _boundDrawingClosed = false;
+                _bindingMismatch = false;
+                _boundMissingPolls = 0;
+                _bindingMismatchPolls = 0;
+                ApplyChromeTheme(false);
+                return;
+            }
 
-            _bindingMismatch =
-                bound != null &&
-                !_boundDrawingClosed &&
-                active != null &&
-                !DrawingMatches(bound, active);
+            if (!TryDrawingSnapshot(
+                    out var drawings,
+                    out var active))
+            {
+                // UNKNOWN local AutoCAD state: keep the last visual state.
+                // A transient DocumentManager failure is never proof that the
+                // bound drawing closed or that another tab became active.
+                ApplyChromeTheme(false);
+                return;
+            }
+
+            var boundOpen =
+                drawings.Any(
+                    drawing =>
+                        DrawingMatches(
+                            bound,
+                            drawing,
+                            drawings));
+
+            if (!boundOpen)
+            {
+                _boundMissingPolls += 1;
+                _bindingMismatchPolls = 0;
+                _bindingMismatch = false;
+                if (_boundMissingPolls >= 3)
+                {
+                    _boundDrawingClosed = true;
+                }
+                ApplyChromeTheme(false);
+                return;
+            }
+
+            _boundMissingPolls = 0;
+            _boundDrawingClosed = false;
+
+            if (active == null)
+            {
+                ApplyChromeTheme(false);
+                return;
+            }
+
+            if (DrawingMatches(
+                    bound,
+                    active,
+                    drawings))
+            {
+                _bindingMismatchPolls = 0;
+                _bindingMismatch = false;
+            }
+            else
+            {
+                _bindingMismatchPolls += 1;
+                if (_bindingMismatchPolls >= 2)
+                {
+                    _bindingMismatch = true;
+                }
+            }
 
             ApplyChromeTheme(false);
         }
 
-        private static bool BoundDrawingIsOpen(
-            AddinDrawingSummary bound)
+        private void SetConfirmedBoundDrawing(
+            AddinDrawingSummary? drawing)
         {
-            try
-            {
-                foreach (AcDocument document in
-                    AcApplication.DocumentManager)
-                {
-                    try
-                    {
-                        if (DrawingMatches(
-                            bound,
-                            DocumentIdentity(document)))
-                        {
-                            return true;
-                        }
-                    }
-                    catch
-                    {
-                        // A document can disappear while AutoCAD is closing it.
-                    }
-                }
+            var previousKey =
+                BoundDrawingKey(
+                    _lastConfirmedBoundDrawing);
+            var nextKey =
+                BoundDrawingKey(drawing);
 
-                return false;
-            }
-            catch
+            _lastConfirmedBoundDrawing =
+                drawing;
+
+            if (!string.Equals(
+                    previousKey,
+                    nextKey,
+                    StringComparison.OrdinalIgnoreCase))
             {
-                // Failure to inspect AutoCAD documents is not proof that the
-                // drawing closed. Preserve the last confirmed bound state.
-                return true;
+                _boundDrawingClosed = false;
+                _bindingMismatch = false;
+                _boundMissingPolls = 0;
+                _bindingMismatchPolls = 0;
             }
+        }
+
+        private static string BoundDrawingKey(
+            AddinDrawingSummary? drawing)
+        {
+            if (drawing == null)
+            {
+                return string.Empty;
+            }
+
+            return
+                DrawingIdentityMatcher.NormalizePath(
+                    drawing.FullName) ??
+                drawing.Name?.Trim() ??
+                string.Empty;
         }
 
         private static bool DrawingMatches(
             AddinDrawingSummary bound,
-            ActiveDrawingInfo? drawing)
+            ActiveDrawingInfo drawing,
+            IReadOnlyCollection<ActiveDrawingInfo>
+                openDrawings)
         {
-            if (drawing == null)
-            {
-                return false;
-            }
-
-            if (!string.IsNullOrWhiteSpace(
-                    bound.FullName) &&
-                !string.IsNullOrWhiteSpace(
-                    drawing.FullName))
-            {
-                return string.Equals(
-                    bound.FullName,
-                    drawing.FullName,
-                    StringComparison.OrdinalIgnoreCase);
-            }
-
-            return !string.IsNullOrWhiteSpace(
-                    bound.Name) &&
-                !string.IsNullOrWhiteSpace(
-                    drawing.Name) &&
-                string.Equals(
-                    bound.Name,
-                    drawing.Name,
-                    StringComparison.OrdinalIgnoreCase);
+            return DrawingIdentityMatcher.Matches(
+                new DrawingIdentityValue
+                {
+                    Name = bound.Name,
+                    FullName = bound.FullName,
+                },
+                new DrawingIdentityValue
+                {
+                    Name = drawing.Name,
+                    FullName = drawing.FullName,
+                },
+                openDrawings
+                    .Select(
+                        item =>
+                            new DrawingIdentityValue
+                            {
+                                Name = item.Name,
+                                FullName =
+                                    item.FullName,
+                            })
+                    .ToList());
         }
 
-        private static ActiveDrawingInfo?
-            ActiveDrawingIdentity()
+        private static bool TryDrawingSnapshot(
+            out List<ActiveDrawingInfo> drawings,
+            out ActiveDrawingInfo? active)
         {
+            drawings =
+                new List<ActiveDrawingInfo>();
+            active = null;
+
             try
             {
-                var document =
-                    AcApplication.DocumentManager
-                        .MdiActiveDocument;
-                return document == null
-                    ? null
-                    : DocumentIdentity(document);
+                var manager =
+                    AcApplication.DocumentManager;
+                var activeDocument =
+                    manager.MdiActiveDocument;
+                var partialFailure = false;
+
+                foreach (AcDocument document in manager)
+                {
+                    try
+                    {
+                        var identity =
+                            DocumentIdentity(
+                                document);
+                        drawings.Add(identity);
+                        if (
+                            activeDocument != null &&
+                            ReferenceEquals(
+                                document,
+                                activeDocument))
+                        {
+                            active = identity;
+                        }
+                    }
+                    catch
+                    {
+                        partialFailure = true;
+                    }
+                }
+
+                if (partialFailure)
+                {
+                    return false;
+                }
+
+                if (
+                    active == null &&
+                    activeDocument != null)
+                {
+                    active =
+                        DocumentIdentity(
+                            activeDocument);
+                }
+
+                return true;
             }
             catch
             {
-                return null;
+                drawings.Clear();
+                active = null;
+                return false;
             }
         }
 
@@ -645,6 +775,111 @@ namespace CadGpt.AutoCad
                         ? null
                         : filename.Trim(),
             };
+        }
+
+        private async void Browser_ProcessFailed(
+            object? sender,
+            CoreWebView2ProcessFailedEventArgs e)
+        {
+            await SchedulePaletteRecoveryAsync(
+                "WEBVIEW_PROCESS_FAILED");
+        }
+
+        private async Task RecoverAfterSuspensionAsync()
+        {
+            if (
+                _disposed ||
+                _browserRecoveryInProgress)
+            {
+                return;
+            }
+
+            _browserRecoveryInProgress = true;
+            try
+            {
+                await Task.Delay(
+                    TimeSpan.FromSeconds(2),
+                    _actionCts.Token);
+
+                try
+                {
+                    await PollBindingStatusAsync(
+                        _actionCts.Token);
+                }
+                catch (
+                    AddinControlException)
+                {
+                }
+
+                if (
+                    _disposed ||
+                    Browser.CoreWebView2 == null)
+                {
+                    return;
+                }
+
+                Browser.CoreWebView2.Reload();
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch
+            {
+                _browserRecoveryInProgress =
+                    false;
+                await SchedulePaletteRecoveryAsync(
+                    "WEBVIEW_RESUME_RECOVERY_FAILED");
+            }
+            finally
+            {
+                _browserRecoveryInProgress = false;
+            }
+        }
+
+        private async Task SchedulePaletteRecoveryAsync(
+            string reason)
+        {
+            if (
+                _disposed ||
+                _browserRecoveryInProgress)
+            {
+                return;
+            }
+
+            _browserRecoveryInProgress = true;
+            try
+            {
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(500),
+                    _actionCts.Token);
+                if (_disposed)
+                {
+                    return;
+                }
+
+                Dispatcher.BeginInvoke(
+                    new Action(
+                        () =>
+                        {
+                            if (!_disposed)
+                            {
+                                PaletteController.Recreate();
+                            }
+                        }),
+                    DispatcherPriority.Background);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                _browserRecoveryInProgress = false;
+            }
+        }
+
+        internal void PreservePairForRecreate()
+        {
+            _preservePairOnDispose = true;
         }
 
         private async void ThemeButton_Click(
@@ -824,6 +1059,11 @@ namespace CadGpt.AutoCad
                 Browser_PreviewMouseDown;
             Browser.NavigationCompleted -=
                 Browser_NavigationCompleted;
+            if (Browser.CoreWebView2 != null)
+            {
+                Browser.CoreWebView2.ProcessFailed -=
+                    Browser_ProcessFailed;
+            }
 
             if (_bindingTimer != null)
             {
@@ -831,6 +1071,33 @@ namespace CadGpt.AutoCad
                 _bindingTimer.Tick -=
                     BindingTimer_Tick;
                 _bindingTimer = null;
+            }
+
+            if (
+                !_preservePairOnDispose &&
+                !string.IsNullOrWhiteSpace(
+                    _pairId))
+            {
+                var pairToRelease = _pairId;
+                _control.ClearSavedPairId();
+                _ = Task.Run(
+                    async () =>
+                    {
+                        using (var releaseCts =
+                            new CancellationTokenSource(
+                                TimeSpan.FromSeconds(2)))
+                        {
+                            try
+                            {
+                                await _control.ReleasePairAsync(
+                                    pairToRelease!,
+                                    releaseCts.Token);
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    });
             }
 
             try
