@@ -112,6 +112,30 @@ test("Reasoning Job runtime isolates raw data and publishes only explicit final 
       );
     };
 
+    const staleRoot = path.join(
+      tempRoot,
+      "workspace",
+      "job-run",
+      "stale-job",
+      "orphaned"
+    );
+    await fs.mkdir(staleRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(staleRoot, ".cadgpt-job-workspace.json"),
+      JSON.stringify({
+        version: 1,
+        execution_id: "exec:dead",
+        job_id: "stale-job",
+        process_id: 99999999,
+      }),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(staleRoot, "raw.json"),
+      "{}\n",
+      "utf8"
+    );
+
     const startedA = await invoke(
       "job_working_location",
       "job-authoring",
@@ -119,6 +143,11 @@ test("Reasoning Job runtime isolates raw data and publishes only explicit final 
       "job-a"
     );
     assert.equal(startedA.isError, undefined, JSON.stringify(startedA));
+    assert.equal(
+      await fs.stat(staleRoot).then(() => true, () => false),
+      false,
+      "starting any new Job run must prune orphaned raw workspace history"
+    );
     const rootA = startedA.structuredContent.data.absolute_path;
 
     const runtimeLisp = path.join(
@@ -289,6 +318,104 @@ test("Reasoning Job runtime isolates raw data and publishes only explicit final 
     assert.equal(ended.isError, undefined, JSON.stringify(ended));
     assert.equal(
       await fs.stat(rootB).then(() => true, () => false),
+      false
+    );
+
+    const draftPath = path.join(
+      tempRoot,
+      "workspace",
+      "job-draft",
+      "jobs",
+      "draft-reasoning",
+      "JOB.md"
+    );
+    await fs.mkdir(path.dirname(draftPath), { recursive: true });
+    await fs.writeFile(
+      draftPath,
+      "# Job: Draft Reasoning\n",
+      "utf8"
+    );
+    const draftStarted = await invoke(
+      "job_working_location",
+      "job-authoring",
+      {
+        job_id: "draft-reasoning",
+        draft_path: draftPath,
+      },
+      "draft-reasoning"
+    );
+    assert.equal(
+      draftStarted.isError,
+      undefined,
+      JSON.stringify(draftStarted)
+    );
+    const draftRoot =
+      draftStarted.structuredContent.data.absolute_path;
+
+    const unknownNoDraft = await invoke(
+      "job_working_location",
+      "job-authoring",
+      { job_id: "unknown-reasoning" },
+      "unknown-reasoning"
+    );
+    assert.equal(
+      unknownNoDraft.isError,
+      true,
+      JSON.stringify(unknownNoDraft)
+    );
+    assert.match(
+      JSON.stringify(unknownNoDraft),
+      /JOB_DRAFT_PATH_REQUIRED/
+    );
+
+    const directDraftPath = path.join(
+      tempRoot,
+      "workspace",
+      "job-draft",
+      "jobs",
+      "draft-direct",
+      "draft-direct.py"
+    );
+    await fs.mkdir(path.dirname(directDraftPath), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      directDraftPath,
+      "print('direct')\n",
+      "utf8"
+    );
+    const directDraftDenied = await invoke(
+      "job_working_location",
+      "job-authoring",
+      {
+        job_id: "draft-direct",
+        draft_path: directDraftPath,
+      },
+      "draft-direct"
+    );
+    assert.equal(
+      directDraftDenied.isError,
+      true,
+      JSON.stringify(directDraftDenied)
+    );
+    assert.match(
+      JSON.stringify(directDraftDenied),
+      /JOB_DRAFT_REASONING_REQUIRED/
+    );
+
+    const draftEnded = await invoke(
+      "job_runtime_end",
+      "job-authoring",
+      { job_id: "draft-reasoning" },
+      "draft-reasoning"
+    );
+    assert.equal(
+      draftEnded.isError,
+      undefined,
+      JSON.stringify(draftEnded)
+    );
+    assert.equal(
+      await fs.stat(draftRoot).then(() => true, () => false),
       false
     );
 
