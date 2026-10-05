@@ -431,6 +431,115 @@ export function createSessionManager(
     return flight;
   }
 
+  async function ensureColdRecovered(
+    id: string,
+    logicalKey: string,
+    route: string,
+    protocolVersion: string,
+    sourceReq: Request
+  ): Promise<McpSession | undefined> {
+    const already = sessions.get(id);
+    if (already) {
+      return already.logicalSessionKey ===
+        logicalKey
+        ? already
+        : undefined;
+    }
+
+    const inFlight =
+      recoveryFlights.get(id);
+    if (inFlight) {
+      const recovered =
+        await inFlight;
+      return recovered?.logicalSessionKey ===
+        logicalKey
+        ? recovered
+        : undefined;
+    }
+
+    let flight!: Promise<
+      McpSession | undefined
+    >;
+    flight = (async () => {
+      const replacement =
+        await build(
+          id,
+          logicalKey,
+          true
+        );
+      pending.set(id, replacement);
+      transportLogical.set(
+        id,
+        logicalKey
+      );
+      transportIdentityBound.set(
+        id,
+        true
+      );
+
+      try {
+        if (
+          !(await warmup(
+            id,
+            route,
+            protocolVersion,
+            sourceReq
+          ))
+        ) {
+          removeTransport(
+            id,
+            "cold recovery warmup failed",
+            replacement.transport,
+            true
+          );
+          return undefined;
+        }
+
+        const recovered =
+          sessions.get(id);
+        if (
+          !recovered ||
+          recovered.transport !==
+            replacement.transport
+        ) {
+          return undefined;
+        }
+
+        touchTransport(id);
+        logContinuityDiagnostic(
+          "session_cold_recovered",
+          {
+            transport_session:
+              continuityFingerprint(id),
+            logical_session:
+              continuityFingerprint(
+                logicalKey
+              ),
+          }
+        );
+        return recovered;
+      } catch (error) {
+        removeTransport(
+          id,
+          "cold recovery exception",
+          replacement.transport,
+          true
+        );
+        throw error;
+      } finally {
+        if (
+          recoveryFlights.get(id) ===
+          flight
+        ) {
+          recoveryFlights.delete(id);
+        }
+      }
+    })();
+
+    recoveryFlights.set(id, flight);
+    return flight;
+  }
+
   function matchesTransportIdentity(id: string, req: Request): boolean {
     if (transportIdentityBound.get(id) !== true) return true;
     const expectedLogicalKey =
@@ -603,69 +712,14 @@ export function createSessionManager(
           return false;
         }
 
-        const replacement =
-          await build(
+        recovered =
+          await ensureColdRecovered(
             id,
             logicalKey,
-            true
+            route,
+            protocol,
+            req
           );
-        pending.set(id, replacement);
-        transportLogical.set(
-          id,
-          logicalKey
-        );
-        transportIdentityBound.set(
-          id,
-          true
-        );
-
-        try {
-          if (
-            !(await warmup(
-              id,
-              route,
-              protocol,
-              req
-            ))
-          ) {
-            removeTransport(
-              id,
-              "cold recovery warmup failed",
-              replacement.transport,
-              true
-            );
-            return false;
-          }
-          recovered =
-            sessions.get(id);
-          if (
-            !recovered ||
-            recovered.transport !==
-              replacement.transport
-          ) {
-            return false;
-          }
-          touchTransport(id);
-          logContinuityDiagnostic(
-            "session_cold_recovered",
-            {
-              transport_session:
-                continuityFingerprint(id),
-              logical_session:
-                continuityFingerprint(
-                  logicalKey
-                ),
-            }
-          );
-        } catch (error) {
-          removeTransport(
-            id,
-            "cold recovery exception",
-            replacement.transport,
-            true
-          );
-          throw error;
-        }
       }
 
       if (!recovered) return false;
