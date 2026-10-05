@@ -33,12 +33,40 @@ function jobRootKey(jobRoot: string): string {
     : resolved;
 }
 
-function managedJobRootForFile(jobFile: string): string {
-  const absolute = path.resolve(jobFile);
+async function canonicalExistingPath(
+  target: string
+): Promise<string> {
+  try {
+    return await fs.realpath(target);
+  } catch (error) {
+    if (
+      (error as NodeJS.ErrnoException).code ===
+      "ENOENT"
+    ) {
+      return path.resolve(target);
+    }
+    throw error;
+  }
+}
+
+async function managedJobRootForFile(
+  jobFile: string
+): Promise<string> {
+  const absolute =
+    await canonicalExistingPath(jobFile);
   const root = path.dirname(absolute);
+  const [librariesRoot, draftRoot] =
+    await Promise.all([
+      canonicalExistingPath(
+        getJobLibrariesRoot()
+      ),
+      canonicalExistingPath(
+        getJobDraftRoot()
+      ),
+    ]);
   if (
-    !isPathInside(root, getJobLibrariesRoot()) &&
-    !isPathInside(root, getJobDraftRoot())
+    !isPathInside(root, librariesRoot) &&
+    !isPathInside(root, draftRoot)
   ) {
     throw new Error(
       "JOB_RUNTIME_SCOPE: Job runtime must belong to one managed Job library or Job draft package."
@@ -146,7 +174,8 @@ export async function prepareJobRuntimeForExecution(
   jobId: string,
   jobFile: string
 ): Promise<JobRuntimeContext> {
-  const jobRoot = managedJobRootForFile(jobFile);
+  const jobRoot =
+    await managedJobRootForFile(jobFile);
   const runtimeRoot = path.join(jobRoot, "runtime");
   const current =
     contextsByExecution.get(executionId);
