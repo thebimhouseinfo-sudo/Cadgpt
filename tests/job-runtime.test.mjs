@@ -94,9 +94,16 @@ test("active Job runtime resets scratch and narrows file writes to its runtime/r
         jobA
       );
     assert.equal(
-      path.resolve(runtime.runtime_root),
       path.resolve(
-        path.join(path.dirname(jobA), "runtime")
+        await fs.realpath(runtime.runtime_root)
+      ),
+      path.resolve(
+        await fs.realpath(
+          path.join(
+            path.dirname(jobA),
+            "runtime"
+          )
+        )
       )
     );
 
