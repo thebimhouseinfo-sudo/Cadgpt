@@ -9,7 +9,7 @@ import { isPathInside, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { currentToolLease } from "../lib/work-registration.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
-import { ensureJobWorkspaceForExecution } from "../runtime/job-workspace.js";
+import { jobWorkspaceForExecution } from "../runtime/job-workspace.js";
 import { listBundledLispEntries, resolveBundledLispPath } from "../lib/bundled-assets.js";
 import { resolveRegisteredAssetPath } from "./user-assets.js";
 import { validateLispSource } from "./lisp-harness.js";
@@ -119,10 +119,20 @@ async function jobTarget(
   relativePath: string
 ): Promise<{ job_root: string; target: string; relative_path: string }> {
   const lease = currentToolLease();
-  const workspace = await ensureJobWorkspaceForExecution(
-    lease.workId,
-    job.id
-  );
+  const workspace = jobWorkspaceForExecution(lease.workId);
+  if (!workspace) {
+    throw new Error(
+      "JOB_WORKSPACE_REQUIRED: call job_working_location before using Job dynamic Lisp."
+    );
+  }
+  if (
+    workspace.job_id.toLowerCase() !==
+    job.id.trim().toLowerCase()
+  ) {
+    throw new Error(
+      `JOB_WORKSPACE_OWNER_MISMATCH: active runtime belongs to '${workspace.job_id}', not '${job.id}'.`
+    );
+  }
   const jobRoot = workspace.root;
   const relative = safeDynamicRelative(relativePath);
   const target = path.resolve(jobRoot, relative);
@@ -505,7 +515,7 @@ export function registerJobDynamicLispTools(server: McpServer): void {
               applied,
               preserved_unmatched_source: true,
               rule:
-                "Only exact declared dynamic sections were replaced; reuse this persisted Job copy on the next run.",
+                "Only exact declared dynamic sections were replaced; reuse this current-run Job copy only within the same run.",
             });
           }
         );
