@@ -89,7 +89,8 @@ test("Reasoning Job runtime isolates raw data and publishes only explicit final 
     const end = callbacks.get("job_runtime_end");
     const publish = callbacks.get("job_publish_result");
     const fileCreate = callbacks.get("file_create");
-    assert.ok(begin && end && publish && fileCreate);
+    const fileRead = callbacks.get("file_read");
+    assert.ok(begin && end && publish && fileCreate && fileRead);
 
     work = createWorkRegistration({
       sessionKey,
@@ -351,6 +352,68 @@ test("Reasoning Job runtime isolates raw data and publishes only explicit final 
     );
     const draftRoot =
       draftStarted.structuredContent.data.absolute_path;
+
+    const draftRead = await invoke(
+      "file_read",
+      "filesystem",
+      { path: draftPath },
+      draftPath
+    );
+    assert.equal(
+      draftRead.isError,
+      undefined,
+      JSON.stringify(draftRead)
+    );
+    assert.match(
+      draftRead.structuredContent.data.content,
+      /Draft Reasoning/
+    );
+
+    const draftMutation = await invoke(
+      "file_create",
+      "filesystem",
+      {
+        path: path.join(
+          path.dirname(draftPath),
+          "runtime-should-not-write.txt"
+        ),
+        content: "no\n",
+      },
+      path.dirname(draftPath)
+    );
+    assert.equal(
+      draftMutation.isError,
+      true,
+      JSON.stringify(draftMutation)
+    );
+
+    const otherDraftPath = path.join(
+      tempRoot,
+      "workspace",
+      "job-draft",
+      "jobs",
+      "other-draft",
+      "JOB.md"
+    );
+    await fs.mkdir(path.dirname(otherDraftPath), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      otherDraftPath,
+      "# Job: Other Draft\n",
+      "utf8"
+    );
+    const otherDraftRead = await invoke(
+      "file_read",
+      "filesystem",
+      { path: otherDraftPath },
+      otherDraftPath
+    );
+    assert.equal(
+      otherDraftRead.isError,
+      true,
+      JSON.stringify(otherDraftRead)
+    );
 
     const unknownNoDraft = await invoke(
       "job_working_location",
