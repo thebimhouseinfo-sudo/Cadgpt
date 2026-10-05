@@ -764,6 +764,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
         let jobId: string;
         let jobFile: string;
         if (id) {
+          await assertJobLocalCompatReady(
+            "running a User Reasoning Job"
+          );
           const jobs = await loadJobs();
           const entry = jobs.find(
             (job) =>
