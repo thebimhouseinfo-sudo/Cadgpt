@@ -87,3 +87,18 @@ For every mapped executor, record whether it:
 - requires manual interaction.
 
 This informs the implementation test and approval boundary.
+
+
+## Independent post-CAD processing tail
+
+Do not add Registry metadata for a background/backend Job and do not make CadGPT infer one.
+
+When the agreed Job workflow has a tail that can continue only after all CAD-dependent data has already been collected:
+
+1. keep the CAD-dependent work in the normal foreground Job flow;
+2. resolve any required final `drawing_job_result_location` before handoff;
+3. insert `job_system_acquire(id=<job-id>)` at the exact boundary where the remaining work is independent of CAD;
+4. use the returned canonical `tool_id` (the Job id itself) for detached `file_*` processing;
+5. guarantee `job_system_release(tool_id=<job-id>)` in the tail's completion/failure cleanup path.
+
+Jobs without such an independent tail are unchanged. Do not add SYSTEM leasing merely because a Job uses file tools during its ordinary foreground execution.

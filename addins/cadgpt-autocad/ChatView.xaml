@@ -7,6 +7,7 @@
     <Grid x:Name="RootGrid" Background="White">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -40,7 +41,28 @@
             </Grid>
         </Border>
 
+        <Border x:Name="JobTickerBorder"
+                Grid.Row="1"
+                Padding="8,3"
+                Visibility="Collapsed"
+                ClipToBounds="True"
+                BorderThickness="0,0,0,1"
+                BorderBrush="#22000000">
+            <Grid x:Name="JobTickerViewport"
+                  ClipToBounds="True">
+                <TextBlock x:Name="JobTickerText"
+                           HorizontalAlignment="Left"
+                           VerticalAlignment="Center"
+                           FontSize="11"
+                           TextWrapping="NoWrap">
+                    <TextBlock.RenderTransform>
+                        <TranslateTransform x:Name="JobTickerTransform" />
+                    </TextBlock.RenderTransform>
+                </TextBlock>
+            </Grid>
+        </Border>
+
         <wv2:WebView2 x:Name="Browser"
-                      Grid.Row="1" />
+                      Grid.Row="2" />
     </Grid>
 </UserControl>

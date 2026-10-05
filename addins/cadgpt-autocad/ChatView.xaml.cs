@@ -1,11 +1,14 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using CadGpt.AutoCad.Stage0;
 using Microsoft.Web.WebView2.Core;
@@ -33,6 +36,14 @@ namespace CadGpt.AutoCad
         private AddinDrawingSummary? _lastConfirmedBoundDrawing;
         private bool _boundDrawingClosed;
         private bool _bindingMismatch;
+        private readonly Dictionary<string, string>
+            _activeBackgroundJobs =
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, BackgroundDoneState>
+            _doneBackgroundJobs =
+                new Dictionary<string, BackgroundDoneState>(
+                    StringComparer.OrdinalIgnoreCase);
 
         public ChatView()
         {
@@ -282,6 +293,8 @@ namespace CadGpt.AutoCad
                     RefreshHeaderFromLocalContext(
                         status.SessionReady &&
                         status.HumanPower);
+                    RefreshBackgroundJobs(
+                        status.BackgroundJobs);
                     return;
                 }
 
@@ -310,6 +323,168 @@ namespace CadGpt.AutoCad
                     await EnsurePairWindowAsync(token);
                 }
             }
+        }
+
+
+        private void RefreshBackgroundJobs(
+            IList<AddinBackgroundJobSummary>? jobs)
+        {
+            var now = DateTime.UtcNow;
+            var incoming =
+                (jobs ??
+                 new List<AddinBackgroundJobSummary>())
+                .Where(
+                    job =>
+                        !string.IsNullOrWhiteSpace(
+                            job.JobId))
+                .GroupBy(
+                    job => job.JobId,
+                    StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group =>
+                        string.IsNullOrWhiteSpace(
+                            group.First().JobName)
+                            ? group.Key
+                            : group.First().JobName,
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var active in
+                _activeBackgroundJobs.ToArray())
+            {
+                if (incoming.ContainsKey(active.Key))
+                {
+                    continue;
+                }
+
+                _doneBackgroundJobs[active.Key] =
+                    new BackgroundDoneState
+                    {
+                        Name = active.Value,
+                        ExpiresUtc =
+                            now.AddSeconds(3),
+                    };
+            }
+
+            _activeBackgroundJobs.Clear();
+            foreach (var job in incoming)
+            {
+                _activeBackgroundJobs[job.Key] =
+                    job.Value;
+                _doneBackgroundJobs.Remove(job.Key);
+            }
+
+            foreach (var done in
+                _doneBackgroundJobs.ToArray())
+            {
+                if (done.Value.ExpiresUtc <= now)
+                {
+                    _doneBackgroundJobs.Remove(
+                        done.Key);
+                }
+            }
+
+            var labels =
+                _activeBackgroundJobs
+                    .OrderBy(
+                        job => job.Value,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(
+                        job =>
+                            job.Value +
+                            " — Processing")
+                    .Concat(
+                        _doneBackgroundJobs
+                            .OrderBy(
+                                job =>
+                                    job.Value.Name,
+                                StringComparer.OrdinalIgnoreCase)
+                            .Select(
+                                job =>
+                                    job.Value.Name +
+                                    " — Done"))
+                    .ToList();
+
+            if (labels.Count == 0)
+            {
+                JobTickerTransform.BeginAnimation(
+                    TranslateTransform.XProperty,
+                    null);
+                JobTickerTransform.X = 0;
+                JobTickerText.Text =
+                    string.Empty;
+                JobTickerBorder.Visibility =
+                    Visibility.Collapsed;
+                return;
+            }
+
+            JobTickerText.Text =
+                string.Join(
+                    "   •   ",
+                    labels);
+            JobTickerBorder.Visibility =
+                Visibility.Visible;
+            AnimateJobTicker(
+                labels.Count > 1);
+        }
+
+        private void AnimateJobTicker(
+            bool shouldScroll)
+        {
+            JobTickerTransform.BeginAnimation(
+                TranslateTransform.XProperty,
+                null);
+            JobTickerTransform.X = 0;
+
+            if (!shouldScroll)
+            {
+                return;
+            }
+
+            Dispatcher.BeginInvoke(
+                new Action(() =>
+                {
+                    if (
+                        _disposed ||
+                        JobTickerBorder.Visibility !=
+                            Visibility.Visible)
+                    {
+                        return;
+                    }
+
+                    var viewportWidth =
+                        JobTickerViewport.ActualWidth;
+                    var textWidth =
+                        JobTickerText.ActualWidth;
+                    if (
+                        viewportWidth <= 0 ||
+                        textWidth <= 0)
+                    {
+                        return;
+                    }
+
+                    var distance =
+                        viewportWidth +
+                        textWidth;
+                    var seconds =
+                        Math.Max(
+                            8.0,
+                            distance / 35.0);
+                    var animation =
+                        new DoubleAnimation(
+                            viewportWidth,
+                            -textWidth,
+                            TimeSpan.FromSeconds(
+                                seconds))
+                        {
+                            RepeatBehavior =
+                                RepeatBehavior.Forever,
+                        };
+                    JobTickerTransform.BeginAnimation(
+                        TranslateTransform.XProperty,
+                        animation);
+                }),
+                DispatcherPriority.Loaded);
         }
 
         private void RefreshHeaderFromLocalContext(
@@ -533,6 +708,12 @@ namespace CadGpt.AutoCad
 
             RootGrid.Background = rootBackground;
             ToolbarBorder.BorderBrush = border;
+            JobTickerBorder.Background =
+                rootBackground;
+            JobTickerBorder.BorderBrush =
+                border;
+            JobTickerText.Foreground =
+                buttonForeground;
 
             ThemeButton.Background =
                 buttonBackground;
@@ -665,6 +846,13 @@ namespace CadGpt.AutoCad
             Browser.Dispose();
             _lifecycle.CompleteDispose(
                 generation);
+        }
+
+        private sealed class BackgroundDoneState
+        {
+            public string Name { get; set; } =
+                string.Empty;
+            public DateTime ExpiresUtc { get; set; }
         }
 
         private sealed class ActiveDrawingInfo

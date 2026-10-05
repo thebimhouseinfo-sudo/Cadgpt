@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Runtime.Serialization;
@@ -36,6 +37,16 @@ namespace CadGpt.AutoCad.Stage0
     }
 
     [DataContract]
+    internal sealed class AddinBackgroundJobSummary
+    {
+        [DataMember(Name = "job_id")]
+        public string JobId { get; set; } = string.Empty;
+
+        [DataMember(Name = "job_name")]
+        public string JobName { get; set; } = string.Empty;
+    }
+
+    [DataContract]
     internal sealed class AddinBindingResponse
     {
         [DataMember(Name = "ok")]
@@ -61,6 +72,10 @@ namespace CadGpt.AutoCad.Stage0
 
         [DataMember(Name = "human_power")]
         public bool HumanPower { get; set; }
+
+        [DataMember(Name = "background_jobs")]
+        public List<AddinBackgroundJobSummary> BackgroundJobs { get; set; } =
+            new List<AddinBackgroundJobSummary>();
 
         [DataMember(Name = "error")]
         public string Error { get; set; } = string.Empty;

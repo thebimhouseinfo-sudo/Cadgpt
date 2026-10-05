@@ -23,8 +23,14 @@ export interface JobRuntimeContext {
 
 const contextsByExecution =
   new Map<string, JobRuntimeContext>();
+const contextsBySystemToolId =
+  new Map<string, JobRuntimeContext>();
 const executionByJobRoot =
   new Map<string, string>();
+
+function systemToolKey(toolId: string): string {
+  return toolId.trim().toLowerCase();
+}
 
 function jobRootKey(jobRoot: string): string {
   const resolved = path.resolve(jobRoot);
@@ -120,19 +126,10 @@ export function jobRuntimeWritableRootsForExecution(
   ];
 }
 
-export async function cleanupJobRuntimeForExecution(
-  executionId: string
+async function cleanupJobRuntimeContext(
+  context: JobRuntimeContext,
+  ownerId: string
 ): Promise<Record<string, unknown>> {
-  const context =
-    contextsByExecution.get(executionId);
-  contextsByExecution.delete(executionId);
-  if (!context) {
-    return {
-      active: false,
-      removed_empty_result_roots: 0,
-    };
-  }
-
   let removedEmptyResultRoots = 0;
   const jobsParents = new Set<string>();
   try {
@@ -157,16 +154,83 @@ export async function cleanupJobRuntimeForExecution(
         removedEmptyResultRoots,
     };
   } finally {
-    const rootKey = jobRootKey(
-      context.job_root
-    );
-    if (
-      executionByJobRoot.get(rootKey) ===
-      executionId
-    ) {
+    const rootKey = jobRootKey(context.job_root);
+    if (executionByJobRoot.get(rootKey) === ownerId) {
       executionByJobRoot.delete(rootKey);
     }
   }
+}
+
+export function detachJobRuntimeForSystemLease(
+  executionId: string,
+  toolId: string
+): JobRuntimeContext {
+  const context = contextsByExecution.get(executionId);
+  if (!context) {
+    throw new Error(
+      "JOB_RUNTIME_NOT_PREPARED: call job_runtime_prepare before acquiring a Job SYSTEM lease."
+    );
+  }
+  if (
+    context.job_id.toLowerCase() !==
+    toolId.trim().toLowerCase()
+  ) {
+    throw new Error(
+      `SYSTEM_LEASE_JOB_MISMATCH: active Job '${context.job_id}' cannot acquire tool_id '${toolId}'.`
+    );
+  }
+
+  const key = systemToolKey(toolId);
+  if (contextsBySystemToolId.has(key)) {
+    throw new Error(
+      `SYSTEM_LEASE_BUSY: Job SYSTEM runtime '${toolId}' is already active.`
+    );
+  }
+
+  const rootKey = jobRootKey(context.job_root);
+  if (executionByJobRoot.get(rootKey) !== executionId) {
+    throw new Error(
+      "JOB_RUNTIME_OWNERSHIP_LOST: foreground execution no longer owns this Job runtime."
+    );
+  }
+
+  contextsByExecution.delete(executionId);
+  contextsBySystemToolId.set(key, context);
+  executionByJobRoot.set(rootKey, `system:${key}`);
+  return context;
+}
+
+export async function cleanupJobRuntimeForSystemLease(
+  toolId: string
+): Promise<Record<string, unknown>> {
+  const key = systemToolKey(toolId);
+  const context = contextsBySystemToolId.get(key);
+  contextsBySystemToolId.delete(key);
+  if (!context) {
+    return {
+      active: false,
+      removed_empty_result_roots: 0,
+    };
+  }
+  return cleanupJobRuntimeContext(
+    context,
+    `system:${key}`
+  );
+}
+
+export async function cleanupJobRuntimeForExecution(
+  executionId: string
+): Promise<Record<string, unknown>> {
+  const context =
+    contextsByExecution.get(executionId);
+  contextsByExecution.delete(executionId);
+  if (!context) {
+    return {
+      active: false,
+      removed_empty_result_roots: 0,
+    };
+  }
+  return cleanupJobRuntimeContext(context, executionId);
 }
 
 export async function prepareJobRuntimeForExecution(
