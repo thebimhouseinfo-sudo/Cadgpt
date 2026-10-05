@@ -528,6 +528,7 @@ async function executeDirectJobScript(
     CADGPT_REPO_ROOT: getRepoRoot(),
     CADGPT_BUNDLED_LISP_ROOT: getBundledLispLibrariesRoot(),
     CADGPT_DIRECT_JOB_NO_FILE_OUTPUT: "1",
+    PYTHONDONTWRITEBYTECODE: "1",
     ...(drawing
       ? {
           CADGPT_DRAWING_ID: drawing.drawing_id,
@@ -546,10 +547,15 @@ async function executeDirectJobScript(
   );
   const scratchCwd = path.join(scratchContainer, "cwd");
   await fs.mkdir(scratchCwd);
+  const scratchScript = path.join(
+    scratchCwd,
+    path.basename(script)
+  );
+  await fs.copyFile(script, scratchScript);
 
   try {
     const execute = () =>
-      execFileAsync(python, [script, ...args], {
+      execFileAsync(python, [scratchScript, ...args], {
         cwd: scratchCwd,
         env,
         windowsHide: true,
@@ -560,9 +566,15 @@ async function executeDirectJobScript(
       ? await withCadHostLock(drawing.host, execute)
       : await execute();
 
+    const allowedScratchEntries = new Set([
+      "cwd",
+      `cwd/${path.basename(scratchScript)}`,
+    ]);
     const scratchEntries = (
       await directJobScratchEntries(scratchContainer)
-    ).filter((entry) => entry !== "cwd");
+    ).filter(
+      (entry) => !allowedScratchEntries.has(entry)
+    );
     if (scratchEntries.length > 0) {
       throw new Error(
         "DIRECT_JOB_DATA_FORBIDDEN: Direct Jobs are execution-only and must not leave file/directory output. Use a Reasoning/Dynamic Job when runtime data is required. Created: " +
