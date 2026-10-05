@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import {
+  getAppDataPath,
   getJobDraftRoot,
   getJobLibrariesRoot,
   getUserCapabilitiesPath,
@@ -468,6 +469,44 @@ async function assertDirectJobPythonReady(python: string): Promise<void> {
   }
 }
 
+function directJobEnvironment(): NodeJS.ProcessEnv {
+  const allowed = new Set([
+    "path",
+    "pathext",
+    "systemroot",
+    "windir",
+    "temp",
+    "tmp",
+    "comspec",
+    "userprofile",
+    "home",
+    "lang",
+    "lc_all",
+  ]);
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && allowed.has(key.toLowerCase())) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
+async function directJobScratchEntries(root: string): Promise<string[]> {
+  const entries: string[] = [];
+  const walk = async (current: string): Promise<void> => {
+    const children = await fs.readdir(current, { withFileTypes: true });
+    for (const child of children) {
+      const absolute = path.join(current, child.name);
+      const relative = path.relative(root, absolute).replaceAll("\\", "/");
+      entries.push(relative);
+      if (child.isDirectory()) await walk(absolute);
+    }
+  };
+  await walk(root);
+  return entries;
+}
+
 async function executeDirectJobScript(
   script: string,
   args: string[],
@@ -483,11 +522,12 @@ async function executeDirectJobScript(
   }
   const drawing = drawings[0];
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...directJobEnvironment(),
     CADGPT_EXECUTION_ID: lease.workId,
     CADGPT_JOB_ID: jobId,
     CADGPT_REPO_ROOT: getRepoRoot(),
     CADGPT_BUNDLED_LISP_ROOT: getBundledLispLibrariesRoot(),
+    CADGPT_DIRECT_JOB_NO_FILE_OUTPUT: "1",
     ...(drawing
       ? {
           CADGPT_DRAWING_ID: drawing.drawing_id,
@@ -499,28 +539,55 @@ async function executeDirectJobScript(
       : {}),
   };
 
-  const execute = () =>
-    execFileAsync(python, [script, ...args], {
-      cwd: path.dirname(script),
-      env,
-      windowsHide: true,
-      timeout: 5 * 60 * 1000,
-      maxBuffer: 4 * 1024 * 1024,
-    });
-  const result = drawing
-    ? await withCadHostLock(drawing.host, execute)
-    : await execute();
+  const scratchRoot = getAppDataPath("runtime", "direct-job");
+  await fs.mkdir(scratchRoot, { recursive: true });
+  const scratchContainer = await fs.mkdtemp(
+    path.join(scratchRoot, "run-")
+  );
+  const scratchCwd = path.join(scratchContainer, "cwd");
+  await fs.mkdir(scratchCwd);
 
-  return {
-    script,
-    execution_mode: "direct",
-    exit_code: 0,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    drawing: drawing
-      ? { drawing_id: drawing.drawing_id, name: drawing.name, full_name: drawing.full_name }
-      : null,
-  };
+  try {
+    const execute = () =>
+      execFileAsync(python, [script, ...args], {
+        cwd: scratchCwd,
+        env,
+        windowsHide: true,
+        timeout: 5 * 60 * 1000,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+    const result = drawing
+      ? await withCadHostLock(drawing.host, execute)
+      : await execute();
+
+    const scratchEntries = (
+      await directJobScratchEntries(scratchContainer)
+    ).filter((entry) => entry !== "cwd");
+    if (scratchEntries.length > 0) {
+      throw new Error(
+        "DIRECT_JOB_DATA_FORBIDDEN: Direct Jobs are execution-only and must not leave file/directory output. Use a Reasoning/Dynamic Job when runtime data is required. Created: " +
+          scratchEntries.slice(0, 20).join(", ")
+      );
+    }
+
+    return {
+      script,
+      execution_mode: "direct",
+      exit_code: 0,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      file_output: "forbidden",
+      scratch_cleaned: true,
+      drawing: drawing
+        ? { drawing_id: drawing.drawing_id, name: drawing.name, full_name: drawing.full_name }
+        : null,
+    };
+  } finally {
+    await fs.rm(scratchContainer, {
+      recursive: true,
+      force: true,
+    });
+  }
 }
 
 const TBH_LOADER_PATH =
