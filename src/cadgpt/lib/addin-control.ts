@@ -155,6 +155,17 @@ export function clearAddinSessionObserver(
   observers.delete(sessionKey);
 }
 
+export function isAddinManagedSession(
+  sessionKey: string
+): boolean {
+  for (const pair of pairedPanels.values()) {
+    if (pair.sessionKey === sessionKey) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function addinBindingStatus(
   pairId: string
 ): Promise<{
