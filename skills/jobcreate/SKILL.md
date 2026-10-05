@@ -197,7 +197,7 @@ The draft must satisfy `knowledge/jobs/JOB_RULES.md` and the `jobcreate` harness
 
 For reasoning `.md`, every step must retain its agreed semantic purpose, explicit tool/executor scope, outputs/postconditions, success criteria and failure behavior.
 
-For direct `.py`, keep the script deterministic, use explicit inputs, fail loudly, and when a drawing is bound target only the exact `CADGPT_DRAWING_*` identity supplied by CadGPT. Do not guess `ActiveDocument` or scan for a convenient drawing. Direct execution runs with `CADGPT_JOB_RUNTIME_ROOT` as CWD; use that for raw/intermediate data. When supplied, `CADGPT_JOB_RESULT_ROOT` is the only Job-owned final drawing-result location.
+For direct `.py`, keep the script deterministic, use explicit inputs, fail loudly, and when a drawing is bound target only the exact `CADGPT_DRAWING_*` identity supplied by CadGPT. Do not guess `ActiveDocument` or scan for a convenient drawing. Direct execution runs with `CADGPT_JOB_RUNTIME_ROOT` as CWD; use that for raw/intermediate data. Resolve permanent package-relative helpers/assets from `CADGPT_JOB_ROOT`, not process CWD. When supplied, `CADGPT_JOB_RESULT_ROOT` is the only Job-owned final drawing-result location.
 
 Do not broaden tool access merely because a tool is available.
 
