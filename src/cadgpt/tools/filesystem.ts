@@ -8,6 +8,7 @@ import { getAppDataRoot } from "../lib/appdata.js";
 import { getAllowedRoots, getRepoRoot, getWritableRoots, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { currentHumanPower, currentToolLease } from "../lib/work-registration.js";
+import { currentJobSystemLease } from "../runtime/system-lease.js";
 import {
   auditHumanPowerSourceMutation,
   isCadGptSourcePath,
@@ -27,6 +28,16 @@ function currentDrawingMetadataRoots(): string[] {
 }
 
 function currentReadableRoots(): string[] {
+  const systemLease = currentJobSystemLease();
+  if (systemLease) {
+    return [
+      ...new Set([
+        ...getAllowedRoots(),
+        ...systemLease.readable_roots,
+      ]),
+    ];
+  }
+
   const humanPowerRoots = currentHumanPower()
     ? [getAppDataRoot(), getRepoRoot()]
     : [];
@@ -40,6 +51,11 @@ function currentReadableRoots(): string[] {
 }
 
 function currentWritableRoots(): string[] {
+  const systemLease = currentJobSystemLease();
+  if (systemLease) {
+    return [...systemLease.writable_roots];
+  }
+
   const humanPowerRoots = currentHumanPower()
     ? [getAppDataRoot(), getRepoRoot()]
     : [];
