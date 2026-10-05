@@ -383,7 +383,7 @@ export async function rehydrateServerForLogicalSession(
 export function createMcpServer(sessionKey: string): McpServer {
   const cadWorkingKnowledge = loadCadWorkingKnowledge();
   const server = new McpServer(
-    { name: "cadgpt", version: "0.2.0" },
+    { name: "cadgpt", version: "0.2.1" },
     {
       capabilities: { logging: {}, tools: { listChanged: true } },
       instructions: [
