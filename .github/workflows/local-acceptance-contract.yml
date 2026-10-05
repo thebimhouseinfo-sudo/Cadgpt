@@ -38,8 +38,10 @@ jobs:
           }
           if ($run -notmatch "cadgpt-tray\.ps1") { throw "run.bat does not delegate to CadGPT tray runtime" }
           $setup = Get-Content setup.bat -Raw
-          if ($setup -notmatch 'run\.bat" install') { throw "setup.bat does not install CadGPT tray startup" }
-          if ($setup -notmatch "HKCU|tray") { throw "setup.bat does not express tray/startup migration" }
+          if ($setup -notmatch "scripts\\setup-core\.bat") { throw "setup.bat does not delegate to canonical setup core" }
+          $setupCore = Get-Content "scripts/setup-core.bat" -Raw
+          if ($setupCore -notmatch 'run\.bat" install') { throw "setup-core.bat does not install CadGPT tray startup" }
+          if ($setupCore -notmatch "HKCU|tray") { throw "setup-core.bat does not express tray/startup migration" }
           Write-Host "Tray-based BAT/startup contract OK"
       - name: Verify safe internal AutoLISP smoke fixture
         shell: pwsh
