@@ -14,10 +14,20 @@ import {
 } from "../lib/appdata.js";
 import { getRepoRoot, isPathInside, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { currentToolLease } from "../lib/work-registration.js";
+import {
+  getJobLocalCompatStatus,
+  markJobLocalCompatChecked,
+} from "../lib/job-local-compat.js";
 import { getBoundDrawingsForExecution } from "../session/drawing-binding.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
+import { prepareDrawingMetadataLocation } from "../runtime/drawing-persistence.js";
+import {
+  cleanupJobRuntimeForExecution,
+  prepareJobResultLocationForExecution,
+  prepareJobRuntimeForExecution,
+} from "../runtime/job-runtime.js";
 import { resolveRegisteredAssetPath } from "./user-assets.js";
 import {
   getBundledLispLibrariesRoot,
@@ -118,6 +128,22 @@ async function loadJobs(): Promise<JobEntry[]> {
     )
     .map((entry) => entry as unknown as JobEntry)
     .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+async function assertJobLocalCompatReady(
+  action: string
+): Promise<void> {
+  const status = await getJobLocalCompatStatus();
+  if (!status.update_required) return;
+  throw new Error(
+    [
+      "JOB_LOCAL_COMPAT_UPDATE_REQUIRED:",
+      `local Custom Jobs have not been checked for the current Job compatibility epoch before ${action}.`,
+      "Run job_local_compat_status, then use jobcreate CONTRACT UPDATE mode to scan User Registry Jobs, inspect/fix only affected local Job packages, validate/re-check them, report any externally blocked action, and finally call job_local_compat_mark_checked.",
+      `source_epoch=${status.source_epoch}`,
+      `checked_epoch=${status.checked_epoch}`,
+    ].join(" ")
+  );
 }
 
 export async function listRegisteredJobs(): Promise<Array<{
@@ -317,6 +343,39 @@ async function assertManagedLibraryExists(libraryId: string): Promise<void> {
 
 export function registerJobDiscoveryTools(server: McpServer): void {
   server.registerTool(
+    "job_local_compat_status",
+    {
+      title: "Check Local Job Compatibility Signal",
+      description:
+        "Lightweight O(1) compatibility check for local Custom Jobs. It reads only the small state marker and never scans User Registry Job packages. If update_required=true, jobcreate must run CONTRACT UPDATE mode before normal User Job create/run/update work.",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const status =
+          await getJobLocalCompatStatus();
+        return toolResult(
+          "job_local_compat_status",
+          {
+            ...status,
+            scan_mode: status.update_required
+              ? "deep_scan_required"
+              : "fast_path",
+            instruction: status.update_required
+              ? "Job build contract affecting local Custom Jobs changed. Before normal User Job create/run/update work, use jobcreate CONTRACT UPDATE mode: enumerate User Registry Jobs, inspect package/source only then, repair affected Jobs through the normal checkout/validate/test/promote lifecycle, report any blocked external action, then mark the epoch checked."
+              : "Compatibility signal matches. Do not deep-scan local Job packages.",
+          }
+        );
+      } catch (error) {
+        return toolError(
+          "job_local_compat_status",
+          error
+        );
+      }
+    }
+  );
+
+  server.registerTool(
     "job_list",
     {
       title: "List CadGPT Jobs",
@@ -397,6 +456,9 @@ export function registerJobDiscoveryTools(server: McpServer): void {
           });
         }
 
+        await assertJobLocalCompatReady(
+          "running a User Job"
+        );
         const jobs = await loadJobs();
         const entry = jobs.find(
           (job) => job.id.toLowerCase() === id.trim().toLowerCase()
@@ -482,45 +544,101 @@ async function executeDirectJobScript(
     throw new Error("DIRECT_JOB_DRAWING_AMBIGUOUS: one work may bind only one drawing.");
   }
   const drawing = drawings[0];
+  const runtime =
+    await prepareJobRuntimeForExecution(
+      lease.workId,
+      jobId,
+      script
+    );
+
+  let jobResultRoot: string | null = null;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     CADGPT_EXECUTION_ID: lease.workId,
     CADGPT_JOB_ID: jobId,
+    CADGPT_JOB_RUNTIME_ROOT:
+      runtime.runtime_root,
     CADGPT_REPO_ROOT: getRepoRoot(),
-    CADGPT_BUNDLED_LISP_ROOT: getBundledLispLibrariesRoot(),
+    CADGPT_BUNDLED_LISP_ROOT:
+      getBundledLispLibrariesRoot(),
     ...(drawing
       ? {
           CADGPT_DRAWING_ID: drawing.drawing_id,
           CADGPT_DRAWING_NAME: drawing.name,
-          CADGPT_DRAWING_PATH: drawing.full_name || drawing.name,
+          CADGPT_DRAWING_PATH:
+            drawing.full_name || drawing.name,
           CADGPT_DRAWING_HOST: drawing.host,
-          CADGPT_DRAWING_RUNTIME_IDENTITY: drawing.runtime_document_identity,
+          CADGPT_DRAWING_RUNTIME_IDENTITY:
+            drawing.runtime_document_identity,
         }
       : {}),
   };
 
-  const execute = () =>
-    execFileAsync(python, [script, ...args], {
-      cwd: path.dirname(script),
-      env,
-      windowsHide: true,
-      timeout: 5 * 60 * 1000,
-      maxBuffer: 4 * 1024 * 1024,
-    });
-  const result = drawing
-    ? await withCadHostLock(drawing.host, execute)
-    : await execute();
-
-  return {
-    script,
-    execution_mode: "direct",
-    exit_code: 0,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    drawing: drawing
-      ? { drawing_id: drawing.drawing_id, name: drawing.name, full_name: drawing.full_name }
-      : null,
+  const execute = async () => {
+    if (drawing) {
+      const drawingLocation =
+        await prepareDrawingMetadataLocation(
+          lease.workId,
+          drawing
+        );
+      const resultLocation =
+        await prepareJobResultLocationForExecution(
+          lease.workId,
+          String(
+            drawingLocation.absolute_path
+          )
+        );
+      jobResultRoot = String(
+        resultLocation.absolute_path
+      );
+      env.CADGPT_JOB_RESULT_ROOT =
+        jobResultRoot;
+    }
+    return execFileAsync(
+      python,
+      [script, ...args],
+      {
+        cwd: runtime.runtime_root,
+        env,
+        windowsHide: true,
+        timeout: 5 * 60 * 1000,
+        maxBuffer: 4 * 1024 * 1024,
+      }
+    );
   };
+
+  try {
+    const result = drawing
+      ? await withCadHostLock(
+          drawing.host,
+          execute
+        )
+      : await execute();
+
+    return {
+      script,
+      execution_mode: "direct",
+      exit_code: 0,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      runtime_root:
+        runtime.runtime_root,
+      job_result_root:
+        jobResultRoot,
+      drawing: drawing
+        ? {
+            drawing_id:
+              drawing.drawing_id,
+            name: drawing.name,
+            full_name: drawing.full_name,
+          }
+        : null,
+    };
+  } finally {
+    await cleanupJobRuntimeForExecution(
+      lease.workId
+    );
+  }
 }
 
 const TBH_LOADER_PATH =
@@ -572,6 +690,177 @@ export async function executeInternalDirectJob(
 }
 
 export function registerJobAuthoringTools(server: McpServer): void {
+  server.registerTool(
+    "job_local_compat_mark_checked",
+    {
+      title: "Mark Local Job Compatibility Scan Complete",
+      description:
+        "After jobcreate CONTRACT UPDATE mode has scanned all User Registry Jobs for the current compatibility signal, repaired/validated affected local Jobs, and produced a report, persist the small checked marker. Pending external actions are recorded but do not force the full scan to repeat.",
+      inputSchema: {
+        scanned_user_jobs: z
+          .number()
+          .int()
+          .min(0),
+        report_summary: z
+          .string()
+          .min(1)
+          .max(4000),
+        pending_actions: z
+          .array(z.string().min(1).max(1000))
+          .max(100)
+          .optional()
+          .default([]),
+      },
+    },
+    async ({
+      scanned_user_jobs,
+      report_summary,
+      pending_actions,
+    }) => {
+      try {
+        await markJobLocalCompatChecked({
+          scanned_user_jobs,
+          report_summary,
+          pending_actions,
+        });
+        return toolResult(
+          "job_local_compat_mark_checked",
+          {
+            ...(await getJobLocalCompatStatus()),
+            scanned_user_jobs,
+            pending_actions,
+          }
+        );
+      } catch (error) {
+        return toolError(
+          "job_local_compat_mark_checked",
+          error
+        );
+      }
+    }
+  );
+
+  server.registerTool(
+    "job_runtime_prepare",
+    {
+      title: "Prepare Job Runtime",
+      description:
+        "Reset and authorize the owning Job package runtime/ directory for one reasoning Job execution/test. Supply exactly one registered User Job id or one absolute managed Job draft path. Runtime scratch is reset at the start of each Job run; permanent source, tools, lisp and dynamic-lisp are not modified.",
+      inputSchema: {
+        id: z.string().min(1).optional(),
+        draft_path: z
+          .string()
+          .min(1)
+          .optional(),
+      },
+    },
+    async ({ id, draft_path }) => {
+      try {
+        if (Boolean(id) === Boolean(draft_path)) {
+          throw new Error(
+            "JOB_RUNTIME_TARGET_REQUIRED: provide exactly one of id or draft_path."
+          );
+        }
+
+        let jobId: string;
+        let jobFile: string;
+        if (id) {
+          const jobs = await loadJobs();
+          const entry = jobs.find(
+            (job) =>
+              job.id.toLowerCase() ===
+              id.trim().toLowerCase()
+          );
+          if (!entry) {
+            throw new Error(
+              `Managed User Job not found: ${id}`
+            );
+          }
+          jobId = entry.id;
+          jobFile =
+            await resolveRegisteredAssetPath(
+              "job",
+              entry.library_id,
+              safeRelativeRegisteredJob(
+                entry.relative_path
+              )
+            );
+        } else {
+          if (!path.isAbsolute(draft_path!)) {
+            throw new Error(
+              "ABSOLUTE_PATH_REQUIRED: job_runtime_prepare draft_path must be absolute."
+            );
+          }
+          assertDraftVirtualPath(draft_path!);
+          jobFile =
+            await resolveAllowedPath(
+              draft_path!
+            );
+          jobId =
+            `draft:${path.basename(
+              path.dirname(jobFile)
+            )}`;
+        }
+
+        const lease = currentToolLease();
+        const runtime =
+          await prepareJobRuntimeForExecution(
+            lease.workId,
+            jobId,
+            jobFile
+          );
+        return toolResult(
+          "job_runtime_prepare",
+          {
+            job_id: runtime.job_id,
+            job_name: runtime.job_name,
+            job_root: runtime.job_root,
+            runtime_root:
+              runtime.runtime_root,
+            runtime_display_path:
+              toCadgptPath(
+                runtime.runtime_root
+              ),
+            reset: true,
+          }
+        );
+      } catch (error) {
+        return toolError(
+          "job_runtime_prepare",
+          error
+        );
+      }
+    }
+  );
+
+  server.registerTool(
+    "job_runtime_finish",
+    {
+      title: "Finish Job Runtime",
+      description:
+        "Finish the current reasoning Job runtime context, remove empty Job result folders, and release execution-scoped Job file-write restrictions. Scratch runtime bytes are left in place only until the next run resets them.",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const lease = currentToolLease();
+        const cleanup =
+          await cleanupJobRuntimeForExecution(
+            lease.workId
+          );
+        return toolResult(
+          "job_runtime_finish",
+          cleanup
+        );
+      } catch (error) {
+        return toolError(
+          "job_runtime_finish",
+          error
+        );
+      }
+    }
+  );
+
   server.registerTool(
     "job_run_direct",
     {
@@ -713,6 +1002,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
     },
     async ({ draft_path, target_library_id, content, overwrite, expected_sha256 }) => {
       try {
+        await assertJobLocalCompatReady(
+          "creating a new User Job"
+        );
         const executionMode = assertDraftVirtualPath(draft_path);
         const target = await resolveAbsoluteMutationPath(draft_path, {
           allowedRoots: [getJobDraftRoot()],
@@ -786,7 +1078,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Checkout Managed Job for jobcreate",
       description:
-        "Checkout one registered managed Job package into an explicit draft path. The primary JOB.md/.py plus Job-owned lisp/** and dynamic-lisp/** assets move together. Existing draft bundles require hash-confirmed overwrite.",
+        "Checkout one registered managed Job package into an explicit draft path. The primary JOB.md/.py plus Job-owned lisp/**, dynamic-lisp/** and tools/** assets move together. runtime/** is execution scratch and is never checked out. Existing draft bundles require hash-confirmed overwrite.",
       inputSchema: {
         registry_id: z.string().min(1),
         draft_path: z
@@ -811,7 +1103,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
           .length(64)
           .optional()
           .describe(
-            "Required for overwrite when the existing draft package contains lisp/** or dynamic-lisp/** assets"
+            "Required for overwrite when the existing draft package contains Job-owned lisp/**, dynamic-lisp/** or tools/** assets"
           ),
       },
     },
@@ -1020,7 +1312,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Promote Tested Job Draft to Managed Library",
       description:
-        "Promote one validated Job draft package into an explicit managed Job target and synchronize User Registry rollback-safely. JOB.md/.py, lisp/** and dynamic-lisp/** are promoted as one bundle.",
+        "Promote one validated Job draft package into an explicit managed Job target and synchronize User Registry rollback-safely. JOB.md/.py, lisp/**, dynamic-lisp/** and tools/** are promoted as one bundle. runtime/** is never promoted.",
       inputSchema: {
         draft_path: z.string().min(1),
         target_path: z
@@ -1050,7 +1342,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
           .length(64)
           .optional()
           .describe(
-            "Required for overwrite when the existing managed Job package contains lisp/** or dynamic-lisp/** assets"
+            "Required for overwrite when the existing managed Job package contains Job-owned lisp/**, dynamic-lisp/** or tools/** assets"
           ),
         test_evidence: z.string().min(1).max(2000),
         final_validation_evidence: z
