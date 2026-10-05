@@ -20,11 +20,18 @@ const DISCOVERY_TOOLS = new Set([
   "library_list",
 ]);
 
-export type ToolAuthority = "control" | "session" | "work";
+export type ToolAuthority =
+  | "control"
+  | "session"
+  | "work"
+  | "work-or-system"
+  | "system";
 
 export function toolAuthority(toolName: string): ToolAuthority {
   if (CONTROL_TOOLS.has(toolName)) return "control";
+  if (toolName === "job_system_release") return "system";
   if (DISCOVERY_TOOLS.has(toolName)) return "session";
+  if (toolName.startsWith("file_")) return "work-or-system";
   return "work";
 }
 
