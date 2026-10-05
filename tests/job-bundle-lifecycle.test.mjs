@@ -22,7 +22,7 @@ function reasoningJob(title) {
   ].join("\n");
 }
 
-test("Job checkout and promotion preserve lisp/** and dynamic-lisp/** as one hash-guarded bundle", async () => {
+test("Job checkout and promotion preserve permanent private assets while excluding runtime scratch", async () => {
   const tempRoot = await fs.mkdtemp(
     path.join(os.tmpdir(), "cadgpt-job-bundle-")
   );
@@ -70,6 +70,14 @@ test("Job checkout and promotion preserve lisp/** and dynamic-lisp/** as one has
       path.join(sourceRoot, "dynamic-lisp"),
       { recursive: true }
     );
+    await fs.mkdir(
+      path.join(sourceRoot, "tools"),
+      { recursive: true }
+    );
+    await fs.mkdir(
+      path.join(sourceRoot, "runtime"),
+      { recursive: true }
+    );
     await fs.mkdir(registryRoot, {
       recursive: true,
     });
@@ -88,6 +96,10 @@ test("Job checkout and promotion preserve lisp/** and dynamic-lisp/** as one has
       "(defun cadgpt-test-static () (princ))\n";
     const dynamicHelper =
       "(defun c:TESTDYNAMIC () (princ))\n";
+    const privateTool =
+      "print('private helper')\n";
+    const runtimeScratch =
+      "{\"raw\":true}\n";
 
     await fs.writeFile(
       path.join(sourceRoot, "JOB.md"),
@@ -110,6 +122,24 @@ test("Job checkout and promotion preserve lisp/** and dynamic-lisp/** as one has
         "derived.lsp"
       ),
       dynamicHelper,
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(
+        sourceRoot,
+        "tools",
+        "helper.py"
+      ),
+      privateTool,
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(
+        sourceRoot,
+        "runtime",
+        "raw.json"
+      ),
+      runtimeScratch,
       "utf8"
     );
 
@@ -176,6 +206,7 @@ test("Job checkout and promotion preserve lisp/** and dynamic-lisp/** as one has
         "JOB.md",
         "dynamic-lisp/derived.lsp",
         "lisp/system-collector.lsp",
+        "tools/helper.py",
       ]
     );
 
@@ -220,6 +251,26 @@ test("Job checkout and promotion preserve lisp/** and dynamic-lisp/** as one has
       dynamicHelper
     );
     assert.equal(
+      await fs.readFile(
+        path.join(
+          path.dirname(draft),
+          "tools",
+          "helper.py"
+        ),
+        "utf8"
+      ),
+      privateTool
+    );
+    assert.equal(
+      await fs.stat(
+        path.join(
+          path.dirname(draft),
+          "runtime"
+        )
+      ).then(() => true, () => false),
+      false
+    );
+    assert.equal(
       checkedOut.structuredContent?.data
         ?.source_bundle_sha256,
       checkedOut.structuredContent?.data
@@ -234,6 +285,46 @@ test("Job checkout and promotion preserve lisp/** and dynamic-lisp/** as one has
         ?.bundle_sha256,
       checkedOut.structuredContent?.data
         ?.draft_bundle_sha256
+    );
+
+    await fs.mkdir(
+      path.join(path.dirname(draft), "runtime"),
+      { recursive: true }
+    );
+    await fs.writeFile(
+      path.join(
+        path.dirname(draft),
+        "runtime",
+        "raw.json"
+      ),
+      "{\"different\":true}\n",
+      "utf8"
+    );
+    const runtimeOnlyValidation =
+      await validate({ path: draft });
+    assert.equal(
+      runtimeOnlyValidation.structuredContent?.data
+        ?.bundle_sha256,
+      validation.structuredContent?.data
+        ?.bundle_sha256
+    );
+
+    await fs.writeFile(
+      path.join(
+        path.dirname(draft),
+        "tools",
+        "helper.py"
+      ),
+      "print('updated helper')\n",
+      "utf8"
+    );
+    const toolChangedValidation =
+      await validate({ path: draft });
+    assert.notEqual(
+      toolChangedValidation.structuredContent?.data
+        ?.bundle_sha256,
+      runtimeOnlyValidation.structuredContent?.data
+        ?.bundle_sha256
     );
 
     const changedStatic =
@@ -311,6 +402,26 @@ test("Job checkout and promotion preserve lisp/** and dynamic-lisp/** as one has
         "utf8"
       ),
       dynamicHelper
+    );
+    assert.equal(
+      await fs.readFile(
+        path.join(
+          path.dirname(target),
+          "tools",
+          "helper.py"
+        ),
+        "utf8"
+      ),
+      "print('updated helper')\n"
+    );
+    assert.equal(
+      await fs.stat(
+        path.join(
+          path.dirname(target),
+          "runtime"
+        )
+      ).then(() => true, () => false),
+      false
     );
     assert.equal(
       promoted.structuredContent?.data
