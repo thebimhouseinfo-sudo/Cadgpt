@@ -210,8 +210,35 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
       new URL("../src/cadgpt/tools/cad-proxy.ts", import.meta.url),
       "utf8"
     );
-    assert.match(proxySource, /appdata\/libraries\/jobs\//);
-    assert.match(proxySource, /Job-owned dynamic-lisp/);
+    assert.match(
+      proxySource,
+      /resolveCadGptLispPath/
+    );
+    assert.match(
+      proxySource,
+      /currentHumanPower/
+    );
+
+    const policySource = await fs.readFile(
+      new URL("../src/cadgpt/lib/lisp-path-policy.ts", import.meta.url),
+      "utf8"
+    );
+    assert.match(
+      policySource,
+      /appdata\/workspace\/job-draft/
+    );
+    assert.match(
+      policySource,
+      /appdata\/libraries\/jobs/
+    );
+    assert.match(
+      policySource,
+      /part === "lisp"/
+    );
+    assert.match(
+      policySource,
+      /part === "dynamic-lisp"/
+    );
 
     const serviceSource = await fs.readFile(
       new URL("../runtimes/cad-mcp/services/lisp_service.py", import.meta.url),

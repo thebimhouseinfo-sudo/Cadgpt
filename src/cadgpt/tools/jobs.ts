@@ -32,6 +32,11 @@ import {
   loadVerifiedLispForCurrentWork,
   markInternalLispGroupLoaded,
 } from "./cad-proxy.js";
+import {
+  JOB_BUNDLE_ASSET_DIRS,
+  inspectJobBundle,
+  replaceJobBundleFromSource,
+} from "../lib/job-bundle.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -406,6 +411,7 @@ export function registerJobDiscoveryTools(server: McpServer): void {
         const content = await fs.readFile(real, "utf8");
         const executionMode =
           path.extname(real).toLowerCase() === ".py" ? "direct" : "reasoning";
+        const bundle = await inspectJobBundle(real);
         return toolResult("job_get", {
           id: entry.id,
           title: entry.title,
@@ -415,6 +421,8 @@ export function registerJobDiscoveryTools(server: McpServer): void {
           relative_path: relative,
           execution_mode: executionMode,
           content,
+          bundle_sha256: bundle.sha256,
+          bundle_files: bundle.files,
           ...(executionMode === "reasoning"
             ? { harness: "knowledge/jobs/REASONING_HARNESS.md" }
             : {}),
@@ -777,65 +785,196 @@ export function registerJobAuthoringTools(server: McpServer): void {
     "job_checkout",
     {
       title: "Checkout Managed Job for jobcreate",
-      description: "Copy one registered managed Job (.md reasoning or .py direct) into an explicit absolute draft path under the Job draft root. Existing drafts require hash-confirmed overwrite.",
+      description:
+        "Checkout one registered managed Job package into an explicit draft path. The primary JOB.md/.py plus Job-owned lisp/** and dynamic-lisp/** assets move together. Existing draft bundles require hash-confirmed overwrite.",
       inputSchema: {
         registry_id: z.string().min(1),
-        draft_path: z.string().min(1).describe("Absolute .md or .py path under the approved Job draft root; extension must match the registered Job"),
-        overwrite_existing: z.boolean().optional().default(false),
-        expected_sha256: z.string().length(64).optional(),
+        draft_path: z
+          .string()
+          .min(1)
+          .describe(
+            "Absolute .md or .py path under the approved Job draft root; extension must match the registered Job"
+          ),
+        overwrite_existing: z
+          .boolean()
+          .optional()
+          .default(false),
+        expected_sha256: z
+          .string()
+          .length(64)
+          .optional()
+          .describe(
+            "Backward-compatible primary-file guard when the existing draft has no Job-owned assets"
+          ),
+        expected_bundle_sha256: z
+          .string()
+          .length(64)
+          .optional()
+          .describe(
+            "Required for overwrite when the existing draft package contains lisp/** or dynamic-lisp/** assets"
+          ),
       },
     },
-    async ({ registry_id, draft_path, overwrite_existing, expected_sha256 }) => {
+    async ({
+      registry_id,
+      draft_path,
+      overwrite_existing,
+      expected_sha256,
+      expected_bundle_sha256,
+    }) => {
       try {
         const jobs = await loadJobs();
-        const entry = jobs.find((job) => job.id.toLowerCase() === registry_id.trim().toLowerCase());
-        if (!entry) throw new Error(`Managed Job not found in User Registry: ${registry_id}`);
-        const source = await resolveAllowedPath(resolveManagedJob(entry));
-        const content = await fs.readFile(source, "utf8");
-        const draft = await resolveAbsoluteMutationPath(draft_path, {
-          allowedRoots: [getJobDraftRoot()],
-          forCreate: true,
-          label: "Job draft",
-        });
-        const draftMode = assertDraftVirtualPath(draft);
-        const sourceMode = jobExecutionModeForPath(source);
+        const entry = jobs.find(
+          (job) =>
+            job.id.toLowerCase() ===
+            registry_id.trim().toLowerCase()
+        );
+        if (!entry) {
+          throw new Error(
+            `Managed Job not found in User Registry: ${registry_id}`
+          );
+        }
+
+        const source = await resolveAllowedPath(
+          resolveManagedJob(entry)
+        );
+        const sourceMode =
+          jobExecutionModeForPath(source);
+        const sourceBundle =
+          await inspectJobBundle(source);
+        if (!sourceBundle.exists) {
+          throw new Error(
+            `Managed Job package is missing: ${toCadgptPath(source)}`
+          );
+        }
+
+        const draftMode =
+          assertDraftVirtualPath(draft_path);
+        const draft = await resolveAbsoluteMutationPath(
+          draft_path,
+          {
+            allowedRoots: [getJobDraftRoot()],
+            forCreate: true,
+            label: "Job draft",
+          }
+        );
         if (draftMode !== sourceMode) {
           throw new Error(
             `JOB_DRAFT_MODE_MISMATCH: registered Job is ${sourceMode} but draft path is ${draftMode}.`
           );
         }
 
-        return await withFileMutationLocks(
-          [draft],
-          async () => {
-          let previousDraft: string | null = null;
-          try {
-            previousDraft = await fs.readFile(draft, "utf8");
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-          }
-          if (previousDraft !== null) {
-            if (!overwrite_existing) {
-              throw new Error(`Draft already exists; explicit overwrite_existing=true is required: ${draft}`);
-            }
-            if (!expected_sha256 || sha256(previousDraft) !== expected_sha256) {
-              throw new Error("RESOURCE_CONFLICT: existing Job draft changed or expected_sha256 was not supplied");
-            }
-          }
+        const draftAssetPaths =
+          JOB_BUNDLE_ASSET_DIRS.map((asset) =>
+            path.join(path.dirname(draft), asset)
+          );
 
-          await atomicWrite(draft, content);
-          const validation = await validateJobDraft(draft, content);
-          return toolResult("job_checkout", {
-            registry_id: entry.id,
-            library_id: entry.library_id,
-            execution_mode: validation.execution_mode,
-            source_path: toCadgptPath(source),
-            draft_path: draft,
-            draft_display_path: toCadgptPath(draft),
-            source_contract_valid: validation.valid,
-            diagnostics: validation.diagnostics,
-            managed_source_unchanged: true,
-          });
+        return await withFileMutationLocks(
+          [draft, ...draftAssetPaths],
+          async () => {
+            const existing =
+              await inspectJobBundle(draft);
+            if (existing.exists) {
+              if (!overwrite_existing) {
+                throw new Error(
+                  `Draft package already exists; explicit overwrite_existing=true is required: ${draft}`
+                );
+              }
+
+              if (existing.has_assets) {
+                if (
+                  !expected_bundle_sha256 ||
+                  expected_bundle_sha256 !==
+                    existing.sha256
+                ) {
+                  throw new Error(
+                    `RESOURCE_CONFLICT: existing Job draft bundle changed or expected_bundle_sha256 was not supplied; current bundle sha256=${existing.sha256}`
+                  );
+                }
+              } else {
+                const previousDraft =
+                  await fs.readFile(draft, "utf8");
+                if (
+                  !expected_sha256 ||
+                  sha256(previousDraft) !==
+                    expected_sha256
+                ) {
+                  throw new Error(
+                    "RESOURCE_CONFLICT: existing Job draft changed or expected_sha256 was not supplied"
+                  );
+                }
+              }
+            }
+
+            let mutation:
+              | Awaited<
+                  ReturnType<
+                    typeof replaceJobBundleFromSource
+                  >
+                >
+              | null = null;
+            let installedBundleSha: string | null =
+              null;
+            try {
+              mutation =
+                await replaceJobBundleFromSource(
+                  source,
+                  draft
+                );
+              const content = await fs.readFile(
+                draft,
+                "utf8"
+              );
+              const validation =
+                await validateJobDraft(
+                  draft,
+                  content
+                );
+              const checkedOut =
+                await inspectJobBundle(draft);
+              installedBundleSha =
+                checkedOut.sha256;
+              await mutation.finalize();
+
+              return toolResult("job_checkout", {
+                registry_id: entry.id,
+                library_id: entry.library_id,
+                execution_mode:
+                  validation.execution_mode,
+                source_path: toCadgptPath(source),
+                source_bundle_sha256:
+                  sourceBundle.sha256,
+                draft_path: draft,
+                draft_display_path:
+                  toCadgptPath(draft),
+                draft_bundle_sha256:
+                  checkedOut.sha256,
+                bundle_files: checkedOut.files,
+                asset_directories:
+                  mutation.asset_directories,
+                source_contract_valid:
+                  validation.valid,
+                diagnostics:
+                  validation.diagnostics,
+                managed_source_unchanged: true,
+              });
+            } catch (error) {
+              if (mutation) {
+                const current =
+                  await inspectJobBundle(draft);
+                if (
+                  installedBundleSha &&
+                  current.sha256 !==
+                    installedBundleSha
+                ) {
+                  throw new Error(
+                    `RESOURCE_CONFLICT: checkout failed and draft bundle changed outside this operation; refusing rollback. Cause: ${String(error)}`
+                  );
+                }
+                await mutation.rollback();
+              }
+              throw error;
+            }
           }
         );
       } catch (error) {
@@ -857,11 +996,14 @@ export function registerJobAuthoringTools(server: McpServer): void {
         const target = await resolveAllowedPath(input);
         const content = await fs.readFile(target, "utf8");
         const validation = await validateJobDraft(target, content);
+        const bundle = await inspectJobBundle(target);
         return toolResult(
           "job_draft_validate",
           {
             path: toCadgptPath(target),
             sha256: sha256(content),
+            bundle_sha256: bundle.sha256,
+            bundle_files: bundle.files,
             ...validation,
             rules: "knowledge/jobs/JOB_RULES.md",
           },
@@ -877,177 +1019,435 @@ export function registerJobAuthoringTools(server: McpServer): void {
     "job_promote_draft",
     {
       title: "Promote Tested Job Draft to Managed Library",
-      description: "Promote one validated absolute-path Job draft into an explicit absolute managed Job target and synchronize User Registry rollback-safely.",
+      description:
+        "Promote one validated Job draft package into an explicit managed Job target and synchronize User Registry rollback-safely. JOB.md/.py, lisp/** and dynamic-lisp/** are promoted as one bundle.",
       inputSchema: {
         draft_path: z.string().min(1),
-        target_path: z.string().min(1).describe("Absolute target path that must exactly match library_id + relative_path"),
-        library_id: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,79}$/i),
+        target_path: z
+          .string()
+          .min(1)
+          .describe(
+            "Absolute target path that must exactly match library_id + relative_path"
+          ),
+        library_id: z
+          .string()
+          .regex(/^[a-z0-9][a-z0-9._-]{0,79}$/i),
         relative_path: z.string().min(1),
         metadata: jobMetadataSchema,
-        overwrite: z.boolean().optional().default(false),
-        expected_target_sha256: z.string().length(64).optional(),
+        overwrite: z
+          .boolean()
+          .optional()
+          .default(false),
+        expected_target_sha256: z
+          .string()
+          .length(64)
+          .optional()
+          .describe(
+            "Backward-compatible primary-file guard when the existing managed Job has no Job-owned assets"
+          ),
+        expected_target_bundle_sha256: z
+          .string()
+          .length(64)
+          .optional()
+          .describe(
+            "Required for overwrite when the existing managed Job package contains lisp/** or dynamic-lisp/** assets"
+          ),
         test_evidence: z.string().min(1).max(2000),
-        final_validation_evidence: z.string().min(1).max(2000),
+        final_validation_evidence: z
+          .string()
+          .min(1)
+          .max(2000),
         user_accepted: z.literal(true),
       },
     },
-    async ({ draft_path, target_path, library_id, relative_path, metadata, overwrite, expected_target_sha256, test_evidence, final_validation_evidence, user_accepted }) => {
+    async ({
+      draft_path,
+      target_path,
+      library_id,
+      relative_path,
+      metadata,
+      overwrite,
+      expected_target_sha256,
+      expected_target_bundle_sha256,
+      test_evidence,
+      final_validation_evidence,
+      user_accepted,
+    }) => {
       try {
         if (!path.isAbsolute(draft_path)) {
-          throw new Error("ABSOLUTE_PATH_REQUIRED: job_promote_draft draft_path must be absolute");
+          throw new Error(
+            "ABSOLUTE_PATH_REQUIRED: job_promote_draft draft_path must be absolute"
+          );
         }
-        const draftMode = assertDraftVirtualPath(draft_path);
+        const draftMode =
+          assertDraftVirtualPath(draft_path);
         if (isInternalJobId(metadata.id)) {
           throw new Error(
             `INTERNAL_JOB_ID_RESERVED: '${metadata.id}' is owned by CadGPT Internal Registry and cannot be promoted as a User Job.`
           );
         }
-        await assertManagedLibraryExists(library_id);
-        if (!user_accepted) throw new Error("Job promotion requires explicit user acceptance");
-
-        const draft = await resolveAllowedPath(draft_path);
-        const content = await fs.readFile(draft, "utf8");
-        const validation = await validateJobDraft(draft, content);
-        if (!validation.valid) {
-          throw new Error(`Job draft contract failed: ${validation.diagnostics.join(" ")}`);
+        await assertManagedLibraryExists(
+          library_id
+        );
+        if (!user_accepted) {
+          throw new Error(
+            "Job promotion requires explicit user acceptance"
+          );
         }
 
-        const normalizedRelative = safeRelativeJob(relative_path);
-        const targetMode = jobExecutionModeForPath(normalizedRelative);
+        const draft =
+          await resolveAllowedPath(draft_path);
+        const content = await fs.readFile(
+          draft,
+          "utf8"
+        );
+        const validation =
+          await validateJobDraft(draft, content);
+        if (!validation.valid) {
+          throw new Error(
+            `Job draft contract failed: ${validation.diagnostics.join(" ")}`
+          );
+        }
+        const draftBundle =
+          await inspectJobBundle(draft);
+        if (!draftBundle.exists) {
+          throw new Error(
+            "Job draft package is missing."
+          );
+        }
+
+        const normalizedRelative =
+          safeRelativeJob(relative_path);
+        const targetMode =
+          jobExecutionModeForPath(
+            normalizedRelative
+          );
         if (draftMode !== targetMode) {
           throw new Error(
             `JOB_PROMOTION_MODE_MISMATCH: draft is ${draftMode} but managed target is ${targetMode}.`
           );
         }
-        const expectedPermanent = managedJobPath(
-          library_id,
-          normalizedRelative
+
+        const expectedPermanent =
+          managedJobPath(
+            library_id,
+            normalizedRelative
+          );
+        const libraryRoot = path.resolve(
+          getJobLibrariesRoot(),
+          library_id
         );
-        const libraryRoot = path.resolve(getJobLibrariesRoot(), library_id);
-        const canonicalExpected = await resolveAbsoluteMutationPath(
-          expectedPermanent,
-          {
-            allowedRoots: [libraryRoot],
-            forCreate: true,
-            label: "managed Job library",
-          }
-        );
-        const permanent = await resolveAbsoluteMutationPath(target_path, {
-          allowedRoots: [libraryRoot],
-          forCreate: true,
-          label: "managed Job library",
-        });
-        if (path.relative(canonicalExpected, permanent) !== "") {
+        const canonicalExpected =
+          await resolveAbsoluteMutationPath(
+            expectedPermanent,
+            {
+              allowedRoots: [libraryRoot],
+              forCreate: true,
+              label: "managed Job library",
+            }
+          );
+        const permanent =
+          await resolveAbsoluteMutationPath(
+            target_path,
+            {
+              allowedRoots: [libraryRoot],
+              forCreate: true,
+              label: "managed Job library",
+            }
+          );
+        if (
+          path.relative(
+            canonicalExpected,
+            permanent
+          ) !== ""
+        ) {
           throw new Error(
             `TARGET_PATH_MISMATCH: target_path must exactly match managed Job target ${expectedPermanent}`
           );
         }
+
+        const permanentAssetPaths =
+          JOB_BUNDLE_ASSET_DIRS.map(
+            (asset) =>
+              path.join(
+                path.dirname(permanent),
+                asset
+              )
+          );
+        const registryPath =
+          getUserCapabilitiesPath();
+
         return await withFileMutationLocks(
-          [permanent, getUserCapabilitiesPath()],
+          [
+            permanent,
+            ...permanentAssetPaths,
+            registryPath,
+          ],
           async () => {
-            let targetExists = false;
-            let previousPermanent: string | null = null;
-        try {
-          previousPermanent = await fs.readFile(permanent, "utf8");
-          targetExists = true;
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-        if (targetExists && !overwrite) throw new Error(`Managed Job already exists; set overwrite=true for intentional replacement: ${toCadgptPath(permanent)}`);
-        if (targetExists && overwrite) {
-          if (!expected_target_sha256 || previousPermanent === null || sha256(previousPermanent) !== expected_target_sha256) {
-            throw new Error("RESOURCE_CONFLICT: managed Job target changed or expected_target_sha256 was not supplied");
-          }
-        }
-
-        const registryPath = getUserCapabilitiesPath();
-        const registryBaseline = await fs.readFile(registryPath, "utf8").catch((error) => {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-          throw error;
-        });
-        const registry = await loadRegistry();
-        for (const entry of registry.entries) {
-          const id = String(entry.id || "");
-          const sameTarget = entry.kind === "job" && String(entry.library_id || "") === library_id && String(entry.relative_path || "").toLowerCase() === normalizedRelative.toLowerCase();
-          if (id === metadata.id && entry.kind !== "job") throw new Error(`Registry id belongs to a non-Job capability: ${metadata.id}`);
-          if (id !== metadata.id && sameTarget) throw new Error(`Managed Job path already belongs to another capability: ${id}`);
-        }
-
-        const newEntry: Record<string, unknown> = {
-          id: metadata.id,
-          kind: "job",
-          registry: "user",
-          library_id,
-          relative_path: normalizedRelative,
-          title: metadata.title,
-          class: metadata.class_name,
-          subclass: metadata.subclass,
-          tags: metadata.tags,
-          summary: metadata.summary,
-          status: metadata.status,
-          risk: metadata.risk,
-          execution_mode: validation.execution_mode,
-          semantic_status: "curated",
-          last_test_evidence: test_evidence,
-          last_validation_evidence: final_validation_evidence,
-        };
-        const nextEntries = registry.entries.filter((entry) => String(entry.id || "") !== metadata.id);
-        nextEntries.push(newEntry);
-        nextEntries.sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
-
-        await fs.mkdir(path.dirname(permanent), { recursive: true });
-        await atomicWrite(permanent, content);
-        try {
-          const registryCurrent = await fs.readFile(registryPath, "utf8").catch((error) => {
-            if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-            throw error;
-          });
-          if (registryCurrent !== registryBaseline) {
-            throw new Error("RESOURCE_CONFLICT: User Registry changed during Job promotion");
-          }
-          await atomicWrite(registryPath, `${JSON.stringify({ version: registry.version, entries: nextEntries }, null, 2)}\n`);
-        } catch (registryError) {
-          try {
-            const currentPermanent = await fs.readFile(permanent, "utf8").catch((error) => {
-              if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-              throw error;
-            });
-            if (currentPermanent !== content) {
+            const targetBundle =
+              await inspectJobBundle(permanent);
+            if (
+              targetBundle.exists &&
+              !overwrite
+            ) {
               throw new Error(
-                "RESOURCE_CONFLICT: managed Job source changed outside this promotion; refusing rollback overwrite"
+                `Managed Job package already exists; set overwrite=true for intentional replacement: ${toCadgptPath(permanent)}`
               );
             }
-            if (targetExists && previousPermanent !== null) {
-              await atomicWrite(permanent, previousPermanent);
-            } else {
-              await fs.rm(permanent, { force: true });
+            if (
+              targetBundle.exists &&
+              overwrite
+            ) {
+              if (targetBundle.has_assets) {
+                if (
+                  !expected_target_bundle_sha256 ||
+                  expected_target_bundle_sha256 !==
+                    targetBundle.sha256
+                ) {
+                  throw new Error(
+                    `RESOURCE_CONFLICT: managed Job bundle changed or expected_target_bundle_sha256 was not supplied; current bundle sha256=${targetBundle.sha256}`
+                  );
+                }
+              } else {
+                const previousPermanent =
+                  await fs.readFile(
+                    permanent,
+                    "utf8"
+                  );
+                if (
+                  !expected_target_sha256 ||
+                  sha256(previousPermanent) !==
+                    expected_target_sha256
+                ) {
+                  throw new Error(
+                    "RESOURCE_CONFLICT: managed Job target changed or expected_target_sha256 was not supplied"
+                  );
+                }
+              }
             }
-          } catch (rollbackError) {
-            throw new Error(
-              `Registry update failed and rollback could not safely restore managed Job source. Registry: ${String(registryError)}; rollback: ${String(rollbackError)}`
-            );
-          }
-          throw registryError;
-        }
 
-        return toolResult("job_promote_draft", {
-          draft_path: toCadgptPath(draft),
-          managed_path: toCadgptPath(permanent),
-          managed_absolute_path: permanent,
-          library_id,
-          registry_id: metadata.id,
-          execution_mode: validation.execution_mode,
-          steps: validation.steps,
-          registry_updated: true,
-          rollback_safe: true,
-          draft_retained: true,
-          test_evidence_recorded: true,
-          final_validation_evidence_recorded: true,
-            });
+            const registryBaseline =
+              await fs
+                .readFile(
+                  registryPath,
+                  "utf8"
+                )
+                .catch((error) => {
+                  if (
+                    (
+                      error as NodeJS.ErrnoException
+                    ).code === "ENOENT"
+                  ) {
+                    return null;
+                  }
+                  throw error;
+                });
+            const registry =
+              await loadRegistry();
+            for (const entry of registry.entries) {
+              const id = String(
+                entry.id || ""
+              );
+              const sameTarget =
+                entry.kind === "job" &&
+                String(
+                  entry.library_id || ""
+                ) === library_id &&
+                String(
+                  entry.relative_path || ""
+                ).toLowerCase() ===
+                  normalizedRelative.toLowerCase();
+              if (
+                id === metadata.id &&
+                entry.kind !== "job"
+              ) {
+                throw new Error(
+                  `Registry id belongs to a non-Job capability: ${metadata.id}`
+                );
+              }
+              if (
+                id !== metadata.id &&
+                sameTarget
+              ) {
+                throw new Error(
+                  `Managed Job path already belongs to another capability: ${id}`
+                );
+              }
+            }
+
+            const newEntry: Record<
+              string,
+              unknown
+            > = {
+              id: metadata.id,
+              kind: "job",
+              registry: "user",
+              library_id,
+              relative_path:
+                normalizedRelative,
+              title: metadata.title,
+              class: metadata.class_name,
+              subclass: metadata.subclass,
+              tags: metadata.tags,
+              summary: metadata.summary,
+              status: metadata.status,
+              risk: metadata.risk,
+              execution_mode:
+                validation.execution_mode,
+              semantic_status: "curated",
+              bundle_sha256:
+                draftBundle.sha256,
+              bundle_files:
+                draftBundle.files,
+              last_test_evidence:
+                test_evidence,
+              last_validation_evidence:
+                final_validation_evidence,
+            };
+            const nextEntries =
+              registry.entries.filter(
+                (entry) =>
+                  String(entry.id || "") !==
+                  metadata.id
+              );
+            nextEntries.push(newEntry);
+            nextEntries.sort((a, b) =>
+              String(a.id || "").localeCompare(
+                String(b.id || "")
+              )
+            );
+
+            let mutation:
+              | Awaited<
+                  ReturnType<
+                    typeof replaceJobBundleFromSource
+                  >
+                >
+              | null = null;
+            let installedBundleSha:
+              | string
+              | null = null;
+
+            try {
+              mutation =
+                await replaceJobBundleFromSource(
+                  draft,
+                  permanent
+                );
+              const installed =
+                await inspectJobBundle(
+                  permanent
+                );
+              installedBundleSha =
+                installed.sha256;
+
+              const registryCurrent =
+                await fs
+                  .readFile(
+                    registryPath,
+                    "utf8"
+                  )
+                  .catch((error) => {
+                    if (
+                      (
+                        error as NodeJS.ErrnoException
+                      ).code === "ENOENT"
+                    ) {
+                      return null;
+                    }
+                    throw error;
+                  });
+              if (
+                registryCurrent !==
+                registryBaseline
+              ) {
+                throw new Error(
+                  "RESOURCE_CONFLICT: User Registry changed during Job promotion"
+                );
+              }
+
+              await atomicWrite(
+                registryPath,
+                `${JSON.stringify(
+                  {
+                    version:
+                      registry.version,
+                    entries:
+                      nextEntries,
+                  },
+                  null,
+                  2
+                )}\n`
+              );
+              await mutation.finalize();
+
+              return toolResult(
+                "job_promote_draft",
+                {
+                  draft_path:
+                    toCadgptPath(draft),
+                  draft_bundle_sha256:
+                    draftBundle.sha256,
+                  managed_path:
+                    toCadgptPath(
+                      permanent
+                    ),
+                  managed_absolute_path:
+                    permanent,
+                  managed_bundle_sha256:
+                    installed.sha256,
+                  bundle_files:
+                    installed.files,
+                  asset_directories:
+                    mutation.asset_directories,
+                  library_id,
+                  registry_id:
+                    metadata.id,
+                  execution_mode:
+                    validation.execution_mode,
+                  steps:
+                    validation.steps,
+                  registry_updated: true,
+                  rollback_safe: true,
+                  draft_retained: true,
+                  test_evidence_recorded:
+                    true,
+                  final_validation_evidence_recorded:
+                    true,
+                }
+              );
+            } catch (registryError) {
+              if (mutation) {
+                try {
+                  const current =
+                    await inspectJobBundle(
+                      permanent
+                    );
+                  if (
+                    installedBundleSha &&
+                    current.sha256 !==
+                      installedBundleSha
+                  ) {
+                    throw new Error(
+                      "RESOURCE_CONFLICT: managed Job bundle changed outside this promotion; refusing rollback overwrite"
+                    );
+                  }
+                  await mutation.rollback();
+                } catch (rollbackError) {
+                  throw new Error(
+                    `Registry/promotion update failed and rollback could not safely restore managed Job bundle. Cause: ${String(registryError)}; rollback: ${String(rollbackError)}`
+                  );
+                }
+              }
+              throw registryError;
+            }
           }
         );
       } catch (error) {
-        return toolError("job_promote_draft", error);
+        return toolError(
+          "job_promote_draft",
+          error
+        );
       }
     }
   );

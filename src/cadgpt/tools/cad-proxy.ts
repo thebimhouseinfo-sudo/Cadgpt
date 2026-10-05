@@ -9,11 +9,14 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { cadUpstream } from "../runtime/cad-upstream.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
-import { getRepoRoot, isPathInside } from "../lib/path-security.js";
-import { getAppDataRoot } from "../lib/appdata.js";
+import { getRepoRoot } from "../lib/path-security.js";
 import { listBundledLispEntries } from "../lib/bundled-assets.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
-import { currentToolLease } from "../lib/work-registration.js";
+import {
+  currentHumanPower,
+  currentToolLease,
+} from "../lib/work-registration.js";
+import { resolveCadGptLispPath } from "../lib/lisp-path-policy.js";
 import {
   assertCadRuntimeGenerationAccess,
   recordCadCandidateSuccess,
@@ -171,82 +174,12 @@ function lispCommandSet(workId: string, drawingId: string): Set<string> {
   return commands;
 }
 
-async function resolveLispSourceForCommandDiscovery(
+export async function resolveLispSourceForCommandDiscovery(
   requestedPath: string
 ): Promise<string> {
-  const raw = requestedPath.trim();
-  if (!raw) {
-    throw new Error("LISP_COMMAND_SCOPE: Lisp path is required.");
-  }
-
-  const approvedRoots = [
-    path.resolve(getRepoRoot(), "resources", "cad"),
-    path.resolve(getAppDataRoot(), "libraries", "lisp"),
-    path.resolve(getAppDataRoot(), "workspace", "lisp-draft"),
-    path.resolve(getAppDataRoot(), "runtime", "dynamic-lisp"),
-    path.resolve(getAppDataRoot(), "libraries", "jobs"),
-  ];
-
-  let candidate: string;
-  if (path.isAbsolute(raw)) {
-    candidate = path.resolve(raw);
-    if (!approvedRoots.some((root) => isPathInside(candidate, root))) {
-      throw new Error(
-        "LISP_COMMAND_SCOPE: absolute Lisp path is outside approved Lisp roots."
-      );
-    }
-  } else {
-    const normalized = raw.replaceAll("\\", "/");
-    const lower = normalized.toLowerCase();
-    let root: string;
-    let suffix: string;
-
-    if (lower.startsWith("resources/cad/")) {
-      root = approvedRoots[0];
-      suffix = normalized.slice("resources/cad/".length);
-    } else if (lower.startsWith("appdata/libraries/lisp/")) {
-      root = approvedRoots[1];
-      suffix = normalized.slice("appdata/libraries/lisp/".length);
-    } else if (lower.startsWith("appdata/workspace/lisp-draft/")) {
-      root = approvedRoots[2];
-      suffix = normalized.slice("appdata/workspace/lisp-draft/".length);
-    } else if (lower.startsWith("appdata/runtime/dynamic-lisp/")) {
-      root = approvedRoots[3];
-      suffix = normalized.slice("appdata/runtime/dynamic-lisp/".length);
-    } else if (lower.startsWith("appdata/libraries/jobs/")) {
-      root = approvedRoots[4];
-      suffix = normalized.slice("appdata/libraries/jobs/".length);
-    } else {
-      throw new Error(
-        "LISP_COMMAND_SCOPE: unsupported Lisp path. Use an approved CadGPT Lisp namespace or an absolute path inside an approved Lisp root."
-      );
-    }
-
-    candidate = path.resolve(root, suffix);
-    if (!isPathInside(candidate, root)) {
-      throw new Error("LISP_COMMAND_SCOPE: Lisp path escapes its approved root.");
-    }
-  }
-
-  const real = await fs.promises.realpath(candidate);
-  if (!approvedRoots.some((root) => isPathInside(real, root))) {
-    throw new Error("LISP_COMMAND_SCOPE: Lisp real path escapes its approved root.");
-  }
-  if (isPathInside(real, approvedRoots[4])) {
-    const jobRelative = path
-      .relative(approvedRoots[4], real)
-      .replaceAll("\\", "/")
-      .toLowerCase();
-    if (!jobRelative.split("/").includes("dynamic-lisp")) {
-      throw new Error(
-        "LISP_COMMAND_SCOPE: Job-library Lisp is loadable only from a Job-owned dynamic-lisp/** folder."
-      );
-    }
-  }
-  if (path.extname(real).toLowerCase() !== ".lsp") {
-    throw new Error("LISP_COMMAND_SCOPE: only .lsp files are supported.");
-  }
-  return real;
+  return resolveCadGptLispPath(requestedPath, {
+    humanPower: Boolean(currentHumanPower()),
+  });
 }
 
 async function discoverLispCommands(virtualPath: string): Promise<string[]> {
