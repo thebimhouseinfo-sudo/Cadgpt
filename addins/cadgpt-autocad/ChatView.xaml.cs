@@ -825,6 +825,8 @@ namespace CadGpt.AutoCad
             }
             catch
             {
+                _browserRecoveryInProgress =
+                    false;
                 await SchedulePaletteRecoveryAsync(
                     "WEBVIEW_RESUME_RECOVERY_FAILED");
             }
