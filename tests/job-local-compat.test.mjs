@@ -28,6 +28,18 @@ test("Job local compatibility fast path reads only the small epoch state and lea
     assert.equal(initial.source_epoch, 1);
     assert.equal(initial.checked_epoch, 0);
     assert.equal(initial.update_required, true);
+    const repairGuide = await fs.readFile(
+      path.resolve(
+        "knowledge/jobs/LOCAL_COMPAT_UPDATE.md"
+      ),
+      "utf8"
+    );
+    assert.match(
+      repairGuide,
+      new RegExp(
+        `JOB_LOCAL_COMPAT_EPOCH = ${initial.source_epoch}`
+      )
+    );
 
     const registryRoot = path.join(
       tempRoot,
