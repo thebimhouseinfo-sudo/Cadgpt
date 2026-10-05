@@ -13,7 +13,10 @@ import {
   isCadGptSourcePath,
 } from "../runtime/human-power.js";
 import { drawingMetadataRootsForExecution } from "../runtime/drawing-persistence.js";
-import { jobWorkspaceForExecution } from "../runtime/job-workspace.js";
+import {
+  jobWorkspaceForExecution,
+  jobWorkspaceReadableRootsForExecution,
+} from "../runtime/job-workspace.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
 const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".py"]);
@@ -49,10 +52,19 @@ function currentReadableRoots(): string[] {
 
   const jobRoot = currentJobWorkspaceRoot();
   if (jobRoot) {
+    let jobReadableRoots = [jobRoot];
+    try {
+      jobReadableRoots =
+        jobWorkspaceReadableRootsForExecution(
+          currentToolLease().workId
+        );
+    } catch {
+      // Keep the active Job work root as the minimum readable scope.
+    }
     return [
       ...new Set([
         getAppDataPath("libraries"),
-        jobRoot,
+        ...jobReadableRoots,
         ...currentDrawingMetadataRoots(),
       ]),
     ];
