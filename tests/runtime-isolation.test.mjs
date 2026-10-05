@@ -526,6 +526,7 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
   const address = httpServer.address();
   assert.ok(address && typeof address === "object");
   const port = address.port;
+  let toolSurfaceNotifications = 0;
 
   const createServer = (sessionKey) => {
     const server = new McpServer(
@@ -572,6 +573,13 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
         };
       },
     });
+
+    const originalSendToolListChanged =
+      server.sendToolListChanged.bind(server);
+    server.sendToolListChanged = () => {
+      toolSurfaceNotifications += 1;
+      return originalSendToolListChanged();
+    };
 
     return server;
   };
@@ -681,6 +689,11 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
       }),
     });
     assert.equal(notification.ok, true);
+    assert.equal(
+      toolSurfaceNotifications,
+      1,
+      "fresh MCP initialization must invalidate the client tool catalog once"
+    );
 
     const admission = await fetch(url, {
       method: "POST",
@@ -737,6 +750,8 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
       "mcp-session-id": rotatedSessionId,
       "mcp-protocol-version": LATEST_PROTOCOL_VERSION,
     };
+    const notificationsBeforeRotation =
+      toolSurfaceNotifications;
     const rotatedNotification = await fetch(url, {
       method: "POST",
       headers: rotatedHeaders,
@@ -746,6 +761,11 @@ test("production MCP router preserves CAD prepare across MCP session rotation an
       }),
     });
     assert.equal(rotatedNotification.ok, true);
+    assert.equal(
+      toolSurfaceNotifications,
+      notificationsBeforeRotation + 1,
+      "replacement transport initialization must invalidate the cached tool catalog"
+    );
 
     const rotatedConfirmed = await fetch(url, {
       method: "POST",

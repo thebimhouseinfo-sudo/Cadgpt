@@ -65,6 +65,40 @@ function negotiateProtocol(requested?: string): string {
   return LATEST_PROTOCOL_VERSION;
 }
 
+function isInitializedNotification(body: unknown): boolean {
+  return Boolean(
+    body &&
+    typeof body === "object" &&
+    (body as { method?: unknown }).method ===
+      "notifications/initialized"
+  );
+}
+
+function refreshClientToolSurface(
+  server: McpServer,
+  logicalSessionKey: string
+): void {
+  try {
+    server.sendToolListChanged();
+    logContinuityDiagnostic(
+      "tool_surface_refresh_notified",
+      {
+        logical_session:
+          continuityFingerprint(
+            logicalSessionKey
+          ),
+      }
+    );
+  } catch (error) {
+    console.warn(
+      "[MCP] tools/list_changed notification failed:",
+      error instanceof Error
+        ? error.message
+        : String(error)
+    );
+  }
+}
+
 function patchSessionHeaders(req: Request, sessionId: string, protocolVersion: string): Request {
   const headers = {
     ...req.headers,
@@ -461,6 +495,12 @@ export function createSessionManager(
 
       const run = async () => {
         await session.transport.handleRequest(req, res, body);
+        if (isInitializedNotification(body)) {
+          refreshClientToolSurface(
+            session.server,
+            session.logicalSessionKey
+          );
+        }
         const active = session.transport.sessionId;
         if (active) touchTransport(active);
       };
@@ -494,7 +534,19 @@ export function createSessionManager(
       }
       const id = existingId;
       if (id) touchTransport(id);
-      const run = async () => session.transport.handleRequest(req, res, body);
+      const run = async () => {
+        await session.transport.handleRequest(
+          req,
+          res,
+          body
+        );
+        if (isInitializedNotification(body)) {
+          refreshClientToolSurface(
+            session.server,
+            session.logicalSessionKey
+          );
+        }
+      };
       if (id && req.method !== "GET") await enqueue(id, run);
       else await run();
     },
