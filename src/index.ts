@@ -19,6 +19,7 @@ import { continuityDiagnosticsPath } from "./cadgpt/lib/continuity-diagnostics.j
 import {
   addinBindingStatus,
   addinControlSecretMatches,
+  releaseAddinPairing,
   removeAddinControlDescriptor,
   startAddinPairing,
   writeAddinControlDescriptor,
@@ -133,6 +134,17 @@ function authorizeAddinControl(
 app.post("/addin-control/pair/start", (req, res) => {
   if (!authorizeAddinControl(req, res)) return;
   res.json({ ok: true, ...startAddinPairing() });
+});
+
+app.post("/addin-control/pair/release/:pairId", (req, res) => {
+  if (!authorizeAddinControl(req, res)) return;
+  res.json({
+    ok: true,
+    pair_id: req.params.pairId,
+    released: releaseAddinPairing(
+      req.params.pairId
+    ),
+  });
 });
 
 app.get("/addin-control/binding/:pairId", async (req, res) => {
