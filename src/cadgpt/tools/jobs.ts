@@ -22,12 +22,24 @@ import { getBoundDrawingsForExecution } from "../session/drawing-binding.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
-import { prepareDrawingMetadataLocation } from "../runtime/drawing-persistence.js";
 import {
+  drawingMetadataRootsForExecution,
+  prepareDrawingMetadataLocation,
+} from "../runtime/drawing-persistence.js";
+import {
+  activeJobRuntimeForExecution,
   cleanupJobRuntimeForExecution,
+  cleanupJobRuntimeForSystemLease,
+  detachJobRuntimeForSystemLease,
   prepareJobResultLocationForExecution,
   prepareJobRuntimeForExecution,
 } from "../runtime/job-runtime.js";
+import {
+  acquireJobSystemLease,
+  currentJobSystemLease,
+  jobSystemLeaseForSession,
+  releaseJobSystemLease,
+} from "../runtime/system-lease.js";
 import { resolveRegisteredAssetPath } from "./user-assets.js";
 import {
   getBundledLispLibrariesRoot,
@@ -858,6 +870,152 @@ export function registerJobAuthoringTools(server: McpServer): void {
         return toolError(
           "job_runtime_finish",
           error
+        );
+      }
+    }
+  );
+
+
+  server.registerTool(
+    "job_system_acquire",
+    {
+      title: "Acquire Job SYSTEM Lease",
+      description:
+        "Hand off the current prepared User Reasoning Job runtime from foreground work to a detached SYSTEM lease. Use only after all CAD-dependent input and any final Job result location have already been resolved. The SYSTEM tool_id is exactly the canonical Job id.",
+      inputSchema: {
+        id: z.string().min(1),
+      },
+    },
+    async ({ id }) => {
+      try {
+        const callLease = currentToolLease();
+        const requestedId = id.trim();
+        const existing = jobSystemLeaseForSession(
+          requestedId,
+          callLease.sessionKey
+        );
+        if (existing) {
+          return toolResult("job_system_acquire", {
+            acquired: true,
+            reused: true,
+            tool_id: existing.tool_id,
+            job_id: existing.job_id,
+            job_name: existing.job_name,
+          });
+        }
+
+        const runtime = activeJobRuntimeForExecution(
+          callLease.workId
+        );
+        if (!runtime) {
+          throw new Error(
+            "JOB_RUNTIME_NOT_PREPARED: call job_runtime_prepare before acquiring a Job SYSTEM lease."
+          );
+        }
+        if (
+          runtime.job_id.toLowerCase() !==
+          requestedId.toLowerCase()
+        ) {
+          throw new Error(
+            `SYSTEM_LEASE_JOB_MISMATCH: active Job '${runtime.job_id}' cannot acquire '${requestedId}'.`
+          );
+        }
+
+        const registered = await loadJobs();
+        const jobName =
+          registered.find(
+            (job) =>
+              job.id.toLowerCase() ===
+              runtime.job_id.toLowerCase()
+          )?.title ?? runtime.job_name;
+
+        const systemLease = acquireJobSystemLease({
+          toolId: runtime.job_id,
+          jobId: runtime.job_id,
+          jobName,
+          sessionKey: callLease.sessionKey,
+          readableRoots:
+            drawingMetadataRootsForExecution(
+              callLease.workId
+            ),
+          writableRoots: [
+            runtime.runtime_root,
+            ...runtime.result_roots,
+          ],
+        });
+
+        try {
+          detachJobRuntimeForSystemLease(
+            callLease.workId,
+            systemLease.tool_id
+          );
+        } catch (error) {
+          releaseJobSystemLease(
+            systemLease.tool_id,
+            callLease.sessionKey
+          );
+          throw error;
+        }
+
+        return toolResult("job_system_acquire", {
+          acquired: true,
+          reused: false,
+          tool_id: systemLease.tool_id,
+          job_id: systemLease.job_id,
+          job_name: systemLease.job_name,
+        });
+      } catch (error) {
+        return toolError(
+          "job_system_acquire",
+          error
+        );
+      }
+    }
+  );
+
+  server.registerTool(
+    "job_system_release",
+    {
+      title: "Release Job SYSTEM Lease",
+      description:
+        "Release the active detached Job SYSTEM lease after its independent data-processing tail is complete. Pass tool_id=<job_id>. Release is limited to the logical CadGPT session that owns the lease.",
+      inputSchema: {},
+    },
+    async () => {
+      const systemLease = currentJobSystemLease();
+      if (!systemLease) {
+        return toolError(
+          "job_system_release",
+          new Error(
+            "NO_SYSTEM_LEASE: operation requires an active Job SYSTEM lease."
+          )
+        );
+      }
+
+      try {
+        const cleanup =
+          await cleanupJobRuntimeForSystemLease(
+            systemLease.tool_id
+          );
+        return toolResult(
+          "job_system_release",
+          {
+            released: true,
+            tool_id: systemLease.tool_id,
+            job_id: systemLease.job_id,
+            job_name: systemLease.job_name,
+            cleanup,
+          }
+        );
+      } catch (error) {
+        return toolError(
+          "job_system_release",
+          error
+        );
+      } finally {
+        releaseJobSystemLease(
+          systemLease.tool_id,
+          systemLease.session_key
         );
       }
     }
