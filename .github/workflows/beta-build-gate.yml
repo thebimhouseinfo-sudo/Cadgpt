@@ -20,15 +20,17 @@ jobs:
           foreach ($required in @(
             "package-lock.json",
             "runtimes/cad-mcp/requirements.lock.txt",
-            "ROADMAP.md",
             "setup.bat",
+            "scripts/setup-core.bat",
             "run.bat",
             "knowledge/jobs/JOB_RULES.md",
             "resources/cad/CADGPT_LOAD_SMOKE.lsp"
           )) {
             if (-not (Test-Path -LiteralPath $required)) { throw "Missing Beta artifact: $required" }
           }
-          $setup = Get-Content "setup.bat" -Raw
+          $setupWrapper = Get-Content "setup.bat" -Raw
+          if ($setupWrapper -notmatch "scripts\\setup-core\.bat") { throw "setup.bat must delegate to scripts/setup-core.bat" }
+          $setup = Get-Content "scripts/setup-core.bat" -Raw
           foreach ($marker in @(
             "npm ci",
             "requirements.lock.txt",
@@ -38,6 +40,7 @@ jobs:
             "registry\user",
             "workspace\lisp-draft",
             "workspace\job-draft",
+            "workspace\job-run",
             "data\runs",
             "runtime\dynamic-lisp",
             "drawings",
@@ -69,6 +72,7 @@ jobs:
             (Join-Path $managedRoot "registry\user"),
             (Join-Path $managedRoot "workspace\lisp-draft"),
             (Join-Path $managedRoot "workspace\job-draft"),
+            (Join-Path $managedRoot "workspace\job-run"),
             (Join-Path $managedRoot "data\runs"),
             (Join-Path $managedRoot "runtime\dynamic-lisp"),
             (Join-Path $managedRoot "drawings"),
