@@ -225,6 +225,19 @@ export async function addinBindingStatus(
   };
 }
 
+export function releaseAddinPairing(
+  pairId: string
+): boolean {
+  cleanupPending();
+  if (
+    pendingPair?.pairId === pairId
+  ) {
+    pendingPair = null;
+    return true;
+  }
+  return pairedPanels.delete(pairId);
+}
+
 export function clearAddinPairingsForSession(
   sessionKey: string
 ): void {
