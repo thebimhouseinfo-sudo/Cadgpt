@@ -79,6 +79,35 @@ test("direct Python Job drafts validate and promote through the controlled Job l
     assert.equal(valid.structuredContent?.data?.execution_mode, "direct");
     assert.match(valid.structuredContent?.data?.sha256 ?? "", /^[a-f0-9]{64}$/);
 
+    const scratchRoot = path.join(
+      tempRoot,
+      "runtime",
+      "direct-job"
+    );
+    const staleScratch = path.join(
+      scratchRoot,
+      "run-stale"
+    );
+    await fs.mkdir(staleScratch, { recursive: true });
+    await fs.writeFile(
+      path.join(
+        staleScratch,
+        ".cadgpt-direct-job.json"
+      ),
+      JSON.stringify({
+        version: 1,
+        execution_id: "exec:dead",
+        job_id: "dead-direct",
+        process_id: 99999999,
+      }),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(staleScratch, "raw.bin"),
+      "stale",
+      "utf8"
+    );
+
     const sessionKey = "direct-draft-test-session";
     checkAdmission(sessionKey, "@cadgpt", "mention");
     const work = createWorkRegistration({
@@ -117,6 +146,13 @@ test("direct Python Job drafts validate and promote through the controlled Job l
     assert.equal(
       draftRun.structuredContent?.data?.scratch_cleaned,
       true
+    );
+    assert.equal(
+      await fs
+        .stat(staleScratch)
+        .then(() => true, () => false),
+      false,
+      "a new Direct Job run must prune orphaned scratch from a dead execution"
     );
 
     const dataDraft = path.join(
@@ -173,11 +209,6 @@ test("direct Python Job drafts validate and promote through the controlled Job l
         .then(() => true, () => false),
       false,
       "Direct Job __file__ output must resolve inside disposable scratch rather than beside its definition"
-    );
-    const scratchRoot = path.join(
-      tempRoot,
-      "runtime",
-      "direct-job"
     );
     assert.deepEqual(
       await fs.readdir(scratchRoot),
