@@ -5,13 +5,19 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { getJobDraftRoot, getUserCapabilitiesPath } from "../lib/appdata.js";
-import { isPathInside, toCadgptPath } from "../lib/path-security.js";
+import {
+  isPathInside,
+  resolveAllowedPath,
+  resolveAbsoluteMutationPath,
+  toCadgptPath,
+} from "../lib/path-security.js";
 import {
   currentToolLease,
   currentWorkRegistration,
 } from "../lib/work-registration.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import {
+  authorizeJobDefinitionRootForExecution,
   beginJobWorkspaceForExecution,
   cleanupJobWorkspaceForExecution,
   jobWorkspaceForExecution,
@@ -38,10 +44,10 @@ function safeResultRelative(value: string): string {
   return normalized;
 }
 
-async function assertReasoningJob(
+async function reasoningDraftPath(
   jobId: string,
   draftPath?: string
-): Promise<void> {
+): Promise<string | null> {
   if (getInternalJob(jobId)) {
     throw new Error(
       "DIRECT_JOB_NO_DATA: Internal Direct Jobs do not own runtime working data."
@@ -87,7 +93,9 @@ async function assertReasoningJob(
         "JOB_DRAFT_REASONING_REQUIRED: draft_path must be a regular reasoning JOB.md file."
       );
     }
-    return;
+    return await resolveAllowedPath(candidate, {
+      allowedRoots: [getJobDraftRoot()],
+    });
   }
   if (
     path.extname(String(match.relative_path || "")).toLowerCase() === ".py"
@@ -96,6 +104,7 @@ async function assertReasoningJob(
       "DIRECT_JOB_NO_DATA: Direct Jobs are execution-only and do not own runtime working storage."
     );
   }
+  return null;
 }
 
 export function registerJobRuntimeTools(server: McpServer): void {
@@ -120,7 +129,10 @@ export function registerJobRuntimeTools(server: McpServer): void {
         const lease = currentToolLease();
         const work = currentWorkRegistration();
         const requested = job_id.trim();
-        await assertReasoningJob(requested, draft_path);
+        const canonicalDraft = await reasoningDraftPath(
+          requested,
+          draft_path
+        );
         if (
           work.ownerType === "job" &&
           work.ownerId.toLowerCase() !== requested.toLowerCase()
@@ -134,6 +146,12 @@ export function registerJobRuntimeTools(server: McpServer): void {
           lease.workId,
           requested
         );
+        if (canonicalDraft) {
+          authorizeJobDefinitionRootForExecution(
+            lease.workId,
+            path.dirname(canonicalDraft)
+          );
+        }
         return toolResult("job_working_location", {
           job_id: state.job_id,
           execution_id: state.execution_id,
