@@ -10,6 +10,7 @@ import {
   toCadgptPath,
 } from "../lib/path-security.js";
 import { withFileMutationLocks } from "./file-scheduler.js";
+import { drawingMetadataRootsForExecution } from "./drawing-persistence.js";
 
 export interface JobRuntimeContext {
   execution_id: string;
@@ -167,6 +168,20 @@ export async function prepareJobResultLocationForExecution(
 
   const resolvedDrawingRoot =
     path.resolve(drawingRoot);
+  const authorizedDrawingRoots =
+    drawingMetadataRootsForExecution(
+      executionId
+    ).map((root) => path.resolve(root));
+  if (
+    !authorizedDrawingRoots.some(
+      (root) => root === resolvedDrawingRoot
+    )
+  ) {
+    throw new Error(
+      "JOB_RESULT_DRAWING_ROOT_NOT_AUTHORIZED: result namespace must derive from the current execution's tool-authorized drawing root."
+    );
+  }
+
   const jobsRoot = path.join(
     resolvedDrawingRoot,
     "jobs"
