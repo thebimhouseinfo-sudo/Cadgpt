@@ -1055,17 +1055,16 @@ export function registerJobAuthoringTools(server: McpServer): void {
     },
     async ({ id, args }) => {
       try {
-        const callLease =
-          currentToolLease();
-        await releasePriorJobAuthorityForStart({
-          executionId:
-            callLease.workId,
-          sessionKey:
-            callLease.sessionKey,
-        });
-
         const internal = getInternalJob(id);
         if (internal) {
+          const callLease =
+            currentToolLease();
+          await releasePriorJobAuthorityForStart({
+            executionId:
+              callLease.workId,
+            sessionKey:
+              callLease.sessionKey,
+          });
           const executed = await executeInternalDirectJob(internal, args);
           return toolResult("job_run_direct", {
             id: internal.id,
@@ -1093,6 +1092,14 @@ export function registerJobAuthoringTools(server: McpServer): void {
           entry.library_id,
           relative
         );
+        const callLease =
+          currentToolLease();
+        await releasePriorJobAuthorityForStart({
+          executionId:
+            callLease.workId,
+          sessionKey:
+            callLease.sessionKey,
+        });
         const executed = await executeDirectJobScript(script, args, entry.id);
 
         return toolResult("job_run_direct", {
@@ -1127,15 +1134,6 @@ export function registerJobAuthoringTools(server: McpServer): void {
     },
     async ({ draft_path, expected_sha256, args }) => {
       try {
-        const callLease =
-          currentToolLease();
-        await releasePriorJobAuthorityForStart({
-          executionId:
-            callLease.workId,
-          sessionKey:
-            callLease.sessionKey,
-        });
-
         if (!path.isAbsolute(draft_path)) {
           throw new Error(
             "ABSOLUTE_PATH_REQUIRED: job_run_direct_draft draft_path must be absolute"
@@ -1161,6 +1159,14 @@ export function registerJobAuthoringTools(server: McpServer): void {
             `JOB_DRAFT_INVALID: ${validation.diagnostics.join(" ")}`
           );
         }
+        const callLease =
+          currentToolLease();
+        await releasePriorJobAuthorityForStart({
+          executionId:
+            callLease.workId,
+          sessionKey:
+            callLease.sessionKey,
+        });
         const executed = await executeDirectJobScript(
           target,
           args,
