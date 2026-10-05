@@ -104,7 +104,11 @@ test("direct Python Job drafts validate and promote through the controlled Job l
         args: [],
       })
     );
-    assert.equal(draftRun.structuredContent?.data?.validation_passed, true);
+    assert.equal(
+      draftRun.structuredContent?.data?.validation_passed,
+      true,
+      JSON.stringify(draftRun)
+    );
     assert.match(String(draftRun.structuredContent?.data?.stdout ?? ""), /no-drawing/);
     const runtimeRoot = path.join(
       path.dirname(directDraft),
