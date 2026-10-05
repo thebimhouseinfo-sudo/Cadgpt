@@ -293,25 +293,41 @@ function Resolve-OwnedTunnelPid {
     return $null
 }
 
-function Stop-VerifiedRuntime {
+function Stop-OwnedCadGptComponent {
     $cadPid = Resolve-OwnedCadGptPid
     if ($cadPid) {
         Stop-Process -Id $cadPid -Force -ErrorAction SilentlyContinue
         [void](Wait-ForCondition { -not (Get-Process -Id $cadPid -ErrorAction SilentlyContinue) } 5)
-    } elseif (Get-PortOwnerPid -TargetPort $CadGptPort) {
-        Write-TrayLog "CadGPT port $CadGptPort is occupied by an unowned process; refusing to kill it."
+        $script:CadGptPid = $null
+        return $true
     }
+    if (Get-PortOwnerPid -TargetPort $CadGptPort) {
+        Write-TrayLog "CadGPT port $CadGptPort is occupied by an unowned process; refusing to kill it."
+        return $false
+    }
+    $script:CadGptPid = $null
+    return $true
+}
 
+function Stop-OwnedTunnelComponent {
     $tunnelPid = Resolve-OwnedTunnelPid
     if ($tunnelPid) {
         Stop-Process -Id $tunnelPid -Force -ErrorAction SilentlyContinue
         [void](Wait-ForCondition { -not (Get-Process -Id $tunnelPid -ErrorAction SilentlyContinue) } 5)
-    } elseif (Get-PortOwnerPid -TargetPort $TunnelHealthPort) {
-        Write-TrayLog "Tunnel health port $TunnelHealthPort is occupied by an unowned process; refusing to kill it."
+        $script:TunnelPid = $null
+        return $true
     }
-
-    $script:CadGptPid = $null
+    if (Get-PortOwnerPid -TargetPort $TunnelHealthPort) {
+        Write-TrayLog "Tunnel health port $TunnelHealthPort is occupied by an unowned process; refusing to kill it."
+        return $false
+    }
     $script:TunnelPid = $null
+    return $true
+}
+
+function Stop-VerifiedRuntime {
+    [void](Stop-OwnedCadGptComponent)
+    [void](Stop-OwnedTunnelComponent)
     if ($script:IsTrayHost -and (Test-Path $TrayReadyPath)) { Write-TrayState }
 }
 
@@ -401,6 +417,8 @@ $script:CadGptPid = $null
 $script:TunnelPid = $null
 $script:RuntimeState = "Starting"
 $script:Exiting = $false
+$script:RuntimeHealthFailures = 0
+$script:SelfHealInProgress = $false
 $script:TrayStartedAt = (Get-Date).ToString("o")
 $script:CadProbe = [pscustomobject]@{
     running = $false
@@ -601,6 +619,69 @@ function Restart-CadGptRuntime {
     Start-CadGptRuntime
 }
 
+function Invoke-RuntimeSelfHeal {
+    if ($script:Exiting -or $script:SelfHealInProgress) { return }
+    if ($script:RuntimeState -eq "Starting") { return }
+
+    $health = Get-CadGptHealth
+    $tunnelHealthy = Test-TunnelHealthy
+    if ($health -and $tunnelHealthy) {
+        $script:RuntimeHealthFailures = 0
+        if ($script:RuntimeState -eq "Degraded") {
+            $script:RuntimeState = "Ready"
+            Update-TrayStatus
+        }
+        return
+    }
+
+    $script:RuntimeHealthFailures += 1
+    if ($script:RuntimeHealthFailures -lt 3) {
+        Write-TrayLog "Runtime health miss $($script:RuntimeHealthFailures)/3; waiting before self-heal."
+        return
+    }
+
+    $script:SelfHealInProgress = $true
+    try {
+        Write-TrayLog "Runtime health failed 3 consecutive checks; starting controlled self-heal."
+        $script:RuntimeState = "Starting"
+        Update-TrayStatus
+
+        if (-not $health) {
+            if (-not (Stop-OwnedCadGptComponent)) {
+                $script:RuntimeState = "Degraded"
+                Update-TrayStatus
+                return
+            }
+        }
+
+        if (-not $tunnelHealthy) {
+            if (-not (Stop-OwnedTunnelComponent)) {
+                $script:RuntimeState = "Degraded"
+                Update-TrayStatus
+                return
+            }
+        }
+
+        Start-Sleep -Milliseconds 600
+        Start-CadGptRuntime
+
+        if ((Get-CadGptHealth) -and (Test-TunnelHealthy)) {
+            $script:RuntimeHealthFailures = 0
+            Write-TrayLog "Controlled runtime self-heal completed successfully."
+        } else {
+            $script:RuntimeState = "Degraded"
+            Update-TrayStatus
+            Write-TrayLog "Controlled runtime self-heal did not restore full health."
+        }
+    } catch {
+        $script:RuntimeState = "Degraded"
+        Update-TrayStatus
+        Write-TrayLog "Controlled runtime self-heal failed: $($_.Exception.Message)"
+    } finally {
+        $script:SelfHealInProgress = $false
+    }
+}
+
 function Get-RuntimeStatus {
     if ($script:RuntimeState -eq "Starting") { return "Starting" }
     $health = Get-CadGptHealth
@@ -698,6 +779,11 @@ $statusTimer.Interval = 60000
 $statusTimer.Add_Tick({ Update-TrayStatus })
 $statusTimer.Start()
 
+$selfHealTimer = New-Object System.Windows.Forms.Timer
+$selfHealTimer.Interval = 15000
+$selfHealTimer.Add_Tick({ Invoke-RuntimeSelfHeal })
+$selfHealTimer.Start()
+
 $cadProbeTimer = New-Object System.Windows.Forms.Timer
 $cadProbeTimer.Interval = 15000
 $cadProbeTimer.Add_Tick({ Update-CadProbeStatus })
@@ -723,6 +809,7 @@ try {
     [System.Windows.Forms.Application]::Run()
 } finally {
     $statusTimer.Stop()
+    $selfHealTimer.Stop()
     $cadProbeTimer.Stop()
     $bootstrapTimer.Stop()
     Remove-Item $TrayReadyPath -Force -ErrorAction SilentlyContinue
