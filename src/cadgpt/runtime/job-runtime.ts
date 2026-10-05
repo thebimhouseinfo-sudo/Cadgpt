@@ -23,6 +23,8 @@ export interface JobRuntimeContext {
 
 const contextsByExecution =
   new Map<string, JobRuntimeContext>();
+const executionByJobRoot =
+  new Map<string, string>();
 
 function managedJobRootForFile(jobFile: string): string {
   const absolute = path.resolve(jobFile);
@@ -96,6 +98,13 @@ export async function cleanupJobRuntimeForExecution(
     };
   }
 
+  if (
+    executionByJobRoot.get(context.job_root) ===
+    executionId
+  ) {
+    executionByJobRoot.delete(context.job_root);
+  }
+
   let removedEmptyResultRoots = 0;
   const jobsParents = new Set<string>();
   for (const resultRoot of context.result_roots) {
@@ -125,9 +134,20 @@ export async function prepareJobRuntimeForExecution(
   jobId: string,
   jobFile: string
 ): Promise<JobRuntimeContext> {
+  const jobRoot = managedJobRootForFile(jobFile);
+  const existingExecution =
+    executionByJobRoot.get(jobRoot);
+  if (
+    existingExecution &&
+    existingExecution !== executionId
+  ) {
+    throw new Error(
+      `JOB_RUNTIME_BUSY: Job runtime is already owned by another active execution (${existingExecution}). Finish that Job run before starting the same Job elsewhere.`
+    );
+  }
+
   await cleanupJobRuntimeForExecution(executionId);
 
-  const jobRoot = managedJobRootForFile(jobFile);
   const runtimeRoot = path.join(jobRoot, "runtime");
   await withFileMutationLocks(
     [runtimeRoot],
@@ -151,6 +171,7 @@ export async function prepareJobRuntimeForExecution(
     result_roots: new Set<string>(),
   };
   contextsByExecution.set(executionId, context);
+  executionByJobRoot.set(jobRoot, executionId);
   return context;
 }
 
