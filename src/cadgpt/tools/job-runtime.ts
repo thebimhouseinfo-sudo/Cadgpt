@@ -147,7 +147,7 @@ export function registerJobRuntimeTools(server: McpServer): void {
           requested
         );
         if (canonicalDraft) {
-          authorizeJobDefinitionRootForExecution(
+          await authorizeJobDefinitionRootForExecution(
             lease.workId,
             path.dirname(canonicalDraft)
           );
@@ -202,15 +202,16 @@ export function registerJobRuntimeTools(server: McpServer): void {
         }
 
         const source = await fs.realpath(path.resolve(source_path));
-        if (!isPathInside(source, state.root)) {
+        const canonicalWorkspaceRoot = await fs.realpath(state.root);
+        if (!isPathInside(source, canonicalWorkspaceRoot)) {
           throw new Error(
             "JOB_RESULT_SOURCE_SCOPE: final result source must be inside the active Job working directory."
           );
         }
         const sourceStat = await fs.lstat(source);
-        if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) {
+        if (!sourceStat.isFile()) {
           throw new Error(
-            "JOB_RESULT_SOURCE_INVALID: final result source must be a regular non-symlink file."
+            "JOB_RESULT_SOURCE_INVALID: final result source must be a regular file."
           );
         }
 
@@ -224,27 +225,89 @@ export function registerJobRuntimeTools(server: McpServer): void {
         const destinationRelative = safeResultRelative(
           relative_path || path.basename(source)
         );
+        const drawingRoot = drawingRoots[0];
         const resultRoot = path.join(
-          drawingRoots[0],
+          drawingRoot,
           state.job_id
         );
-        const destination = path.resolve(
+        const destinationRequest = path.resolve(
           resultRoot,
           destinationRelative
         );
-        if (!isPathInside(destination, resultRoot)) {
+        if (!isPathInside(destinationRequest, resultRoot)) {
           throw new Error(
             "JOB_RESULT_PATH_INVALID: destination escapes the Job result folder."
           );
         }
 
         return await withFileMutationLocks(
-          [source, destination],
+          [source, resultRoot, destinationRequest],
           async () => {
+            const resultRootStat = await fs
+              .lstat(resultRoot)
+              .catch((error) => {
+                if (
+                  (error as NodeJS.ErrnoException).code === "ENOENT"
+                ) {
+                  return null;
+                }
+                throw error;
+              });
+            if (
+              resultRootStat?.isSymbolicLink() ||
+              (resultRootStat && !resultRootStat.isDirectory())
+            ) {
+              throw new Error(
+                "JOB_RESULT_SCOPE: Job result namespace must be a regular directory."
+              );
+            }
+
+            const safeResultRoot =
+              await resolveAbsoluteMutationPath(
+                resultRoot,
+                {
+                  allowedRoots: [drawingRoot],
+                  forCreate: true,
+                  label: "Job drawing result",
+                }
+              );
+            if (!resultRootStat) {
+              await fs.mkdir(safeResultRoot);
+            }
+
+            const destination =
+              await resolveAbsoluteMutationPath(
+                path.join(
+                  safeResultRoot,
+                  destinationRelative
+                ),
+                {
+                  allowedRoots: [safeResultRoot],
+                  forCreate: true,
+                  label: "Job drawing result",
+                }
+              );
             const content = await fs.readFile(source);
             await fs.mkdir(path.dirname(destination), {
               recursive: true,
             });
+
+            const requestedDestinationStat = await fs
+              .lstat(destinationRequest)
+              .catch((error) => {
+                if (
+                  (error as NodeJS.ErrnoException).code === "ENOENT"
+                ) {
+                  return null;
+                }
+                throw error;
+              });
+            if (requestedDestinationStat?.isSymbolicLink()) {
+              throw new Error(
+                "JOB_RESULT_SCOPE: final result destination must not be a symlink."
+              );
+            }
+
             const existing = await fs
               .lstat(destination)
               .catch((error) => {
@@ -266,18 +329,47 @@ export function registerJobRuntimeTools(server: McpServer): void {
               );
             }
 
+            const token = randomUUID();
             const temp = path.join(
               path.dirname(destination),
-              `.${path.basename(destination)}.${randomUUID()}.tmp`
+              `.${path.basename(destination)}.${token}.tmp`
             );
+            const backup = existing
+              ? path.join(
+                  path.dirname(destination),
+                  `.${path.basename(destination)}.${token}.bak`
+                )
+              : null;
             try {
               await fs.writeFile(temp, content);
-              if (existing) {
-                await fs.rm(destination, { force: true });
+              if (backup) {
+                await fs.rename(destination, backup);
               }
-              await fs.rename(temp, destination);
+              try {
+                await fs.rename(temp, destination);
+              } catch (error) {
+                if (backup) {
+                  await fs.rename(backup, destination).catch(
+                    () => undefined
+                  );
+                }
+                throw error;
+              }
+              if (backup) {
+                await fs.rm(backup, { force: true });
+              }
             } finally {
               await fs.rm(temp, { force: true }).catch(() => undefined);
+              if (backup) {
+                const destinationExists = await fs
+                  .stat(destination)
+                  .then(() => true, () => false);
+                if (destinationExists) {
+                  await fs.rm(backup, { force: true }).catch(
+                    () => undefined
+                  );
+                }
+              }
             }
 
             return toolResult("job_publish_result", {
