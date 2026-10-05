@@ -2,14 +2,21 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 
-import { getJobRunRoot } from "../lib/appdata.js";
-import { toCadgptPath } from "../lib/path-security.js";
+import {
+  getJobDraftRoot,
+  getJobRunRoot,
+} from "../lib/appdata.js";
+import {
+  isPathInside,
+  toCadgptPath,
+} from "../lib/path-security.js";
 import { isWorkExecutionActive } from "../lib/work-registration.js";
 
 interface JobWorkspaceState {
   execution_id: string;
   job_id: string;
   root: string;
+  definition_roots: string[];
 }
 
 const jobWorkspaceByExecution = new Map<string, JobWorkspaceState>();
@@ -131,7 +138,12 @@ export function jobWorkspaceForExecution(
   executionId: string
 ): JobWorkspaceState | null {
   const state = jobWorkspaceByExecution.get(executionId);
-  return state ? { ...state } : null;
+  return state
+    ? {
+        ...state,
+        definition_roots: [...state.definition_roots],
+      }
+    : null;
 }
 
 export function jobWorkspaceRootsForExecution(
@@ -139,6 +151,37 @@ export function jobWorkspaceRootsForExecution(
 ): string[] {
   const state = jobWorkspaceByExecution.get(executionId);
   return state ? [state.root] : [];
+}
+
+export function jobWorkspaceReadableRootsForExecution(
+  executionId: string
+): string[] {
+  const state = jobWorkspaceByExecution.get(executionId);
+  return state
+    ? [state.root, ...state.definition_roots]
+    : [];
+}
+
+export function authorizeJobDefinitionRootForExecution(
+  executionId: string,
+  absoluteRoot: string
+): void {
+  const state = jobWorkspaceByExecution.get(executionId);
+  if (!state) {
+    throw new Error(
+      "JOB_WORKSPACE_REQUIRED: Job definition scope requires an active Job workspace."
+    );
+  }
+  const root = path.resolve(absoluteRoot);
+  const draftRoot = path.resolve(getJobDraftRoot());
+  if (!isPathInside(root, draftRoot)) {
+    throw new Error(
+      "JOB_DEFINITION_SCOPE: only the active reasoning draft directory may be authorized."
+    );
+  }
+  if (!state.definition_roots.includes(root)) {
+    state.definition_roots.push(root);
+  }
 }
 
 export async function beginJobWorkspaceForExecution(
@@ -166,6 +209,7 @@ export async function beginJobWorkspaceForExecution(
     execution_id: executionId,
     job_id: jobId,
     root,
+    definition_roots: [],
   };
   await writeMarker(state);
   jobWorkspaceByExecution.set(executionId, state);
@@ -199,6 +243,7 @@ export async function transferJobWorkspaceForExecution(
   const transferred: JobWorkspaceState = {
     ...state,
     execution_id: successorExecutionId,
+    definition_roots: [...state.definition_roots],
   };
   jobWorkspaceByExecution.set(successorExecutionId, transferred);
   await writeMarker(transferred).catch(() => undefined);
