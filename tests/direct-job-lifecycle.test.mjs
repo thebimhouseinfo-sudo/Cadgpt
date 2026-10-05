@@ -116,9 +116,13 @@ test("direct Python Job drafts validate and promote through the controlled Job l
     );
     assert.equal(
       path.resolve(
-        draftRun.structuredContent?.data?.runtime_root
+        await fs.realpath(
+          draftRun.structuredContent?.data?.runtime_root
+        )
       ),
-      path.resolve(runtimeRoot)
+      path.resolve(
+        await fs.realpath(runtimeRoot)
+      )
     );
     assert.equal(
       await fs.readFile(
