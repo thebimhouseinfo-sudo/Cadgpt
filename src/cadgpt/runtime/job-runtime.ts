@@ -26,6 +26,13 @@ const contextsByExecution =
 const executionByJobRoot =
   new Map<string, string>();
 
+function jobRootKey(jobRoot: string): string {
+  const resolved = path.resolve(jobRoot);
+  return process.platform === "win32"
+    ? resolved.toLowerCase()
+    : resolved;
+}
+
 function managedJobRootForFile(jobFile: string): string {
   const absolute = path.resolve(jobFile);
   const root = path.dirname(absolute);
@@ -99,10 +106,14 @@ export async function cleanupJobRuntimeForExecution(
   }
 
   if (
-    executionByJobRoot.get(context.job_root) ===
+    executionByJobRoot.get(
+      jobRootKey(context.job_root)
+    ) ===
     executionId
   ) {
-    executionByJobRoot.delete(context.job_root);
+    executionByJobRoot.delete(
+      jobRootKey(context.job_root)
+    );
   }
 
   let removedEmptyResultRoots = 0;
@@ -151,8 +162,9 @@ export async function prepareJobRuntimeForExecution(
   return withFileMutationLocks(
     [jobRoot, runtimeRoot],
     async () => {
+      const rootKey = jobRootKey(jobRoot);
       const existingExecution =
-        executionByJobRoot.get(jobRoot);
+        executionByJobRoot.get(rootKey);
       if (
         existingExecution &&
         existingExecution !== executionId
@@ -175,7 +187,7 @@ export async function prepareJobRuntimeForExecution(
       // lock keeps another execution from observing an unclaimed gap
       // while this shared Job runtime is reset.
       executionByJobRoot.set(
-        jobRoot,
+        rootKey,
         executionId
       );
       try {
@@ -202,10 +214,10 @@ export async function prepareJobRuntimeForExecution(
         return context;
       } catch (error) {
         if (
-          executionByJobRoot.get(jobRoot) ===
+          executionByJobRoot.get(rootKey) ===
           executionId
         ) {
-          executionByJobRoot.delete(jobRoot);
+          executionByJobRoot.delete(rootKey);
         }
         throw error;
       }
