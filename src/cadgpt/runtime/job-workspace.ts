@@ -37,30 +37,61 @@ async function removeIfEmpty(target: string): Promise<void> {
   }
 }
 
-async function pruneStaleJobWorkspaces(jobRoot: string): Promise<void> {
-  let entries: Array<import("node:fs").Dirent>;
+function processIsAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (pid === process.pid) return true;
   try {
-    entries = await fs.readdir(jobRoot, { withFileTypes: true });
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pruneStaleJobWorkspaces(): Promise<void> {
+  const root = getJobRunRoot();
+  let jobs: Array<import("node:fs").Dirent>;
+  try {
+    jobs = await fs.readdir(root, { withFileTypes: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
   }
 
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const candidate = path.join(jobRoot, entry.name);
-    let executionId = "";
-    try {
-      const marker = JSON.parse(
-        await fs.readFile(path.join(candidate, MARKER), "utf8")
-      ) as { execution_id?: unknown };
-      executionId =
-        typeof marker.execution_id === "string" ? marker.execution_id : "";
-    } catch {
-      executionId = "";
+  for (const job of jobs) {
+    if (!job.isDirectory()) continue;
+    const jobRoot = path.join(root, job.name);
+    const entries = await fs.readdir(jobRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const candidate = path.join(jobRoot, entry.name);
+      let executionId = "";
+      let ownerPid = 0;
+      try {
+        const marker = JSON.parse(
+          await fs.readFile(path.join(candidate, MARKER), "utf8")
+        ) as {
+          execution_id?: unknown;
+          process_id?: unknown;
+        };
+        executionId =
+          typeof marker.execution_id === "string"
+            ? marker.execution_id
+            : "";
+        ownerPid = Number(marker.process_id || 0);
+      } catch {
+        executionId = "";
+        ownerPid = 0;
+      }
+
+      const activeHere =
+        executionId && isWorkExecutionActive(executionId);
+      const activeElsewhere =
+        ownerPid !== process.pid && processIsAlive(ownerPid);
+      if (activeHere || activeElsewhere) continue;
+      await fs.rm(candidate, { recursive: true, force: true });
     }
-    if (executionId && isWorkExecutionActive(executionId)) continue;
-    await fs.rm(candidate, { recursive: true, force: true });
+    await removeIfEmpty(jobRoot);
   }
 }
 
@@ -72,6 +103,7 @@ async function writeMarker(state: JobWorkspaceState): Promise<void> {
         version: 1,
         execution_id: state.execution_id,
         job_id: state.job_id,
+        process_id: process.pid,
       },
       null,
       2
@@ -106,9 +138,10 @@ export async function beginJobWorkspaceForExecution(
     await removeIfEmpty(path.dirname(prior.root));
   }
 
+  await fs.mkdir(getJobRunRoot(), { recursive: true });
+  await pruneStaleJobWorkspaces();
   const jobRoot = path.join(getJobRunRoot(), jobId);
   await fs.mkdir(jobRoot, { recursive: true });
-  await pruneStaleJobWorkspaces(jobRoot);
 
   const root = path.join(jobRoot, executionSegment(executionId));
   await fs.rm(root, { recursive: true, force: true });
