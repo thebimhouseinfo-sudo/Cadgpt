@@ -8,9 +8,9 @@ Before executing the first Reasoning/Dynamic Job step, call:
 
 ```text
 job_working_location(job_id=<registered Job id>)
+```
 
 For a pre-promotion Reasoning Job draft, also pass its absolute `draft_path` pointing to `appdata/workspace/job-draft/**/JOB.md`. Direct `.py` drafts are not eligible for Job runtime working storage.
-```
 
 This begins a fresh current-run workspace. All raw/intermediate/generated file data belongs there. If the Job needs drawing-scoped persistence, call `drawing_metadata_location` only to resolve/authorize the exact drawing root, then use `job_publish_result` for explicit **final** result files. Generic file writes from an active Job runtime must not write to drawing storage.
 
