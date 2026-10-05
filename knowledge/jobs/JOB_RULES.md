@@ -126,7 +126,7 @@ Runtime working-data rules:
 - it is not Job history and is not a durable project record;
 - beginning a fresh run replaces the prior current-run state for that execution;
 - normal work stop/replacement/expiry and `job_runtime_end` remove it;
-- a later run prunes stale abandoned workspace state for that Job;
+- a later Job run prunes stale abandoned Job workspaces across the runtime root while preserving work owned by a live execution/process;
 - Job A cannot read/write Job B's runtime workspace through generic file tools;
 - `appdata/data/runs/**` is reserved for explicit authoring/test evidence when applicable and is not a production Job raw-data sink.
 
