@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { getUserCapabilitiesPath } from "../lib/appdata.js";
+import { getJobDraftRoot, getUserCapabilitiesPath } from "../lib/appdata.js";
 import { isPathInside, toCadgptPath } from "../lib/path-security.js";
 import {
   currentToolLease,
@@ -38,7 +38,10 @@ function safeResultRelative(value: string): string {
   return normalized;
 }
 
-async function assertRegisteredReasoningJob(jobId: string): Promise<void> {
+async function assertReasoningJob(
+  jobId: string,
+  draftPath?: string
+): Promise<void> {
   if (getInternalJob(jobId)) {
     throw new Error(
       "DIRECT_JOB_NO_DATA: Internal Direct Jobs do not own runtime working data."
@@ -62,7 +65,29 @@ async function assertRegisteredReasoningJob(jobId: string): Promise<void> {
       String(entry.id || "").trim().toLowerCase() === needle
   );
   if (!match) {
-    throw new Error(`JOB_NOT_FOUND: ${jobId}`);
+    if (!draftPath) {
+      throw new Error(
+        `JOB_DRAFT_PATH_REQUIRED: unregistered Job '${jobId}' requires its absolute reasoning JOB.md draft_path.`
+      );
+    }
+    const candidate = path.resolve(draftPath);
+    const draftRoot = path.resolve(getJobDraftRoot());
+    if (
+      !path.isAbsolute(draftPath) ||
+      !isPathInside(candidate, draftRoot) ||
+      path.basename(candidate).toLowerCase() !== "job.md"
+    ) {
+      throw new Error(
+        "JOB_DRAFT_REASONING_REQUIRED: unregistered Job runtime storage is allowed only for an absolute reasoning JOB.md under appdata/workspace/job-draft/**."
+      );
+    }
+    const stat = await fs.lstat(candidate);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error(
+        "JOB_DRAFT_REASONING_REQUIRED: draft_path must be a regular reasoning JOB.md file."
+      );
+    }
+    return;
   }
   if (
     path.extname(String(match.relative_path || "")).toLowerCase() === ".py"
@@ -82,14 +107,20 @@ export function registerJobRuntimeTools(server: McpServer): void {
         "Begin a fresh current-run working directory for one Reasoning/Dynamic Job. The previous current-run raw workspace for this execution is deleted. This root is for intermediate/raw/generated runtime data only and is never drawing metadata or Job history.",
       inputSchema: {
         job_id: z.string().min(1).max(160),
+        draft_path: z
+          .string()
+          .optional()
+          .describe(
+            "Required only for an unregistered pre-promotion Reasoning Job: absolute JOB.md path under appdata/workspace/job-draft/**. Direct .py drafts are not eligible for runtime working storage."
+          ),
       },
     },
-    async ({ job_id }) => {
+    async ({ job_id, draft_path }) => {
       try {
         const lease = currentToolLease();
         const work = currentWorkRegistration();
         const requested = job_id.trim();
-        await assertRegisteredReasoningJob(requested);
+        await assertReasoningJob(requested, draft_path);
         if (
           work.ownerType === "job" &&
           work.ownerId.toLowerCase() !== requested.toLowerCase()
