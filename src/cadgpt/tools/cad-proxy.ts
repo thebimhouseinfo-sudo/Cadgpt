@@ -184,9 +184,14 @@ export async function resolveLispSourceForCommandDiscovery(
     humanPower,
   });
 
+  const lexicalJobRunRoot = getJobRunRoot();
+  const canonicalJobRunRoot = await fs.promises
+    .realpath(lexicalJobRunRoot)
+    .catch(() => path.resolve(lexicalJobRunRoot));
+
   if (
     !humanPower &&
-    isPathInside(resolved, getJobRunRoot())
+    isPathInside(resolved, canonicalJobRunRoot)
   ) {
     let workId: string;
     try {
@@ -197,9 +202,14 @@ export async function resolveLispSourceForCommandDiscovery(
       );
     }
     const workspace = jobWorkspaceForExecution(workId);
+    const canonicalWorkspaceRoot = workspace
+      ? await fs.promises
+          .realpath(workspace.root)
+          .catch(() => path.resolve(workspace.root))
+      : null;
     if (
-      !workspace ||
-      !isPathInside(resolved, workspace.root)
+      !canonicalWorkspaceRoot ||
+      !isPathInside(resolved, canonicalWorkspaceRoot)
     ) {
       throw new Error(
         "JOB_RUNTIME_LISP_SCOPE: current-run Job Lisp must belong to the active Job workspace for this execution."
