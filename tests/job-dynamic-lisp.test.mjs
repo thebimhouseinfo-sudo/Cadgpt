@@ -9,7 +9,7 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted state", async () => {
+test("Job dynamic Lisp uses current-run workspace, exact patches, and fresh next-run seed", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-job-dynamic-lisp-"));
   const previousRoot = process.env.CADGPT_APPDATA_ROOT;
   process.env.CADGPT_APPDATA_ROOT = tempRoot;
@@ -23,6 +23,24 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
       callbacks.set(name, callback);
     },
   });
+
+  const {
+    checkAdmission,
+    revokeSessionAdmissions,
+  } = await import("../dist/cadgpt/lib/admission.js");
+  const {
+    acquireToolLease,
+    createWorkRegistration,
+    releaseWorkRegistration,
+    runWithToolLease,
+  } = await import("../dist/cadgpt/lib/work-registration.js");
+  const {
+    beginJobWorkspaceForExecution,
+  } = await import("../dist/cadgpt/runtime/job-workspace.js");
+
+  const sessionKey = "job-dynamic-lisp-test";
+  checkAdmission(sessionKey, "@cg", "mention");
+  let work;
 
   try {
     const registryRoot = path.join(tempRoot, "registry", "user");
@@ -82,7 +100,7 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
         "preferred_tools: job_dynamic_lisp_prepare, job_dynamic_lisp_patch",
         "success_criteria: dynamic copy updated",
         "failure_handling: stop",
-        "output: persistent dynamic Lisp",
+        "output: current-run dynamic Lisp",
         "## Validation",
         "Verify load and result.",
         "",
@@ -119,7 +137,27 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
     assert.equal(typeof prepare, "function");
     assert.equal(typeof patch, "function");
 
-    const seeded = await prepare({
+    work = createWorkRegistration({
+      sessionKey,
+      ownerType: "job",
+      ownerId: "fdt-update",
+      executionPath: "file",
+    });
+    const invoke = async (tool, args) => {
+      const lease = acquireToolLease({
+        tool,
+        family: "job-authoring",
+        targetId: "fdt-update",
+        executionId: work.executionId,
+        authorityToken: work.authorityToken,
+        sessionKey,
+      });
+      return runWithToolLease(lease, () =>
+        callbacks.get(tool)(args)
+      );
+    };
+
+    const seeded = await invoke("job_dynamic_lisp_prepare", {
       job_id: "fdt-update",
       source_lisp_id: "fdt-source",
     });
@@ -136,7 +174,17 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
     const beforeHash = seeded.structuredContent?.data?.sha256;
     const oldTable = "(setq table '((0 100) (101 200)))";
     const newTable = "(setq table '((0 80) (81 160) (161 250)))";
-    const patched = await patch({
+    assert.match(
+      dynamicPath.replaceAll("\\", "/"),
+      /\/workspace\/job-run\/fdt-update\//
+    );
+    assert.equal(
+      dynamicPath.startsWith(jobRoot),
+      false,
+      "runtime dynamic Lisp must not be written into the permanent Job library"
+    );
+
+    const patched = await invoke("job_dynamic_lisp_patch", {
       job_id: "fdt-update",
       relative_path: "dynamic-lisp/fdt.lsp",
       expected_sha256: beforeHash,
@@ -167,7 +215,7 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
       updatedHash
     );
 
-    const reused = await prepare({
+    const reused = await invoke("job_dynamic_lisp_prepare", {
       job_id: "fdt-update",
       source_lisp_id: "fdt-source",
     });
@@ -179,10 +227,10 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
     assert.equal(
       await fs.readFile(dynamicPath, "utf8"),
       updated,
-      "prepare must not recopy source over persisted Job state"
+      "prepare must not recopy source over current-run Job state"
     );
 
-    const invalid = await patch({
+    const invalid = await invoke("job_dynamic_lisp_patch", {
       job_id: "fdt-update",
       relative_path: "dynamic-lisp/fdt.lsp",
       expected_sha256: updatedHash,
@@ -203,7 +251,29 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
     assert.equal(
       await fs.readFile(dynamicPath, "utf8"),
       updated,
-      "invalid patch must not mutate persisted dynamic Lisp"
+      "invalid patch must not mutate current-run dynamic Lisp"
+    );
+
+    await beginJobWorkspaceForExecution(
+      work.executionId,
+      "fdt-update"
+    );
+    const freshRun = await invoke("job_dynamic_lisp_prepare", {
+      job_id: "fdt-update",
+      source_lisp_id: "fdt-source",
+    });
+    assert.equal(
+      freshRun.structuredContent?.data?.reused,
+      false,
+      JSON.stringify(freshRun)
+    );
+    assert.equal(
+      await fs.readFile(
+        freshRun.structuredContent.data.dynamic_lisp_absolute_path,
+        "utf8"
+      ),
+      source,
+      "a fresh Job run must start from the proven source instead of prior patched runtime state"
     );
 
     const proxySource = await fs.readFile(
@@ -229,6 +299,10 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
     );
     assert.match(
       policySource,
+      /appdata\/workspace\/job-run/
+    );
+    assert.match(
+      policySource,
       /appdata\/libraries\/jobs/
     );
     assert.match(
@@ -246,11 +320,22 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
     );
     assert.match(serviceSource, /appdata\/libraries\/jobs/);
     assert.match(serviceSource, /appdata\/workspace\/job-draft/);
+    assert.match(serviceSource, /appdata\/workspace\/job-run/);
     assert.match(
       serviceSource,
       /Job-owned LISP is loadable only from a Job lisp\/\*\* or dynamic-lisp\/\*\* folder/
     );
   } finally {
+    if (work) {
+      try {
+        releaseWorkRegistration(
+          work.executionId,
+          work.authorityToken,
+          sessionKey
+        );
+      } catch {}
+    }
+    revokeSessionAdmissions(sessionKey);
     if (previousRoot === undefined) delete process.env.CADGPT_APPDATA_ROOT;
     else process.env.CADGPT_APPDATA_ROOT = previousRoot;
     await fs.rm(tempRoot, { recursive: true, force: true });
