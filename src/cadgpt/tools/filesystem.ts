@@ -13,6 +13,7 @@ import {
   isCadGptSourcePath,
 } from "../runtime/human-power.js";
 import { drawingMetadataRootsForExecution } from "../runtime/drawing-persistence.js";
+import { jobRuntimeWritableRootsForExecution } from "../runtime/job-runtime.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
 const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".py"]);
@@ -42,10 +43,23 @@ function currentWritableRoots(): string[] {
   const humanPowerRoots = currentHumanPower()
     ? [getAppDataRoot(), getRepoRoot()]
     : [];
+  let jobRoots: string[] = [];
+  try {
+    jobRoots = jobRuntimeWritableRootsForExecution(
+      currentToolLease().workId
+    );
+  } catch {
+    jobRoots = [];
+  }
+  const ordinaryRoots = jobRoots.length
+    ? jobRoots
+    : [
+        ...getWritableRoots(),
+        ...currentDrawingMetadataRoots(),
+      ];
   return [
     ...new Set([
-      ...getWritableRoots(),
-      ...currentDrawingMetadataRoots(),
+      ...ordinaryRoots,
       ...humanPowerRoots,
     ]),
   ];

@@ -58,8 +58,11 @@ test("direct Python Job drafts validate and promote through the controlled Job l
       directDraft,
       [
         "import os",
+        "from pathlib import Path",
         "drawing = os.environ.get('CADGPT_DRAWING_PATH')",
-        "print(drawing or 'no-drawing')",
+        "runtime = Path(os.environ['CADGPT_JOB_RUNTIME_ROOT'])",
+        "Path('runtime-created.txt').write_text('fresh', encoding='utf-8')",
+        "print((drawing or 'no-drawing') + '|cwd=' + os.getcwd() + '|runtime=' + str(runtime))",
         "",
       ].join("\n"),
       "utf8"
@@ -101,8 +104,75 @@ test("direct Python Job drafts validate and promote through the controlled Job l
         args: [],
       })
     );
-    assert.equal(draftRun.structuredContent?.data?.validation_passed, true);
+    assert.equal(
+      draftRun.structuredContent?.data?.validation_passed,
+      true,
+      JSON.stringify(draftRun)
+    );
     assert.match(String(draftRun.structuredContent?.data?.stdout ?? ""), /no-drawing/);
+    const runtimeRoot = path.join(
+      path.dirname(directDraft),
+      "runtime"
+    );
+    assert.equal(
+      path.resolve(
+        await fs.realpath(
+          draftRun.structuredContent?.data?.runtime_root
+        )
+      ),
+      path.resolve(
+        await fs.realpath(runtimeRoot)
+      )
+    );
+    assert.equal(
+      await fs.readFile(
+        path.join(runtimeRoot, "runtime-created.txt"),
+        "utf8"
+      ),
+      "fresh"
+    );
+    assert.equal(
+      await fs.stat(
+        path.join(
+          path.dirname(directDraft),
+          "runtime-created.txt"
+        )
+      ).then(() => true, () => false),
+      false
+    );
+
+    await fs.writeFile(
+      path.join(runtimeRoot, "stale.txt"),
+      "stale",
+      "utf8"
+    );
+    const secondDraftRun =
+      await runWithToolLease(lease, () =>
+        runDraft({
+          draft_path: directDraft,
+          expected_sha256:
+            valid.structuredContent.data.sha256,
+          args: [],
+        })
+      );
+    assert.equal(
+      secondDraftRun.isError,
+      undefined,
+      JSON.stringify(secondDraftRun)
+    );
+    assert.equal(
+      await fs.stat(
+        path.join(runtimeRoot, "stale.txt")
+      ).then(() => true, () => false),
+      false
+    );
+    assert.equal(
+      await fs.readFile(
+        path.join(runtimeRoot, "runtime-created.txt"),
+        "utf8"
+      ),
+      "fresh"
+    );
 
     const invalidDraft = path.join(
       draftRoot,

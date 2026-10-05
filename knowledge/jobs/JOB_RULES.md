@@ -39,9 +39,10 @@ A step may:
 - read managed user assets inside CadGPT AppData;
 - call the `write-lisp` Skill to patch/create AutoLISP in the AppData workspace;
 - read another managed Job when the workflow explicitly needs it;
-- write only approved workspace/data outputs through generic file tools.
+- write Job working data only inside the active Job's `runtime/**`;
+- publish final drawing-scoped results only inside the Job result location returned by CadGPT.
 
-A step must **not** directly edit permanent `appdata/libraries/**` content with generic file tools.
+A step must **not** directly edit permanent `appdata/libraries/**` source/assets with generic file tools. During an active Job runtime, generic file mutation is narrowed to that Job's runtime/result roots instead of the broad authoring workspace.
 
 ## Job vs Skill vs Tool
 
@@ -60,6 +61,8 @@ CadGPT has two execution modes:
 User-authored Jobs use the managed draft → validate → real test → user acceptance → promote lifecycle. Official Internal Jobs version with CadGPT, are read-only product capabilities, never live in User AppData, and cannot be overridden by a User Registry id. A Direct Job is never exempt from drawing-targeting, authority, evidence, or final validation rules.
 
 When a Direct Job runs with one bound drawing, CadGPT serializes the child process under that drawing host lock and provides exact target identity through `CADGPT_DRAWING_ID`, `CADGPT_DRAWING_NAME`, `CADGPT_DRAWING_PATH`, `CADGPT_DRAWING_HOST`, and `CADGPT_DRAWING_RUNTIME_IDENTITY`. Direct Job code must use that explicit identity and must not guess or inherit AutoCAD `ActiveDocument`.
+
+Direct Job execution uses `<job-root>/runtime` as process CWD. CadGPT also provides `CADGPT_JOB_ROOT` for permanent package-relative assets, `CADGPT_JOB_RUNTIME_ROOT` for raw/intermediate scratch, and `CADGPT_JOB_RESULT_ROOT` when a drawing-scoped final-result namespace is available. A Direct Job must not rely on the old script-directory CWD to find permanent helpers.
 
 ## Required Job Structure
 
@@ -126,6 +129,41 @@ job_get
 
 New Jobs begin in `appdata/workspace/job-draft/**` only after the `jobcreate` planning approval gate and become reusable only through `job_promote_draft`.
 
+A reusable User Job package owns its private executable assets and its current-run scratch space:
+
+```text
+<job-root>/
+├─ JOB.md | <job-name>.py
+├─ lisp/
+├─ dynamic-lisp/
+├─ tools/
+└─ runtime/
+```
+
+The first four entries are permanent Job definition/executable assets. `runtime/**` is different: it is mutable scratch owned by that Job, reset at the start of every new Job run, and never retained as run history. Raw inputs collected during execution, temporary inventories, mappings, intermediate JSON/CSV and other working files belong there.
+
+`runtime/**` is never part of the promoted Job bundle, never copied by checkout/promotion and never included in the permanent bundle hash. Changing `runtime/**` therefore cannot create a Job version/conflict. `dynamic-lisp/**`, despite its name, is a persistent executable derivative and is **not** scratch runtime.
+
+## Local Custom Job compatibility signal
+
+CadGPT uses `JOB_LOCAL_COMPAT_EPOCH` only as a lightweight signal that an installed source change may require existing User Jobs in local AppData to be checked or repaired. It is **not** the Job-system version and must not change for ordinary features, documentation edits, optimizations or other compatible changes.
+
+Before normal User Job create/run/update work, CadGPT performs only the O(1) `job_local_compat_status` comparison between the source epoch and the small local checked marker. When they match, do not enumerate or inspect Job packages.
+
+When they differ, `jobcreate` enters **CONTRACT UPDATE** mode:
+
+```text
+job_local_compat_status
+→ job_list User Jobs
+→ job_get each local package only now
+→ detect current-contract violations
+→ checkout/fix/test/promote only affected Jobs
+→ report changed / unchanged / blocked items
+→ job_local_compat_mark_checked
+```
+
+The updater uses the normal Job authoring authority. It must not enable Human Power, bypass a Registry/platform gate or silently broaden ownership. If a local correction is valid but an external registration/policy action is blocked, keep the safe local result when possible and report the exact remaining action. Pending external actions are recorded with the report but do not force a full deep scan on every later Job call.
+
 ## Choosing the Executor for a Step
 
 Use the most suitable executor that preserves the step semantics.
@@ -136,13 +174,14 @@ Use a registered Lisp capability when reusable AutoLISP already performs the req
 ### Job-owned internal helper assets
 When a Job needs code that exists only to implement that Job, the helper is part of the Job package rather than a shared CadGPT capability.
 
-For AutoLISP, the canonical ownership is:
+Canonical private helper ownership is:
 
 ```text
-<job-root>/lisp/*.lsp
+<job-root>/lisp/*.lsp      # private AutoLISP
+<job-root>/tools/**        # other private helper/script/assets
 ```
 
-A Job-owned internal Lisp helper:
+Private Job helpers are declared/resolved by the owning Job only. They are not independent global/user Registry capabilities. A Job-owned internal Lisp helper:
 
 - is authored, versioned, tested, checked out and promoted with its owning Job;
 - is declared locally by the Job contract so the Job can resolve and load it;
@@ -150,6 +189,8 @@ A Job-owned internal Lisp helper:
 - is not added to the global/user Lisp Registry;
 - is not discoverable as an independent reusable Lisp capability;
 - must not be moved into a shared Lisp Library merely to bypass missing Job-bundle tooling.
+
+The same ownership rule applies to `tools/**`: checkout, validation hashing and promotion preserve those assets with the Job, but they are not separately registered globally.
 
 This differs from a Job-owned dynamic derivative: an internal helper is authored specifically for the Job, while a dynamic derivative is seeded from a registered proven Lisp and then changes only declared dynamic sections.
 
@@ -160,19 +201,17 @@ Job source/assets and Job runtime products have different ownership.
 
 CadGPT ensures a durable `drawing_anchor` whenever a drawing is successfully bound. The execution-scoped runtime `drawing_id` remains separate and must never be used as persistent identity.
 
-When a Job needs persistent metadata about the bound drawing, it must call the shared `drawing_metadata_location` tool. The tool re-validates the anchor, resolves or creates:
+When a Job needs a final persistent result for the bound drawing, drawing identity/root resolution remains owned by CadGPT. The Job must use `drawing_job_result_location`. That tool internally re-validates the Drawing Anchor through the canonical drawing-location primitive, obtains/creates the tool-owned drawing root, then returns the Job namespace:
 
 ```text
-%LOCALAPPDATA%\CadGPT\drawings\<drawing_anchor>\
+<tool-provided-drawing-root>/
+└─ jobs/
+   └─ <job-name>-result/
 ```
 
-and returns the canonical absolute path.
+The Job must never construct `%LOCALAPPDATA%\CadGPT\drawings\<drawing_anchor>\` itself. It writes only final/persistent Job products to the returned `<job-name>-result` directory. Raw inputs, inventories, mappings, intermediate JSON/CSV, debug files and other working data stay in `<job-root>/runtime/**`.
 
-The Job/model must not assemble this path itself. Generic `file_*` access to `drawings/**` is allowed only for the exact drawing root authorized by `drawing_metadata_location` for the current execution.
-
-If the tool created an empty drawing root and the execution ends without writing metadata, CadGPT cleanup removes that one registered empty directory. A non-empty directory is retained.
-
-Jobs must not derive a replacement identity from filename/path, runtime `drawing_id`, ActiveDocument, work/session identity, or their own Job folder.
+The `drawing_metadata_location` primitive remains the canonical owner of drawing-root validation, creation, authorization and empty-root cleanup for non-Job callers and internal composition. Job result cleanup removes an empty `<job-name>-result` (and empty `jobs/`) before drawing-root cleanup; a non-empty result is retained. Jobs must not infer further drawing-storage layout or derive a replacement identity from filename/path, runtime `drawing_id`, ActiveDocument, work/session identity, or their own Job folder.
 
 ### Job-owned dynamic Lisp derivative
 When a Job needs the **same proven Lisp logic with changing data/ranges/sections**, prefer a persistent derivative owned by that Job:
@@ -249,7 +288,7 @@ Reasoning: appdata/libraries/jobs/<library-id>/<job-name>/JOB.md
 Direct:    appdata/libraries/jobs/<library-id>/<job-name>/<job-name>.py
 ```
 
-Supporting reusable definition assets may live beside the Job entrypoint when they belong to the Job contract. This includes Job-owned internal helpers under `<job-root>/lisp/**` and Job-owned dynamic derivatives under `<job-root>/dynamic-lisp/**`. Persistent runtime products about a drawing do **not** belong beside the Job entrypoint; they belong under `AppData/drawings/<drawing_anchor>/**` after resolving the canonical Drawing Anchor. Runtime/test evidence belongs under managed data/run locations rather than being silently mixed into the permanent Job definition.
+Supporting reusable definition assets live beside the Job entrypoint when they belong only to that Job. This includes `<job-root>/lisp/**`, `<job-root>/dynamic-lisp/**` and `<job-root>/tools/**`. Current-run working data lives in `<job-root>/runtime/**`, is reset on the next run and is excluded from the permanent bundle/hash. Final drawing-scoped Job products live only in the tool-returned `<drawing-root>/jobs/<job-name>-result/**` namespace.
 
 Shared reusable AutoLISP logic belongs to a managed Lisp Library. A **Job-owned dynamic derivative** is the explicit exception and lives under:
 

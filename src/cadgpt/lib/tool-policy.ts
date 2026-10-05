@@ -12,6 +12,7 @@ const CONTROL_TOOLS = new Set([
 const DISCOVERY_TOOLS = new Set([
   "job_list",
   "job_get",
+  "job_local_compat_status",
   "skill_list",
   "skill_get",
   "registry_list",

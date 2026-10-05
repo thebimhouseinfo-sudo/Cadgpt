@@ -131,6 +131,16 @@ test("job draft creation and promotion validate library prerequisites clearly", 
     };
     registerJobAuthoringTools(fakeServer);
 
+    const { markJobLocalCompatChecked } = await import(
+      "../dist/cadgpt/lib/job-local-compat.js"
+    );
+    await markJobLocalCompatChecked({
+      scanned_user_jobs: 0,
+      report_summary:
+        "fixture bootstrapped at current compatibility epoch",
+      pending_actions: [],
+    });
+
     const draftNew = callbacks.get("job_draft_new");
     assert.ok(draftNew);
 
