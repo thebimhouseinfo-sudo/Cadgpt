@@ -62,6 +62,8 @@ User-authored Jobs use the managed draft → validate → real test → user acc
 
 When a Direct Job runs with one bound drawing, CadGPT serializes the child process under that drawing host lock and provides exact target identity through `CADGPT_DRAWING_ID`, `CADGPT_DRAWING_NAME`, `CADGPT_DRAWING_PATH`, `CADGPT_DRAWING_HOST`, and `CADGPT_DRAWING_RUNTIME_IDENTITY`. Direct Job code must use that explicit identity and must not guess or inherit AutoCAD `ActiveDocument`.
 
+Direct Job execution uses `<job-root>/runtime` as process CWD. CadGPT also provides `CADGPT_JOB_ROOT` for permanent package-relative assets, `CADGPT_JOB_RUNTIME_ROOT` for raw/intermediate scratch, and `CADGPT_JOB_RESULT_ROOT` when a drawing-scoped final-result namespace is available. A Direct Job must not rely on the old script-directory CWD to find permanent helpers.
+
 ## Required Job Structure
 
 Reasoning Jobs must define identity, goal, preconditions, ordered steps, per-step tool/executor scope, success criteria, failure handling, outputs/postconditions, and final validation. Direct Jobs encode their workflow in Python, but still require an explicit goal, controlled inputs, deterministic target handling, failure behavior, and real final validation before promotion.
