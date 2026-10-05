@@ -824,6 +824,20 @@ export function currentToolLease(): ToolLease {
   return lease;
 }
 
+export function currentWorkRegistration(): WorkRegistration {
+  const lease = currentToolLease();
+  const work = registrations.get(lease.workId);
+  if (!work || work.closing) {
+    throw new Error("NO_ACTIVE_WORK: current ToolLease does not belong to an active CadGPT work.");
+  }
+  return { ...work, capabilities: [...work.capabilities] };
+}
+
+export function isWorkExecutionActive(executionId: string): boolean {
+  const work = registrations.get(executionId);
+  return Boolean(work && !work.closing);
+}
+
 export function activeWorkCount(): number {
   cleanup();
   return registrations.size;
