@@ -135,44 +135,82 @@ export async function prepareJobRuntimeForExecution(
   jobFile: string
 ): Promise<JobRuntimeContext> {
   const jobRoot = managedJobRootForFile(jobFile);
-  const existingExecution =
-    executionByJobRoot.get(jobRoot);
+  const runtimeRoot = path.join(jobRoot, "runtime");
+  const current =
+    contextsByExecution.get(executionId);
+
   if (
-    existingExecution &&
-    existingExecution !== executionId
+    current &&
+    current.job_root !== jobRoot
   ) {
-    throw new Error(
-      `JOB_RUNTIME_BUSY: Job runtime is already owned by another active execution (${existingExecution}). Finish that Job run before starting the same Job elsewhere.`
+    await cleanupJobRuntimeForExecution(
+      executionId
     );
   }
 
-  await cleanupJobRuntimeForExecution(executionId);
-
-  const runtimeRoot = path.join(jobRoot, "runtime");
-  await withFileMutationLocks(
-    [runtimeRoot],
+  return withFileMutationLocks(
+    [jobRoot, runtimeRoot],
     async () => {
-      await fs.rm(runtimeRoot, {
-        recursive: true,
-        force: true,
-      });
-      await fs.mkdir(runtimeRoot, {
-        recursive: true,
-      });
+      const existingExecution =
+        executionByJobRoot.get(jobRoot);
+      if (
+        existingExecution &&
+        existingExecution !== executionId
+      ) {
+        throw new Error(
+          `JOB_RUNTIME_BUSY: Job runtime is already owned by another active execution (${existingExecution}). Finish that Job run before starting the same Job elsewhere.`
+        );
+      }
+
+      if (
+        contextsByExecution.get(executionId)
+          ?.job_root === jobRoot
+      ) {
+        await cleanupJobRuntimeForExecution(
+          executionId
+        );
+      }
+
+      // Claim before the first filesystem await. The per-root mutation
+      // lock keeps another execution from observing an unclaimed gap
+      // while this shared Job runtime is reset.
+      executionByJobRoot.set(
+        jobRoot,
+        executionId
+      );
+      try {
+        await fs.rm(runtimeRoot, {
+          recursive: true,
+          force: true,
+        });
+        await fs.mkdir(runtimeRoot, {
+          recursive: true,
+        });
+
+        const context: JobRuntimeContext = {
+          execution_id: executionId,
+          job_id: jobId,
+          job_name: jobNameForRoot(jobRoot),
+          job_root: jobRoot,
+          runtime_root: runtimeRoot,
+          result_roots: new Set<string>(),
+        };
+        contextsByExecution.set(
+          executionId,
+          context
+        );
+        return context;
+      } catch (error) {
+        if (
+          executionByJobRoot.get(jobRoot) ===
+          executionId
+        ) {
+          executionByJobRoot.delete(jobRoot);
+        }
+        throw error;
+      }
     }
   );
-
-  const context: JobRuntimeContext = {
-    execution_id: executionId,
-    job_id: jobId,
-    job_name: jobNameForRoot(jobRoot),
-    job_root: jobRoot,
-    runtime_root: runtimeRoot,
-    result_roots: new Set<string>(),
-  };
-  contextsByExecution.set(executionId, context);
-  executionByJobRoot.set(jobRoot, executionId);
-  return context;
 }
 
 export async function prepareJobResultLocationForExecution(
