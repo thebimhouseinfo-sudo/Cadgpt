@@ -96,11 +96,12 @@ test("outer Lisp policy accepts Job-owned static/dynamic helpers and rejects unr
       ),
       await fs.realpath(promotedDynamic)
     );
-    assert.equal(
-      await resolveLispSourceForCommandDiscovery(
-        runtimeDynamic
-      ),
-      await fs.realpath(runtimeDynamic)
+    await assert.rejects(
+      () =>
+        resolveLispSourceForCommandDiscovery(
+          runtimeDynamic
+        ),
+      /JOB_RUNTIME_LISP_SCOPE/
     );
 
     await assert.rejects(
