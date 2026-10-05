@@ -7,6 +7,7 @@ import {
 } from "node:crypto";
 
 import { getAppDataPath } from "./appdata.js";
+import { activeJobSystemLeasesForSession } from "../runtime/system-lease.js";
 
 const CONTROL_SECRET = randomBytes(32).toString("base64url");
 const PAIR_WINDOW_MS = 180_000;
@@ -27,6 +28,11 @@ interface PairedPanel {
 export interface AddinBoundDrawing {
   name: string | null;
   full_name: string | null;
+}
+
+export interface AddinBackgroundJob {
+  job_id: string;
+  job_name: string;
 }
 
 interface SessionObserver {
@@ -174,6 +180,7 @@ export async function addinBindingStatus(
   drawing: AddinBoundDrawing | null;
   bound_count: number;
   human_power: boolean;
+  background_jobs: AddinBackgroundJob[];
 }> {
   const pair = pairedPanels.get(pairId);
   if (!pair) {
@@ -183,10 +190,18 @@ export async function addinBindingStatus(
       drawing: null,
       bound_count: 0,
       human_power: false,
+      background_jobs: [],
     };
   }
 
   pair.lastAccessedAt = Date.now();
+  const backgroundJobs =
+    activeJobSystemLeasesForSession(
+      pair.sessionKey
+    ).map((lease) => ({
+      job_id: lease.job_id,
+      job_name: lease.job_name,
+    }));
   const observer = observers.get(pair.sessionKey);
   if (!observer) {
     return {
@@ -195,6 +210,7 @@ export async function addinBindingStatus(
       drawing: null,
       bound_count: 0,
       human_power: false,
+      background_jobs: backgroundJobs,
     };
   }
 
@@ -205,6 +221,7 @@ export async function addinBindingStatus(
     drawing: binding.drawing,
     bound_count: binding.bound_count,
     human_power: binding.human_power,
+    background_jobs: backgroundJobs,
   };
 }
 
