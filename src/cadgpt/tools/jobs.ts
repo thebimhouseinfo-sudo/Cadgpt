@@ -14,7 +14,10 @@ import {
   getUserLibrariesManifestPath,
 } from "../lib/appdata.js";
 import { getRepoRoot, isPathInside, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
-import { currentToolLease } from "../lib/work-registration.js";
+import {
+  currentToolLease,
+  isWorkExecutionActive,
+} from "../lib/work-registration.js";
 import { getBoundDrawingsForExecution } from "../session/drawing-binding.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
@@ -507,6 +510,74 @@ async function directJobScratchEntries(root: string): Promise<string[]> {
   return entries;
 }
 
+const DIRECT_JOB_SCRATCH_MARKER = ".cadgpt-direct-job.json";
+
+function directJobProcessIsAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (
+      (error as NodeJS.ErrnoException).code === "EPERM"
+    );
+  }
+}
+
+async function pruneDirectJobScratchRoot(
+  scratchRoot: string
+): Promise<void> {
+  let entries: Array<import("node:fs").Dirent>;
+  try {
+    entries = await fs.readdir(scratchRoot, {
+      withFileTypes: true,
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith("run-")) {
+      continue;
+    }
+    const candidate = path.join(scratchRoot, entry.name);
+    let executionId = "";
+    let ownerPid = 0;
+    try {
+      const marker = JSON.parse(
+        await fs.readFile(
+          path.join(candidate, DIRECT_JOB_SCRATCH_MARKER),
+          "utf8"
+        )
+      ) as {
+        execution_id?: unknown;
+        process_id?: unknown;
+      };
+      executionId =
+        typeof marker.execution_id === "string"
+          ? marker.execution_id
+          : "";
+      ownerPid = Number(marker.process_id || 0);
+    } catch {
+      executionId = "";
+      ownerPid = 0;
+    }
+
+    const activeHere =
+      executionId && isWorkExecutionActive(executionId);
+    const activeElsewhere =
+      ownerPid !== process.pid &&
+      directJobProcessIsAlive(ownerPid);
+    if (activeHere || activeElsewhere) continue;
+    await fs.rm(candidate, {
+      recursive: true,
+      force: true,
+    });
+  }
+}
+
 async function executeDirectJobScript(
   script: string,
   args: string[],
@@ -542,8 +613,26 @@ async function executeDirectJobScript(
 
   const scratchRoot = getAppDataPath("runtime", "direct-job");
   await fs.mkdir(scratchRoot, { recursive: true });
+  await pruneDirectJobScratchRoot(scratchRoot);
   const scratchContainer = await fs.mkdtemp(
     path.join(scratchRoot, "run-")
+  );
+  await fs.writeFile(
+    path.join(
+      scratchContainer,
+      DIRECT_JOB_SCRATCH_MARKER
+    ),
+    JSON.stringify(
+      {
+        version: 1,
+        execution_id: lease.workId,
+        job_id: jobId,
+        process_id: process.pid,
+      },
+      null,
+      2
+    ) + "\n",
+    "utf8"
   );
   const scratchCwd = path.join(scratchContainer, "cwd");
   await fs.mkdir(scratchCwd);
@@ -567,6 +656,7 @@ async function executeDirectJobScript(
       : await execute();
 
     const allowedScratchEntries = new Set([
+      DIRECT_JOB_SCRATCH_MARKER,
       "cwd",
       `cwd/${path.basename(scratchScript)}`,
     ]);
