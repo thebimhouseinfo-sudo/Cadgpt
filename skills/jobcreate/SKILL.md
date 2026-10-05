@@ -17,10 +17,11 @@ It is **not** a generic autonomous agent and it must not invent missing business
 ```text
 knowledge/jobs/**                         internal Job contract/rules
 skills/jobcreate/**                       internal read-only authoring skill
-appdata/workspace/job-draft/**            Job working drafts
-appdata/libraries/jobs/<library-id>/**     promoted reusable Jobs + Job-owned dynamic-lisp assets
+appdata/workspace/job-draft/**            Job authoring/refinement drafts
+appdata/workspace/job-run/**              current-run Reasoning/Dynamic Job raw/intermediate/generated data; no history
+appdata/libraries/jobs/<library-id>/**     promoted reusable Job definitions/templates/helpers
 appdata/registry/user/**                   promoted Job registry metadata
-appdata/data/runs/**                       test/evidence outputs when applicable
+appdata/data/runs/**                       explicit authoring/test evidence when applicable; not production raw Job data
 ```
 
 External user folders are import sources only. `jobcreate` works on managed AppData copies/drafts and never writes back to an external source folder.
@@ -170,6 +171,8 @@ For reasoning `.md`, every step must retain its agreed semantic purpose, explici
 
 For direct `.py`, keep the script deterministic, use explicit inputs, fail loudly, and when a drawing is bound target only the exact `CADGPT_DRAWING_*` identity supplied by CadGPT. Do not guess `ActiveDocument` or scan for a convenient drawing.
 
+Direct Jobs are execution-only/no-persistent-data Jobs. They must not create durable raw/result files. CadGPT runs them in disposable scratch CWD with a minimal environment. If the workflow requires intermediate/persistent files, choose a Reasoning/Dynamic Job instead.
+
 Do not broaden tool access merely because a tool is available.
 
 Run:
@@ -188,9 +191,10 @@ Required behavior:
 
 ```text
 registered working Lisp source
+→ job_working_location(job_id)
 → job_dynamic_lisp_prepare
-   ├─ first run: byte-for-byte copy into <job>/dynamic-lisp/**
-   └─ later runs: reuse existing Job copy; do not recopy
+   ├─ first call in this run: byte-for-byte copy into <job-work>/dynamic-lisp/**
+   └─ later calls in this run: reuse current working copy
 → identify the declared dynamic data/section(s)
 → job_dynamic_lisp_patch with exact old_text/new_text + sha256
 → syntax validation is part of the patch gate
@@ -199,7 +203,7 @@ registered working Lisp source
 → verify Job postcondition
 ```
 
-The dynamic file is a **derivative owned by that Job**, not a new shared Lisp capability. Preserve the source command and all code outside the declared dynamic sections. Changing the number of data rows/sections is allowed when that is part of the Job input; replace the data block itself rather than building a wrapper that feeds the old command.
+The dynamic file is a **current-run derivative owned by that Job**, not a new shared Lisp capability. Preserve the source command and all code outside the declared dynamic sections. Changing the number of data rows/sections is allowed when that is part of the Job input; replace the data block itself rather than building a wrapper that feeds the old command. A new Job run starts from a fresh proven source seed, so runtime dynamic files do not become permanent Job state.
 
 Example: an FDT-update-style Job should seed from the known-working FDT Lisp, replace the sizing table/range section directly (including adding/removing ranges), keep the rest of the FDT implementation unchanged, and persist that Job copy for the next run.
 
@@ -240,7 +244,7 @@ The tool returns the exact canonical drawing root:
 
 and authorizes that exact root for `file_*` access in the current execution.
 
-The Job must use the returned absolute path. It must never substitute filename/path matching, runtime `drawing_id`, Job-local output folders, or a separately registered helper.
+The Job must use the returned absolute path and exact Drawing Anchor contract. During an active Job runtime that drawing root is not a generic writable raw-data area. Keep raw/intermediate data in the path returned by `job_working_location`; publish only explicit final result files with `job_publish_result`. The Job must never substitute filename/path matching, runtime `drawing_id`, or a separately registered helper.
 
 #### B4. Implement missing capabilities only when required
 
@@ -255,6 +259,8 @@ After a called Skill completes its own gate, return to the interrupted Job step.
 #### B5. Real execution/test — mandatory
 
 If the current work_handle is FILE-only and the approved test needs AutoCAD, call `cadgpt_work_upgrade` with that FILE handle plus the exact user-approved drawing name/full path, or `drawing_selector="CREATE_TEST"` for an isolated blank test drawing. The returned HYBRID handle supersedes the FILE handle; use only the new credentials afterward. Never call `drawing_*` or `cad__*` with a FILE handle and never default to ActiveDocument/first-open drawing.
+
+For a Reasoning/Dynamic Job real run, begin with `job_working_location` and end with `job_runtime_end`. This is required even when the current work_handle is an already-bound HYBRID drawing workspace, because the Job runtime context is separate from chat/drawing work authority.
 
 A Job is not proven by reading its Markdown or dispatching commands. The workflow must be exercised against an explicitly approved test context.
 
@@ -335,7 +341,7 @@ Do not rewrite unaffected steps for cosmetic consistency.
 
 `jobcreate` owns workflow authoring. `write-lisp` owns AutoLISP engineering.
 
-A Job step may invoke `write-lisp` when Lisp creation or repair is part of the approved implementation plan. For **dynamic reuse of an already-working Lisp**, the Job should normally seed and patch its own persisted derivative with `job_dynamic_lisp_prepare` / `job_dynamic_lisp_patch` instead of asking `write-lisp` to create an adapter or a fresh copy every run. `jobcreate` must not absorb unrelated AutoLISP-specific coding rules into the Job definition.
+A Job step may invoke `write-lisp` when Lisp creation or repair is part of the approved implementation plan. For **dynamic reuse of an already-working Lisp**, the Job should seed and patch its current-run derivative with `job_dynamic_lisp_prepare` / `job_dynamic_lisp_patch` inside the active Job workspace instead of asking `write-lisp` to create an adapter or mutating the permanent Job library. `jobcreate` must not absorb unrelated AutoLISP-specific coding rules into the Job definition.
 
 ## Required supporting knowledge
 
