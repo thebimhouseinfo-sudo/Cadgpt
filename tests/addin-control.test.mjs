@@ -71,6 +71,7 @@ test("paired panel reads bound drawing without receiving work authority", async 
     },
     bound_count: 1,
     human_power: false,
+    background_jobs: [],
   });
 
   const serialized = JSON.stringify(status);
@@ -137,6 +138,7 @@ test("paired panel reports session not ready when observer is gone", async () =>
       drawing: null,
       bound_count: 0,
       human_power: false,
+      background_jobs: [],
     }
   );
 });
@@ -319,5 +321,6 @@ test("detached MCP transport keeps add-in binding observer until logical session
     drawing: null,
     bound_count: 0,
     human_power: false,
+    background_jobs: [],
   });
 });
