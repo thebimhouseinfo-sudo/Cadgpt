@@ -18,9 +18,10 @@ It is **not** a generic autonomous agent and it must not invent missing business
 knowledge/jobs/**                         internal Job contract/rules
 skills/jobcreate/**                       internal read-only authoring skill
 appdata/workspace/job-draft/**            Job working drafts
-appdata/libraries/jobs/<library-id>/**     promoted reusable Jobs + Job-owned dynamic-lisp assets
+appdata/libraries/jobs/<library-id>/**     promoted reusable Job package (entrypoint + lisp/ + dynamic-lisp/ + tools/)
+<job-root>/runtime/**                       current-run scratch; reset next run; never promoted/hashed
 appdata/registry/user/**                   promoted Job registry metadata
-appdata/data/runs/**                       test/evidence outputs when applicable
+<drawing-root>/jobs/<job-name>-result/**   final persistent drawing result only
 ```
 
 External user folders are import sources only. `jobcreate` works on managed AppData copies/drafts and never writes back to an external source folder.
@@ -29,11 +30,14 @@ Permanent `appdata/libraries/**` content is read-only to generic file tools. `jo
 
 ## Entry modes
 
-`jobcreate` supports the same authoring workflow from three entry points:
+`jobcreate` supports four entry modes:
 
 1. **Goal only** — user states the desired outcome. Ask whether the user wants `jobcreate` to propose a skeleton or wants to provide the steps.
 2. **User skeleton** — user supplies some or all steps. Develop and clarify that skeleton; do not replace it without agreement.
 3. **Refine existing Job** — load the existing managed Job first, then discuss only what is wrong, missing or should change. Preserve accepted workflow semantics unless the user explicitly changes them.
+4. **CONTRACT UPDATE** — entered only when `job_local_compat_status` reports a changed local-compatibility epoch. This is the updater for existing local Custom Jobs; do not create a separate migration agent/framework.
+
+For normal create/refine work, run the lightweight compatibility status before drafting. A matching epoch is a fast path and must not enumerate/deep-read all Jobs. A mismatch routes to CONTRACT UPDATE first.
 
 ## Reasoning boundary
 
@@ -52,6 +56,31 @@ Permanent `appdata/libraries/**` content is read-only to generic file tools. `jo
 When a domain decision is missing, ask the user or mark it explicitly as unresolved during planning. Do not hide uncertainty by filling in a plausible default.
 
 ## Required workflow
+
+### CONTRACT UPDATE — compatibility-only local repair
+
+This mode is not ordinary feature/refinement planning. It executes only when `job_local_compat_status.update_required=true`.
+
+```text
+job_local_compat_status
+→ job_list User Registry Jobs
+→ job_get each User Job only after the mismatch is known
+→ compare its real local package/source with current JOB_RULES
+→ classify unchanged vs affected vs blocked
+→ job_checkout only affected Jobs
+→ patch narrowly without changing business semantics
+→ job_draft_validate
+→ real test/re-check required affected behavior
+→ job_promote_draft when the corrected Job is proven
+→ produce one scan report
+→ job_local_compat_mark_checked
+```
+
+The scan report must include scanned / affected / updated / unchanged / blocked counts and per-Job detected violations, performed local corrections, validation result and any required external follow-up.
+
+CONTRACT UPDATE has no extra authority. Do not enable Human Power, bypass Registry/platform gates, invent domain rules or change ownership as a workaround. If a gate blocks an external cleanup/re-registration step, report the exact gate and required follow-up. A safe validated local correction may remain valid while that external action is pending. Pass pending actions to `job_local_compat_mark_checked` so the expensive scan does not repeat on every later Job call.
+
+`JOB_LOCAL_COMPAT_EPOCH` is only a local-compatibility signal. Increase it only when a source/contract change can require repairs to already-installed Custom Jobs in AppData. Do not increase it for ordinary compatible features, docs or implementation refactors.
 
 ### Phase A — Planning
 
@@ -168,7 +197,7 @@ The draft must satisfy `knowledge/jobs/JOB_RULES.md` and the `jobcreate` harness
 
 For reasoning `.md`, every step must retain its agreed semantic purpose, explicit tool/executor scope, outputs/postconditions, success criteria and failure behavior.
 
-For direct `.py`, keep the script deterministic, use explicit inputs, fail loudly, and when a drawing is bound target only the exact `CADGPT_DRAWING_*` identity supplied by CadGPT. Do not guess `ActiveDocument` or scan for a convenient drawing.
+For direct `.py`, keep the script deterministic, use explicit inputs, fail loudly, and when a drawing is bound target only the exact `CADGPT_DRAWING_*` identity supplied by CadGPT. Do not guess `ActiveDocument` or scan for a convenient drawing. Direct execution runs with `CADGPT_JOB_RUNTIME_ROOT` as CWD; use that for raw/intermediate data. When supplied, `CADGPT_JOB_RESULT_ROOT` is the only Job-owned final drawing-result location.
 
 Do not broaden tool access merely because a tool is available.
 
@@ -209,12 +238,14 @@ Use `appdata/runtime/dynamic-lisp/**` only for ad-hoc/session variants that do *
 
 When the approved Job design needs a private helper that exists only for that Job, keep it inside the Job bundle rather than creating a shared Registry capability.
 
-For a private AutoLISP helper:
+For private helpers:
 
 ```text
-draft:     <job-draft-root>/<library-id>/<job-name>/lisp/*.lsp
-permanent: <job-library-root>/<library-id>/<job-name>/lisp/*.lsp
+AutoLISP:  <job-root>/lisp/*.lsp
+Other:     <job-root>/tools/**
 ```
+
+Both directories are Job bundle assets preserved by checkout/promotion and included in the permanent Job hash. They are not registered as independent global capabilities.
 
 The helper is Job-private, declared by the owning Job, loaded on demand, and is **not** registered in the global/user Lisp Registry. Do not promote it through the shared Lisp library path merely because current bundle tooling is incomplete.
 
@@ -224,23 +255,23 @@ If the current draft/promotion/load primitives cannot preserve the required Job-
 
 #### B3b. Drawing-scoped persistent metadata
 
-If the approved Job needs persistent drawing-scoped metadata, do not make the Job invent or implement drawing identity/path resolution.
+If the approved Job needs a final persistent drawing-scoped product, do not make the Job invent or implement drawing identity/path resolution.
 
-CadGPT ensures `drawing_anchor` when the drawing is bound. At the step that needs persistence, the Job must call:
+At Job execution start, Reasoning Jobs call `job_runtime_prepare`. Raw/intermediate working data stays in the returned `runtime_root`.
 
-```text
-drawing_metadata_location
-```
-
-The tool returns the exact canonical drawing root:
+At the step that publishes a final drawing result, call:
 
 ```text
-%LOCALAPPDATA%\CadGPT\drawings\<drawing_anchor>\
+drawing_job_result_location
 ```
 
-and authorizes that exact root for `file_*` access in the current execution.
+CadGPT internally resolves the canonical drawing root through the existing Drawing Anchor tool contract and returns:
 
-The Job must use the returned absolute path. It must never substitute filename/path matching, runtime `drawing_id`, Job-local output folders, or a separately registered helper.
+```text
+<drawing-root>/jobs/<job-name>-result/
+```
+
+Use that returned absolute path only for final/persistent Job output. Never construct the drawing root or substitute filename/path matching, runtime `drawing_id`, ActiveDocument, or Job-local guesses. After mutation, re-read/verify the actual output. Finish a Reasoning Job run with `job_runtime_finish`.
 
 #### B4. Implement missing capabilities only when required
 
