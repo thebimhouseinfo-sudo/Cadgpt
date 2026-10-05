@@ -5,6 +5,7 @@ import {
   getAppDataRoot,
   getJobDraftRoot,
   getJobLibrariesRoot,
+  getJobRunRoot,
 } from "./appdata.js";
 import { getRepoRoot, isPathInside } from "./path-security.js";
 
@@ -39,6 +40,11 @@ function roots(): LispRoot[] {
     {
       root: path.resolve(getJobDraftRoot()),
       virtualPrefix: "appdata/workspace/job-draft",
+      jobOwned: true,
+    },
+    {
+      root: path.resolve(getJobRunRoot()),
+      virtualPrefix: "appdata/workspace/job-run",
       jobOwned: true,
     },
     {
