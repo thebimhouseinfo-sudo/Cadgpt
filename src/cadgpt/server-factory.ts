@@ -63,6 +63,12 @@ import {
 } from "./tools/cad-launcher.js";
 import { cleanupExecutionState } from "./runtime/execution-cleanup.js";
 import { withCadHostLock } from "./runtime/cad-scheduler.js";
+import {
+  getJobSystemLease,
+  releaseJobSystemLeasesForSession,
+  runWithJobSystemLease,
+} from "./runtime/system-lease.js";
+import { cleanupJobRuntimeForSystemLease } from "./runtime/job-runtime.js";
 import { getRepoRoot } from "./lib/path-security.js";
 import {
   clearAddinPairingsForSession,
@@ -120,19 +126,37 @@ function configureToolRegistration(server: McpServer, sessionKey: string): void 
     const authority = toolAuthority(name);
     const baseInputSchema = (config.inputSchema || {}) as Record<string, unknown>;
 
+    const workAuthoritySchema = {
+      execution_id: z
+        .string()
+        .min(1)
+        .describe("execution_id from work_handle returned by cadgpt_cad_confirm (drawing workspace) or cadgpt_work_start (file/job work)"),
+      authority_token: z
+        .string()
+        .min(1)
+        .describe("authority_token from work_handle returned by cadgpt_cad_confirm (drawing workspace) or cadgpt_work_start (file/job work)"),
+    };
     const authoritySchema =
       authority === "work"
-        ? {
-            execution_id: z
-              .string()
-              .min(1)
-              .describe("execution_id from work_handle returned by cadgpt_cad_confirm (drawing workspace) or cadgpt_work_start (file/job work)"),
-            authority_token: z
-              .string()
-              .min(1)
-              .describe("authority_token from work_handle returned by cadgpt_cad_confirm (drawing workspace) or cadgpt_work_start (file/job work)"),
-          }
-        : {};
+        ? workAuthoritySchema
+        : authority === "system"
+          ? {
+              tool_id: z
+                .string()
+                .min(1)
+                .describe("Canonical Job id of the active SYSTEM lease."),
+            }
+          : authority === "work-or-system"
+            ? {
+                execution_id: workAuthoritySchema.execution_id.optional(),
+                authority_token: workAuthoritySchema.authority_token.optional(),
+                tool_id: z
+                  .string()
+                  .min(1)
+                  .optional()
+                  .describe("Canonical Job id of the active SYSTEM lease; use instead of execution_id + authority_token for detached Job backend file work."),
+              }
+            : {};
 
     const nextConfig = {
       ...config,
@@ -142,7 +166,11 @@ function configureToolRegistration(server: McpServer, sessionKey: string): void 
           ? `${config.description || ""} Requires this MCP/chat session to have launched CadGPT.`.trim()
           : authority === "work"
             ? `${config.description || ""} Requires the current CadGPT work_handle.`.trim()
-            : config.description,
+            : authority === "system"
+              ? `${config.description || ""} Requires an active Job SYSTEM tool_id.`.trim()
+              : authority === "work-or-system"
+                ? `${config.description || ""} Requires either the current CadGPT work_handle or an active Job SYSTEM tool_id.`.trim()
+                : config.description,
     };
 
     if (authority === "control") {
@@ -155,10 +183,36 @@ function configureToolRegistration(server: McpServer, sessionKey: string): void 
         return callback(args, ...rest);
       }
 
+      const toolId =
+        typeof args.tool_id === "string" ? args.tool_id : undefined;
       const executionId =
         typeof args.execution_id === "string" ? args.execution_id : undefined;
       const authorityToken =
         typeof args.authority_token === "string" ? args.authority_token : undefined;
+      const toolArgs = { ...args };
+      delete toolArgs.execution_id;
+      delete toolArgs.authority_token;
+      delete toolArgs.tool_id;
+
+      if (
+        authority === "system" ||
+        (authority === "work-or-system" && toolId)
+      ) {
+        if (executionId || authorityToken) {
+          throw new Error(
+            "AUTHORITY_CONFLICT: use either tool_id or execution_id + authority_token, never both."
+          );
+        }
+        const systemLease = getJobSystemLease(
+          toolId,
+          sessionKey
+        );
+        return runWithJobSystemLease(
+          systemLease,
+          () => callback(toolArgs, ...rest)
+        );
+      }
+
       const family = toolFamily(name);
       const lease = acquireToolLease({
         tool: name,
@@ -168,9 +222,6 @@ function configureToolRegistration(server: McpServer, sessionKey: string): void 
         authorityToken,
         sessionKey,
       });
-      const toolArgs = { ...args };
-      delete toolArgs.execution_id;
-      delete toolArgs.authority_token;
       return runWithToolLease(lease, () => callback(toolArgs, ...rest));
     };
 
@@ -924,6 +975,14 @@ export function createMcpServer(sessionKey: string): McpServer {
 export async function disposeLogicalSessionState(
   sessionKey: string
 ): Promise<void> {
+  const systemLeases =
+    releaseJobSystemLeasesForSession(sessionKey);
+  for (const lease of systemLeases) {
+    await cleanupJobRuntimeForSystemLease(
+      lease.tool_id
+    ).catch(() => undefined);
+  }
+
   const executionIdReadyForCleanup = releaseSessionWork(sessionKey);
   if (executionIdReadyForCleanup) {
     await cleanupExecutionState(executionIdReadyForCleanup);
