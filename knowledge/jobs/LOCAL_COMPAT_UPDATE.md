@@ -32,6 +32,7 @@ Mark a Job `AFFECTED` only when the real local Job shows one or more of these co
 - a Reasoning Job writes working data but does not use the Job-owned runtime boundary;
 - a Job publishes final drawing-scoped output outside its own `jobs/<job-name>-result/` namespace;
 - a Direct Job hard-codes a working/result path that conflicts with `CADGPT_JOB_RUNTIME_ROOT` / `CADGPT_JOB_RESULT_ROOT`;
+- a Direct Job relied on the old process CWD to resolve permanent package-relative assets such as `tools/**`, `lisp/**` or `dynamic-lisp/**`;
 - a private helper owned only by that Job sits outside the Job package or is treated as a shared Registry capability solely because the old Job bundle could not preserve it;
 - a private non-Lisp helper belongs to the Job but is not owned under `<job-root>/tools/**`.
 
@@ -47,6 +48,7 @@ For each affected Job, preserve business/workflow semantics and make only the co
 - Reasoning execution -> prepare the Job runtime before working-data mutation and finish/re-check at the end;
 - final drawing result -> use `drawing_job_result_location`, never construct the drawing root;
 - Direct Job working files -> prefer relative paths / `CADGPT_JOB_RUNTIME_ROOT`;
+- Direct Job permanent package assets -> resolve from `CADGPT_JOB_ROOT` instead of the process CWD;
 - Direct Job final drawing products -> `CADGPT_JOB_RESULT_ROOT` when supplied;
 - Job-private AutoLISP -> `<job-root>/lisp/**`;
 - other Job-private helper/scripts/assets -> `<job-root>/tools/**`;
