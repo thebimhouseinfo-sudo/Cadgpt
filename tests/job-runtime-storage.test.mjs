@@ -40,6 +40,9 @@ test("Reasoning Job runtime isolates raw data and publishes only explicit final 
   const persistence = await import(
     "../dist/cadgpt/runtime/drawing-persistence.js"
   );
+  const {
+    resolveLispSourceForCommandDiscovery,
+  } = await import("../dist/cadgpt/tools/cad-proxy.js");
 
   const sessionKey = "job-runtime-storage-test";
   checkAdmission(sessionKey, "@cg", "mention");
@@ -117,6 +120,70 @@ test("Reasoning Job runtime isolates raw data and publishes only explicit final 
     );
     assert.equal(startedA.isError, undefined, JSON.stringify(startedA));
     const rootA = startedA.structuredContent.data.absolute_path;
+
+    const runtimeLisp = path.join(
+      rootA,
+      "dynamic-lisp",
+      "runtime.lsp"
+    );
+    await fs.mkdir(path.dirname(runtimeLisp), { recursive: true });
+    await fs.writeFile(runtimeLisp, "(princ)\n", "utf8");
+    const lispLease = acquireToolLease({
+      tool: "job_dynamic_lisp_prepare",
+      family: "job-authoring",
+      targetId: runtimeLisp,
+      executionId: work.executionId,
+      authorityToken: work.authorityToken,
+      sessionKey,
+    });
+    const resolvedRuntimeLisp = await runWithToolLease(
+      lispLease,
+      () =>
+        resolveLispSourceForCommandDiscovery(
+          runtimeLisp
+        )
+    );
+    assert.equal(
+      resolvedRuntimeLisp,
+      await fs.realpath(runtimeLisp)
+    );
+
+    const foreignRuntimeLisp = path.join(
+      tempRoot,
+      "workspace",
+      "job-run",
+      "job-b",
+      "foreign-execution",
+      "dynamic-lisp",
+      "foreign.lsp"
+    );
+    await fs.mkdir(path.dirname(foreignRuntimeLisp), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      foreignRuntimeLisp,
+      "(princ)\n",
+      "utf8"
+    );
+    const foreignLispLease = acquireToolLease({
+      tool: "job_dynamic_lisp_prepare",
+      family: "job-authoring",
+      targetId: foreignRuntimeLisp,
+      executionId: work.executionId,
+      authorityToken: work.authorityToken,
+      sessionKey,
+    });
+    await assert.rejects(
+      () =>
+        runWithToolLease(
+          foreignLispLease,
+          () =>
+            resolveLispSourceForCommandDiscovery(
+              foreignRuntimeLisp
+            )
+        ),
+      /JOB_RUNTIME_LISP_SCOPE/
+    );
 
     const rawA = path.join(rootA, "raw.json");
     const createdA = await invoke(
