@@ -39,6 +39,7 @@ import { registerWorkControlTools } from "./tools/work-control.js";
 import { registerLibraryDiscoveryTools, registerLibraryMutationTools } from "./tools/libraries.js";
 import { registerJobDiscoveryTools, registerJobAuthoringTools } from "./tools/jobs.js";
 import { registerJobDynamicLispTools } from "./tools/job-dynamic-lisp.js";
+import { registerJobRuntimeTools } from "./tools/job-runtime.js";
 import { registerSkillTools } from "./tools/skills.js";
 import { registerCapabilityRegistryTools } from "./tools/registry.js";
 import { registerFilesystemTools } from "./tools/filesystem.js";
@@ -199,6 +200,7 @@ function registerStableProductionSurface(server: McpServer): void {
   registerJobDiscoveryTools(server);
   registerJobAuthoringTools(server);
   registerJobDynamicLispTools(server);
+  registerJobRuntimeTools(server);
   registerSkillTools(server);
   registerCapabilityRegistryTools(server);
   registerFilesystemTools(server);
@@ -852,6 +854,13 @@ export function createMcpServer(sessionKey: string): McpServer {
         });
         committed = true;
 
+        const { transferJobWorkspaceForExecution } = await import(
+          "./runtime/job-workspace.js"
+        );
+        await transferJobWorkspaceForExecution(
+          previousWork.executionId,
+          work.executionId
+        );
         await cleanupExecutionState(previousWork.executionId);
 
         const { cadProxySurfaceSnapshot } = await import("./tools/cad-proxy.js");
