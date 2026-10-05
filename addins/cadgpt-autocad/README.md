@@ -56,7 +56,9 @@ AutoCAD commands are case-insensitive, so `cadgpt` works as well.
 
 ## Panel behavior
 
-The palette title is `CadGPT`. Its header is read-only and shows the drawing currently bound by CadGPT plus a Dark/Light toggle. If AutoCAD's active drawing is not the drawing bound to the CadGPT chat/workspace, the header turns orange.
+The palette title is `CadGPT`. Its header is read-only and shows the drawing currently bound by CadGPT plus a Dark/Light toggle. If AutoCAD's active drawing is confirmed to be different from the bound drawing, the header turns orange; if the bound drawing is confirmed closed, it turns yellow. Local AutoCAD document snapshots are debounced so a transient COM/.NET miss or resume transition does not change header color.
+
+The add-in pair remains live for the lifetime of the panel/CAD session and is released on real panel disposal. Add-in-managed logical sessions are not expired by the ordinary MCP idle TTL. A WebView process failure recreates the palette while preserving the pair, and a long dispatcher gap such as Windows sleep triggers a delayed binding poll plus WebView reload. This recovery never restarts AutoCAD.
 
 Drawing binding is not controlled by add-in buttons. It follows the normal CadGPT / `@cg` workflow used from ChatGPT.
 
