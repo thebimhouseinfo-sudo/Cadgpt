@@ -361,6 +361,7 @@ export function createMcpServer(sessionKey: string): McpServer {
         "Hard invariant: 1 work = 1 drawing. For later compatible requests, reuse the active work_handle. cg/list may prepare a replacement workspace; selecting a new drawing releases the prior work before registering the new one.",
         "CadGPT has FILE, CAD and HYBRID execution paths. FILE is user authoring/data-only; CAD is CAD-only; HYBRID is the controlled successor when FILE authoring must continue while performing a real CAD test. CAD MCP activates only on actual CAD demand. User-created/imported Lisp/Job lives in real per-user AppData. Repo-bundled TBH Tool Kit is Internal Registry/install content under resources/cad/internal-lisp/** and is never resolved through user AppData.",
         "Job behavior is execution-mode driven. Official Internal Registry direct Jobs (for example id=tbh) must be dispatched with job_run_direct and use bounded built-in CadGPT executors with no model planning. The Internal Direct Job path is authoritative: if job_run_direct fails or times out, do NOT bypass it by manually calling lower-level Lisp/CAD tools such as cad__cad_load_lisp_file; surface the Job failure so the implementation can be fixed. User Registry .py Jobs are also direct and use job_run_direct with CadGPT's fixed Python runtime. User .md Jobs are reasoning Jobs. For .md Jobs follow knowledge/jobs/REASONING_HARNESS.md: execute read-only observations first, then PLAN -> REVIEW -> REVISE if needed -> EXEC -> READBACK -> NEXT per reasoning/mutation stage. Re-plan/review later stages from the new drawing state instead of assuming an upfront whole-workflow plan remains valid. Internal review does not pause for user confirmation; defer uncertain items when safe, continue the workflow, and report unresolved items at the end.",
+        "LOCAL JOB COMPATIBILITY — before normal User Job create/run/refine, call the lightweight job_local_compat_status first. Matching epoch is the fast path: do not inspect all Job packages. A mismatch means jobcreate CONTRACT UPDATE mode must scan/fix local User Jobs through normal authority, report blocked external actions, then call job_local_compat_mark_checked. JOB_LOCAL_COMPAT_EPOCH is only a local-repair signal, not a general Job version.",
         "Never assume AutoCAD ActiveDocument is the target; use explicit drawing contexts.",
         "All file mutations require absolute canonical target paths and allowed-root verification. Relative/CWD-authorized mutation is forbidden.",
         "Human Power is an explicit human-only emergency capability for the CURRENT active work execution. Never self-activate it. Use it only after the human explicitly authorizes Human Power for the current task. It expires with work stop/release/expiry/replacement or human_power_stop. It is platform recovery state, never Job metadata.",
@@ -695,6 +696,21 @@ export function createMcpServer(sessionKey: string): McpServer {
       if (!bareLaunch) return;
       clearSessionWorkStopBarrier(sessionKey);
 
+      const { getJobLocalCompatStatus } = await import(
+        "./lib/job-local-compat.js"
+      );
+      const jobCompat =
+        await getJobLocalCompatStatus();
+      const compatNotice =
+        jobCompat.update_required
+          ? [
+              "",
+              "",
+              "⚠ Job build contract affecting local Custom Jobs has changed.",
+              "Before the next User Job create/run/update, jobcreate will scan and repair local Jobs to the current contract, then report the result.",
+            ].join("\n")
+          : "";
+
       const launch = await prepareCadLaunch(sessionKey, {
         autoBindSingle: true,
       });
@@ -704,7 +720,8 @@ export function createMcpServer(sessionKey: string): McpServer {
         );
         return {
           launch_mode: "auto_bind",
-          welcome_text: activated.text,
+          welcome_text:
+            activated.text + compatNotice,
           autocad_detected: true,
           auto_bound: true,
           drawing: activated.drawing,
@@ -716,7 +733,10 @@ export function createMcpServer(sessionKey: string): McpServer {
       }
       return {
         launch_mode: launch.mode,
-        welcome_text: launch.welcome_text,
+        welcome_text:
+          launch.welcome_text
+            ? launch.welcome_text + compatNotice
+            : launch.welcome_text,
         autocad_detected: launch.autocad_detected,
         ...(launch.confirmation_token
           ? { confirmation_token: launch.confirmation_token }
