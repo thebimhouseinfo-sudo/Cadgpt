@@ -4,7 +4,7 @@ Markdown Jobs are sequential reasoning workflows. The Job file defines the workf
 
 Before a normal User Reasoning Job starts, call `job_local_compat_status`. If it returns `update_required=true`, do not start the normal Job yet: route through `jobcreate` **CONTRACT UPDATE** mode, complete/report the local scan, then mark the compatibility epoch checked. When the status is already current, this check is only the small state comparison; do not inspect all Job packages.
 
-At the start of the actual Reasoning Job run, call `job_runtime_prepare(id=<registered-job-id>)`. Use the returned `runtime_root` for all raw/intermediate working data. A new run resets that runtime; it is not a history store.
+At the start of every actual Reasoning Job run, call `job_runtime_prepare(id=<registered-job-id>)` before any file mutation. Starting a Job automatically releases stale foreground/SYSTEM Job authority from the same logical chat, but it does not delete prior runtime bytes. Use the returned `runtime_root` for all raw/intermediate working data. If `recovery_pending=true`, drain/verify/delete the preserved pending work before or as part of the new run according to the Job contract.
 
 ## Runtime loop
 
@@ -32,7 +32,7 @@ Rules:
 - Re-read the drawing after mutation whenever the next step depends on the resulting state.
 - After every filesystem/CAD mutation, re-read the actual target/postcondition before advancing; do not treat the intended path/action as proof of success.
 - When the Job needs a final persistent drawing result, call `drawing_job_result_location` and write only the final result under the returned `jobs/<job-name>-result` path. Never construct or guess the drawing root. Keep raw/intermediate files under the Job runtime.
-- Call `job_runtime_finish` when the Reasoning Job run/test is complete so execution-scoped Job write authority is released and empty result namespaces can be cleaned.
+- Call `job_runtime_finish` when the Reasoning Job run/test is complete so execution-scoped Job write authority is released and empty result namespaces can be cleaned. It never deletes non-empty runtime data; processed raw/intermediate files must be removed explicitly with `file_delete`.
 - Exception for an independent post-CAD data-processing tail: after every CAD-dependent input is already collected and any required `drawing_job_result_location` has already been resolved, call `job_system_acquire(id=<registered-job-id>)`. From that point the detached tail uses `tool_id=<job-id>` for `file_*` calls instead of the foreground work handle. The Job source owns this decision; CadGPT does not infer or register a backend flag.
 - A Job that acquired SYSTEM authority must always call `job_system_release(tool_id=<job-id>)` when that independent tail ends, including its failure/finally path. Do not call `job_runtime_finish` for the detached runtime; SYSTEM release owns that cleanup.
 - For Job-owned raw/intermediate files under the authorized runtime root, cleanup is transactional: persist the durable result, verify/read back that result, read the raw file hash, then call `file_delete(path=<raw>, expected_sha256=<verified-hash>)`. Delete one processed raw at a time; never delete a raw item before its corresponding durable result is verified. `file_delete` does not remove directories or CadGPT source files.
