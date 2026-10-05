@@ -162,18 +162,22 @@ export function jobWorkspaceReadableRootsForExecution(
     : [];
 }
 
-export function authorizeJobDefinitionRootForExecution(
+export async function authorizeJobDefinitionRootForExecution(
   executionId: string,
   absoluteRoot: string
-): void {
+): Promise<void> {
   const state = jobWorkspaceByExecution.get(executionId);
   if (!state) {
     throw new Error(
       "JOB_WORKSPACE_REQUIRED: Job definition scope requires an active Job workspace."
     );
   }
-  const root = path.resolve(absoluteRoot);
-  const draftRoot = path.resolve(getJobDraftRoot());
+  const root = await fs
+    .realpath(path.resolve(absoluteRoot))
+    .catch(() => path.resolve(absoluteRoot));
+  const draftRoot = await fs
+    .realpath(path.resolve(getJobDraftRoot()))
+    .catch(() => path.resolve(getJobDraftRoot()));
   if (!isPathInside(root, draftRoot)) {
     throw new Error(
       "JOB_DEFINITION_SCOPE: only the active reasoning draft directory may be authorized."
@@ -199,7 +203,25 @@ export async function beginJobWorkspaceForExecution(
   await fs.mkdir(getJobRunRoot(), { recursive: true });
   await pruneStaleJobWorkspaces();
   const jobRoot = path.join(getJobRunRoot(), jobId);
-  await fs.mkdir(jobRoot, { recursive: true });
+  const existingJobRoot = await fs
+    .lstat(jobRoot)
+    .catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    });
+  if (
+    existingJobRoot?.isSymbolicLink() ||
+    (existingJobRoot && !existingJobRoot.isDirectory())
+  ) {
+    throw new Error(
+      "JOB_WORKSPACE_SCOPE: Job runtime root must be a regular directory, not a symlink or file."
+    );
+  }
+  if (!existingJobRoot) {
+    await fs.mkdir(jobRoot);
+  }
 
   const root = path.join(jobRoot, executionSegment(executionId));
   await fs.rm(root, { recursive: true, force: true });
@@ -213,7 +235,10 @@ export async function beginJobWorkspaceForExecution(
   };
   await writeMarker(state);
   jobWorkspaceByExecution.set(executionId, state);
-  return { ...state };
+  return {
+    ...state,
+    definition_roots: [...state.definition_roots],
+  };
 }
 
 export async function ensureJobWorkspaceForExecution(
@@ -225,7 +250,12 @@ export async function ensureJobWorkspaceForExecution(
   if (current && current.job_id === jobId) {
     try {
       const stat = await fs.stat(current.root);
-      if (stat.isDirectory()) return { ...current };
+      if (stat.isDirectory()) {
+        return {
+          ...current,
+          definition_roots: [...current.definition_roots],
+        };
+      }
     } catch {
       // Recreate below.
     }
