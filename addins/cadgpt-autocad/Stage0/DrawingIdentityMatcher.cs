@@ -63,14 +63,18 @@ namespace CadGpt.AutoCad.Stage0
 
             if (
                 boundPath != null &&
-                candidatePath != null)
-            {
-                return string.Equals(
+                candidatePath != null &&
+                string.Equals(
                     boundPath,
                     candidatePath,
-                    StringComparison.OrdinalIgnoreCase);
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
             }
 
+            // AutoCAD COM and managed Document APIs can expose the same DWG
+            // through different path representations. A unique open document
+            // name is an unambiguous fallback; duplicated names are not.
             var boundName =
                 NormalizeName(bound.Name);
             var candidateName =
