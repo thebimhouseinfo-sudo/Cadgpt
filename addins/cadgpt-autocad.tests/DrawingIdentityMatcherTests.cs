@@ -56,7 +56,35 @@ namespace CadGpt.AutoCad.Tests
         }
 
         [TestMethod]
-        public void DoesNotCollapseDifferentFullPathsWithSameName()
+        public void UsesUniqueNameFallbackAfterPathMismatch()
+        {
+            var bound =
+                new DrawingIdentityValue
+                {
+                    Name = "MAGS.dwg",
+                    FullName =
+                        @"C:\API-A\MAGS.dwg",
+                };
+            var candidate =
+                new DrawingIdentityValue
+                {
+                    Name = "MAGS.dwg",
+                    FullName =
+                        @"C:\API-B\MAGS.dwg",
+                };
+
+            Assert.IsTrue(
+                DrawingIdentityMatcher.Matches(
+                    bound,
+                    candidate,
+                    new[]
+                    {
+                        candidate,
+                    }));
+        }
+
+        [TestMethod]
+        public void DoesNotCollapseDuplicatedNamesAcrossDifferentPaths()
         {
             var bound =
                 new DrawingIdentityValue
@@ -72,6 +100,13 @@ namespace CadGpt.AutoCad.Tests
                     FullName =
                         @"C:\B\MAGS.dwg",
                 };
+            var duplicate =
+                new DrawingIdentityValue
+                {
+                    Name = "MAGS.dwg",
+                    FullName =
+                        @"C:\C\MAGS.dwg",
+                };
 
             Assert.IsFalse(
                 DrawingIdentityMatcher.Matches(
@@ -80,6 +115,7 @@ namespace CadGpt.AutoCad.Tests
                     new[]
                     {
                         candidate,
+                        duplicate,
                     }));
         }
     }
