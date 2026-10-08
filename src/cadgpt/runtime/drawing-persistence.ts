@@ -191,6 +191,40 @@ export function registerCreatedDrawingMetadataFolderForExecution(
   );
 }
 
+/**
+ * Hand off exactly one already CAD-verified drawing metadata root between
+ * consecutive work executions in the SAME admitted conversation.
+ *
+ * This is not a path-based permission request: the source execution must have
+ * obtained the canonical drawing root through drawing_metadata_location.
+ * Multi-drawing contexts cannot be inferred and are intentionally rejected.
+ * No CAD capability, runtime lease, source Job result-write authority, or
+ * arbitrary AppData root is inherited.
+ *
+ * Ownership of an empty new drawing folder also moves: delayed cleanup of
+ * Job A must not delete a root that Job B is about to populate.
+ */
+export function handoffVerifiedDrawingMetadataRoot(
+  previousExecutionId: string,
+  nextExecutionId: string
+): string | null {
+  if (previousExecutionId === nextExecutionId) return null;
+  const roots = drawingMetadataRootsForExecution(previousExecutionId);
+  if (roots.length !== 1) return null;
+  const root = roots[0];
+  // Recheck the canonical direct-child constraint even for internal callers.
+  const storageRoot = path.resolve(getDrawingStorageRoot());
+  if (path.dirname(root) !== storageRoot || !isPathInside(root, storageRoot)) {
+    throw new Error("DRAWING_METADATA_HANDOFF_SCOPE: source is not a canonical drawing root.");
+  }
+  authorizeDrawingMetadataRootForExecution(nextExecutionId, root);
+  if (lastCreatedMetadataFolderByExecution.get(previousExecutionId) === root) {
+    lastCreatedMetadataFolderByExecution.delete(previousExecutionId);
+    lastCreatedMetadataFolderByExecution.set(nextExecutionId, root);
+  }
+  return root;
+}
+
 export async function prepareDrawingMetadataLocation(
   executionId: string,
   binding: BoundDrawing
