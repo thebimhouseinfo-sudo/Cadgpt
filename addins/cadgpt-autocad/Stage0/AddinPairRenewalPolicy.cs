@@ -11,10 +11,12 @@ namespace CadGpt.AutoCad.Stage0
     {
         public static bool ShouldRenew(
             bool wasConfirmed,
+            bool serverStillPending,
             DateTime pendingExpiresUtc,
             DateTime nowUtc)
         {
             return wasConfirmed ||
+                   !serverStillPending ||
                    pendingExpiresUtc == DateTime.MinValue ||
                    nowUtc >= pendingExpiresUtc;
         }
