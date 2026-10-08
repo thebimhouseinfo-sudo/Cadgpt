@@ -622,9 +622,25 @@ namespace CadGpt.AutoCad
             // Cache the actual managed AutoCAD Document object once it
             // matches the confirmed binding. Save As / path changes may
             // alter names without closing or switching the document.
-            var matched = drawings.FirstOrDefault(
-                drawing => DrawingMatches(
-                    bound, drawing, drawings));
+            ActiveDrawingInfo? matched = null;
+            if (_boundDocumentReference != null &&
+                _boundDocumentReference.TryGetTarget(
+                    out var originalDocument))
+            {
+                // Once a particular managed document has been confirmed,
+                // do not accidentally "rebind" a different open DWG with
+                // the same name/path during Save As or tab reordering.
+                matched = drawings.FirstOrDefault(
+                    item => ReferenceEquals(
+                        item.Document,
+                        originalDocument));
+            }
+            else
+            {
+                matched = drawings.FirstOrDefault(
+                    item => DrawingMatches(
+                        bound, item, drawings));
+            }
             var boundOpen = matched != null;
             if (matched?.Document != null)
             {
@@ -687,12 +703,11 @@ namespace CadGpt.AutoCad
         {
             if (_boundDocumentReference != null &&
                 _boundDocumentReference.TryGetTarget(
-                    out var confirmedDocument) &&
-                ReferenceEquals(
-                    confirmedDocument,
-                    drawing.Document))
+                    out var confirmedDocument))
             {
-                return true;
+                return ReferenceEquals(
+                    confirmedDocument,
+                    drawing.Document);
             }
 
             return DrawingIdentityMatcher.Matches(
