@@ -10,6 +10,21 @@ Status: **active**
 
 CadGPT owns the authoring workflow, not the user's original library folder.
 
+## TBH HVAC numeric system shortcuts (internal Lisp authoring rule)
+
+When a TBH Toolkit Lisp prompts for an HVAC **system type**, the ONLY numeric
+mapping is `1=SA, 2=RA, 3=OA, 4=EA, 5=TA`. Keep all three surfaces in sync:
+the printed prompt, `initget` accepted keywords, and the branch/normalizer
+that resolves the selected number. Never reuse the legacy round-duct
+`0=SA, 1=RA, 2=EA, 3=OA, 4=TA` mapping, or label `3` as EA in CD.
+The digit `0` may still mean Exit in unrelated menus; insulation, shape,
+and geometric type menus are NOT HVAC-system selectors and keep their own
+numbering. Preserve existing correct geometry logic while fixing shortcuts.
+
+The regression gate is `tests/tbh-system-shortcuts.test.mjs`, which scans every
+bundled TBH `.lsp` and asserts numeric mappings for major commands.
+This is **internal Lisp authoring guidance**, not KUG/KUD HVAC domain knowledge.
+
 ## Storage
 
 ```text

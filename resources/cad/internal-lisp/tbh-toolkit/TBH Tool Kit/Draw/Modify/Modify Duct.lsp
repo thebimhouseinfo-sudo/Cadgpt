@@ -144,6 +144,128 @@
         (+ (cadr ip) (* bx sa) (* by ca))
         0.0))
 
+;; ─── DUCT ATT LAYOUT (MATCH D1 / D2) ─────────────────────────────────────────
+;; Recompute canonical tag anchors after edits and preserve any user-adjusted
+;; offsets relative to the original anchors. Invisible metadata ATTRIBs are
+;; never touched.
+(defun md:att-frame (ins / ed ip ang sx sy)
+  (setq ed (entget ins)
+        ip (cdr (assoc 10 ed))
+        ang (cdr (assoc 50 ed))
+        sx (cdr (assoc 41 ed))
+        sy (cdr (assoc 42 ed)))
+  (if (null ang) (setq ang 0.0))
+  (if (or (null sx) (equal sx 0.0 1e-12)) (setq sx 1.0))
+  (if (or (null sy) (equal sy 0.0 1e-12)) (setq sy 1.0))
+  (list ip ang sx sy))
+
+(defun md:att-local (pt ip ang sx sy / dx dy ca sa)
+  (setq dx (- (car pt) (car ip))
+        dy (- (cadr pt) (cadr ip))
+        ca (cos ang) sa (sin ang))
+  (list (/ (+ (* dx ca) (* dy sa)) sx)
+        (/ (- (* dy ca) (* dx sa)) sy)))
+
+(defun md:att-layout (fam len width frame / ip ang sx sy mg ytop ybot p1 p2 p3 p4 pts tl p rule idx bxS bxL center high low yS yL narrow)
+  (setq ip (nth 0 frame) ang (nth 1 frame)
+        sx (nth 2 frame) sy (nth 3 frame)
+        mg (if (= fam "DT") *DT:MARGIN* *RD:MARGIN*)
+        ytop (if (= fam "DT") 0.0 (/ width 2.0))
+        ybot (if (= fam "DT") (- width) (- (/ width 2.0)))
+        p1 (md:xf 0.0 (* ytop sy) ip ang)
+        p2 (md:xf (* len sx) (* ytop sy) ip ang)
+        p3 (md:xf (* len sx) (* ybot sy) ip ang)
+        p4 (md:xf 0.0 (* ybot sy) ip ang)
+        pts (list (list p1 1) (list p2 2) (list p3 3) (list p4 4))
+        rule (if (> (abs (cos ang)) 0.174) "H" "V")
+        tl (car pts))
+  ;; Same top-left / bottommost corner selection as D1 and D2.
+  (foreach p (cdr pts)
+    (if (if (= rule "H")
+          (or (< (caar p) (caar tl))
+              (and (equal (caar p) (caar tl) 0.01)
+                   (> (cadar p) (cadar tl))))
+          (or (< (cadar p) (cadar tl))
+              (and (equal (cadar p) (cadar tl) 0.01)
+                   (< (caar p) (caar tl)))))
+      (setq tl p)))
+  (setq idx (cadr tl)
+        bxS (if (or (= idx 1) (= idx 4)) mg (- len mg))
+        bxL (if (or (= idx 1) (= idx 4)) (- len mg) mg))
+  (if (= fam "RD")
+    ;; Round duct: both labels on the centerline, even if the duct rotates.
+    (list (cons "SIZE" (list bxS 0.0 0 2))
+          (cons "LENGTH" (list bxL 0.0 2 2)))
+    (progn
+      ;; Rectangular duct: D1 switches between centerline and opposite faces.
+      (setq center (- (/ width 2.0)) narrow (<= width 250.0))
+      (cond
+        (narrow (setq high center low center))
+        ((<= width 300.0)
+         (setq high (+ center 100.0) low (- center 100.0)))
+        (T (setq high -50.0 low (+ (- width) 50.0))))
+      (if (if (= rule "V")
+            (< (car p1) (car p4))
+            (> (cadr p1) (cadr p4)))
+        (setq yS high yL low)
+        (setq yS low yL high))
+      (list (cons "SIZE" (list bxS yS 0 (if narrow 2 3)))
+            (cons "LENGTH" (list bxL yL 2 (if narrow 2 1)))))))
+
+(defun md:att-point (ed)
+  ;; D1/D2 store both DXF 10 and 11; justified labels use alignment point 11.
+  (if (assoc 11 ed) (cdr (assoc 11 ed)) (cdr (assoc 10 ed))))
+
+(defun md:att-snapshot (ins fam oldlen oldwidth / frame layout e ed tag spec pt local delta normal out)
+  (setq frame (md:att-frame ins)
+        layout (md:att-layout fam oldlen oldwidth frame)
+        e (entnext ins))
+  (while (and e (/= (cdr (assoc 0 (entget e))) "SEQEND"))
+    (setq ed (entget e)
+          tag (strcase (if (assoc 2 ed) (cdr (assoc 2 ed)) "")))
+    (if (and (= (cdr (assoc 0 ed)) "ATTRIB")
+             (member tag '("SIZE" "LENGTH"))
+             (setq spec (cdr (assoc tag layout)))
+             (setq pt (md:att-point ed)))
+      (progn
+        (setq local (md:att-local pt (nth 0 frame) (nth 1 frame) (nth 2 frame) (nth 3 frame))
+              delta (list (- (car local) (car spec))
+                          (- (cadr local) (cadr spec)))
+              normal (and (assoc 72 ed) (assoc 74 ed)
+                          (= (cdr (assoc 72 ed)) (nth 2 spec))
+                          (= (cdr (assoc 74 ed)) (nth 3 spec))))
+        (setq out (cons (list e tag delta normal) out))))
+    (setq e (entnext e)))
+  (reverse out))
+
+(defun md:att-reflow (ins snapshot fam newlen newwidth / frame layout row ed spec delta ip ang pt oldpt)
+  (setq frame (md:att-frame ins)
+        layout (md:att-layout fam newlen newwidth frame)
+        ip (nth 0 frame) ang (nth 1 frame))
+  (foreach row snapshot
+    (setq spec (cdr (assoc (cadr row) layout)))
+    (if (and spec (setq ed (entget (car row))))
+      (progn
+        (setq delta (nth 2 row)
+              oldpt (md:att-point ed)
+              pt (md:xf (* (nth 2 frame) (+ (car spec) (car delta)))
+                        (* (nth 3 frame) (+ (cadr spec) (cadr delta)))
+                        ip ang))
+        ;; Preserve ATT elevation, visual text rotation and manually changed
+        ;; alignment. D1/D2 standard alignment is updated for width thresholds.
+        (if (and oldpt (caddr oldpt))
+          (setq pt (list (car pt) (cadr pt) (caddr oldpt))))
+        (if (assoc 10 ed)
+          (setq ed (subst (cons 10 pt) (assoc 10 ed) ed)))
+        (if (assoc 11 ed)
+          (setq ed (subst (cons 11 pt) (assoc 11 ed) ed)))
+        (if (nth 3 row)
+          (progn
+            (setq ed (subst (cons 72 (nth 2 spec)) (assoc 72 ed) ed))
+            (setq ed (subst (cons 74 (nth 3 spec)) (assoc 74 ed) ed))))
+        (entmod ed))))
+  (entupd ins))
+
 ;; ─── PARSE BLOCK NAME ────────────────────────────────────────────────────────
 
 (defun md:parse-block-name (bn / u ps rawTyp typ ecMode pl w h d insTok insIdx)
@@ -197,7 +319,7 @@
 ;; ─── SIZE FUNCTIONS ──────────────────────────────────────────────────────────
 
 (defun md:do-size (ent ed info / fam typ ecMode pl w h d insTok insIdx
-                    newW newH newD newBN ecStr prfStr lo newSizeTxt newLenTxt)
+                    newW newH newD newBN ecStr prfStr lo newSizeTxt newLenTxt attState)
   (setq fam     (nth 0 info)
         typ     (nth 1 info)
         ecMode  (nth 2 info)
@@ -241,12 +363,14 @@
       (setq newSizeTxt (strcat (itoa (fix newW)) "x" (itoa (fix newH)))
             newLenTxt  (strcat (itoa (fix pl)) "L"))
 
+      (setq attState (md:att-snapshot ent fam pl w))
       (setq ed (subst (cons 2 newBN) (assoc 2 ed) ed))
       (setq ed (subst (cons 8 lo)    (assoc 8 ed) ed))
       (entmod ed)
       (entupd ent)
 
       (md:update-attribs ent newSizeTxt newLenTxt)
+      (md:att-reflow ent attState fam pl newW)
 
       (princ (strcat "\n[MD] OK - Rectangular duct resized to "
                      (itoa (fix newW)) "x" (itoa (fix newH))
@@ -282,12 +406,14 @@
       (setq newSizeTxt (strcat (itoa (fix newD)) "%%c")
             newLenTxt  (strcat (itoa (fix pl)) "L"))
 
+      (setq attState (md:att-snapshot ent fam pl d))
       (setq ed (subst (cons 2 newBN) (assoc 2 ed) ed))
       (setq ed (subst (cons 8 lo)    (assoc 8 ed) ed))
       (entmod ed)
       (entupd ent)
 
       (md:update-attribs ent newSizeTxt newLenTxt)
+      (md:att-reflow ent attState fam pl newD)
 
       (princ (strcat "\n[MD] OK - Round duct resized to D"
                      (itoa (fix newD))
@@ -298,7 +424,7 @@
 
 ;; ─── SWITCH FUNCTION ─────────────────────────────────────────────────────────
 
-(defun md:do-switch (ent ed info / fam typ ecMode pl w h d insTok insIdx newBN ecStr prfStr lo)
+(defun md:do-switch (ent ed info / fam typ ecMode pl w h d insTok insIdx newBN ecStr prfStr lo attState)
   (setq fam     (nth 0 info)
         typ     (nth 1 info)
         ecMode  (nth 2 info)
@@ -333,12 +459,14 @@
                   (dt:lo typ)
                   (strcat "Hvacduct-" (strcase typ T))))
 
+      (setq attState (md:att-snapshot ent fam pl w))
       (setq ed (subst (cons 2 newBN) (assoc 2 ed) ed))
       (setq ed (subst (cons 8 lo)    (assoc 8 ed) ed))
       (entmod ed)
       (entupd ent)
 
       (md:update-attribs ent (strcat (itoa (fix h)) "x" (itoa (fix w))) (strcat (itoa (fix pl)) "L"))
+      (md:att-reflow ent attState fam pl h)
 
       (princ (strcat "\n[MD] OK - Switched to " (itoa (fix h)) "x" (itoa (fix w))
                      " (Type=" typ " | Insul=" (if (= insTok "") "Bare" insTok)
@@ -368,7 +496,7 @@
       (setq newlen (getreal (strcat "\nNew length <" (rtos pl 2 0) ">: ")))
       (if (null newlen) (setq newlen pl))
 
-      (md:resize-rect ent ed newlen typ w h insTok ecMode))
+      (md:resize-rect ent ed pl newlen typ w h insTok ecMode))
 
     ((= fam "RD")
       (princ (strcat "\n[MD] Round duct | Current: D" (itoa (fix d))
@@ -377,17 +505,12 @@
       (setq newlen (getreal (strcat "\nNew length <" (rtos pl 2 0) ">: ")))
       (if (null newlen) (setq newlen pl))
 
-      (md:resize-round ent ed newlen typ d insTok ecMode))
+      (md:resize-round ent ed pl newlen typ d insTok ecMode))
 
     (T (princ "\n[MD] Unknown duct family."))))
 
-(defun md:resize-rect (ent ed newlen typ W H prf ecMode / ip ang pl mg bn-new)
-  (setq ip  (cdr (assoc 10 ed))
-        ang (cdr (assoc 50 ed)))
-  (if (not ang) (setq ang 0.0))
-
+(defun md:resize-rect (ent ed oldlen newlen typ W H prf ecMode / pl bn-new attState)
   (setq pl newlen)
-  (setq mg *DT:MARGIN*)
 
   (setq bn-new (strcat "DTv9-" typ
                        (cond ((= ecMode 1) "_ECR") ((= ecMode 2) "_ECL") (T ""))
@@ -405,23 +528,19 @@
         (princ "\n[MD] dt:make-block not available. Load Rectangular_duct.lsp first.")
         (exit))))
 
+  (setq attState (md:att-snapshot ent "DT" oldlen W))
   (setq ed (subst (cons 2 bn-new) (assoc 2 ed) ed))
   (entmod ed)
   (entupd ent)
 
   (md:set-att ent "LENGTH" (strcat (itoa (fix pl)) "L"))
-  (md:move-att ent "LENGTH" (md:xf (- pl mg) (- mg H) ip ang))
+  (md:att-reflow ent attState "DT" pl W)
 
   (princ (strcat "\n[MD] OK - Rectangular duct: " typ " " (itoa (fix W)) "x" (itoa (fix H))
                  " | " (itoa (fix pl)) "L")))
 
-(defun md:resize-round (ent ed newlen typ D prf ecMode / ip ang pl mg bn-new)
-  (setq ip  (cdr (assoc 10 ed))
-        ang (cdr (assoc 50 ed)))
-  (if (not ang) (setq ang 0.0))
-
+(defun md:resize-round (ent ed oldlen newlen typ D prf ecMode / pl bn-new attState)
   (setq pl newlen)
-  (setq mg *RD:MARGIN*)
 
   (setq bn-new (strcat "RDv2-" typ
                        (cond ((= ecMode 1) "_ECR") ((= ecMode 2) "_ECL") (T ""))
@@ -438,12 +557,13 @@
         (princ "\n[MD] rd:make-block not available. Load Round_Duct.lsp first.")
         (exit))))
 
+  (setq attState (md:att-snapshot ent "RD" oldlen D))
   (setq ed (subst (cons 2 bn-new) (assoc 2 ed) ed))
   (entmod ed)
   (entupd ent)
 
   (md:set-att ent "LENGTH" (strcat (itoa (fix pl)) "L"))
-  (md:move-att ent "LENGTH" (md:xf (- pl mg) 0.0 ip ang))
+  (md:att-reflow ent attState "RD" pl D)
 
   (princ (strcat "\n[MD] OK - Round duct: " typ " D" (itoa (fix D))
                  " | " (itoa (fix pl)) "L")))
@@ -472,7 +592,7 @@
       (princ) (exit)))
 
   (initget "1 2 3")
-  (setq opt (getkword "\nSelect option [1-Length / 2-Size / 3-Switch W<->H]: "))
+  (setq opt (getkword "\nSelect option [1-Length / 2-Size / 3-Switch W-H]: "))
   (if (null opt) (setq opt "1"))
 
   (cond

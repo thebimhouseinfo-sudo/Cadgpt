@@ -269,11 +269,11 @@
   (setq old_echo (getvar "CMDECHO")) (setvar "CMDECHO" 0)
   (dts:ensure-defaults)
   (princ (strcat "\nCurrent Settings: System=" *DTS:Type* ", Insulation=" (itoa *DTS:Insul*) ", Rect MaxLen=" (rtos *DTS:RectMaxLen* 2 0) ", Round MaxLen=" (rtos *DTS:RoundMaxLen* 2 0)))
-  (initget "1 2 3 4 5 SA RA EA OA TA Setting")
+  (initget "1 2 3 4 5 SA RA OA EA TA Setting")
   (setq act (getkword (strcat "\nSystem Type [1=SA / 2=RA / 3=OA / 4=EA / 5=TA / Setting] <" *DTS:Type* ">: ")))
   (if (null act) (setq act *DTS:Type*))
   (cond
-    ((member (strcase act) '("1" "2" "3" "4" "5" "SA" "RA" "EA" "OA" "TA"))
+    ((member (strcase act) '("1" "2" "3" "4" "5" "SA" "RA" "OA" "EA" "TA"))
       (setq *DTS:Type* (dts:norm-type act))
       (dts:prompt-system))
     ((= act "Setting")
@@ -294,5 +294,5 @@
 (dts:sync-shape "RECT")
 (dts:sync-shape "ROUND")
 
-(princ (strcat "\n[TBH] Duct Type Settings loaded. Type 'DTS' to configure [SA/RA/EA/OA/TA/Setting]. Default MaxLen: RECT=" (rtos *DTS:RectMaxLen* 2 0) ", ROUND=" (rtos *DTS:RoundMaxLen* 2 0)))
+(princ (strcat "\n[TBH] Duct Type Settings loaded. Type 'DTS' to configure [SA/RA/OA/EA/TA/Setting]. Default MaxLen: RECT=" (rtos *DTS:RectMaxLen* 2 0) ", ROUND=" (rtos *DTS:RoundMaxLen* 2 0)))
 (princ)

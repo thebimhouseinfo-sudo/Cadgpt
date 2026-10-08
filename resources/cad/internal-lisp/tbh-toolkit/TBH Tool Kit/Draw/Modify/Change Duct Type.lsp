@@ -1234,8 +1234,8 @@
       (setq dftType (cd:get-default-type)
             dftIns  (cd:get-default-ins))
 
-      (initget "1 2 3 4 5 SA RA EA OA TA")
-      (setq nType (cd:norm-type (getkword (strcat "\nSystem [1=Supply Air (SA) / 2=Return Air (RA) / 3=Exhaust Air (EA) / 4=Outside Air (OA) / 5=Transfer Air (TA)] <"
+      (initget "1 2 3 4 5 SA RA OA EA TA")
+      (setq nType (cd:norm-type (getkword (strcat "\nSystem [1=Supply Air (SA) / 2=Return Air (RA) / 3=Outside Air (OA) / 4=Exhaust Air (EA) / 5=Transfer Air (TA)] <"
                                                    dftType ">: "))
                                  dftType))
 
