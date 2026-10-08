@@ -406,7 +406,7 @@
         (list nil (strcat
           "The original drawing could not be reactivated: "
           (vl-catch-all-error-message activated)))
-        copy-result)))))
+        copy-result))))
 
 (defun tbhbl:write-dcl (/ dcl-path f)
   ;; Generate the UI in TEMP so this feature only needs one LSP file.
