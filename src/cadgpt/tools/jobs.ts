@@ -760,7 +760,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Prepare Job Runtime",
       description:
-        "Authorize the owning Job package runtime/ directory for one reasoning Job execution/test. Starting a new reasoning Job releases stale prior Job authority in this logical chat but preserves prior runtime bytes. Existing runtime files are reused as recovery evidence instead of being reset. Supply exactly one registered User Job id or one absolute managed Job draft path.",
+        "Authorize one Reasoning Job runtime. Starting Job B releases stale Job A runtime/SYSTEM authority but preserves files. If this conversation already has exactly one CAD-verified drawing metadata root (possibly handed off from Job A into FILE work), this call also prepares Job B's own drawing result folder without CAD rebind; Job A's result remains readable only. Supply a registered User Job id or an absolute managed Job draft path.",
       inputSchema: {
         id: z.string().min(1).optional(),
         draft_path: z
