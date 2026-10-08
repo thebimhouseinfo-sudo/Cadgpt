@@ -88,7 +88,7 @@ def list_blocks(filter: dict | None = None) -> list[dict]:
     result: list[dict] = []
     doc = _doc()
     if normalized.get("handle"):
-        _doc, space_name, entity = resolve_top_level(normalized["handle"], doc=doc)
+        _resolved_doc, space_name, entity = resolve_top_level(normalized["handle"], doc=doc)
         if entity is None or entity_type(entity) != "block":
             return []
         data = entity_to_dict(entity)
