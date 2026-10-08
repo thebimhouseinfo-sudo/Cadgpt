@@ -172,6 +172,64 @@ test("generic file tools must not claim ownership of managed HVAC knowledge", as
   assert.equal(policy.toolFamily("knowledge_upsert"), "knowledge");
 });
 
+
+test("KUG tool works in FILE-only mode, needs human approval, and unbound KUD does not wake CAD", async (t) => {
+  await tempWorkspace(t);
+  const { checkAdmission, revokeSessionAdmissions } = await import("../dist/cadgpt/lib/admission.js");
+  const { createWorkRegistration, acquireToolLease, runWithToolLease } =
+    await import("../dist/cadgpt/lib/work-registration.js");
+  const { registerKnowledgeTools } = await import("../dist/cadgpt/tools/knowledge.js");
+  const { cadUpstream } = await import("../dist/cadgpt/runtime/cad-upstream.js");
+
+  const callbacks = new Map();
+  registerKnowledgeTools({ registerTool(name, _config, callback) { callbacks.set(name, callback); } });
+  const sessionKey = "knowledge-file-only-integration";
+  checkAdmission(sessionKey, "@cg", "mention");
+  const work = createWorkRegistration({
+    sessionKey, ownerType: "file", ownerId: "knowledge-updater-global", executionPath: "file",
+  });
+  async function call(name, args) {
+    const lease = acquireToolLease({
+      tool: name, family: "knowledge", sessionKey,
+      executionId: work.executionId, authorityToken: work.authorityToken,
+    });
+    return await runWithToolLease(lease, () => callbacks.get(name)(args));
+  }
+  try {
+    const before = cadUpstream.status();
+    const list = await call("knowledge_list", { scope: "global" });
+    assert.equal(list.structuredContent.ok, true);
+    assert.deepEqual(list.structuredContent.data.entries, []);
+
+    const payload = {
+      scope: "global", key: "system-rules", title: "HVAC system rules",
+      body: "SA supply and RA return have separate system labels.",
+      source: "user_confirmed", source_note: "User approved a domain rule.",
+      expected_sha256: "",
+    };
+    const denied = await call("knowledge_upsert", { ...payload, human_approved: false });
+    assert.equal(denied.isError, true);
+    assert.match(denied.structuredContent.data.error, /KNOWLEDGE_HUMAN_APPROVAL_REQUIRED/);
+
+    const created = await call("knowledge_upsert", { ...payload, human_approved: true });
+    assert.equal(created.structuredContent.ok, true);
+    assert.equal(created.structuredContent.data.operation, "created");
+
+    const readback = await call("knowledge_read", { scope: "global", key: "system-rules" });
+    assert.equal(readback.structuredContent.ok, true);
+    assert.match(readback.structuredContent.data.entry.content, /SA supply/);
+
+    const invalidKud = await call("knowledge_list", { scope: "drawing" });
+    assert.equal(invalidKud.isError, true);
+    assert.match(invalidKud.structuredContent.data.error, /DRAWING|BOUND|CONTEXT/i);
+    const after = cadUpstream.status();
+    assert.equal(after.enabled, before.enabled, "unbound KUD must not activate CAD");
+    assert.equal(after.connected, before.connected, "unbound KUD must not connect CAD");
+  } finally {
+    revokeSessionAdmissions(sessionKey);
+  }
+});
+
 test("menu and MCP surface register both workflow selectors and knowledge tools", async () => {
   const { CADGPT_ROOT_MENU, CADGPT_HELP } = await import("../dist/cadgpt/lib/quickstart.js");
   for (const command of ["cg/kug", "cg/kud"]) {
