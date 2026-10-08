@@ -36,6 +36,7 @@ export function toolAuthority(toolName: string): ToolAuthority {
 }
 
 export function toolFamily(toolName: string): string {
+  if (toolName.startsWith("knowledge_")) return "knowledge";
   if (toolName.startsWith("file_")) return "filesystem";
   if (toolName.startsWith("lisp_")) return "lisp-authoring";
   if (toolName.startsWith("job_")) return "job-authoring";
