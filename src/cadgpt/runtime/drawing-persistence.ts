@@ -15,6 +15,9 @@ export const DRAWING_ANCHOR_SCHEMA_VERSION = 1;
 const SAFE_DRAWING_ANCHOR = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const metadataRootsByExecution = new Map<string, Set<string>>();
+// A work-generation handoff is READ ONLY; the next Job must prepare its
+// own result location before it may mutate a drawing-scoped result.
+const inheritedReadOnlyRootsByExecution = new Map<string, Set<string>>();
 const lastCreatedMetadataFolderByExecution = new Map<string, string>();
 
 function extractUpstreamPayload(raw: unknown): unknown {
@@ -158,6 +161,15 @@ export function drawingMetadataRootsForExecution(
   ];
 }
 
+export function drawingMetadataWritableRootsForExecution(
+  executionId: string
+): string[] {
+  const inherited = inheritedReadOnlyRootsByExecution.get(executionId);
+  return drawingMetadataRootsForExecution(executionId).filter(
+    (root) => !inherited?.has(root)
+  );
+}
+
 export function authorizeDrawingMetadataRootForExecution(
   executionId: string,
   absoluteRoot: string
@@ -178,6 +190,7 @@ export function authorizeDrawingMetadataRootForExecution(
     metadataRootsByExecution.set(executionId, roots);
   }
   roots.add(root);
+  inheritedReadOnlyRootsByExecution.get(executionId)?.delete(root);
 }
 
 export function registerCreatedDrawingMetadataFolderForExecution(
@@ -218,6 +231,12 @@ export function handoffVerifiedDrawingMetadataRoot(
     throw new Error("DRAWING_METADATA_HANDOFF_SCOPE: source is not a canonical drawing root.");
   }
   authorizeDrawingMetadataRootForExecution(nextExecutionId, root);
+  let inherited = inheritedReadOnlyRootsByExecution.get(nextExecutionId);
+  if (!inherited) {
+    inherited = new Set<string>();
+    inheritedReadOnlyRootsByExecution.set(nextExecutionId, inherited);
+  }
+  inherited.add(root);
   if (lastCreatedMetadataFolderByExecution.get(previousExecutionId) === root) {
     lastCreatedMetadataFolderByExecution.delete(previousExecutionId);
     lastCreatedMetadataFolderByExecution.set(nextExecutionId, root);
@@ -290,6 +309,7 @@ export async function cleanupDrawingMetadataForExecution(
     lastCreatedMetadataFolderByExecution.get(executionId);
   lastCreatedMetadataFolderByExecution.delete(executionId);
   metadataRootsByExecution.delete(executionId);
+  inheritedReadOnlyRootsByExecution.delete(executionId);
 
   if (!candidate) {
     return {
