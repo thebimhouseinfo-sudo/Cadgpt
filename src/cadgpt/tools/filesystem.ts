@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { getAppDataRoot } from "../lib/appdata.js";
+import { isHvacKnowledgePath } from "../lib/knowledge-storage.js";
 import { getAllowedRoots, getRepoRoot, getWritableRoots, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { currentHumanPower, currentToolLease } from "../lib/work-registration.js";
@@ -79,6 +80,15 @@ function currentWritableRoots(): string[] {
       ...humanPowerRoots,
     ]),
   ];
+}
+
+async function assertNotManagedHvacKnowledgeMutation(target: string): Promise<void> {
+  if (currentHumanPower()) return;
+  const appRoot = getAppDataRoot();
+  const canonicalRoot = await fs.realpath(appRoot).catch(() => appRoot);
+  if (isHvacKnowledgePath(target, appRoot) || isHvacKnowledgePath(target, canonicalRoot)) {
+    throw new Error("KNOWLEDGE_UPDATER_REQUIRED: use KUG/KUD knowledge_upsert for persisted HVAC knowledge.");
+  }
 }
 
 function sha256(content: string | Buffer): string {
@@ -301,6 +311,7 @@ export function registerFilesystemTools(server: McpServer): void {
             : "execution-authorized writable AppData",
         });
         assertTextExtension(target);
+        await assertNotManagedHvacKnowledgeMutation(target);
         const sourceMutation = isCadGptSourcePath(target);
         if (sourceMutation && !currentHumanPower()) {
           throw new Error(
@@ -395,6 +406,7 @@ export function registerFilesystemTools(server: McpServer): void {
             : "execution-authorized writable AppData",
         });
         assertTextExtension(target);
+        await assertNotManagedHvacKnowledgeMutation(target);
         const sourceMutation = isCadGptSourcePath(target);
         if (sourceMutation && !currentHumanPower()) {
           throw new Error(
@@ -496,6 +508,7 @@ export function registerFilesystemTools(server: McpServer): void {
               "execution-authorized writable AppData",
           });
         assertTextExtension(target);
+        await assertNotManagedHvacKnowledgeMutation(target);
         if (isCadGptSourcePath(target)) {
           throw new Error(
             "SOURCE_DELETE_UNSUPPORTED: generic file_delete never deletes CadGPT source files."
