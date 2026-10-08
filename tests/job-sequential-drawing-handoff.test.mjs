@@ -142,6 +142,21 @@ test("cannot hand off arbitrary, ambiguous, cross-session or unauthenticated dra
   revokeSessionAdmissions(otherSession);
 });
 
+test("handoff transfers empty-root cleanup ownership so Job A cannot delete Job B's pending root", async () => {
+  const source="empty-a-" + Date.now();
+  const target="empty-b-" + Date.now();
+  const folder=path.join(appRoot,"drawings","empty-test-anchor");
+  await fs.mkdir(folder,{recursive:true});
+  persistence.registerCreatedDrawingMetadataFolderForExecution(source,folder);
+  assert.equal(persistence.handoffVerifiedDrawingMetadataRoot(source,target),folder);
+  assert.deepEqual(persistence.drawingMetadataWritableRootsForExecution(target),[],
+    "new execution receives only read permission");
+  await persistence.cleanupDrawingMetadataForExecution(source);
+  assert.equal((await fs.stat(folder)).isDirectory(),true,"A cleanup cannot remove B's root");
+  const end=await persistence.cleanupDrawingMetadataForExecution(target);
+  assert.equal(end.deleted_empty,true,"B cleanup can reclaim an unused folder");
+});
+
 test.after(async () => {
   const current=registration.activeWorkForSession(session);
   if(current){
