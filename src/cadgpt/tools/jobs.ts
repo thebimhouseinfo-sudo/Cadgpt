@@ -24,6 +24,7 @@ import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import {
   drawingMetadataRootsForExecution,
+  drawingMetadataWritableRootsForExecution,
   prepareDrawingMetadataLocation,
 } from "../runtime/drawing-persistence.js";
 import {
@@ -871,7 +872,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
               transition,
             ...(resultLocation ? {
               drawing_result: resultLocation,
-              drawing_metadata_read_only: true,
+              drawing_metadata_read_only:
+                !drawingMetadataWritableRootsForExecution(lease.workId)
+                  .includes(roots[0]),
               note: "Job-owned result is now writable; other drawing-scoped Job results are read-only handoff inputs.",
             } : {}),
           }
