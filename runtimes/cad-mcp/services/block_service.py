@@ -6,7 +6,7 @@ DWG; it intentionally exposes no document override and no mutation methods.
 """
 
 from connection.acad import get_active_document
-from services.handle_service import resolve_top_level, normalize_handle
+from services.handle_service import resolve_top_level, normalize_handle, read_com
 from utils.entity_mapper import entity_to_dict, entity_type
 from utils.filters import FilterError, matches_entity, normalize_filter
 
@@ -31,10 +31,12 @@ def _point(value):
         return None
 
 
-def _attributes(entity) -> list[dict]:
+def _attributes(entity, strict: bool = False) -> list[dict]:
     try:
-        attrs = entity.GetAttributes()
-    except Exception:
+        attrs = read_com(lambda: entity.GetAttributes())
+    except Exception as exc:
+        if strict:
+            raise BlockServiceError("Could not read block ATT values reliably: " + str(exc)) from exc
         return []
     result = []
     for attr in attrs:
@@ -85,6 +87,15 @@ def list_blocks(filter: dict | None = None) -> list[dict]:
     normalized["types"] = ["block"]
     result: list[dict] = []
     doc = _doc()
+    if normalized.get("handle"):
+        _doc, space_name, entity = resolve_top_level(normalized["handle"], doc=doc)
+        if entity is None or entity_type(entity) != "block":
+            return []
+        data = entity_to_dict(entity)
+        if not matches_entity(data, normalized):
+            return []
+        return [{**data, "space": space_name, "attribute_count": len(_attributes(entity))}]
+
     for space_name, space in _spaces(doc):
         for entity in _iter_entities(space):
             if entity_type(entity) != "block":
@@ -114,7 +125,7 @@ def get_block(handle: str) -> dict:
     return {
         **entity_to_dict(entity),
         "space": space_name,
-        "attributes": _attributes(entity),
+        "attributes": _attributes(entity, strict=True),
     }
 
 
