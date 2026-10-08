@@ -396,10 +396,11 @@
       (if (eq opened T)
         (setq closed
           (vl-catch-all-apply 'vla-Close (list source-doc :vlax-false))))
-      (setq activated (vl-catch-all-apply 'vla-Activate (list orig-doc)))
-      (if (vl-catch-all-error-p activated)
+      (if (eq opened T)
+        (setq activated (vl-catch-all-apply 'vla-Activate (list orig-doc))))
+      (if (and (eq opened T) (vl-catch-all-error-p activated))
         (list nil (strcat
-          "Source processed, but destination drawing could not be reactivated: "
+          "The original drawing could not be reactivated: "
           (vl-catch-all-error-message activated)))
         copy-result)))))
 
@@ -475,7 +476,13 @@
     (T
       ;; Library blocks are authored at their drawing scale: always insert 1:1.
       (setq scale 1.0)
-      (setq result (tbhbl:insert-from-library source source-block block point 0.0))
+      (setq result
+        (vl-catch-all-apply 'tbhbl:insert-from-library
+          (list source source-block block (trans point 1 0) 0.0)))
+      (if (vl-catch-all-error-p result)
+        (setq result
+          (list nil (strcat "Template import error: "
+                            (vl-catch-all-error-message result)))))
       (if (not (car result))
         (alert (strcat "Insert failed:\n" (cadr result)))
         (progn
