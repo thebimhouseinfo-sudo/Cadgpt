@@ -157,6 +157,21 @@ test("knowledge folder redirection is blocked before write", async (t) => {
   assert.deepEqual(await fs.readdir(outside), []);
 });
 
+test("generic file tools must not claim ownership of managed HVAC knowledge", async (t) => {
+  const root = await tempWorkspace(t);
+  const p = knowledge.isHvacKnowledgePath;
+  assert.equal(p(path.join(root, "knowledge", "duct-rules.md"), root), true);
+  assert.equal(p(path.join(root, "drawings", "A.1", "knowledge", "system.md"), root), true);
+  assert.equal(p(path.join(root, "drawings", "A.1", "jobs", "result.md"), root), false);
+  assert.equal(p(path.join(root, "workspace", "knowledge", "scratch.md"), root), false);
+  const fileTools = await fs.readFile(path.join(repoRoot, "src", "cadgpt", "tools", "filesystem.ts"), "utf8");
+  assert.match(fileTools, /KNOWLEDGE_UPDATER_REQUIRED/);
+  const current = fileTools.match(/await assertNotManagedHvacKnowledgeMutation\(target\)/g) || [];
+  assert.equal(current.length, 3, "create/edit/delete must each check managed knowledge");
+  const policy = await import("../dist/cadgpt/lib/tool-policy.js");
+  assert.equal(policy.toolFamily("knowledge_upsert"), "knowledge");
+});
+
 test("menu and MCP surface register both workflow selectors and knowledge tools", async () => {
   const { CADGPT_ROOT_MENU, CADGPT_HELP } = await import("../dist/cadgpt/lib/quickstart.js");
   for (const command of ["cg/kug", "cg/kud"]) {
