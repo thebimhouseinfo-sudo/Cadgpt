@@ -7,7 +7,7 @@ import { toolError, toolResult } from "../lib/tool-result.js";
 import { assertCadRuntimeGenerationAccess } from "../runtime/cad-candidate.js";
 import { cadUpstream } from "../runtime/cad-upstream.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
-import { prepareDrawingMetadataLocation } from "../runtime/drawing-persistence.js";
+import { prepareDrawingMetadataLocation, ensureDrawingAnchorForBinding } from "../runtime/drawing-persistence.js";
 import { getDrawingStorageRoot } from "../lib/appdata.js";
 import { resolveDrawingContext } from "../session/drawing-binding.js";
 import path from "node:path";
@@ -28,6 +28,12 @@ async function resolveKnowledgeRoot(scope: "global" | "drawing", drawingId?: str
   return await withCadHostLock(binding.host, async () => {
     const location = await prepareDrawingMetadataLocation(lease.workId, binding);
     const anchor = String(location.drawing_anchor);
+    if (!binding.anchor_verified_readback) {
+      const recheck = await ensureDrawingAnchorForBinding(binding);
+      if (!recheck.verified_readback || recheck.drawing_anchor !== anchor) {
+        throw new Error("DRAWING_ANCHOR_NOT_VERIFIED: KUD requires a stable CAD-verified drawing identity.");
+      }
+    }
     // Reject a drawing-root junction that aliases a different drawing's knowledge.
     const drawingRoot = path.resolve(String(location.absolute_path));
     const actualRoot = await fs.realpath(drawingRoot);
