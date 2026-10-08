@@ -33,11 +33,17 @@ namespace CadGpt.AutoCad
         private bool _disposed;
         private bool _darkChrome;
         private bool _pollInProgress;
+        private bool _pairInProgress;
+        private bool _pairWasConfirmed;
+        private bool _observedHumanPower;
+        private readonly BindingHeaderEvidence _headerEvidence =
+            new BindingHeaderEvidence();
+        private WeakReference<AcDocument>? _boundDocumentReference;
         private AddinDrawingSummary? _lastConfirmedBoundDrawing;
-        private bool _boundDrawingClosed;
-        private bool _bindingMismatch;
-        private int _boundMissingPolls;
-        private int _bindingMismatchPolls;
+        private string _lastTickerCaption = string.Empty;
+        private bool _lastTickerShouldScroll;
+        private bool? _appliedDarkChrome;
+        private string? _appliedHeaderTheme;
         private DateTime _lastBindingTickUtc =
             DateTime.UtcNow;
         private bool _browserRecoveryInProgress;
@@ -188,8 +194,11 @@ namespace CadGpt.AutoCad
                 return;
             }
 
+            // Local HTTP + DocumentManager scans do not belong in a 1 Hz
+            // UI loop. Three seconds keeps status responsive without adding
+            // repeated COM/UI/network work to long CAD operations.
             _bindingTimer = new DispatcherTimer(
-                TimeSpan.FromSeconds(1),
+                TimeSpan.FromSeconds(3),
                 DispatcherPriority.Background,
                 BindingTimer_Tick,
                 Dispatcher);
@@ -213,12 +222,11 @@ namespace CadGpt.AutoCad
                 _ = RecoverAfterSuspensionAsync();
             }
 
-            if (_disposed || _pollInProgress)
+            if (_disposed)
             {
                 return;
             }
 
-            _pollInProgress = true;
             try
             {
                 await PollBindingStatusAsync(
@@ -227,34 +235,30 @@ namespace CadGpt.AutoCad
             catch (OperationCanceledException)
             {
             }
-            finally
-            {
-                _pollInProgress = false;
-            }
         }
 
         private async Task EnsurePairWindowAsync(
             CancellationToken token)
         {
             if (_disposed ||
+                _pairInProgress ||
                 !string.IsNullOrWhiteSpace(_pairId))
             {
                 return;
             }
 
+            _pairInProgress = true;
             try
             {
-                var pair =
-                    await _control.StartPairAsync(
-                        token);
+                var pair = await _control.StartPairAsync(token);
                 if (!pair.Ok ||
-                    string.IsNullOrWhiteSpace(
-                        pair.PairId))
+                    string.IsNullOrWhiteSpace(pair.PairId))
                 {
                     return;
                 }
 
                 _pairId = pair.PairId;
+                _pairWasConfirmed = false;
                 if (!DateTime.TryParse(
                     pair.ExpiresAt,
                     out _pairExpiresUtc))
@@ -270,84 +274,120 @@ namespace CadGpt.AutoCad
             }
             catch (AddinControlException)
             {
-                // Read-only header is best effort. ChatGPT itself stays usable.
+                // Pair setup is best effort; keep the browser usable.
+            }
+            finally
+            {
+                _pairInProgress = false;
             }
         }
 
         private async Task PollBindingStatusAsync(
             CancellationToken token)
         {
-            if (_disposed)
+            // Navigation, the dispatcher timer, theme changes and wake
+            // recovery can all request status. Only one request may be in
+            // flight: stale/out-of-order replies can otherwise replace a
+            // newer bound drawing and increase response latency.
+            if (_disposed || _pollInProgress)
             {
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(_pairId))
-            {
-                await EnsurePairWindowAsync(token);
-            }
-
-            if (string.IsNullOrWhiteSpace(_pairId))
-            {
-                RefreshHeaderFromLocalContext(false);
-                return;
-            }
-
+            _pollInProgress = true;
             try
             {
-                var status =
-                    await _control.GetBindingStatusAsync(
-                        _pairId!,
-                        token);
-
-                if (status.Paired)
+                if (string.IsNullOrWhiteSpace(_pairId))
                 {
-                    _control.SavePairId(_pairId!);
+                    await EnsurePairWindowAsync(token);
+                }
 
-                    if (status.SessionReady)
-                    {
-                        // session_ready=true is authoritative binding evidence.
-                        // A temporary session/transport gap must never clear the
-                        // last drawing that the add-in knows is bound.
-                        SetConfirmedBoundDrawing(
-                            status.Drawing);
-                    }
-
+                if (string.IsNullOrWhiteSpace(_pairId))
+                {
                     RefreshHeaderFromLocalContext(
-                        status.SessionReady &&
-                        status.HumanPower);
-                    RefreshBackgroundJobs(
-                        status.BackgroundJobs);
+                        _observedHumanPower);
                     return;
                 }
 
-                // paired=false is authoritative only for this pair id.
-                // Renew immediately after control-plane restart, but preserve
-                // the last confirmed drawing until a new session reports its
-                // binding so the header never turns into a transport warning.
-                _pairId = null;
-                _pairExpiresUtc =
-                    DateTime.MinValue;
-                _control.ClearSavedPairId();
-                await EnsurePairWindowAsync(token);
-
-                RefreshHeaderFromLocalContext(false);
-            }
-            catch (AddinControlException)
-            {
-                // Header has no timeout semantics. Do not infer Human Power
-                // OFF from a transport/control-plane failure. The header
-                // changes mode only from observed WorkRegistration state
-                // returned by add-in control.
-                if (_pairExpiresUtc == DateTime.MinValue)
+                try
                 {
-                    _pairId = null;
-                    _control.ClearSavedPairId();
-                    await EnsurePairWindowAsync(token);
+                    var status =
+                        await _control.GetBindingStatusAsync(
+                            _pairId!,
+                            token);
+
+                    if (status.Paired)
+                    {
+                        _pairWasConfirmed = true;
+                        _control.SavePairId(_pairId!);
+
+                        // session_ready=true means the control-plane
+                        // observer is alive, NOT that the current FILE Job
+                        // owns the previously bound drawing. A null drawing
+                        // cannot revoke an earlier confirmed CAD binding.
+                        if (status.SessionReady &&
+                            status.Drawing != null)
+                        {
+                            SetConfirmedBoundDrawing(
+                                status.Drawing);
+                        }
+
+                        // Only an authoritative session response can
+                        // change Human Power mode. Missing/failed pairing
+                        // polls must not override the last observed mode.
+                        if (status.SessionReady)
+                        {
+                            _observedHumanPower =
+                                status.SessionReady &&
+                                status.HumanPower;
+                        }
+
+                        RefreshHeaderFromLocalContext(
+                            _observedHumanPower);
+                        RefreshBackgroundJobs(
+                            status.BackgroundJobs);
+                        return;
+                    }
+
+                    // A newly started pair remains pending until ChatGPT
+                    // claims it or its three-minute window expires. Rotating
+                    // every poll can invalidate the pair before admission.
+                    // A formerly confirmed pair may renew immediately when
+                    // the control-plane explicitly reports paired=false.
+                    if (AddinPairRenewalPolicy.ShouldRenew(
+                            _pairWasConfirmed,
+                            status.Pending,
+                            _pairExpiresUtc,
+                            DateTime.UtcNow))
+                    {
+                        _pairId = null;
+                        _pairWasConfirmed = false;
+                        _pairExpiresUtc = DateTime.MinValue;
+                        _control.ClearSavedPairId();
+                        await EnsurePairWindowAsync(token);
+                    }
+
+                    RefreshHeaderFromLocalContext(
+                        _observedHumanPower);
+                }
+                catch (AddinControlException)
+                {
+                    // Header has no timeout semantics. Do not infer Human
+                    // Power OFF or an unbound drawing from network failure.
+                    if (_pairExpiresUtc == DateTime.MinValue)
+                    {
+                        _pairId = null;
+                        _pairWasConfirmed = false;
+                        _control.ClearSavedPairId();
+                        await EnsurePairWindowAsync(token);
+                    }
                 }
             }
+            finally
+            {
+                _pollInProgress = false;
+            }
         }
-
 
         private void RefreshBackgroundJobs(
             IList<AddinBackgroundJobSummary>? jobs)
@@ -428,6 +468,21 @@ namespace CadGpt.AutoCad
                                     " — Done"))
                     .ToList();
 
+            var caption = string.Join(
+                "   •   ",
+                labels);
+            var shouldScroll = labels.Count > 1;
+            if (caption == _lastTickerCaption &&
+                shouldScroll == _lastTickerShouldScroll)
+            {
+                // Do not restart an infinite ticker animation on every
+                // successful background status poll.
+                return;
+            }
+
+            _lastTickerCaption = caption;
+            _lastTickerShouldScroll = shouldScroll;
+
             if (labels.Count == 0)
             {
                 JobTickerTransform.BeginAnimation(
@@ -441,14 +496,10 @@ namespace CadGpt.AutoCad
                 return;
             }
 
-            JobTickerText.Text =
-                string.Join(
-                    "   •   ",
-                    labels);
+            JobTickerText.Text = caption;
             JobTickerBorder.Visibility =
                 Visibility.Visible;
-            AnimateJobTicker(
-                labels.Count > 1);
+            AnimateJobTicker(shouldScroll);
         }
 
         private void AnimateJobTicker(
@@ -519,10 +570,7 @@ namespace CadGpt.AutoCad
                     "HUMAN POWER ON";
                 BoundDrawingText.ToolTip =
                     "Human Power is active for the current CadGPT task.";
-                _boundDrawingClosed = false;
-                _bindingMismatch = false;
-                _boundMissingPolls = 0;
-                _bindingMismatchPolls = 0;
+                _headerEvidence.Reset();
                 ApplyChromeTheme(true);
                 return;
             }
@@ -555,10 +603,8 @@ namespace CadGpt.AutoCad
 
             if (bound == null)
             {
-                _boundDrawingClosed = false;
-                _bindingMismatch = false;
-                _boundMissingPolls = 0;
-                _bindingMismatchPolls = 0;
+                _headerEvidence.Reset();
+                _boundDocumentReference = null;
                 ApplyChromeTheme(false);
                 return;
             }
@@ -574,53 +620,41 @@ namespace CadGpt.AutoCad
                 return;
             }
 
-            var boundOpen =
-                drawings.Any(
-                    drawing =>
-                        DrawingMatches(
-                            bound,
-                            drawing,
-                            drawings));
-
-            if (!boundOpen)
+            // Cache the actual managed AutoCAD Document object once it
+            // matches the confirmed binding. Save As / path changes may
+            // alter names without closing or switching the document.
+            ActiveDrawingInfo? matched = null;
+            if (_boundDocumentReference != null &&
+                _boundDocumentReference.TryGetTarget(
+                    out var originalDocument))
             {
-                _boundMissingPolls += 1;
-                _bindingMismatchPolls = 0;
-                _bindingMismatch = false;
-                if (_boundMissingPolls >= 3)
-                {
-                    _boundDrawingClosed = true;
-                }
-                ApplyChromeTheme(false);
-                return;
-            }
-
-            _boundMissingPolls = 0;
-            _boundDrawingClosed = false;
-
-            if (active == null)
-            {
-                ApplyChromeTheme(false);
-                return;
-            }
-
-            if (DrawingMatches(
-                    bound,
-                    active,
-                    drawings))
-            {
-                _bindingMismatchPolls = 0;
-                _bindingMismatch = false;
+                // Once a particular managed document has been confirmed,
+                // do not accidentally "rebind" a different open DWG with
+                // the same name/path during Save As or tab reordering.
+                matched = drawings.FirstOrDefault(
+                    item => ReferenceEquals(
+                        item.Document,
+                        originalDocument));
             }
             else
             {
-                _bindingMismatchPolls += 1;
-                if (_bindingMismatchPolls >= 2)
-                {
-                    _bindingMismatch = true;
-                }
+                matched = drawings.FirstOrDefault(
+                    item => DrawingMatches(
+                        bound, item, drawings));
+            }
+            var boundOpen = matched != null;
+            if (matched?.Document != null)
+            {
+                _boundDocumentReference =
+                    new WeakReference<AcDocument>(
+                        matched.Document);
             }
 
+            bool? boundActive =
+                active == null
+                    ? (bool?)null
+                    : DrawingMatches(bound, active, drawings);
+            _headerEvidence.Observe(boundOpen, boundActive);
             ApplyChromeTheme(false);
         }
 
@@ -641,10 +675,8 @@ namespace CadGpt.AutoCad
                     nextKey,
                     StringComparison.OrdinalIgnoreCase))
             {
-                _boundDrawingClosed = false;
-                _bindingMismatch = false;
-                _boundMissingPolls = 0;
-                _bindingMismatchPolls = 0;
+                _headerEvidence.Reset();
+                _boundDocumentReference = null;
             }
         }
 
@@ -656,19 +688,29 @@ namespace CadGpt.AutoCad
                 return string.Empty;
             }
 
-            return
-                DrawingIdentityMatcher.NormalizePath(
+            return (
+                drawing.RuntimeDocumentId ?? string.Empty) + "|" +
+                (DrawingIdentityMatcher.NormalizePath(
                     drawing.FullName) ??
                 drawing.Name?.Trim() ??
-                string.Empty;
+                string.Empty);
         }
 
-        private static bool DrawingMatches(
+        private bool DrawingMatches(
             AddinDrawingSummary bound,
             ActiveDrawingInfo drawing,
             IReadOnlyCollection<ActiveDrawingInfo>
                 openDrawings)
         {
+            if (_boundDocumentReference != null &&
+                _boundDocumentReference.TryGetTarget(
+                    out var confirmedDocument))
+            {
+                return ReferenceEquals(
+                    confirmedDocument,
+                    drawing.Document);
+            }
+
             return DrawingIdentityMatcher.Matches(
                 new DrawingIdentityValue
                 {
@@ -715,6 +757,7 @@ namespace CadGpt.AutoCad
                         var identity =
                             DocumentIdentity(
                                 document);
+                        identity.Document = document;
                         drawings.Add(identity);
                         if (
                             activeDocument != null &&
@@ -743,6 +786,7 @@ namespace CadGpt.AutoCad
                     active =
                         DocumentIdentity(
                             activeDocument);
+                    active.Document = activeDocument;
                 }
 
                 return true;
@@ -888,6 +932,7 @@ namespace CadGpt.AutoCad
         {
             _darkChrome = !_darkChrome;
             ApplyBaseChromeTheme();
+            ApplyHeaderTheme(_observedHumanPower);
             WebViewProfile.TrySaveChromeTheme(
                 _darkChrome
                     ? "dark"
@@ -912,6 +957,11 @@ namespace CadGpt.AutoCad
 
         private void ApplyBaseChromeTheme()
         {
+            if (_appliedDarkChrome == _darkChrome)
+            {
+                return;
+            }
+            _appliedDarkChrome = _darkChrome;
             var rootBackground =
                 new SolidColorBrush(
                     _darkChrome
@@ -964,6 +1014,16 @@ namespace CadGpt.AutoCad
         private void ApplyHeaderTheme(
             bool humanPower)
         {
+            var headerTheme =
+                humanPower ? "human" :
+                _headerEvidence.BoundDrawingClosed ? "closed" :
+                _headerEvidence.DifferentTabActive ? "other-tab" :
+                _darkChrome ? "dark" : "light";
+            if (_appliedHeaderTheme == headerTheme)
+            {
+                return;
+            }
+            _appliedHeaderTheme = headerTheme;
             var normalHeader =
                 new SolidColorBrush(
                     _darkChrome
@@ -972,18 +1032,18 @@ namespace CadGpt.AutoCad
                         : Color.FromRgb(
                             255, 255, 255));
             var headerWarning =
-                _boundDrawingClosed ||
-                _bindingMismatch;
+                _headerEvidence.BoundDrawingClosed ||
+                _headerEvidence.DifferentTabActive;
             var headerBackground =
                 humanPower
                     ? new SolidColorBrush(
                         Color.FromRgb(
                             34, 211, 238))
-                    : _boundDrawingClosed
+                    : _headerEvidence.BoundDrawingClosed
                         ? new SolidColorBrush(
                             Color.FromRgb(
                                 250, 204, 21))
-                        : _bindingMismatch
+                        : _headerEvidence.DifferentTabActive
                             ? new SolidColorBrush(
                                 Color.FromRgb(
                                     245, 158, 11))
@@ -1126,6 +1186,7 @@ namespace CadGpt.AutoCad
         {
             public string? Name { get; set; }
             public string? FullName { get; set; }
+            public AcDocument? Document { get; set; }
         }
     }
 }

@@ -28,6 +28,7 @@ interface PairedPanel {
 export interface AddinBoundDrawing {
   name: string | null;
   full_name: string | null;
+  runtime_document_id?: string | null;
 }
 
 export interface AddinBackgroundJob {
@@ -176,6 +177,7 @@ export async function addinBindingStatus(
   pairId: string
 ): Promise<{
   paired: boolean;
+  pending?: boolean;
   session_ready: boolean;
   drawing: AddinBoundDrawing | null;
   bound_count: number;
@@ -184,8 +186,12 @@ export async function addinBindingStatus(
 }> {
   const pair = pairedPanels.get(pairId);
   if (!pair) {
+    const pending =
+      pendingPair?.pairId === pairId &&
+      Date.now() < pendingPair.expiresAt;
     return {
       paired: false,
+      ...(pending ? { pending: true } : {}),
       session_ready: false,
       drawing: null,
       bound_count: 0,

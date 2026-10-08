@@ -379,3 +379,18 @@ test("detached MCP transport keeps add-in binding observer until logical session
     background_jobs: [],
   });
 });
+
+test("pending add-in pair is distinguishable from invalid token after control-plane restart", async () => {
+  const pending = addin.startAddinPairing();
+  const firstStatus = await addin.addinBindingStatus(pending.pair_id);
+  assert.equal(firstStatus.paired, false);
+  assert.equal(firstStatus.pending, true);
+
+  // Starting a new pending window invalidates the previous pair. AutoCAD
+  // may now reconnect immediately rather than waiting three minutes.
+  const replacement = addin.startAddinPairing();
+  const staleStatus = await addin.addinBindingStatus(pending.pair_id);
+  const newStatus = await addin.addinBindingStatus(replacement.pair_id);
+  assert.equal(staleStatus.pending, undefined);
+  assert.equal(newStatus.pending, true);
+});

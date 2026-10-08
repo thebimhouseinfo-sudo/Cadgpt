@@ -234,7 +234,7 @@ test("header is a drawing-context indicator with debounced local-state warnings"
   );
   assert.match(
     code,
-    /if \(status\.SessionReady\)[\s\S]*SetConfirmedBoundDrawing\(\s*status\.Drawing\s*\)/
+    /if \(status\.SessionReady &&\s*status\.Drawing != null\)[\s\S]*SetConfirmedBoundDrawing\(\s*status\.Drawing\s*\)/
   );
   assert.match(
     code,
@@ -242,11 +242,15 @@ test("header is a drawing-context indicator with debounced local-state warnings"
   );
   assert.match(
     code,
-    /_boundMissingPolls\s*>=\s*3/
+    /_headerEvidence\.Observe\(boundOpen, boundActive\)/
   );
   assert.match(
     code,
-    /_bindingMismatchPolls\s*>=\s*2/
+    /_headerEvidence\.BoundDrawingClosed/
+  );
+  assert.match(
+    code,
+    /_headerEvidence\.DifferentTabActive/
   );
   assert.match(
     code,
@@ -419,4 +423,40 @@ test("panel startup is not pinned to a persisted ChatGPT conversation", () => {
     code,
     /ReadLastConversationUrl|TrySaveConversationUrl/
   );
+});
+
+test("no background animation reset for unchanged status; low-cost single-flight polling", () => {
+  assert.match(code, /TimeSpan\.FromSeconds\(3\)/);
+  assert.match(code, /if \(_disposed \|\| _pollInProgress\)/);
+  assert.match(code, /_pollInProgress = true;/);
+  assert.match(code, /_pollInProgress = false;/);
+  assert.match(code, /caption == _lastTickerCaption/);
+  assert.match(code, /shouldScroll == _lastTickerShouldScroll/);
+  assert.match(code, /if \(_appliedDarkChrome == _darkChrome\)/);
+  assert.match(code, /if \(_appliedHeaderTheme == headerTheme\)/);
+});
+
+test("pending pair never rotates on every poll and null FILE drawing does not unbind active tab", () => {
+  assert.match(code, /_pairInProgress/);
+  assert.match(code, /AddinPairRenewalPolicy\.ShouldRenew\(/);
+  assert.match(code, /status\.Pending/);
+  assert.match(client, /DataMember\(Name = "pending"\)/);
+  assert.match(code, /status\.SessionReady &&\s*status\.Drawing != null/);
+  assert.match(code, /_boundDocumentReference/);
+  assert.match(code, /ReferenceEquals\(\s*confirmedDocument,\s*drawing\.Document\)/);
+  assert.match(client, /DataMember\(Name = "runtime_document_id"\)/);
+});
+
+test("runtime restart explicitly warns that AutoCAD add-in needs a separate installer", async () => {
+  const batch = await fs.readFile(
+    new URL("../run.bat", import.meta.url), "utf8");
+  const begin = batch.indexOf("\n:restart");
+  const end = batch.indexOf("\n:status", begin + 1);
+  assert.ok(begin >= 0 && end > begin, "restart section exists");
+  const restart = batch.slice(begin, end);
+  assert.match(restart, /call npm run build/);
+  assert.match(restart, /run\.bat restart rebuilds the CadGPT runtime, not the installed AutoCAD add-in DLL/);
+  assert.match(restart, /close AutoCAD and run cadaddin\.bat once/);
+  assert.doesNotMatch(restart, /call cadaddin\.bat|install-autocad-addin\.ps1/,
+    "do not reinstall in an open AutoCAD host");
 });
