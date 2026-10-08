@@ -450,8 +450,10 @@ test("pending pair never rotates on every poll and null FILE drawing does not un
 test("runtime restart explicitly warns that AutoCAD add-in needs a separate installer", async () => {
   const batch = await fs.readFile(
     new URL("../run.bat", import.meta.url), "utf8");
-  const restart = batch.slice(
-    batch.indexOf(":restart"), batch.indexOf(":status"));
+  const begin = batch.indexOf("\n:restart");
+  const end = batch.indexOf("\n:status", begin + 1);
+  assert.ok(begin >= 0 && end > begin, "restart section exists");
+  const restart = batch.slice(begin, end);
   assert.match(restart, /call npm run build/);
   assert.match(restart, /run\.bat restart rebuilds the CadGPT runtime, not the installed AutoCAD add-in DLL/);
   assert.match(restart, /close AutoCAD and run cadaddin\.bat once/);
