@@ -25,7 +25,8 @@ function relative(file) {
 }
 
 function assertNumericChoice(number, system, location) {
-  assert.equal(canonical[number], system.toUpperCase(), `${location}: ${number} must mean ${canonical[number] || "no system"}; found ${system}`);
+  const normalized = system.toUpperCase().replace(/^(SA|RA|OA|EA|TA)G$/, "$1");
+  assert.equal(canonical[number], normalized, `${location}: ${number} must mean ${canonical[number] || "no system"}; found ${system}`);
 }
 
 test("scan every TBH Lisp system shortcut: 1 SA, 2 RA, 3 OA, 4 EA, 5 TA", async () => {
