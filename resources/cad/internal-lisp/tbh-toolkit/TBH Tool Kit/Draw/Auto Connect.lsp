@@ -5,8 +5,6 @@
 
 ;; ─── MATH HELPERS ───────────────────────────────────
 (defun acc:tan2 (a) (/ (sin (* 0.5 a)) (max (cos (* 0.5 a)) 1e-9)))
-;; ─── MATH HELPERS ───────────────────────────────────
-(defun acc:tan2 (a) (/ (sin (* 0.5 a)) (max (cos (* 0.5 a)) 1e-9)))
 ;; Ls is the straight duct length between elbows. We subtract the elbow extensions.
 (defun acc:ls   (dy R a ext) (/ (- dy (* 2.0 R (- 1.0 (cos a))) (* 2.0 ext (sin a))) (max (sin a) 1e-9)))
 ;; Total parallel footprint includes the extensions

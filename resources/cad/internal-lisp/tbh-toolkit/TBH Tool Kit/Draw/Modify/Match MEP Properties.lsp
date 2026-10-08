@@ -54,13 +54,12 @@
   result)
 
 (defun mma:valid-system (sys)
-  (cond
-    ((wcmatch sys "SA") "SA")
-    ((wcmatch sys "RA") "RA")
-    ((wcmatch sys "OA") "OA")
-    ((wcmatch sys "EA") "EA")
-    ((wcmatch sys "TA") "TA")
-    (T nil)))
+  ;; Unrecognized block/layer metadata may be NIL. wcmatch requires
+  ;; strings; fail closed and let MMA's existing no-system path report it.
+  (if (and (= (type sys) 'STR)
+           (member (strcase sys) '("SA" "RA" "OA" "EA" "TA")))
+    (strcase sys)
+    nil))
 
 (defun c:MMA (/ src srcEnt srcName sys insTok ins ss targets ent bn fam result changed skipped)
   (if (not (cd:has-func 'cd:classify-family))

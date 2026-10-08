@@ -26,7 +26,7 @@
       (LM:ReLockLayers lck) (LM:EndUndo doc))) (princ))
 
 ;;-----------------=={ Rotate Attributes }==------------------;;
-(defun c:roAtt ( / *error* doc asel base disp lck ss tag )
+(defun c:roAtt ( / *error* doc asel base disp lck ss tag o )
   (defun *error* ( msg ) (if doc (LM:EndUndo doc)) (if lck (LM:ReLockLayers lck)) (if mutt (setvar 'NOMUTT mutt)) (or (wcmatch (strcase msg) "*BREAK,*CANCEL*,*EXIT*") (princ (strcat "\n** Error: " msg " **"))) (princ))
   (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
   (if (and (setq asel (LM:GetAttribSelection doc t)) (setq base (trans (vlax-get (setq o (car asel)) (if (and (or (not (vlax-property-available-p o 'MTextAttribute)) (eq :vlax-false (vla-get-MTextAttribute o))) (not (eq acAlignmentLeft (vla-get-Alignment o)))) 'TextAlignmentPoint 'InsertionPoint)) 0 1)) (setq disp (getangle "\nSpecify Rotation Angle: " base)) (setq disp (+ disp (angle '(0. 0. 0.) (trans (getvar 'UCSXDIR) 0 (trans '(0. 0. 1.) 1 0 t) t)))))
@@ -88,7 +88,9 @@
       (setvar 'NOMUTT mutt)
     )
   )
-  (list o ss tag)
+  ;; A cancelled ATT pick or an empty block selection must return NIL.
+  ;; Returning (nil nil nil) is truthy in AutoLISP and crashes ROATT/EDATT.
+  (if (and o ss tag) (list o ss tag) nil)
 )
 
 ;;--------------------=={ Start Undo }==----------------------;;
@@ -106,9 +108,9 @@
 ;;--------------------=={ Block Name }==----------------------;;
 (defun LM:BlockName ( obj ) (vlax-get-property obj (if (vlax-property-available-p obj 'EffectiveName) 'EffectiveName 'Name)))
 
-(defun c:MVATT () (c:mvAtt)) 
-(defun c:ROATT () (c:roAtt)) 
-(defun c:EDATT () (c:edAtt))
+;; AutoLISP command symbols are case-insensitive. The three functions
+;; c:mvAtt / c:roAtt / c:edAtt already serve MVATT, ROATT and EDATT;
+;; defining uppercase aliases here would overwrite them with recursion.
 
 (princ "\n[TBH] Attribute Modification Suite loaded. Commands: MVATT, ROATT, EDATT")
 (princ)
