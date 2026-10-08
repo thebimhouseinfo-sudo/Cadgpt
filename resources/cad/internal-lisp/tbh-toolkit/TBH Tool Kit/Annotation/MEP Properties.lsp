@@ -134,14 +134,10 @@
 (setq *MEP_REACTOR_LOCK* nil)
 
 ;; =========================================================================
-;; FIX: Resolve the actual block reference to process from a notified object.
-;; Editing an attribute's value modifies the AcDbAttribute entity itself
-;; (not the AcDbBlockReference), and different edit paths (Properties palette,
-;; Quick Properties, EATTEDIT) don't always leave the grille as the current
-;; PICKFIRST selection. Reading the reactor's own notified object (instead of
-;; only relying on ssgetfirst) makes the auto-calc fire reliably regardless of
-;; how the attribute was edited. If the notified object is the attribute,
-;; its owner (group 330) is the INSERT that contains it.
+;; AutoCAD AcDb events identify the modified entity, which can be an ATTRIB
+;; rather than its owning grille INSERT. Only the notified grille should be
+;; auto-calculated/synced; stale PICKFIRST would fire during unrelated tag
+;; deletion and repeatedly contend with AutoCAD COM modification state.
 ;; =========================================================================
 ;; Database :vlr-objectModified supplies (database modified-ename).
 ;; Resolve only the notified entity. The former PICKFIRST fallback fired
