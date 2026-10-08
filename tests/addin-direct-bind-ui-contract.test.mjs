@@ -439,6 +439,8 @@ test("no background animation reset for unchanged status; low-cost single-flight
 test("pending pair never rotates on every poll and null FILE drawing does not unbind active tab", () => {
   assert.match(code, /_pairInProgress/);
   assert.match(code, /AddinPairRenewalPolicy\.ShouldRenew\(/);
+  assert.match(code, /status\.Pending/);
+  assert.match(client, /DataMember\(Name = "pending"\)/);
   assert.match(code, /status\.SessionReady &&\s*status\.Drawing != null/);
   assert.match(code, /_boundDocumentReference/);
   assert.match(code, /ReferenceEquals\(\s*confirmedDocument,\s*drawing\.Document\)/);
