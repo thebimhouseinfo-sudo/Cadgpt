@@ -76,6 +76,7 @@ function sessionTag(sessionKey: string): string {
 
 const FILE_FAMILIES = new Set([
   "filesystem",
+  "knowledge",
   "lisp-authoring",
   "job-authoring",
   "library",
