@@ -58,6 +58,14 @@ async function checkedRoot(root: string): Promise<string> {
   const parent = path.dirname(path.resolve(root));
   await fs.mkdir(parent, { recursive: true });
   const actualParent = await fs.realpath(parent);
+  try {
+    const prior = await fs.lstat(root);
+    if (prior.isSymbolicLink()) {
+      throw new Error("KNOWLEDGE_PATH_REDIRECT: knowledge root symlink is forbidden.");
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   await fs.mkdir(root, { recursive: true });
   const info = await fs.lstat(root);
   if (!info.isDirectory() || info.isSymbolicLink()) {
@@ -135,6 +143,7 @@ export async function upsertKnowledgeEntry(input: {
 }) {
   assertKnowledgeKey(input.key);
   assertHvacDomain(input.body);
+  assertHvacDomain(input.title);
   if (!input.title.trim() || input.title.length > 120 || /[\r\n]/.test(input.title)) {
     throw new Error("HVAC_KNOWLEDGE_TITLE_INVALID");
   }
