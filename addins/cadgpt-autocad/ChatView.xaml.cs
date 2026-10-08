@@ -356,6 +356,7 @@ namespace CadGpt.AutoCad
                     // the control-plane explicitly reports paired=false.
                     if (AddinPairRenewalPolicy.ShouldRenew(
                             _pairWasConfirmed,
+                            status.Pending,
                             _pairExpiresUtc,
                             DateTime.UtcNow))
                     {
