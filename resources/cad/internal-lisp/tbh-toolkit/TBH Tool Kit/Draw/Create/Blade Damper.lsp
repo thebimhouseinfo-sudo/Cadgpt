@@ -123,22 +123,6 @@
     ((wcmatch u "TA*") "TA")
     (T nil)))
 
-(defun bd:system-from-picked-layer-last2 (lay / u n s2)
-  ;; Requested simple rule: system is exactly the last 2 chars of picked duct layer.
-  (setq u (strcase (vl-string-trim " " (bd:ensure-str lay))))
-  (setq n (strlen u))
-  (if (>= n 2)
-    (progn
-      (setq s2 (substr u (1- n) 2))
-      (if (or (equal s2 "SA")
-              (equal s2 "RA")
-              (equal s2 "EA")
-              (equal s2 "OA")
-              (equal s2 "TA"))
-        s2
-        nil))
-    nil))
-
 (defun bd:system-from-name (bn / u)
   (setq u (strcase (bd:ensure-str bn)))
   (cond
@@ -185,6 +169,23 @@
               (if (and (boundp '*RD:Type*) (bd:valid-system-p *RD:Type*)) (strcase *RD:Type*) nil)))
   (setq s (bd:normalize-system s))
   (if (bd:valid-system-p s) s nil))
+
+(defun bd:system-layer (sys / mapped)
+  ;; Select the BD layer from its picked duct system, never from CLAYER.
+  ;; Respect the configured MEP system layer if available; otherwise use
+  ;; the same canonical Hvacduct-* names as the D1/D2 drawing commands.
+  (setq mapped nil)
+  (if (fboundp 'dts:get-system-layer)
+    (setq mapped
+      (vl-catch-all-apply 'dts:get-system-layer (list sys))))
+  (if (and (bd:str-p mapped) (/= mapped ""))
+    mapped
+    (cdr (assoc sys
+      '(("SA" . "Hvacduct-sa")
+        ("RA" . "Hvacduct-ra")
+        ("OA" . "Hvacduct-oa")
+        ("EA" . "Hvacduct-ea")
+        ("TA" . "Hvacduct-ta"))))))
 
 (defun bd:shading-layer (lay)
   (if (and (bd:str-p lay) (/= lay "")) (strcat lay "-shading") "0"))
@@ -435,7 +436,7 @@
   (list base ents))
 
 ;; ─── MAIN COMMAND ───────────────────────────────────
-(defun c:BD (/ *error* old_cmdecho old_osmode typ size sel ent ed bn sys lay info drawRes base blockName ins ductLay curLay)
+(defun c:BD (/ *error* old_cmdecho old_osmode typ size sel ent ed bn sys lay info drawRes base blockName ins ductLay blockSys layerSys)
   (defun *error* (msg)
     (if old_cmdecho (setvar "CMDECHO" old_cmdecho))
     (if old_osmode (setvar "OSMODE" old_osmode))
@@ -458,23 +459,33 @@
   (setq sel (entsel "\nSelect duct edge to place BD: "))
   (if (and sel (bd:ename-p (car sel)))
     (progn
-      (setq ent  (car sel)
-            ed   (entget ent)
-            bn   (bd:insert-name ent ed)
-            ductLay (cdr (assoc 8 ed))
-            curLay  (getvar "CLAYER")
-            ;; Prefer drawing on current layer when it is an HVAC system layer,
-            ;; otherwise inherit picked duct layer to keep system consistency.
-            lay  (if (bd:system-from-layer curLay) curLay ductLay)
-            info (bd:parse-duct ent ed (cadr sel)))
-        ;; Simple requested logic: derive system from the last 2 chars of picked duct layer.
-        (setq sys (bd:system-from-picked-layer-last2 ductLay))
+      (setq ent      (car sel)
+            ed       (entget ent)
+            bn       (bd:insert-name ent ed)
+            ductLay  (cdr (assoc 8 ed))
+            info     (bd:parse-duct ent ed (cadr sel))
+            ;; The picked duct is authoritative. Current layer and
+            ;; previously used D1/D2 system defaults can be unrelated.
+            blockSys (if info (cdr (assoc 'sys info)) nil)
+            layerSys (or
+                       (and (fboundp 'dts:system-from-layer)
+                            (dts:system-from-layer ductLay))
+                       (bd:system-from-layer ductLay))
+            sys      (if blockSys blockSys layerSys))
       (cond
+        ((null info)
+         (princ "\n[BD] Error: Unsupported duct block. Supported: DTv9-* and RDv2-*"))
+        ((and blockSys layerSys (/= blockSys layerSys))
+         (princ (strcat "\n[BD] Error: Picked duct's block system ("
+                        blockSys ") conflicts with its layer ("
+                        (bd:ensure-str ductLay) " -> " layerSys
+                        "). Fix the duct before placing BD.")))
         ((null sys)
-         (princ (strcat "\n[BD] Error: Could not detect system from picked duct layer=" (bd:ensure-str ductLay) " . Expected suffix SA/RA/EA/OA/TA.")))
-        ((null info) (princ "\n[BD] Error: Unsupported duct block. Supported: DTv9-* and RDv2-*"))
+         (princ (strcat "\n[BD] Error: Cannot identify SA/RA/OA/EA/TA from the picked duct "
+                        (bd:ensure-str bn) " on layer " (bd:ensure-str ductLay) ".")))
         (T
-         (setq drawRes   (bd:draw-spigot lay info size typ)
+         (setq lay       (bd:system-layer sys)
+               drawRes   (bd:draw-spigot lay info size typ)
                base      (car drawRes)
                blockName (bd:make-name sys typ size)
                ins       (bd:blockify blockName base (cadr drawRes) lay))
