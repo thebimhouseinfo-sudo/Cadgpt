@@ -17,7 +17,8 @@ f_clear_inputs f_clear_history f_update_ui_history f_logic)
   ;; AutoLISP invokes *error* (not a function named error) on ESC/failure.
   ;; DCL creation may fail before the dialog ID is initialized.
   (if (and file_handle (= (type file_handle) 'FILE))
-    (progn (close file_handle) (setq file_handle nil)))
+    (progn (vl-catch-all-apply 'close (list file_handle))
+           (setq file_handle nil)))
   (if (and (numberp dcl_id) (> dcl_id 0))
     (progn (unload_dialog dcl_id) (setq dcl_id nil)))
   (if (and (= (type dcl_file) 'STR) (findfile dcl_file))
@@ -354,6 +355,7 @@ elev1_name (rtos elev1_val 2 0) " / COD" (rtos cod1 2 0) " / TOD" (rtos tod1 2 0
 (write-line "  }" file_handle)
 (write-line "}" file_handle)
 (close file_handle)
+(setq file_handle nil)
 
 ;; 7. STARTUP & BINDINGS
 (setq dcl_id (load_dialog dcl_file))
