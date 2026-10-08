@@ -16,9 +16,21 @@
 ;; AutoCAD does not expose the path of a file loaded by APPLOAD consistently.
 ;; Keep a locator in the environment after the first fallback selection.
 (setq *TBHBL:LspPath*
-  (if (= (type (getenv "TBHBL_LSP_PATH")) 'STR)
-    (getenv "TBHBL_LSP_PATH")
-    (findfile "TBH_Block_Library.lsp")))
+  (cond
+    ;; CadGPT verified TBH loader knows its absolute toolkit root. Prefer
+    ;; the installed source rather than a stale TBHBL_LSP_PATH env setting.
+    ((and (boundp '*cadgpt-load-dir*)
+          (= (type *cadgpt-load-dir*) 'STR)
+          (findfile
+            (strcat *cadgpt-load-dir*
+                    "/TBH Tool Kit/TBH_Block_Library.lsp")))
+     (findfile
+       (strcat *cadgpt-load-dir*
+               "/TBH Tool Kit/TBH_Block_Library.lsp")))
+    ((and (= (type (getenv "TBHBL_LSP_PATH")) 'STR)
+          (findfile (getenv "TBHBL_LSP_PATH")))
+     (findfile (getenv "TBHBL_LSP_PATH")))
+    (T (findfile "TBH_Block_Library.lsp"))))
 
 ;; Each entry is: (display-name source-block-name)
 (setq *TBHBL:Groups*
@@ -82,7 +94,9 @@
 
 (defun tbhbl:locate-lsp (/ path)
   (setq path *TBHBL:LspPath*)
-  (if (or (not path) (/= (type path) 'STR))
+  (if (or (not path)
+          (/= (type path) 'STR)
+          (not (findfile path)))
     (setq path
       (getfiled
         "Locate TBH_Block_Library.lsp once"
@@ -163,12 +177,21 @@
   (princ)
 )
 
+(defun tbhbl:dbx-live-p (obj / blocks)
+  ;; A cached COM object may become invalid after AutoCAD reload/sleep.
+  ;; Validate without mutating before reusing it for another BLL import.
+  (and obj
+       (setq blocks (vl-catch-all-apply 'vla-get-Blocks (list obj)))
+       (not (vl-catch-all-error-p blocks))))
+
 (defun tbhbl:get-dbx (source-path / obj)
-  ;; Returns a live ObjectDBX document already loaded with source-path.
-  ;; Opens it only the first time it's needed; every call after that
-  ;; reuses the same loaded database, no repeat disk I/O.
+  ;; Reuse only a *verified-live* ObjectDBX document; stale COM pointers
+  ;; cause repeated copy failures after host reload or power-state changes.
   (cond
-    ((and *TBHBL:Dbx* (equal *TBHBL:DbxSourcePath* source-path)) *TBHBL:Dbx*)
+    ((and *TBHBL:Dbx*
+          (equal *TBHBL:DbxSourcePath* source-path)
+          (tbhbl:dbx-live-p *TBHBL:Dbx*))
+     *TBHBL:Dbx*)
     ((not (tbhbl:probe-dbx-progid)) nil)
     (T
       (tbhbl:release-dbx-cache) ;; drop any stale/different cached database
@@ -203,88 +226,196 @@
   (if (vl-catch-all-error-p result) nil result)
 )
 
-(defun tbhbl:copy-block-def (source-doc dest-doc source-def / dest-blocks name existing sa newobjs variant-val newlist new-def)
-  ;; Copy the block definition object directly into dest-doc's Blocks
-  ;; collection, in memory - no temp DWG file, no document activation.
-  ;; If a block of the same name already exists in dest-doc, reuse it
-  ;; instead of copying again (avoids name-collision errors).
-  ;;
-  ;; Every ActiveX call below is wrapped in vl-catch-all-apply, including
-  ;; the variant/safearray conversion of CopyObjects' result. That
-  ;; conversion is NOT guaranteed to come back the same way for every
-  ;; block: blocks with attribute definitions, dynamic-block extension
-  ;; dictionaries, reactors, etc. can make some AutoCAD builds hand back
-  ;; a bare object instead of a one-element safearray. Previously that
-  ;; case threw an uncaught "Invalid index" ActiveX error straight to
-  ;; the command line; now it's caught and falls back gracefully, or at
-  ;; worst reports a clear message instead of an opaque ActiveX error.
-  (setq dest-blocks (vla-get-Blocks dest-doc))
-  (setq name (vla-get-Name source-def))
-  (setq existing (vl-catch-all-apply 'vla-Item (list dest-blocks name)))
+;; CopyObjects must receive objects owned by the source database and an
+;; owner in the destination. Cloning a source INSERT (rather than *U123's
+;; anonymous block-table record) carries its referenced definition, dynamic
+;; block data, attributes and dependent nested definitions together.
+(defun tbhbl:find-sample-in-owner (owner name / found item objname itemname)
+  (setq found nil)
+  (vlax-for item owner
+    (if (not found)
+      (progn
+        (setq objname (vl-catch-all-apply 'vla-get-ObjectName (list item)))
+        (if (and (not (vl-catch-all-error-p objname))
+                 (= objname "AcDbBlockReference"))
+          (progn
+            (setq itemname (vl-catch-all-apply 'vla-get-Name (list item)))
+            (if (and (not (vl-catch-all-error-p itemname))
+                     (= (strcase itemname) (strcase name)))
+              (setq found item)))))))
+  found)
+
+(defun tbhbl:find-source-sample (doc name display / result lay block)
+  ;; Do not call CopyObjects while a vlax-for is still active.
+  (setq result (tbhbl:find-sample-in-owner (vla-get-ModelSpace doc) name))
+  (if (and (not result) (/= (strcase name) (strcase display)))
+    (setq result (tbhbl:find-sample-in-owner (vla-get-ModelSpace doc) display)))
+  (if (not result)
+    (vlax-for lay (vla-get-Layouts doc)
+      (if (and (not result)
+               (/= (strcase (vla-get-Name lay)) "MODEL"))
+        (progn
+          (setq block (vla-get-Block lay))
+          (setq result (tbhbl:find-sample-in-owner block name))
+          (if (and (not result) (/= (strcase name) (strcase display)))
+            (setq result (tbhbl:find-sample-in-owner block display)))))))
+  result)
+
+(defun tbhbl:copy-primary-result (raw owner before / value arr result n item typ)
+  ;; COM may return VARIANT, SAFEARRAY or an object depending on host.
+  ;; A lost/odd return is not proof that copying failed: verify destination.
+  (setq value raw)
+  (if (= (type value) 'VARIANT)
+    (setq value (vl-catch-all-apply 'vlax-variant-value (list value))))
+  (if (and (not (vl-catch-all-error-p value))
+           (= (type value) 'SAFEARRAY))
+    (progn
+      (setq arr (vl-catch-all-apply 'vlax-safearray->list (list value)))
+      (if (not (vl-catch-all-error-p arr))
+        (setq value (car arr)))))
+  (if (= (type value) 'VLA-OBJECT)
+    (progn
+      (setq typ (vl-catch-all-apply 'vla-get-ObjectName (list value)))
+      (if (and (not (vl-catch-all-error-p typ))
+               (= typ "AcDbBlockReference"))
+        (setq result value))))
+  (if (not result)
+    (progn
+      (setq n (vl-catch-all-apply 'vla-get-Count (list owner)))
+      (if (and (not (vl-catch-all-error-p n)) (> n before))
+        (progn
+          (setq item (vl-catch-all-apply 'vla-Item (list owner (1- n))))
+          (if (not (vl-catch-all-error-p item))
+            (progn
+              (setq typ (vl-catch-all-apply 'vla-get-ObjectName (list item)))
+              (if (and (not (vl-catch-all-error-p typ))
+                       (= typ "AcDbBlockReference"))
+                (setq result item))))))))
+  result)
+
+(defun tbhbl:copy-source-sample (source-doc dest-doc sample point rotation / owner before sa copied result moved rotated err)
+  (setq owner (vla-get-ModelSpace dest-doc)
+        before (vla-get-Count owner)
+        sa (vlax-make-safearray vlax-vbObject '(0 . 0)))
+  (vlax-safearray-put-element sa 0 sample)
+  (setq copied (vl-catch-all-apply 'vla-CopyObjects (list source-doc sa owner)))
+  (setq result (tbhbl:copy-primary-result copied owner before))
+  (if (not result)
+    (list nil
+      (if (vl-catch-all-error-p copied)
+        (strcat "Cannot copy block reference from template: "
+                (vl-catch-all-error-message copied))
+        "CopyObjects returned no verified block reference in destination."))
+    (progn
+      (setq moved
+        (vl-catch-all-apply 'vla-Move
+          (list result (vla-get-InsertionPoint result) (vlax-3D-point point))))
+      (setq rotated
+        (if (vl-catch-all-error-p moved)
+          moved
+          (vl-catch-all-apply 'vla-put-Rotation (list result rotation))))
+      (if (vl-catch-all-error-p rotated)
+        (progn
+          ;; Never leave a duplicate source-template sample at its old point.
+          (vl-catch-all-apply 'vla-Delete (list result))
+          (list nil
+            (strcat "Copied block but could not position it: "
+                    (vl-catch-all-error-message rotated))))
+        (list T result)))))
+
+(defun tbhbl:copy-block-def (source-doc dest-doc source-def / dest-blocks name existing sa copied verified)
+  ;; Named block fallback for definitions not placed as template samples.
+  ;; Trust a verified destination Blocks.Item, not only CopyObjects' COM
+  ;; return shape (which differs between AutoCAD releases).
+  (setq dest-blocks (vla-get-Blocks dest-doc)
+        name (vla-get-Name source-def)
+        existing (vl-catch-all-apply 'vla-Item (list dest-blocks name)))
   (if (not (vl-catch-all-error-p existing))
     (list T existing)
     (progn
-      (setq sa (vlax-make-safearray vlax-vbObject (cons 0 0)))
+      (setq sa (vlax-make-safearray vlax-vbObject '(0 . 0)))
       (vlax-safearray-put-element sa 0 source-def)
-      (setq newobjs (vl-catch-all-apply 'vla-CopyObjects (list source-doc sa dest-blocks)))
-      (cond
-        ((vl-catch-all-error-p newobjs)
-          (list nil (vl-catch-all-error-message newobjs)))
-        (T
-          (setq variant-val (vl-catch-all-apply 'vlax-variant-value (list newobjs)))
-          (if (vl-catch-all-error-p variant-val)
-            (list nil (strcat "CopyObjects returned an unreadable result: "
-                        (vl-catch-all-error-message variant-val)))
-            (progn
-              (setq newlist (vl-catch-all-apply 'vlax-safearray->list (list variant-val)))
-              (cond
-                ;; Normal case: result is a safearray of copied objects.
-                ((not (vl-catch-all-error-p newlist))
-                  (setq new-def (car newlist))
-                  (if new-def
-                    (list T new-def)
-                    (list nil "CopyObjects returned no block definition.")))
-                ;; Fallback: not an array - some builds return the single
-                ;; copied object directly for a one-object copy. Confirm
-                ;; it is actually a usable block definition before trusting it.
-                ((not (vl-catch-all-error-p (vl-catch-all-apply 'vla-get-Name (list variant-val))))
-                  (list T variant-val))
-                (T
-                  (list nil "CopyObjects returned an unrecognized result (not an array or object)."))))))))))
+      (setq copied (vl-catch-all-apply 'vla-CopyObjects (list source-doc sa dest-blocks))
+            verified (vl-catch-all-apply 'vla-Item (list dest-blocks name)))
+      (if (not (vl-catch-all-error-p verified))
+        (list T verified)
+        (list nil
+          (if (vl-catch-all-error-p copied)
+            (strcat "Cannot copy block definition: "
+                    (vl-catch-all-error-message copied))
+            (strcat "Block definition was not found after CopyObjects: " name)))))))
 
-(defun tbhbl:insert-from-library (source-path source-name display-name point rotation / orig-doc source-info source-doc opened source-def copy-result new-def new-def-name result)
-  (setq orig-doc (vla-get-ActiveDocument (vlax-get-acad-object)))
-  (setq source-info (tbhbl:find-source-document source-path))
-  (setq source-doc (car source-info) opened (cadr source-info))
-  (if (vl-catch-all-error-p source-doc)
-    (list nil (vl-catch-all-error-message source-doc))
-    (progn
-      (setq source-def (tbhbl:find-source-definition source-doc source-name display-name))
-      (if (not source-def)
+(defun tbhbl:insert-from-library (source-path source-name display-name point rotation
+                                  / orig-doc source-info source-doc opened source-ref source-def copy-result
+                                    new-def-name inserted closed activated)
+  (setq orig-doc (vla-get-ActiveDocument (vlax-get-acad-object))
+        source-info (tbhbl:find-source-document source-path)
+        source-doc (car source-info)
+        opened (cadr source-info))
+  (cond
+    ((or (not source-doc) (vl-catch-all-error-p source-doc))
+     (list nil
+       (if (vl-catch-all-error-p source-doc)
+         (vl-catch-all-error-message source-doc)
+         "Cannot open the library template.")))
+    (T
+      (setq source-ref
+        (vl-catch-all-apply 'tbhbl:find-source-sample
+          (list source-doc source-name display-name)))
+      (cond
+        ;; Preferred: deep-clone a real block reference. This works with
+        ;; anonymous *U names and preserves dynamic definitions/dependencies.
+        ((and (not (vl-catch-all-error-p source-ref)) source-ref)
+         (setq copy-result
+           (tbhbl:copy-source-sample
+             source-doc orig-doc source-ref point rotation)))
+        ((= (substr source-name 1 1) "*")
+         (setq copy-result
+           (list nil (strcat
+             "Anonymous block " source-name
+             " has no placed INSERT in SRC/FDM TEMPLATE.dwg. "
+             "Place one source instance in the template, then BLLRELOAD."))))
+        (T
+         (setq source-def
+           (vl-catch-all-apply 'tbhbl:find-source-definition
+             (list source-doc source-name display-name)))
+         (if (or (vl-catch-all-error-p source-def) (not source-def))
+           (setq copy-result
+             (list nil (strcat "Block not found in template: " source-name)))
+           (progn
+             (setq copy-result (tbhbl:copy-block-def source-doc orig-doc source-def))
+             (if (car copy-result)
+               (progn
+                 (setq new-def-name
+                   (vl-catch-all-apply 'vla-get-Name (list (cadr copy-result))))
+                 (if (vl-catch-all-error-p new-def-name)
+                   (setq copy-result (list nil "Imported block name cannot be read."))
+                   (progn
+                     (setq inserted
+                       (vl-catch-all-apply 'vla-InsertBlock
+                         (list (vla-get-ModelSpace orig-doc)
+                               (vlax-3D-point point)
+                               new-def-name 1.0 1.0 1.0 rotation)))
+                     (setq copy-result
+                       (if (vl-catch-all-error-p inserted)
+                         (list nil (vl-catch-all-error-message inserted))
+                         (list T inserted)))))))))))
+      ;; A visible source-document fallback changes AutoCAD's active tab.
+      ;; Close only what BLL opened, then reactivate the original destination.
+      (if (eq opened T)
         (progn
-          (if (eq opened T)
-            (vl-catch-all-apply 'vla-Close (list source-doc :vlax-false)))
-          (list nil (strcat "Block definition not found: " source-name)))
-        (progn
-          (setq copy-result (tbhbl:copy-block-def source-doc orig-doc source-def))
-          (if (eq opened T)
-            (vl-catch-all-apply 'vla-Close (list source-doc :vlax-false)))
-          (if (not (car copy-result))
-            (list nil (cadr copy-result))
-            (progn
-              (setq new-def (cadr copy-result))
-              (setq new-def-name (vl-catch-all-apply 'vla-get-Name (list new-def)))
-              (if (vl-catch-all-error-p new-def-name)
-                (list nil "Could not read the name of the copied block definition.")
-                (progn
-                  (setq result
-                    (vl-catch-all-apply
-                      'vla-InsertBlock
-                      (list (vla-get-ModelSpace orig-doc) (vlax-3D-point point)
-                            new-def-name 1.0 1.0 1.0 rotation)))
-                  (if (vl-catch-all-error-p result)
-                    (list nil (vl-catch-all-error-message result))
-                    (list T result)))))))))))
+          ;; Reactivate destination BEFORE closing a visible source drawing:
+          ;; some AutoCAD versions refuse to close the active document.
+          (setq activated (vl-catch-all-apply 'vla-Activate (list orig-doc)))
+          (if (not (vl-catch-all-error-p activated))
+            (setq closed
+              (vl-catch-all-apply 'vla-Close
+                (list source-doc :vlax-false))))))
+      (if (and (eq opened T) (vl-catch-all-error-p activated))
+        (list nil (strcat
+          "The original drawing could not be reactivated: "
+          (vl-catch-all-error-message activated)))
+        copy-result))))
 
 (defun tbhbl:write-dcl (/ dcl-path f)
   ;; Generate the UI in TEMP so this feature only needs one LSP file.
@@ -342,7 +473,7 @@
     (strcat (car group) " - " (itoa (length items)) " block(s)"))
 )
 
-(defun tbhbl:insert-selected (group-index block-index / group item block source-block source point scale result blk-ref ent)
+(defun tbhbl:insert-selected (group-index block-index / group item block source-block source point result blk-ref ent)
   (setq group (nth group-index *TBHBL:Groups*))
   (setq item (nth block-index (cdr group)))
   (setq block (car item))
@@ -356,9 +487,15 @@
     ((not (setq point (getpoint (strcat "\nSpecify insertion point for " block ": "))))
       (princ "\nInsert cancelled."))
     (T
-      ;; Library blocks are authored at their drawing scale: always insert 1:1.
-      (setq scale 1.0)
-      (setq result (tbhbl:insert-from-library source source-block block point 0.0))
+      ;; For a placed source INSERT, preserve its authored block parameters.
+      ;; Named definition imports use the original 1:1 insertion scale.
+      (setq result
+        (vl-catch-all-apply 'tbhbl:insert-from-library
+          (list source source-block block (trans point 1 0) 0.0)))
+      (if (vl-catch-all-error-p result)
+        (setq result
+          (list nil (strcat "Template import error: "
+                            (vl-catch-all-error-message result)))))
       (if (not (car result))
         (alert (strcat "Insert failed:\n" (cadr result)))
         (progn
