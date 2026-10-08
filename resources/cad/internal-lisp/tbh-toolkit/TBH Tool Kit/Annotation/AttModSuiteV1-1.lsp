@@ -106,9 +106,9 @@
 ;;--------------------=={ Block Name }==----------------------;;
 (defun LM:BlockName ( obj ) (vlax-get-property obj (if (vlax-property-available-p obj 'EffectiveName) 'EffectiveName 'Name)))
 
-(defun c:MVATT () (c:mvAtt)) 
-(defun c:ROATT () (c:roAtt)) 
-(defun c:EDATT () (c:edAtt))
+;; AutoLISP command symbols are case-insensitive. The three functions
+;; c:mvAtt / c:roAtt / c:edAtt already serve MVATT, ROATT and EDATT;
+;; defining uppercase aliases here would overwrite them with recursion.
 
 (princ "\n[TBH] Attribute Modification Suite loaded. Commands: MVATT, ROATT, EDATT")
 (princ)
