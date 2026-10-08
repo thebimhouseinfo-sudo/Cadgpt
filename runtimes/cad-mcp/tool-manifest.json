@@ -87,6 +87,32 @@
       }
     },
     {
+      "name": "cad_delete_grille_tags",
+      "description": "Delete ONLY exact GR-* tag blocks on the Hvac-GrilleTag layer.\n\nRequires explicit user confirmation (confirmed=true). Unlike generic\npreview-token deletion this grille-specific operation is idempotent\nafter a lost response: handles already absent are verified no-ops.\nRefuses other blocks, wrong layers and mismatched TAG_NUMBER values.\nUse for deleting existing grille TAGS, never for deleting grilles.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confirmed": {
+            "type": "boolean",
+            "default": false
+          },
+          "expected_tag_numbers": {
+            "type": "object",
+            "nullable": true
+          }
+        },
+        "required": [
+          "handles"
+        ]
+      }
+    },
+    {
       "name": "cad_ensure_drawing_anchor",
       "description": "Ensure the canonical CadGPT Drawing Anchor exists on one explicitly identified AutoCAD document and return it.\\n\\nThis low-level primitive stores schema_version + drawing_anchor in the\\nNamed Objects Dictionary extension dictionary as\\nCADGPT_DRAWING_ANCHOR XRecord. Existing valid anchors are never\\nreplaced.",
       "inputSchema": {
@@ -708,6 +734,29 @@
         },
         "required": [
           "handle"
+        ]
+      }
+    },
+    {
+      "name": "cad_update_grille_attributes",
+      "description": "Update grille block ATT values by exact handle in the bound drawing.\n\nOne bounded request updates multiple tags; verifies readback and reports\nalready-correct fields after a retry. Optional expected_values protects\nagainst overwriting another user's changes. Never rewrites block\ngeometry or unrelated ATT values. Read current ATT via cad_get_block.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "updates": {
+            "type": "object"
+          },
+          "expected_values": {
+            "type": "object",
+            "nullable": true
+          }
+        },
+        "required": [
+          "handle",
+          "updates"
         ]
       }
     },
