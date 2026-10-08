@@ -22,9 +22,11 @@ async function resolveKnowledgeRoot(scope: "global" | "drawing", drawingId?: str
   }
   const lease = currentToolLease();
   assertCadRuntimeGenerationAccess(lease.workId);
+  // Refuse KUD without an execution-bound drawing before waking CAD MCP.
+  // FILE-only KUG must not inadvertently start CAD on an invalid KUD request.
+  const binding = resolveDrawingContext(drawingId);
   const status = cadUpstream.status();
   if (!status.enabled || !status.connected) await cadUpstream.activate();
-  const binding = resolveDrawingContext(drawingId);
   return await withCadHostLock(binding.host, async () => {
     const location = await prepareDrawingMetadataLocation(lease.workId, binding);
     const anchor = String(location.drawing_anchor);
@@ -85,9 +87,13 @@ export function registerKnowledgeTools(server: McpServer): void {
       source: z.enum(["user_confirmed", "reference", "drawing_observation"]),
       source_note: z.string().min(1).max(2000),
       expected_sha256: z.string().describe("Empty for a new document; exact hash from knowledge_read for any update."),
+      human_approved: z.literal(true).describe("Required: the human has explicitly approved the proposed knowledge document/diff for this operation."),
     },
-  }, async ({ scope, drawing_id, key, title, body, source, source_note, expected_sha256 }) => {
+  }, async ({ scope, drawing_id, key, title, body, source, source_note, expected_sha256, human_approved }) => {
     try {
+      if (human_approved !== true) {
+        throw new Error("KNOWLEDGE_HUMAN_APPROVAL_REQUIRED: show the proposed changes and obtain explicit human approval before saving.");
+      }
       const location = await resolveKnowledgeRoot(scope, drawing_id);
       const saved = await upsertKnowledgeEntry({
         root: location.root, scope, drawingAnchor: "drawing_anchor" in location ? location.drawing_anchor : undefined,
