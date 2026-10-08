@@ -16,6 +16,8 @@ import {
 import { assertSessionClaimed } from "../lib/admission.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { cleanupExecutionState } from "../runtime/execution-cleanup.js";
+import { handoffVerifiedDrawingMetadataRoot } from "../runtime/drawing-persistence.js";
+import { toCadgptPath } from "../lib/path-security.js";
 
 export function registerWorkControlTools(
   server: McpServer,
@@ -194,6 +196,16 @@ export function registerWorkControlTools(
           executionPath: execution_path as ExecutionPath,
         });
 
+        // Work A can be HYBRID while Job B needs FILE only. A new work
+        // generation must not silently discard A's CAD-verified drawing
+        // metadata scope. Transfer only the single previously authorized
+        // drawing root, not CAD capability or old Job write scopes.
+        const inheritedDrawingRoot = previousExecution
+          ? handoffVerifiedDrawingMetadataRoot(
+              previousExecution,
+              work.executionId
+            )
+          : null;
         const previousCleanup = previousExecution
           ? await cleanupExecutionState(previousExecution)
           : null;
@@ -228,6 +240,15 @@ export function registerWorkControlTools(
           ...(toolSurface ? { tool_surface: toolSurface } : {}),
           note:
             "IMPORTANT: Use work_handle.execution_id + work_handle.authority_token as required parameters for every file_*, job_*, lisp_*, cad__*, drawing_* tool call. work_capabilities are internal privilege flags unrelated to tool availability.",
+          ...(inheritedDrawingRoot ? {
+            drawing_metadata_handoff: {
+              inherited: true,
+              drawing_root: inheritedDrawingRoot,
+              drawing_display_path: toCadgptPath(inheritedDrawingRoot),
+              file_access_authorized: true,
+              note: "Only the already-verified drawing metadata root was carried into this work. Prepare the next Job runtime before writing its own result.",
+            },
+          } : {}),
           ...(previousCleanup ? { previous_cleanup: previousCleanup } : {}),
         });
       } catch (error) {
