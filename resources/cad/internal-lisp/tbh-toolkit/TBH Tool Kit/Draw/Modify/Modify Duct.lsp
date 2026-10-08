@@ -319,7 +319,7 @@
 ;; ─── SIZE FUNCTIONS ──────────────────────────────────────────────────────────
 
 (defun md:do-size (ent ed info / fam typ ecMode pl w h d insTok insIdx
-                    newW newH newD newBN ecStr prfStr lo newSizeTxt newLenTxt)
+                    newW newH newD newBN ecStr prfStr lo newSizeTxt newLenTxt attState)
   (setq fam     (nth 0 info)
         typ     (nth 1 info)
         ecMode  (nth 2 info)
@@ -363,12 +363,14 @@
       (setq newSizeTxt (strcat (itoa (fix newW)) "x" (itoa (fix newH)))
             newLenTxt  (strcat (itoa (fix pl)) "L"))
 
+      (setq attState (md:att-snapshot ent fam pl w))
       (setq ed (subst (cons 2 newBN) (assoc 2 ed) ed))
       (setq ed (subst (cons 8 lo)    (assoc 8 ed) ed))
       (entmod ed)
       (entupd ent)
 
       (md:update-attribs ent newSizeTxt newLenTxt)
+      (md:att-reflow ent attState fam pl newW)
 
       (princ (strcat "\n[MD] OK - Rectangular duct resized to "
                      (itoa (fix newW)) "x" (itoa (fix newH))
@@ -404,12 +406,14 @@
       (setq newSizeTxt (strcat (itoa (fix newD)) "%%c")
             newLenTxt  (strcat (itoa (fix pl)) "L"))
 
+      (setq attState (md:att-snapshot ent fam pl d))
       (setq ed (subst (cons 2 newBN) (assoc 2 ed) ed))
       (setq ed (subst (cons 8 lo)    (assoc 8 ed) ed))
       (entmod ed)
       (entupd ent)
 
       (md:update-attribs ent newSizeTxt newLenTxt)
+      (md:att-reflow ent attState fam pl newD)
 
       (princ (strcat "\n[MD] OK - Round duct resized to D"
                      (itoa (fix newD))
@@ -420,7 +424,7 @@
 
 ;; ─── SWITCH FUNCTION ─────────────────────────────────────────────────────────
 
-(defun md:do-switch (ent ed info / fam typ ecMode pl w h d insTok insIdx newBN ecStr prfStr lo)
+(defun md:do-switch (ent ed info / fam typ ecMode pl w h d insTok insIdx newBN ecStr prfStr lo attState)
   (setq fam     (nth 0 info)
         typ     (nth 1 info)
         ecMode  (nth 2 info)
@@ -455,12 +459,14 @@
                   (dt:lo typ)
                   (strcat "Hvacduct-" (strcase typ T))))
 
+      (setq attState (md:att-snapshot ent fam pl w))
       (setq ed (subst (cons 2 newBN) (assoc 2 ed) ed))
       (setq ed (subst (cons 8 lo)    (assoc 8 ed) ed))
       (entmod ed)
       (entupd ent)
 
       (md:update-attribs ent (strcat (itoa (fix h)) "x" (itoa (fix w))) (strcat (itoa (fix pl)) "L"))
+      (md:att-reflow ent attState fam pl h)
 
       (princ (strcat "\n[MD] OK - Switched to " (itoa (fix h)) "x" (itoa (fix w))
                      " (Type=" typ " | Insul=" (if (= insTok "") "Bare" insTok)
@@ -490,7 +496,7 @@
       (setq newlen (getreal (strcat "\nNew length <" (rtos pl 2 0) ">: ")))
       (if (null newlen) (setq newlen pl))
 
-      (md:resize-rect ent ed newlen typ w h insTok ecMode))
+      (md:resize-rect ent ed pl newlen typ w h insTok ecMode))
 
     ((= fam "RD")
       (princ (strcat "\n[MD] Round duct | Current: D" (itoa (fix d))
@@ -499,17 +505,12 @@
       (setq newlen (getreal (strcat "\nNew length <" (rtos pl 2 0) ">: ")))
       (if (null newlen) (setq newlen pl))
 
-      (md:resize-round ent ed newlen typ d insTok ecMode))
+      (md:resize-round ent ed pl newlen typ d insTok ecMode))
 
     (T (princ "\n[MD] Unknown duct family."))))
 
-(defun md:resize-rect (ent ed newlen typ W H prf ecMode / ip ang pl mg bn-new)
-  (setq ip  (cdr (assoc 10 ed))
-        ang (cdr (assoc 50 ed)))
-  (if (not ang) (setq ang 0.0))
-
+(defun md:resize-rect (ent ed oldlen newlen typ W H prf ecMode / pl bn-new attState)
   (setq pl newlen)
-  (setq mg *DT:MARGIN*)
 
   (setq bn-new (strcat "DTv9-" typ
                        (cond ((= ecMode 1) "_ECR") ((= ecMode 2) "_ECL") (T ""))
@@ -527,23 +528,19 @@
         (princ "\n[MD] dt:make-block not available. Load Rectangular_duct.lsp first.")
         (exit))))
 
+  (setq attState (md:att-snapshot ent "DT" oldlen W))
   (setq ed (subst (cons 2 bn-new) (assoc 2 ed) ed))
   (entmod ed)
   (entupd ent)
 
   (md:set-att ent "LENGTH" (strcat (itoa (fix pl)) "L"))
-  (md:move-att ent "LENGTH" (md:xf (- pl mg) (- mg H) ip ang))
+  (md:att-reflow ent attState "DT" pl W)
 
   (princ (strcat "\n[MD] OK - Rectangular duct: " typ " " (itoa (fix W)) "x" (itoa (fix H))
                  " | " (itoa (fix pl)) "L")))
 
-(defun md:resize-round (ent ed newlen typ D prf ecMode / ip ang pl mg bn-new)
-  (setq ip  (cdr (assoc 10 ed))
-        ang (cdr (assoc 50 ed)))
-  (if (not ang) (setq ang 0.0))
-
+(defun md:resize-round (ent ed oldlen newlen typ D prf ecMode / pl bn-new attState)
   (setq pl newlen)
-  (setq mg *RD:MARGIN*)
 
   (setq bn-new (strcat "RDv2-" typ
                        (cond ((= ecMode 1) "_ECR") ((= ecMode 2) "_ECL") (T ""))
@@ -560,12 +557,13 @@
         (princ "\n[MD] rd:make-block not available. Load Round_Duct.lsp first.")
         (exit))))
 
+  (setq attState (md:att-snapshot ent "RD" oldlen D))
   (setq ed (subst (cons 2 bn-new) (assoc 2 ed) ed))
   (entmod ed)
   (entupd ent)
 
   (md:set-att ent "LENGTH" (strcat (itoa (fix pl)) "L"))
-  (md:move-att ent "LENGTH" (md:xf (- pl mg) 0.0 ip ang))
+  (md:att-reflow ent attState "RD" pl D)
 
   (princ (strcat "\n[MD] OK - Round duct: " typ " D" (itoa (fix D))
                  " | " (itoa (fix pl)) "L")))
