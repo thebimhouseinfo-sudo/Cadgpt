@@ -234,7 +234,7 @@ test("header is a drawing-context indicator with debounced local-state warnings"
   );
   assert.match(
     code,
-    /if \(status\.SessionReady\)[\s\S]*SetConfirmedBoundDrawing\(\s*status\.Drawing\s*\)/
+    /if \(status\.SessionReady &&\s*status\.Drawing != null\)[\s\S]*SetConfirmedBoundDrawing\(\s*status\.Drawing\s*\)/
   );
   assert.match(
     code,
@@ -242,11 +242,15 @@ test("header is a drawing-context indicator with debounced local-state warnings"
   );
   assert.match(
     code,
-    /_boundMissingPolls\s*>=\s*3/
+    /_headerEvidence\.Observe\(boundOpen, boundActive\)/
   );
   assert.match(
     code,
-    /_bindingMismatchPolls\s*>=\s*2/
+    /_headerEvidence\.BoundDrawingClosed/
+  );
+  assert.match(
+    code,
+    /_headerEvidence\.DifferentTabActive/
   );
   assert.match(
     code,
@@ -419,4 +423,24 @@ test("panel startup is not pinned to a persisted ChatGPT conversation", () => {
     code,
     /ReadLastConversationUrl|TrySaveConversationUrl/
   );
+});
+
+test("no background animation reset for unchanged status; low-cost single-flight polling", () => {
+  assert.match(code, /TimeSpan\.FromSeconds\(3\)/);
+  assert.match(code, /if \(_disposed \|\| _pollInProgress\)/);
+  assert.match(code, /_pollInProgress = true;/);
+  assert.match(code, /_pollInProgress = false;/);
+  assert.match(code, /caption == _lastTickerCaption/);
+  assert.match(code, /shouldScroll == _lastTickerShouldScroll/);
+  assert.match(code, /if \(_appliedDarkChrome == _darkChrome\)/);
+  assert.match(code, /if \(_appliedHeaderTheme == headerTheme\)/);
+});
+
+test("pending pair never rotates on every poll and null FILE drawing does not unbind active tab", () => {
+  assert.match(code, /_pairInProgress/);
+  assert.match(code, /AddinPairRenewalPolicy\.ShouldRenew\(/);
+  assert.match(code, /status\.SessionReady &&\s*status\.Drawing != null/);
+  assert.match(code, /_boundDocumentReference/);
+  assert.match(code, /ReferenceEquals\(\s*confirmedDocument,\s*drawing\.Document\)/);
+  assert.match(client, /DataMember\(Name = "runtime_document_id"\)/);
 });
