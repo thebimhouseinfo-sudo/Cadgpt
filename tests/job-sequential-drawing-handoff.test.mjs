@@ -86,6 +86,8 @@ test("A hybrid Grille Tag → B file-only Create System inherits only verified d
   assert.equal(prepared.structuredContent?.ok, true, JSON.stringify(prepared));
   const resultRoot = path.join(root,"jobs","create-system-result");
   assert.equal(prepared.structuredContent.data.drawing_result.absolute_path, resultRoot);
+  assert.equal(prepared.structuredContent.data.drawing_metadata_read_only, true,
+    "metadata handoff stays read only, even after B gets its own writable result");
   assert.deepEqual(runtime.jobRuntimeWritableRootsForExecution(workB.executionId).includes(resultRoot), true);
 
   const output = path.join(resultRoot, "system.json");
