@@ -86,19 +86,21 @@ namespace CadGpt.AutoCad.Tests
             {
                 var now = expires.AddSeconds(-180 + elapsed);
                 Assert.IsFalse(
-                    AddinPairRenewalPolicy.ShouldRenew(false, expires, now),
+                    AddinPairRenewalPolicy.ShouldRenew(false, true, expires, now),
                     "pending ChatGPT pair must not rotate during polling");
             }
-            Assert.IsTrue(AddinPairRenewalPolicy.ShouldRenew(false, expires, expires));
+            Assert.IsTrue(AddinPairRenewalPolicy.ShouldRenew(false, true, expires, expires));
         }
 
         [TestMethod]
         public void ConfirmedPairRevocationReconnectsImmediatelyButTransportGapDoesNot()
         {
             var now = DateTime.UtcNow;
-            Assert.IsTrue(AddinPairRenewalPolicy.ShouldRenew(true, now.AddMinutes(3), now));
-            Assert.IsTrue(AddinPairRenewalPolicy.ShouldRenew(false, DateTime.MinValue, now));
-            Assert.IsFalse(AddinPairRenewalPolicy.ShouldRenew(false, now.AddMinutes(3), now));
+            Assert.IsTrue(AddinPairRenewalPolicy.ShouldRenew(true, false, now.AddMinutes(3), now));
+            Assert.IsTrue(AddinPairRenewalPolicy.ShouldRenew(false, false, DateTime.MinValue, now));
+            Assert.IsFalse(AddinPairRenewalPolicy.ShouldRenew(false, true, now.AddMinutes(3), now));
+            Assert.IsTrue(AddinPairRenewalPolicy.ShouldRenew(false, false, now.AddMinutes(3), now),
+                "after runtime restart an invalid old pending pair must renew immediately");
         }
     }
 }
