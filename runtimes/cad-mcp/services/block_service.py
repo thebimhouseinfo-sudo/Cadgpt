@@ -6,6 +6,7 @@ DWG; it intentionally exposes no document override and no mutation methods.
 """
 
 from connection.acad import get_active_document
+from services.handle_service import resolve_top_level, normalize_handle
 from utils.entity_mapper import entity_to_dict, entity_type
 from utils.filters import FilterError, matches_entity, normalize_filter
 
@@ -104,25 +105,17 @@ def list_blocks(filter: dict | None = None) -> list[dict]:
 
 
 def get_block(handle: str) -> dict:
-    if not handle:
-        raise BlockServiceError("handle is required")
-    needle = handle.lower()
-    doc = _doc()
-    for space_name, space in _spaces(doc):
-        for entity in _iter_entities(space):
-            try:
-                if str(entity.Handle).lower() != needle:
-                    continue
-            except Exception:
-                continue
-            if entity_type(entity) != "block":
-                raise BlockServiceError(f"Entity with handle '{handle}' is not a block reference")
-            return {
-                **entity_to_dict(entity),
-                "space": space_name,
-                "attributes": _attributes(entity),
-            }
-    raise BlockServiceError(f"Block reference with handle '{handle}' was not found")
+    needle = normalize_handle(handle)
+    doc, space_name, entity = resolve_top_level(needle, include_paper_space=True)
+    if entity is None:
+        raise BlockServiceError(f"Top-level block reference with handle '{handle}' was not found")
+    if entity_type(entity) != "block":
+        raise BlockServiceError(f"Entity with handle '{handle}' is not a block reference")
+    return {
+        **entity_to_dict(entity),
+        "space": space_name,
+        "attributes": _attributes(entity),
+    }
 
 
 def list_block_definitions() -> list[dict]:
