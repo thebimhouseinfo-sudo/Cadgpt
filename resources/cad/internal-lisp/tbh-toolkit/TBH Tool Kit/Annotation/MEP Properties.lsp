@@ -134,116 +134,64 @@
 (setq *MEP_REACTOR_LOCK* nil)
 
 ;; =========================================================================
-;; FIX: Resolve the actual block reference to process from a notified object.
-;; Editing an attribute's value modifies the AcDbAttribute entity itself
-;; (not the AcDbBlockReference), and different edit paths (Properties palette,
-;; Quick Properties, EATTEDIT) don't always leave the grille as the current
-;; PICKFIRST selection. Reading the reactor's own notified object (instead of
-;; only relying on ssgetfirst) makes the auto-calc fire reliably regardless of
-;; how the attribute was edited. If the notified object is the attribute,
-;; its owner (group 330) is the INSERT that contains it.
+;; AutoCAD AcDb events identify the modified entity, which can be an ATTRIB
+;; rather than its owning grille INSERT. Only the notified grille should be
+;; auto-calculated/synced; stale PICKFIRST would fire during unrelated tag
+;; deletion and repeatedly contend with AutoCAD COM modification state.
 ;; =========================================================================
-(defun mep_flex_size_edit_p (params / p obj name tag found)
-  ;; Preserve a value entered directly into FLEX_DUCT_SIZE.
-  (setq found nil)
-  (foreach p params
-    (setq obj p
-          name (vl-catch-all-apply 'vla-get-ObjectName (list obj)))
-    (if (and (not (vl-catch-all-error-p name)) (= name "AcDbAttribute"))
-      (progn
-        (setq tag (vl-catch-all-apply 'vla-get-TagString (list obj)))
-        (if (and (not (vl-catch-all-error-p tag))
-                 (= (strcase tag) "FLEX_DUCT_SIZE"))
-          (setq found T)))))
-  found)
+;; Database :vlr-objectModified supplies (database modified-ename).
+;; Resolve only the notified entity. The former PICKFIRST fallback fired
+;; while deleting an unrelated tag with a grille still selected, causing
+;; recursive ATT updates and repeated CAD busy/retry failures.
+(defun mep_event_entity (params)
+  (if (and (listp params) (cdr params))
+    (cadr params)
+    nil))
 
-(defun mep_get_target_blockref (obj / oName entName ownerHandle ownerEnt ownerObj)
-  (setq ownerObj nil)
-  (if obj
+(defun mep_flex_size_edit_p (params / ent ed)
+  (setq ent (mep_event_entity params))
+  (if (= (type ent) 'VLA-OBJECT)
+    (setq ent (vl-catch-all-apply 'vlax-vla-object->ename (list ent))))
+  (if (and (= (type ent) 'ENAME)
+           (setq ed (entget ent))
+           (= (cdr (assoc 0 ed)) "ATTRIB"))
+    (= (strcase (if (assoc 2 ed) (cdr (assoc 2 ed)) ""))
+       "FLEX_DUCT_SIZE")
+    nil))
+
+(defun mep_get_target_blockref (obj / ent ed ownerEnt ownerData blkref)
+  (setq ent obj)
+  (if (= (type ent) 'VLA-OBJECT)
+    (setq ent (vl-catch-all-apply 'vlax-vla-object->ename (list ent))))
+  (if (= (type ent) 'ENAME)
     (progn
-      (setq oName (vl-catch-all-apply 'vla-get-ObjectName (list obj)))
-      (if (not (vl-catch-all-error-p oName))
-        (cond
-          ((= oName "AcDbBlockReference") (setq ownerObj obj))
-          ((= oName "AcDbAttribute")
-           (setq entName (vl-catch-all-apply 'vlax-vla-object->ename (list obj)))
-           (if (not (vl-catch-all-error-p entName))
-             (progn
-               (setq ownerHandle (cdr (assoc 330 (entget entName))))
-               (if ownerHandle
-                 (progn
-                   (setq ownerEnt (vl-catch-all-apply 'handent (list ownerHandle)))
-                   (if (and (not (vl-catch-all-error-p ownerEnt)) ownerEnt)
-                     (progn
-                       (setq ownerObj (vl-catch-all-apply 'vlax-ename->vla-object (list ownerEnt)))
-                       (if (vl-catch-all-error-p ownerObj) (setq ownerObj nil))
-                     )
-                   )
-                 )
-               )
-             )
-           )
-          )
-        )
-      )
-    )
-  )
-  ownerObj
-)
+      (setq ed (entget ent))
+      (if (= (cdr (assoc 0 ed)) "ATTRIB")
+        (progn
+          ;; DXF 330 is normally an ENAME, not a hexadecimal handle.
+          ;; Passing it directly to handent caused an ownership lookup error.
+          (setq ownerEnt (cdr (assoc 330 ed)))
+          (if (= (type ownerEnt) 'STR)
+            (setq ownerEnt (handent ownerEnt)))
+          (if (= (type ownerEnt) 'ENAME)
+            (setq ent ownerEnt)
+            (setq ent nil))))
+      (if (and (= (type ent) 'ENAME)
+               (setq ownerData (entget ent))
+               (= (cdr (assoc 0 ownerData)) "INSERT")
+               (member (strcase (cdr (assoc 8 ownerData)))
+                       '("HVAC-SAGRILLE" "HVAC-RAGRILLE"
+                         "HVAC-OAGRILLE" "HVAC-EAGRILLE" "HVAC-TAGRILLE")))
+        (progn
+          (setq blkref (vl-catch-all-apply 'vlax-ename->vla-object (list ent)))
+          (if (vl-catch-all-error-p blkref) (setq blkref nil))))))
+  blkref)
 
-;; =========================================================================
-;; FIX: Build a de-duplicated list of grille block references to process.
-;; Source 1 (authoritative): the object(s) the reactor itself reports as
-;; modified, via 'params'. Source 2 (legacy fallback, kept so nothing that
-;; previously worked via PICKFIRST selection stops working): ssgetfirst.
-;; =========================================================================
-(defun mep_collect_targets (params / lst handles obj blkref h ss i ent)
-  (setq lst '() handles '())
-
-  (foreach p params
-    (setq blkref (mep_get_target_blockref p))
-    (if blkref
-      (progn
-        (setq h (vl-catch-all-apply 'vla-get-Handle (list blkref)))
-        (if (and (not (vl-catch-all-error-p h)) (not (member h handles)))
-          (progn
-            (setq lst (cons blkref lst))
-            (setq handles (cons h handles))
-          )
-        )
-      )
-    )
-  )
-
-  (setq ss (cadr (ssgetfirst)))
-  (if (and ss (> (sslength ss) 0))
-    (progn
-      (setq i 0)
-      (repeat (sslength ss)
-        (setq ent (ssname ss i))
-        (setq obj (vl-catch-all-apply 'vlax-ename->vla-object (list ent)))
-        (if (not (vl-catch-all-error-p obj))
-          (progn
-            (setq blkref (mep_get_target_blockref obj))
-            (if blkref
-              (progn
-                (setq h (vl-catch-all-apply 'vla-get-Handle (list blkref)))
-                (if (and (not (vl-catch-all-error-p h)) (not (member h handles)))
-                  (progn
-                    (setq lst (cons blkref lst))
-                    (setq handles (cons h handles))
-                  )
-                )
-              )
-            )
-          )
-        )
-        (setq i (1+ i))
-      )
-    )
-  )
-  lst
-)
+(defun mep_collect_targets (params / block)
+  ;; NEVER use ssgetfirst here. The selected grille may have nothing
+  ;; to do with the objectModified event (e.g. deleting its grille tag).
+  (setq block (mep_get_target_blockref (mep_event_entity params)))
+  (if block (list block) nil))
 
 (defun mep_auto_update_callback (reactor params / targets obj flow flexSize cushion val_lookup atts needs_update any_updated grilleData linkedTag belongs ss manualFlex manualFlexValue manualFlexHandled)
   (if (not *MEP_REACTOR_LOCK*)
@@ -415,20 +363,8 @@
             )
           )
 
-          ;; Cosmetic refresh so the Properties palette shows updated values
-          ;; immediately, when the edited grille also happens to be the
-          ;; current PICKFIRST selection (safe no-op otherwise).
-          (if any_updated
-            (progn
-              (setq ss (cadr (ssgetfirst)))
-              (if (and ss (> (sslength ss) 0))
-                (progn
-                  (sssetfirst nil nil)
-                  (sssetfirst nil ss)
-                )
-              )
-            )
-          )
+          ;; Do not change PICKFIRST selection from a database reactor.
+          ;; This also avoids re-entry while AutoCAD edits/deletes a tag.
         )
       )
     )
@@ -441,13 +377,16 @@
   (setq tagEnt (vlax-vla-object->ename tagObj))
   (setq tagData (entget tagEnt '("MEP_TAG_LINK")))
   (setq tagXdata (assoc -3 tagData))
-  ;; If the tag has no back-link stored, accept it (legacy / first-time link).
+  ;; Keep legacy tags supported, but malformed XData must not raise
+  ;; during a grille ATT edit.
   (if (not tagXdata)
     T
     (progn
       (setq storedGrilleHandle (cdr (assoc 1005 (cdadr tagXdata))))
       (setq grilleHandle (cdr (assoc 5 (entget (vlax-vla-object->ename grilleObj)))))
-      (= (strcase storedGrilleHandle) (strcase grilleHandle))
+      (and (= (type storedGrilleHandle) 'STR)
+           (= (type grilleHandle) 'STR)
+           (= (strcase storedGrilleHandle) (strcase grilleHandle)))
     )
   )
 )
@@ -1049,7 +988,7 @@
 ;; GET LINKED TAG FROM GRILLE (via XData handle)
 ;; Returns the tag vla-object or nil.
 ;; =========================
-(defun GT:GetLinkedTag (grilleObj / entData xdata tagHandle doc tagObj)
+(defun GT:GetLinkedTag (grilleObj / entData xdata tagHandle doc tagObj erased)
   (setq entData (entget (vlax-vla-object->ename grilleObj) '("MEP_TAG_LINK")))
   (setq xdata (assoc -3 entData))
   (if xdata
@@ -1059,11 +998,13 @@
         (progn
           (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
           (setq tagObj (vl-catch-all-apply 'vla-HandleToObject (list doc tagHandle)))
-          (if (and (not (vl-catch-all-error-p tagObj))
-                   (not (vlax-erased-p tagObj)))
-            tagObj
-            nil
-          )
+          (if (not (vl-catch-all-error-p tagObj))
+            (progn
+              (setq erased (vl-catch-all-apply 'vlax-erased-p (list tagObj)))
+              (if (or (vl-catch-all-error-p erased) erased)
+                nil
+                tagObj))
+            nil)
         )
       )
     )
