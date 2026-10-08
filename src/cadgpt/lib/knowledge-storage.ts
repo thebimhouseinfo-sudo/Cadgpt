@@ -10,6 +10,7 @@ export type KnowledgeScope = "global" | "drawing";
 export type KnowledgeSource = "user_confirmed" | "reference" | "drawing_observation";
 
 const DOCUMENT_KEY = /^[a-z0-9][a-z0-9_-]{0,79}$/;
+const DRAWING_ANCHOR = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SHA256 = /^[a-f0-9]{64}$/i;
 const INTERNAL_TECHNICAL_CONTENT = [
   /\(\s*defun\b/i,
@@ -43,7 +44,7 @@ export function getGlobalKnowledgeRoot(): string {
 export function getDrawingKnowledgeRoot(drawingRoot: string, anchor: string): string {
   const drawings = path.resolve(getDrawingStorageRoot());
   const selected = path.resolve(drawingRoot);
-  if (!DOCUMENT_KEY.test(anchor) || path.dirname(selected) !== drawings || path.basename(selected) !== anchor) {
+  if (!DRAWING_ANCHOR.test(anchor) || anchor.length > 180 || anchor === "." || anchor === ".." || path.dirname(selected) !== drawings || path.basename(selected) !== anchor) {
     throw new Error("DRAWING_KNOWLEDGE_SCOPE: expected one exact verified drawings/<drawing_anchor> root.");
   }
   return path.join(selected, "knowledge");
