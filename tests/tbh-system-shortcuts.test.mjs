@@ -41,7 +41,9 @@ test("scan every TBH Lisp system shortcut: 1 SA, 2 RA, 3 OA, 4 EA, 5 TA", async 
     // User-facing numeric system labels, including '1=Supply Air (SA)' and
     // grille labels such as '3 = OAG'. Excludes unrelated numbered menus.
     const fullLabel = /\b([0-5])\s*[=:]\s*(?:Supply|Return|Outside|Exhaust|Transfer)\s+Air\s*\((SA|RA|OA|EA|TA)\)/gi;
-    const shortLabel = /\b([0-5])\s*[=:]\s*(SA|RA|OA|EA|TA)G?\b/gi;
+    // TAG alone can mean a generic annotation "Tag", so check it in the
+    // explicit MEP Properties mapping test rather than guessing its meaning.
+    const shortLabel = /\b([0-5])\s*[=:]\s*(SA|RA|OA|EA|TA|SAG|RAG|OAG|EAG)\b/gi;
     for (const [kind, expression] of [["full", fullLabel], ["short", shortLabel]]) {
       for (const match of source.matchAll(expression)) {
         assertNumericChoice(match[1], match[2], `${fileName}:${kind}`);
