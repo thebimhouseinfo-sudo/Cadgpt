@@ -16,6 +16,7 @@
   <ItemGroup>
     <Compile Include="../cadgpt-autocad/Stage0/PaletteLifecycleState.cs" Link="Stage0/PaletteLifecycleState.cs" />
     <Compile Include="../cadgpt-autocad/Stage0/DrawingIdentityMatcher.cs" Link="Stage0/DrawingIdentityMatcher.cs" />
+    <Compile Include="../cadgpt-autocad/Stage0/BindingHeaderEvidence.cs" Link="Stage0/BindingHeaderEvidence.cs" />
     <Compile Include="../cadgpt-autocad/WebViewProfile.cs" Link="WebViewProfile.cs" />
   </ItemGroup>
 </Project>
