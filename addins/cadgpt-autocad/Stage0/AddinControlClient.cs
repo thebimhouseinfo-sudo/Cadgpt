@@ -77,6 +77,9 @@ namespace CadGpt.AutoCad.Stage0
         [DataMember(Name = "paired")]
         public bool Paired { get; set; }
 
+        [DataMember(Name = "pending")]
+        public bool Pending { get; set; }
+
         [DataMember(Name = "session_ready")]
         public bool SessionReady { get; set; }
 
