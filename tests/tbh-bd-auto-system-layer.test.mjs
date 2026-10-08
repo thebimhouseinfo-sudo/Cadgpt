@@ -40,10 +40,10 @@ test("BD outputs correct main and shading layer for SA RA OA EA TA", async () =>
   const rd = await fs.readFile(path.join(draw, "Create", "Round Duct.LSP"), "utf8");
   for (const sys of ["SA", "RA", "OA", "EA", "TA"]) {
     const expected = "Hvacduct-" + sys.toLowerCase();
-    const pattern = new RegExp("\\(\\\"" + sys + "\\\" \\. \\\"" + expected + "\\\"\\)");
-    assert.match(layers, pattern, "BD system " + sys + " targets " + expected);
-    assert.ok(dt.includes('("' + sys + '" . "' + expected + '")'), "D1 mapping " + sys);
-    assert.ok(rd.includes('("' + sys + '" . "' + expected + '")'), "D2 mapping " + sys);
+    const mapping = new RegExp('\\("' + sys + '"\\s*\\.\\s*"' + expected + '"\\)');
+    assert.match(layers, mapping, "BD system " + sys + " targets " + expected);
+    assert.match(dt, mapping, "D1 mapping " + sys);
+    assert.match(rd, mapping, "D2 mapping " + sys);
   }
   assert.match(layers, /dts:get-system-layer/, "honor configured MEP mapping when available");
   assert.match(command, /lay\s+\(bd:system-layer sys\)/, "resolve target layer before drawing");
