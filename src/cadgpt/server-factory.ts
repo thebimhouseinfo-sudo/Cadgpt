@@ -554,6 +554,8 @@ export function createMcpServer(sessionKey: string): McpServer {
           ? {
               name: drawings[0].name ?? null,
               full_name: drawings[0].full_name ?? null,
+              runtime_document_id:
+                drawings[0].runtime_document_identity ?? null,
             }
           : null;
 
