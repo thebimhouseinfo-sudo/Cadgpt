@@ -36,6 +36,8 @@ export const CADGPT_ROOT_MENU = [
   "cg/cl       create Lisp",
   "cg/cj       create Job",
   "cg/job      list registered Jobs",
+  "cg/kug      update global HVAC knowledge",
+  "cg/kud      update drawing HVAC knowledge",
   "cg/rl       register Lisp folder",
   "cg/rj       register Job folder",
   "cg/il       import Lisp",
