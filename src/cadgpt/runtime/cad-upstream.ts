@@ -144,6 +144,7 @@ class CadUpstream {
     if (force) await this.shutdown();
 
     this.connecting = (async () => {
+      const connectionStartedAt = Date.now();
       const client = new Client({
         name: "cadgpt-cad-upstream",
         version: "0.1.0",
@@ -206,6 +207,10 @@ class CadUpstream {
         this.connectedHumanPower = requestedHumanPower;
         this.lastError = null;
         console.log(`[CAD MCP] connected; ${this.tools.length} tool(s) discovered`);
+        const connectMs = Date.now() - connectionStartedAt;
+        if (connectMs >= 3000) {
+          console.warn(`[CAD LATENCY] upstream_connect_ms=${connectMs}`);
+        }
       } catch (error) {
         await transport.close().catch(() => undefined);
         const enriched = enrichCadError(error, stderrTail);
@@ -242,12 +247,20 @@ class CadUpstream {
     await this.connect();
     if (!this.client) throw new Error("CAD MCP client is not connected");
 
+    const callStartedAt = Date.now();
     try {
       return await this.client.callTool({ name, arguments: args });
     } catch (error) {
       const message = this.rememberError(error);
       await this.shutdown();
       throw new Error(`CAD MCP call '${name}' failed; upstream was reset and will reconnect on the next call while AutoCAD remains active. Original error: ${message}`);
+    } finally {
+      const callMs = Date.now() - callStartedAt;
+      if (callMs >= 5000) {
+        // Instrument real upstream delay without logging tool arguments or
+        // CAD entity data. The tool name is a declared MCP capability.
+        console.warn(`[CAD LATENCY] upstream_tool=${name} rpc_ms=${callMs}`);
+      }
     }
   }
 
