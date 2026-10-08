@@ -13,7 +13,7 @@ import pywintypes
 from connection.acad import get_active_document
 
 _HANDLE = re.compile(r"^[0-9a-fA-F]{1,32}$")
-_RPC_CALL_REJECTED = -2147418111
+_BUSY_COM_HRESULTS = {-2147418111, -2147417846, -2147417845}
 
 
 class HandleResolutionError(RuntimeError):
@@ -32,7 +32,7 @@ def read_com(call, attempts: int = 4, delay: float = 0.08):
         try:
             return call()
         except pywintypes.com_error as exc:
-            if getattr(exc, "hresult", None) != _RPC_CALL_REJECTED or attempt == attempts - 1:
+            if getattr(exc, "hresult", None) not in _BUSY_COM_HRESULTS or attempt == attempts - 1:
                 raise
             time.sleep(delay * (attempt + 1))
 
@@ -59,9 +59,16 @@ def resolve_top_level(handle: str, include_paper_space: bool = True, doc=None):
     try:
         entity = read_com(lambda: doc.HandleToObject(needle))
     except pywintypes.com_error as exc:
-        if getattr(exc, "hresult", None) == _RPC_CALL_REJECTED:
+        if getattr(exc, "hresult", None) in _BUSY_COM_HRESULTS:
             raise HandleResolutionError("AutoCAD COM remained busy while resolving handle " + needle) from exc
-        return doc, None, None
+        # Never classify an arbitrary COM failure as a deleted entity.
+        # Otherwise a failed verification could falsely report delete success.
+        message = str(exc).casefold()
+        if any(value in message for value in ("invalid handle", "invalid object handle", "unknown handle", "handle not found", "object was erased")):
+            return doc, None, None
+        raise HandleResolutionError(
+            "AutoCAD could not resolve handle " + needle + " reliably: " + str(exc)
+        ) from exc
     except (ValueError, KeyError):
         return doc, None, None
 
