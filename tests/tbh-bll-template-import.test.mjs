@@ -46,7 +46,7 @@ test("BLL reads real destination state after CopyObjects rather than retrying un
   const lsp = await source();
   const verify = part(lsp, "(defun tbhbl:copy-primary-result ", "(defun tbhbl:copy-source-sample ");
   const def = part(lsp, "(defun tbhbl:copy-block-def ", "(defun tbhbl:insert-from-library ");
-  assert.match(verify, /\(vla-get-Count owner\)/);
+  assert.match(verify, /vla-get-Count \(list owner\)/, "read post-copy destination count safely");
   assert.match(verify, /vlax-variant-value/);
   assert.match(verify, /vlax-safearray->list/);
   assert.match(def, /\(list dest-blocks name\)/, "verify copied named definition in dest Blocks table");
