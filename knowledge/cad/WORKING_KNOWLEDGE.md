@@ -18,6 +18,13 @@ Only stable lessons belong here. Raw product errors, failures, workarounds, and 
 - Never reuse an old layer count, entity count, selection result, property value, or geometry observation as though it were current.
 - One work binds one drawing.
 
+## Grille ATT and grille-tag mutations
+
+- Resolve actual grille and tag handles from the **currently bound drawing**. Read current grille ATT via `cad__cad_get_block` rather than scanning all blocks.
+- To edit existing grille ATT values, use `cad__cad_update_grille_attributes` with one handle and an `updates` map. Where possible send observed original values in `expected_values`; inspect `verified`, `after` and `unresolved_tags` before reporting completion. This does not automatically update any already-placed tag's displayed ATTRIBs.
+- To **delete a grille TAG** (not the grille), use `cad__cad_delete_grille_tags` with the exact tag handles only, after an explicit user delete request/approval. Set `confirmed=true` only with that authority. The service checks `GR-*` and `Hvac-GrilleTag` and is idempotent if a prior call already deleted the tag.
+- Do not delete the grille INSERT when the user asked to delete only its annotation tag. Never blindly retry a mutating COM command when its result is uncertain; inspect verified readback. General-purpose destruction continues to require its own preview-token protocol.
+
 ## Internal Direct Jobs
 
 - An Internal Direct Job is authoritative. If it fails, surface the failure rather than bypassing it with lower-level tools.
