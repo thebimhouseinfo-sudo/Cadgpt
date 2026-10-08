@@ -16,9 +16,21 @@
 ;; AutoCAD does not expose the path of a file loaded by APPLOAD consistently.
 ;; Keep a locator in the environment after the first fallback selection.
 (setq *TBHBL:LspPath*
-  (if (= (type (getenv "TBHBL_LSP_PATH")) 'STR)
-    (getenv "TBHBL_LSP_PATH")
-    (findfile "TBH_Block_Library.lsp")))
+  (cond
+    ;; CadGPT verified TBH loader knows its absolute toolkit root. Prefer
+    ;; the installed source rather than a stale TBHBL_LSP_PATH env setting.
+    ((and (boundp '*cadgpt-load-dir*)
+          (= (type *cadgpt-load-dir*) 'STR)
+          (findfile
+            (strcat *cadgpt-load-dir*
+                    "/TBH Tool Kit/TBH_Block_Library.lsp")))
+     (findfile
+       (strcat *cadgpt-load-dir*
+               "/TBH Tool Kit/TBH_Block_Library.lsp")))
+    ((and (= (type (getenv "TBHBL_LSP_PATH")) 'STR)
+          (findfile (getenv "TBHBL_LSP_PATH")))
+     (findfile (getenv "TBHBL_LSP_PATH")))
+    (T (findfile "TBH_Block_Library.lsp"))))
 
 ;; Each entry is: (display-name source-block-name)
 (setq *TBHBL:Groups*
@@ -82,7 +94,9 @@
 
 (defun tbhbl:locate-lsp (/ path)
   (setq path *TBHBL:LspPath*)
-  (if (or (not path) (/= (type path) 'STR))
+  (if (or (not path)
+          (/= (type path) 'STR)
+          (not (findfile path)))
     (setq path
       (getfiled
         "Locate TBH_Block_Library.lsp once"
