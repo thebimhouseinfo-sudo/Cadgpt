@@ -394,10 +394,14 @@
       ;; A visible source-document fallback changes AutoCAD's active tab.
       ;; Close only what BLL opened, then reactivate the original destination.
       (if (eq opened T)
-        (setq closed
-          (vl-catch-all-apply 'vla-Close (list source-doc :vlax-false))))
-      (if (eq opened T)
-        (setq activated (vl-catch-all-apply 'vla-Activate (list orig-doc))))
+        (progn
+          ;; Reactivate destination BEFORE closing a visible source drawing:
+          ;; some AutoCAD versions refuse to close the active document.
+          (setq activated (vl-catch-all-apply 'vla-Activate (list orig-doc)))
+          (if (not (vl-catch-all-error-p activated))
+            (setq closed
+              (vl-catch-all-apply 'vla-Close
+                (list source-doc :vlax-false))))))
       (if (and (eq opened T) (vl-catch-all-error-p activated))
         (list nil (strcat
           "The original drawing could not be reactivated: "
@@ -460,7 +464,7 @@
     (strcat (car group) " - " (itoa (length items)) " block(s)"))
 )
 
-(defun tbhbl:insert-selected (group-index block-index / group item block source-block source point scale result blk-ref ent)
+(defun tbhbl:insert-selected (group-index block-index / group item block source-block source point result blk-ref ent)
   (setq group (nth group-index *TBHBL:Groups*))
   (setq item (nth block-index (cdr group)))
   (setq block (car item))
@@ -474,8 +478,8 @@
     ((not (setq point (getpoint (strcat "\nSpecify insertion point for " block ": "))))
       (princ "\nInsert cancelled."))
     (T
-      ;; Library blocks are authored at their drawing scale: always insert 1:1.
-      (setq scale 1.0)
+      ;; For a placed source INSERT, preserve its authored block parameters.
+      ;; Named definition imports use the original 1:1 insertion scale.
       (setq result
         (vl-catch-all-apply 'tbhbl:insert-from-library
           (list source source-block block (trans point 1 0) 0.0)))
