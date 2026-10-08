@@ -42,7 +42,7 @@ test("MEP ATT owner resolution uses DXF 330 ENAME, verifies grille layer and pre
 
 test("Grille linked tag resolution remains safe when tag was erased or link is stale", async () => {
   const src = await getSource();
-  const linked = extract(src, "(defun GT:GetLinkedTag ", ";; =========================\n;; INITIALIZE GRILLE ATTRIBUTES");
+  const linked = extract(src, "(defun GT:GetLinkedTag ", "(defun GT:InitGrilleAttributes ");
   const belongs = extract(src, "(defun GT:TagBelongsToGrille ", ";;; ");
   assert.match(linked, /vl-catch-all-apply 'vla-HandleToObject/);
   assert.match(linked, /vl-catch-all-apply 'vlax-erased-p/, "no unguarded erased-object COM calls");
