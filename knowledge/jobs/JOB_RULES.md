@@ -201,7 +201,7 @@ Job source/assets and Job runtime products have different ownership.
 
 CadGPT ensures a durable `drawing_anchor` whenever a drawing is successfully bound. The execution-scoped runtime `drawing_id` remains separate and must never be used as persistent identity.
 
-When a Job needs a final persistent result for the bound drawing, drawing identity/root resolution remains owned by CadGPT. The Job must use `drawing_job_result_location`. That tool internally re-validates the Drawing Anchor through the canonical drawing-location primitive, obtains/creates the tool-owned drawing root, then returns the Job namespace:
+When a Job needs a final persistent result for the bound drawing, drawing identity/root resolution remains owned by CadGPT. For first-time CAD/HYBRID work, the Job uses `drawing_job_result_location`; this tool re-validates the Drawing Anchor and returns the Job namespace. For a **sequential FILE-only Job B** in the same CadGPT conversation, `cadgpt_work_start` inherits only the single *previously CAD-verified* drawing metadata root as read-only; `job_runtime_prepare` then automatically prepares B's own result namespace and returns `drawing_result.absolute_path`. B may read A's result and update only B's result without reopening `@cg` or acquiring CAD tools. If there is no earlier verified root or multiple roots are ambiguous, inheritance fails closed and a normal CAD drawing bind is still required. The returned Job namespace is:
 
 ```text
 <tool-provided-drawing-root>/

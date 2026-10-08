@@ -24,6 +24,7 @@ import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import {
   drawingMetadataRootsForExecution,
+  drawingMetadataWritableRootsForExecution,
   prepareDrawingMetadataLocation,
 } from "../runtime/drawing-persistence.js";
 import {
@@ -760,7 +761,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Prepare Job Runtime",
       description:
-        "Authorize the owning Job package runtime/ directory for one reasoning Job execution/test. Starting a new reasoning Job releases stale prior Job authority in this logical chat but preserves prior runtime bytes. Existing runtime files are reused as recovery evidence instead of being reset. Supply exactly one registered User Job id or one absolute managed Job draft path.",
+        "Authorize one Reasoning Job runtime. Starting Job B releases stale Job A runtime/SYSTEM authority but preserves files. If this conversation already has exactly one CAD-verified drawing metadata root (possibly handed off from Job A into FILE work), this call also prepares Job B's own drawing result folder without CAD rebind; Job A's result remains readable only. Supply a registered User Job id or an absolute managed Job draft path.",
       inputSchema: {
         id: z.string().min(1).optional(),
         draft_path: z
@@ -835,6 +836,18 @@ export function registerJobAuthoringTools(server: McpServer): void {
             jobFile,
             { resetRuntime: false }
           );
+        // A FILE-only Job B can resume on a drawing root already verified
+        // during Job A, with no second CAD bind or invented AppData path.
+        // Only B's own result namespace becomes writable; other Job results
+        // remain readable handoff inputs.
+        const roots = drawingMetadataRootsForExecution(lease.workId);
+        const resultLocation =
+          roots.length === 1
+            ? await prepareJobResultLocationForExecution(
+                lease.workId,
+                roots[0]
+              )
+            : null;
         return toolResult(
           "job_runtime_prepare",
           {
@@ -857,6 +870,13 @@ export function registerJobAuthoringTools(server: McpServer): void {
               runtime.recovery_pending,
             prior_job_transition:
               transition,
+            ...(resultLocation ? {
+              drawing_result: resultLocation,
+              drawing_metadata_read_only:
+                !drawingMetadataWritableRootsForExecution(lease.workId)
+                  .includes(roots[0]),
+              note: "Job-owned result is now writable; other drawing-scoped Job results are read-only handoff inputs.",
+            } : {}),
           }
         );
       } catch (error) {

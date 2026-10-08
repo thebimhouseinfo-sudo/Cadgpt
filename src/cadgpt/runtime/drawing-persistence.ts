@@ -15,6 +15,9 @@ export const DRAWING_ANCHOR_SCHEMA_VERSION = 1;
 const SAFE_DRAWING_ANCHOR = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const metadataRootsByExecution = new Map<string, Set<string>>();
+// A work-generation handoff is READ ONLY; the next Job must prepare its
+// own result location before it may mutate a drawing-scoped result.
+const inheritedReadOnlyRootsByExecution = new Map<string, Set<string>>();
 const lastCreatedMetadataFolderByExecution = new Map<string, string>();
 
 function extractUpstreamPayload(raw: unknown): unknown {
@@ -158,6 +161,15 @@ export function drawingMetadataRootsForExecution(
   ];
 }
 
+export function drawingMetadataWritableRootsForExecution(
+  executionId: string
+): string[] {
+  const inherited = inheritedReadOnlyRootsByExecution.get(executionId);
+  return drawingMetadataRootsForExecution(executionId).filter(
+    (root) => !inherited?.has(root)
+  );
+}
+
 export function authorizeDrawingMetadataRootForExecution(
   executionId: string,
   absoluteRoot: string
@@ -178,6 +190,7 @@ export function authorizeDrawingMetadataRootForExecution(
     metadataRootsByExecution.set(executionId, roots);
   }
   roots.add(root);
+  inheritedReadOnlyRootsByExecution.get(executionId)?.delete(root);
 }
 
 export function registerCreatedDrawingMetadataFolderForExecution(
@@ -189,6 +202,46 @@ export function registerCreatedDrawingMetadataFolderForExecution(
     executionId,
     path.resolve(absoluteRoot)
   );
+}
+
+/**
+ * Hand off exactly one already CAD-verified drawing metadata root between
+ * consecutive work executions in the SAME admitted conversation.
+ *
+ * This is not a path-based permission request: the source execution must have
+ * obtained the canonical drawing root through drawing_metadata_location.
+ * Multi-drawing contexts cannot be inferred and are intentionally rejected.
+ * No CAD capability, runtime lease, source Job result-write authority, or
+ * arbitrary AppData root is inherited.
+ *
+ * Ownership of an empty new drawing folder also moves: delayed cleanup of
+ * Job A must not delete a root that Job B is about to populate.
+ */
+export function handoffVerifiedDrawingMetadataRoot(
+  previousExecutionId: string,
+  nextExecutionId: string
+): string | null {
+  if (previousExecutionId === nextExecutionId) return null;
+  const roots = drawingMetadataRootsForExecution(previousExecutionId);
+  if (roots.length !== 1) return null;
+  const root = roots[0];
+  // Recheck the canonical direct-child constraint even for internal callers.
+  const storageRoot = path.resolve(getDrawingStorageRoot());
+  if (path.dirname(root) !== storageRoot || !isPathInside(root, storageRoot)) {
+    throw new Error("DRAWING_METADATA_HANDOFF_SCOPE: source is not a canonical drawing root.");
+  }
+  authorizeDrawingMetadataRootForExecution(nextExecutionId, root);
+  let inherited = inheritedReadOnlyRootsByExecution.get(nextExecutionId);
+  if (!inherited) {
+    inherited = new Set<string>();
+    inheritedReadOnlyRootsByExecution.set(nextExecutionId, inherited);
+  }
+  inherited.add(root);
+  if (lastCreatedMetadataFolderByExecution.get(previousExecutionId) === root) {
+    lastCreatedMetadataFolderByExecution.delete(previousExecutionId);
+    lastCreatedMetadataFolderByExecution.set(nextExecutionId, root);
+  }
+  return root;
 }
 
 export async function prepareDrawingMetadataLocation(
@@ -256,6 +309,7 @@ export async function cleanupDrawingMetadataForExecution(
     lastCreatedMetadataFolderByExecution.get(executionId);
   lastCreatedMetadataFolderByExecution.delete(executionId);
   metadataRootsByExecution.delete(executionId);
+  inheritedReadOnlyRootsByExecution.delete(executionId);
 
   if (!candidate) {
     return {
