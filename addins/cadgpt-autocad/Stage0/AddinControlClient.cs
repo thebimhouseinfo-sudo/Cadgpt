@@ -34,6 +34,9 @@ namespace CadGpt.AutoCad.Stage0
 
         [DataMember(Name = "full_name")]
         public string? FullName { get; set; }
+
+        [DataMember(Name = "runtime_document_id")]
+        public string? RuntimeDocumentId { get; set; }
     }
 
     [DataContract]
