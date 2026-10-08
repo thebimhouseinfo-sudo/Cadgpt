@@ -37,6 +37,16 @@ export function assertHvacDomain(body: string): void {
   }
 }
 
+export function isHvacKnowledgePath(candidate: string, appDataRoot: string): boolean {
+  const relative = path.relative(path.resolve(appDataRoot), path.resolve(candidate));
+  if (!relative || relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
+    return false;
+  }
+  const parts = relative.split(path.sep).map((part) => part.toLowerCase());
+  return (parts[0] === "knowledge" && parts.length >= 1) ||
+    (parts[0] === "drawings" && parts.length >= 3 && parts[2] === "knowledge");
+}
+
 export function getGlobalKnowledgeRoot(): string {
   return getAppDataPath("knowledge");
 }
