@@ -25,6 +25,7 @@ test("BLL source DWG is physically bundled and compatible with DWG format", asyn
   assert.match(lsp, /SRC\\\\FDM TEMPLATE\.dwg/);
   assert.match(lsp, /\*cadgpt-load-dir\*/, "resolve actual TBH loader root");
   assert.match(lsp, /findfile \(getenv "TBHBL_LSP_PATH"\)/, "reject stale environment file locator");
+  assert.match(lsp, /tbhbl:dbx-live-p \*TBHBL:Dbx\*/, "verify cached ObjectDBX before reuse");
 });
 
 test("BLL handles anonymous template block references and dependencies without pasting entire DWG", async () => {
