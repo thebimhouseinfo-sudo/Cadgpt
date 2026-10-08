@@ -12,6 +12,7 @@ import time
 import pywintypes
 
 from connection.acad import get_active_document
+from services.handle_service import resolve_top_level
 from utils.entity_mapper import entity_to_dict, is_supported_entity
 from utils.filters import FilterError, matches_entity, normalize_filter
 
@@ -64,18 +65,12 @@ def _entities(space):
 
 
 def _find_entity(handle: str, include_paper_space: bool = True):
-    needle = handle.lower()
-    doc = _doc()
-    for space_name, space in _spaces(doc, include_paper_space):
-        for entity in _entities(space):
-            if not is_supported_entity(entity):
-                continue
-            try:
-                if str(entity.Handle).lower() == needle:
-                    return doc, space_name, entity
-            except Exception:
-                continue
-    return doc, None, None
+    # A direct document.HandleToObject lookup avoids O(drawing size) scans and
+    # retries when a Grille/Tag is targeted by its existing handle.
+    doc, space, entity = resolve_top_level(handle, include_paper_space)
+    if entity is None or not is_supported_entity(entity):
+        return doc, None, None
+    return doc, space, entity
 
 
 def _require_handles(handles: list[str]) -> list[str]:
@@ -106,6 +101,17 @@ def list_entities(filter: dict | None = None, include_paper_space: bool = False)
         raise EntityServiceError(str(exc)) from exc
 
     doc = _doc()
+    # Destructive previews usually specify one exact handle. Never enumerate
+    # thousands of entities to resolve that single known target.
+    if normalized.get("handle"):
+        _doc_obj, space_name, entity = _find_entity(
+            normalized["handle"], include_paper_space=include_paper_space
+        )
+        if entity is None:
+            return []
+        data = entity_to_dict(entity)
+        return [{**data, "space": space_name}] if matches_entity(data, normalized) else []
+
     result: list[dict] = []
     for space_name, space in _spaces(doc, include_paper_space):
         for entity in _entities(space):
