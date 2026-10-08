@@ -64,6 +64,17 @@ test("scan every TBH Lisp system shortcut: 1 SA, 2 RA, 3 OA, 4 EA, 5 TA", async 
 
   assert.ok(checked >= 25, `system menu coverage unexpectedly shrank (found ${checked})`);
   assert.ok(visited.size >= 6, `system-menu file coverage unexpectedly shrank (found ${visited.size})`);
+  for (const file of [
+    "TBH Tool Kit/Annotation/MEP Properties.lsp",
+    "TBH Tool Kit/Draw/Create/Grille.lsp",
+    "TBH Tool Kit/Draw/Create/Rectangular duct.lsp",
+    "TBH Tool Kit/Draw/Create/Round Duct.LSP",
+    "TBH Tool Kit/Draw/Duct Type Setting.lsp",
+    "TBH Tool Kit/Draw/Modify/Change Duct Type.lsp",
+    "TBH Tool Kit/Draw/Others/Tapper.lsp",
+  ]) {
+    assert.ok(visited.has(file), "Missing audited system picker: " + file);
+  }
 });
 
 test("all bare numeric AutoCAD layer aliases, including shading, are canonical and unique", async () => {
@@ -71,7 +82,7 @@ test("all bare numeric AutoCAD layer aliases, including shading, are canonical a
   const byAlias = new Map();
   for (const file of files) {
     const source = await fs.readFile(file, "utf8");
-    for (const match of source.matchAll(/\\(\\s*defun\\s+c:([1-5](?:r)?)\\s*\\(/gi)) {
+    for (const match of source.matchAll(/\(\s*defun\s+c:([1-5](?:r)?)\s*\(/gi)) {
       const alias = match[1].toLowerCase();
       const definitions = byAlias.get(alias) || [];
       definitions.push({ source, file: relative(file) });
