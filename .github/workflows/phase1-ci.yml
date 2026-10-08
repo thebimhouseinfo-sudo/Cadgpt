@@ -433,6 +433,11 @@ jobs:
         run: python -m pip check
       - name: Compile CAD MCP slice
         run: python scripts/check-cad-mcp-python.py
+      - name: Test bound grille ATT edit and idempotent tag delete (fake COM)
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "${{ github.workspace }}\runtimes\cad-mcp"
+          python -m unittest discover -s runtimes/cad-mcp/tests -p "test_*.py" -v
       - name: Generate CAD tool manifest without starting runtime
         run: python scripts/generate-cad-tool-manifest.py
       - name: Import CAD MCP entrypoint
