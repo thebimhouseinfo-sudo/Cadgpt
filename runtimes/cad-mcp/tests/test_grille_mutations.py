@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from services.block_service import get_block
+from services.block_service import get_block, list_blocks
 from services.entity_service import list_entities, _find_entity
 from services.grille_service import (
     GrilleServiceError, update_grille_attributes, delete_grille_tags,
@@ -158,17 +158,27 @@ class GrilleToolsTests(unittest.TestCase):
         self.assertEqual(outcome["already_absent_count"], 1)
         self.assertEqual(nested.delete_calls, 0)
 
+    def test_ambiguous_com_error_never_reports_grille_tag_already_deleted(self):
+        import pywintypes
+        failure = pywintypes.com_error(-2147352567, "Exception occurred.", None, None)
+        with patch.object(self.doc, "HandleToObject", side_effect=failure):
+            with self.assertRaisesRegex(Exception, "reliably"):
+                delete_grille_tags(["B10"], confirmed=True)
+        self.assertEqual(self.tag.delete_calls, 0)
+
     def test_get_block_and_entity_filter_use_direct_handle_lookup(self):
         block = get_block("A10")
         self.assertEqual(block["handle"], "A10")
         self.assertEqual(block["attributes"][1]["value"], "300")
+        block_list = list_blocks({"handle": "A10", "layer": "Hvac-SAGrille"})
+        self.assertEqual(len(block_list), 1)
         result = list_entities({"handle": "B10", "types": ["block"]})
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["handle"], "B10")
         doc, space, entity = _find_entity("A10")
         self.assertEqual(space, "ModelSpace")
         self.assertIs(entity, self.grille)
-        self.assertLessEqual(self.doc.lookup_count, 4)
+        self.assertLessEqual(self.doc.lookup_count, 5)
 
 
 if __name__ == "__main__":
