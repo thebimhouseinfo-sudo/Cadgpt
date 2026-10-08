@@ -324,10 +324,10 @@
   (princ "\nSelect ROUND ducts to Change: ")
   (if (setq ss (ssget '((0 . "INSERT"))))
     (progn
-      (initget "0 1 2 3 4 SA RA EA OA TA")
-      (setq nType (getkword (strcat "\nChange to Duct Type [0=SA / 1=RA / 2=EA / 3=OA / 4=TA] <" *RD:Type* ">: ")))
+      (initget "1 2 3 4 5 SA RA OA EA TA")
+      (setq nType (getkword (strcat "\nChange to Duct Type [1=SA / 2=RA / 3=OA / 4=EA / 5=TA] <" *RD:Type* ">: ")))
       (if (null nType) (setq nType *RD:Type*))
-      (cond ((= nType "0") (setq nType "SA")) ((= nType "1") (setq nType "RA")) ((= nType "2") (setq nType "EA")) ((= nType "3") (setq nType "OA")) ((= nType "4") (setq nType "TA")))
+      (cond ((= nType "1") (setq nType "SA")) ((= nType "2") (setq nType "RA")) ((= nType "3") (setq nType "OA")) ((= nType "4") (setq nType "EA")) ((= nType "5") (setq nType "TA")))
       (setq *RD:Type* nType)
       
       (initget "0 1 2 3 4 5 6 7")
