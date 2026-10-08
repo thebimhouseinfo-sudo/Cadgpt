@@ -28,6 +28,7 @@ interface PairedPanel {
 export interface AddinBoundDrawing {
   name: string | null;
   full_name: string | null;
+  runtime_document_id?: string | null;
 }
 
 export interface AddinBackgroundJob {
