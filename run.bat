@@ -85,7 +85,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wait-tray-ready.ps1" -
 if errorlevel 1 exit /b 1
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cadgpt-tray.ps1" -StatusOnly
-if errorlevel 1 exit /b 1
+if errorlevel 1 exit /b %ERRORLEVEL%
 echo.
 echo [NOTE] run.bat restart rebuilds the CadGPT runtime, not the installed AutoCAD add-in DLL.
 echo [NOTE] To apply changed AutoCAD header/panel code, close AutoCAD and run cadaddin.bat once.
