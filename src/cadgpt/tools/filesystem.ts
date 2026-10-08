@@ -14,7 +14,7 @@ import {
   auditHumanPowerSourceMutation,
   isCadGptSourcePath,
 } from "../runtime/human-power.js";
-import { drawingMetadataRootsForExecution } from "../runtime/drawing-persistence.js";
+import { drawingMetadataRootsForExecution, drawingMetadataWritableRootsForExecution } from "../runtime/drawing-persistence.js";
 import { jobRuntimeWritableRootsForExecution } from "../runtime/job-runtime.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
@@ -23,6 +23,14 @@ const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml"
 function currentDrawingMetadataRoots(): string[] {
   try {
     return drawingMetadataRootsForExecution(currentToolLease().workId);
+  } catch {
+    return [];
+  }
+}
+
+function currentWritableDrawingMetadataRoots(): string[] {
+  try {
+    return drawingMetadataWritableRootsForExecution(currentToolLease().workId);
   } catch {
     return [];
   }
@@ -72,7 +80,7 @@ function currentWritableRoots(): string[] {
     ? jobRoots
     : [
         ...getWritableRoots(),
-        ...currentDrawingMetadataRoots(),
+        ...currentWritableDrawingMetadataRoots(),
       ];
   return [
     ...new Set([
