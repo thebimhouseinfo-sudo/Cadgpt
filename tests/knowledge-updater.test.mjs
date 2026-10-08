@@ -182,4 +182,11 @@ test("menu and MCP surface register both workflow selectors and knowledge tools"
   assert.match(source, /registerKnowledgeTools\(server\)/);
   const control = await fs.readFile(path.join(repoRoot, "src", "cadgpt", "tools", "control.ts"), "utf8");
   assert.match(control, /surface === "kug" \|\| surface === "kud"/);
+  const registry = await fs.readFile(path.join(repoRoot, "src", "cadgpt", "tools", "registry.ts"), "utf8");
+  for (const name of ["knowledge_list", "knowledge_read", "knowledge_upsert"]) {
+    assert.ok(registry.includes(`name: "${name}"`), "Internal Registry must expose " + name);
+  }
+  const skill = await fs.readFile(path.join(repoRoot, "skills", "knowledge-updater", "SKILL.md"), "utf8");
+  assert.match(skill, /AutoLISP syntax\/authoring\/debugging/);
+  assert.match(skill, /drawing observations to global|per-drawing observations/i);
 });
