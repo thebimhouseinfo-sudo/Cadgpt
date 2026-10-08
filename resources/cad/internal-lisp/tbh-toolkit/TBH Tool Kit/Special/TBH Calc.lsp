@@ -5,7 +5,7 @@
 ;; COMMAND : TC
 ;; ===========================================================================
 
-(defun c:TC (/ error dcl_id dcl_file file_handle Q history_list active_mode
+(defun c:TC (/ *error* dcl_id dcl_file file_handle Q history_list active_mode
 tokens _peek _consume _parse_factor _parse_term _parse_expr
 f_tokenize f_evaluate f_calculate_duct_connection f_calculate_hydraulic
 f_clear_inputs f_clear_history f_update_ui_history f_logic)
@@ -13,13 +13,19 @@ f_clear_inputs f_clear_history f_update_ui_history f_logic)
 (vl-load-com)
 
 ;; 1. ERROR HANDLING
-(defun error (msg)
-(if (> dcl_id 0) (unload_dialog dcl_id))
-(if (and dcl_file (findfile dcl_file)) (vl-file-delete dcl_file))
-(if (not (member msg '("Function cancelled" "quit / exit abort")))
-(princ (strcat "\nError: " msg))
-)
-(princ)
+(defun *error* (msg)
+  ;; AutoLISP invokes *error* (not a function named error) on ESC/failure.
+  ;; DCL creation may fail before the dialog ID is initialized.
+  (if (and file_handle (= (type file_handle) 'FILE))
+    (progn (close file_handle) (setq file_handle nil)))
+  (if (and (numberp dcl_id) (> dcl_id 0))
+    (progn (unload_dialog dcl_id) (setq dcl_id nil)))
+  (if (and (= (type dcl_file) 'STR) (findfile dcl_file))
+    (vl-file-delete dcl_file))
+  (if (and (= (type msg) 'STR)
+           (not (wcmatch (strcase msg) "*CANCEL*,*QUIT*,*EXIT*,*BREAK*")))
+    (princ (strcat "\nError: " msg)))
+  (princ)
 )
 
 ;; 2. CONFIGURATION
@@ -351,7 +357,12 @@ elev1_name (rtos elev1_val 2 0) " / COD" (rtos cod1 2 0) " / TOD" (rtos tod1 2 0
 
 ;; 7. STARTUP & BINDINGS
 (setq dcl_id (load_dialog dcl_file))
-(if (not (new_dialog "tbh_calc" dcl_id)) (exit))
+(if (or (null dcl_id) (<= dcl_id 0)
+        (not (new_dialog "tbh_calc" dcl_id)))
+  (progn
+    (princ "\n[TC] Unable to open calculator dialog.")
+    (*error* "Function cancelled")
+    (exit)))
 
 ;; Set default values: only slide up/down = 0, others empty
 (set_tile "duct1_h" "")
