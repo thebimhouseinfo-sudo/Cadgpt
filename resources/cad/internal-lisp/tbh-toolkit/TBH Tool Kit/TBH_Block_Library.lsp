@@ -177,12 +177,21 @@
   (princ)
 )
 
+(defun tbhbl:dbx-live-p (obj / blocks)
+  ;; A cached COM object may become invalid after AutoCAD reload/sleep.
+  ;; Validate without mutating before reusing it for another BLL import.
+  (and obj
+       (setq blocks (vl-catch-all-apply 'vla-get-Blocks (list obj)))
+       (not (vl-catch-all-error-p blocks))))
+
 (defun tbhbl:get-dbx (source-path / obj)
-  ;; Returns a live ObjectDBX document already loaded with source-path.
-  ;; Opens it only the first time it's needed; every call after that
-  ;; reuses the same loaded database, no repeat disk I/O.
+  ;; Reuse only a *verified-live* ObjectDBX document; stale COM pointers
+  ;; cause repeated copy failures after host reload or power-state changes.
   (cond
-    ((and *TBHBL:Dbx* (equal *TBHBL:DbxSourcePath* source-path)) *TBHBL:Dbx*)
+    ((and *TBHBL:Dbx*
+          (equal *TBHBL:DbxSourcePath* source-path)
+          (tbhbl:dbx-live-p *TBHBL:Dbx*))
+     *TBHBL:Dbx*)
     ((not (tbhbl:probe-dbx-progid)) nil)
     (T
       (tbhbl:release-dbx-cache) ;; drop any stale/different cached database
