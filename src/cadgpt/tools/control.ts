@@ -13,7 +13,7 @@ import {
   CADGPT_ROOT_MENU,
 } from "../lib/quickstart.js";
 
-function workflowPrompt(surface: "cl" | "cj" | "mcp"): string {
+function workflowPrompt(surface: "cl" | "cj" | "mcp" | "kug" | "kud"): string {
   if (surface === "cl") {
     return [
       "```text",
@@ -32,6 +32,21 @@ function workflowPrompt(surface: "cl" | "cj" | "mcp"): string {
       "────────────────────────────────",
       "Hãy mô tả Job bạn muốn tạo hoặc sửa.",
       "Job sẽ được author/validate theo Job workflow của CadGPT.",
+      "────────────────────────────────",
+      "```",
+    ].join("\n");
+  }
+  if (surface === "kug" || surface === "kud") {
+    const global = surface === "kug";
+    return [
+      "```text",
+      global ? "CG / Knowledge Update Global (KUG)" : "CG / Knowledge Update Drawing (KUD)",
+      "────────────────────────────────",
+      global
+        ? "Hãy cung cấp quy tắc hoặc kinh nghiệm nghiệp vụ HVAC muốn cập nhật vào Global Knowledge."
+        : "Hãy cung cấp thông tin HVAC của drawing đã bind cần cập nhật. KUD cần drawing workspace hiện tại.",
+      "Kiểm tra knowledge cũ, phân tích xung đột, đề xuất nội dung rồi xác nhận trước khi ghi.",
+      "Kiến thức CAD API, Lisp Writer, MCP Fixer không thuộc knowledge này.",
       "────────────────────────────────",
       "```",
     ].join("\n");
@@ -82,13 +97,15 @@ export function registerCadGptControlTool(
     {
       title: "CadGPT Control",
       description:
-        "Lightweight CG fake CLI. cg/list refreshes the tray-backed drawing launcher without waking full CAD MCP; cg/job lists registered Jobs; cg/cl/cj/mcp enter authoring workflows; cg/rl,rj,il,el,ij,ej enter Lisp/Job register/import/export workflows; cg/ shows the full command menu.",
+        "Lightweight CG fake CLI. cg/list refreshes the tray-backed drawing launcher without waking full CAD MCP; cg/job lists registered Jobs; cg/cl/cj/mcp enter authoring workflows; cg/kug and cg/kud update HVAC domain knowledge; cg/rl,rj,il,el,ij,ej enter Lisp/Job register/import/export workflows; cg/ shows the full command menu.",
       inputSchema: {
         surface: z.enum([
           "commands",
           "list",
           "cl",
           "cj",
+          "kug",
+          "kud",
           "job",
           "rl",
           "rj",
@@ -132,6 +149,8 @@ export function registerCadGptControlTool(
       if (
         surface === "cl" ||
         surface === "cj" ||
+        surface === "kug" ||
+        surface === "kud" ||
         surface === "mcp" ||
         surface === "rl" ||
         surface === "rj" ||
@@ -149,7 +168,7 @@ export function registerCadGptControlTool(
         text = await options.launchCadWorkspace();
       } else if (surface === "job") {
         text = await options.listJobs();
-      } else if (surface === "cl" || surface === "cj" || surface === "mcp") {
+      } else if (surface === "cl" || surface === "cj" || surface === "mcp" || surface === "kug" || surface === "kud") {
         text = workflowPrompt(surface);
       } else if (
         surface === "rl" || surface === "rj" ||
@@ -195,7 +214,7 @@ export function registerCadGptControlTool(
       }
 
       const activeWork =
-        surface === "cl" || surface === "cj" || surface === "mcp"
+        surface === "cl" || surface === "cj" || surface === "mcp" || surface === "kug" || surface === "kud"
           ? activeWorkForSession(options.sessionKey)
           : null;
       let continuationPolicy:
@@ -237,6 +256,53 @@ export function registerCadGptControlTool(
             owner_type: "file",
             owner_id: surface === "cl" ? "lisp-authoring" : "job-authoring",
             execution_path: "file",
+          };
+        }
+      } else if (surface === "kug" || surface === "kud") {
+        if (activeWork && activeWork.executionPath === "hybrid") {
+          continuationPolicy = {
+            existing_work_action: "Reuse the current HYBRID bound drawing workspace. For KUG use global scope; for KUD use drawing scope after validating bound drawing. Follow skills/knowledge-updater/SKILL.md.",
+            start_new_work: false,
+            active_work_handle: {
+              execution_id: activeWork.executionId,
+              authority_token: activeWork.authorityToken,
+              execution_path: activeWork.executionPath,
+              owner_id: activeWork.ownerId,
+            },
+          };
+        } else if (surface === "kug" && activeWork && activeWork.executionPath === "file") {
+          continuationPolicy = {
+            existing_work_action: "Reuse existing FILE work for global knowledge. If live CAD evidence is required, transition to HYBRID with cadgpt_work_upgrade and explicit drawing selection.",
+            start_new_work: false,
+            active_work_handle: {
+              execution_id: activeWork.executionId,
+              authority_token: activeWork.authorityToken,
+              execution_path: activeWork.executionPath,
+              owner_id: activeWork.ownerId,
+            },
+          };
+        } else if (surface === "kug") {
+          continuationPolicy = {
+            existing_work_action: "No compatible work is active. Start FILE work with owner_type=file, owner_id=knowledge-updater-global and execution_path=file; CAD is optional.",
+            start_new_work: true,
+            owner_type: "file",
+            owner_id: "knowledge-updater-global",
+            execution_path: "file",
+          };
+        } else {
+          continuationPolicy = {
+            existing_work_action: activeWork?.executionPath === "file"
+              ? "KUD requires a bound HYBRID drawing workspace. Use cadgpt_work_upgrade with an explicitly selected drawing; do not try to read or write drawing knowledge in FILE mode."
+              : "KUD requires an explicitly bound drawing. Use cg/list and bind one drawing before updating its HVAC knowledge. Do not guess the drawing folder.",
+            start_new_work: false,
+            ...(activeWork?.executionPath === "file"
+              ? { active_work_handle: {
+                  execution_id: activeWork.executionId,
+                  authority_token: activeWork.authorityToken,
+                  execution_path: activeWork.executionPath,
+                  owner_id: activeWork.ownerId,
+                } }
+              : {}),
           };
         }
       } else if (surface === "mcp") {

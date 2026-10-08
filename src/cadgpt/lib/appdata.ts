@@ -13,6 +13,7 @@ export type AppDataArea =
   | "workspace"
   | "runtime"
   | "drawings"
+  | "knowledge"
   | "state"
   | "logs";
 
@@ -118,6 +119,7 @@ export async function ensureAppDataLayout(): Promise<void> {
     getJobDraftRoot(),
     getDynamicLispRoot(),
     getDrawingStorageRoot(),
+    getAppDataPath("knowledge"),
     getAppDataPath("state"),
     getAppDataPath("logs"),
   ];

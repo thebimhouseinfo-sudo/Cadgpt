@@ -74,12 +74,35 @@ cg/list   refresh open drawings
 cg/cl     create or repair Lisp
 cg/cj     create or repair Job
 cg/job    list registered Jobs
+cg/kug    update global HVAC knowledge (KUG)
+cg/kud    update bound-drawing HVAC knowledge (KUD)
 cg/mcp    CAD MCP development workflow (development builds only)
 cg/help   help
 cg/stop   stop current work
 ```
 
 `@cadgpt` / `@cg` activate CadGPT; they are not the CLI namespace.
+
+## HVAC domain Knowledge Updater (KUG / KUD)
+
+The **Knowledge Updater** stores HVAC workflow/domain knowledge separately from
+CadGPT internal CAD API, AutoLISP and MCP development knowledge.
+
+- `KUG` / `cg/kug` — global reusable HVAC practice in
+  `%LOCALAPPDATA%\\CadGPT\\knowledge\\<topic>.md`. Works without AutoCAD.
+- `KUD` / `cg/kud` — bound-drawing HVAC knowledge in
+  `%LOCALAPPDATA%\\CadGPT\\drawings\\<verified-anchor>\\knowledge\\<topic>.md`.
+  Requires a valid, explicitly bound drawing workspace.
+
+The dedicated `knowledge_list`, `knowledge_read`, and `knowledge_upsert`
+tools handle scope, revision checks (SHA-256), atomic writes and readback.
+For drawing knowledge, the exact binding/anchor is revalidated before access.
+The model should compare existing content, show changes and request human
+approval before updating. Unresolved HVAC facts stay unresolved.
+
+CAD API/Lisp authoring, the Lisp Writer, and MCP Fixer remain in their
+respective **internal** knowledge and skills. KUG/KUD must not edit them.
+See `skills/knowledge-updater/SKILL.md`.
 
 ## AutoCAD add-in
 
@@ -227,6 +250,8 @@ Production data lives under:
 ├── runtime/
 ├── data/
 ├── drawings/
+│   └── <drawing-anchor>/knowledge/
+├── knowledge/                 # Global HVAC domain knowledge
 ├── state/
 └── logs/
 ```
