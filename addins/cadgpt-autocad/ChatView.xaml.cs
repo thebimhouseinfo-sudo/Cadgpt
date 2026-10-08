@@ -33,6 +33,8 @@ namespace CadGpt.AutoCad
         private bool _disposed;
         private bool _darkChrome;
         private bool _pollInProgress;
+        private bool _pairInProgress;
+        private bool _pairWasConfirmed;
         private readonly BindingHeaderEvidence _headerEvidence =
             new BindingHeaderEvidence();
         private WeakReference<AcDocument>? _boundDocumentReference;
@@ -238,24 +240,24 @@ namespace CadGpt.AutoCad
             CancellationToken token)
         {
             if (_disposed ||
+                _pairInProgress ||
                 !string.IsNullOrWhiteSpace(_pairId))
             {
                 return;
             }
 
+            _pairInProgress = true;
             try
             {
-                var pair =
-                    await _control.StartPairAsync(
-                        token);
+                var pair = await _control.StartPairAsync(token);
                 if (!pair.Ok ||
-                    string.IsNullOrWhiteSpace(
-                        pair.PairId))
+                    string.IsNullOrWhiteSpace(pair.PairId))
                 {
                     return;
                 }
 
                 _pairId = pair.PairId;
+                _pairWasConfirmed = false;
                 if (!DateTime.TryParse(
                     pair.ExpiresAt,
                     out _pairExpiresUtc))
@@ -271,7 +273,11 @@ namespace CadGpt.AutoCad
             }
             catch (AddinControlException)
             {
-                // Read-only header is best effort. ChatGPT itself stays usable.
+                // Pair setup is best effort; keep the browser usable.
+            }
+            finally
+            {
+                _pairInProgress = false;
             }
         }
 
@@ -310,6 +316,7 @@ namespace CadGpt.AutoCad
 
                     if (status.Paired)
                     {
+                        _pairWasConfirmed = true;
                         _control.SavePairId(_pairId!);
 
                         // session_ready=true means the control-plane
@@ -331,12 +338,23 @@ namespace CadGpt.AutoCad
                         return;
                     }
 
-                    // The pairing endpoint can restart independently of CAD.
-                    // Keep the locally confirmed drawing while reconnecting.
-                    _pairId = null;
-                    _pairExpiresUtc = DateTime.MinValue;
-                    _control.ClearSavedPairId();
-                    await EnsurePairWindowAsync(token);
+                    // A newly started pair remains pending until ChatGPT
+                    // claims it or its three-minute window expires. Rotating
+                    // every poll can invalidate the pair before admission.
+                    // A formerly confirmed pair may renew immediately when
+                    // the control-plane explicitly reports paired=false.
+                    if (AddinPairRenewalPolicy.ShouldRenew(
+                            _pairWasConfirmed,
+                            _pairExpiresUtc,
+                            DateTime.UtcNow))
+                    {
+                        _pairId = null;
+                        _pairWasConfirmed = false;
+                        _pairExpiresUtc = DateTime.MinValue;
+                        _control.ClearSavedPairId();
+                        await EnsurePairWindowAsync(token);
+                    }
+
                     RefreshHeaderFromLocalContext(false);
                 }
                 catch (AddinControlException)
@@ -346,6 +364,7 @@ namespace CadGpt.AutoCad
                     if (_pairExpiresUtc == DateTime.MinValue)
                     {
                         _pairId = null;
+                        _pairWasConfirmed = false;
                         _control.ClearSavedPairId();
                         await EnsurePairWindowAsync(token);
                     }
