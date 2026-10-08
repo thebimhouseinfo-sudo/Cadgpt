@@ -472,7 +472,7 @@
       (princ) (exit)))
 
   (initget "1 2 3")
-  (setq opt (getkword "\nSelect option [1-Length / 2-Size / 3-Switch W<->H]: "))
+  (setq opt (getkword "\nSelect option [1-Length / 2-Size / 3-Switch W-H]: "))
   (if (null opt) (setq opt "1"))
 
   (cond
