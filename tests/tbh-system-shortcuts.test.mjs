@@ -44,7 +44,7 @@ test("scan every TBH Lisp system shortcut: 1 SA, 2 RA, 3 OA, 4 EA, 5 TA", async 
     const fullLabel = /\b([0-5])\s*[=:]\s*(?:Supply|Return|Outside|Exhaust|Transfer)\s+Air\s*\((SA|RA|OA|EA|TA)\)/gi;
     // TAG alone can mean a generic annotation "Tag", so check it in the
     // explicit MEP Properties mapping test rather than guessing its meaning.
-    const shortLabel = /\b([0-5])\s*[=:]\s*(SA|RA|OA|EA|TA|SAG|RAG|OAG|EAG)\b/gi;
+    const shortLabel = /\b([0-5])\s*[-=:]\s*(SA|RA|OA|EA|TA|SAG|RAG|OAG|EAG)\b/gi;
     for (const [kind, expression] of [["full", fullLabel], ["short", shortLabel]]) {
       for (const match of source.matchAll(expression)) {
         assertNumericChoice(match[1], match[2], `${fileName}:${kind}`);
@@ -64,6 +64,44 @@ test("scan every TBH Lisp system shortcut: 1 SA, 2 RA, 3 OA, 4 EA, 5 TA", async 
 
   assert.ok(checked >= 25, `system menu coverage unexpectedly shrank (found ${checked})`);
   assert.ok(visited.size >= 6, `system-menu file coverage unexpectedly shrank (found ${visited.size})`);
+});
+
+test("all bare numeric AutoCAD layer aliases, including shading, are canonical and unique", async () => {
+  const files = await allLispFiles(toolkitRoot);
+  const byAlias = new Map();
+  for (const file of files) {
+    const source = await fs.readFile(file, "utf8");
+    for (const match of source.matchAll(/\\(\\s*defun\\s+c:([1-5](?:r)?)\\s*\\(/gi)) {
+      const alias = match[1].toLowerCase();
+      const definitions = byAlias.get(alias) || [];
+      definitions.push({ source, file: relative(file) });
+      byAlias.set(alias, definitions);
+    }
+  }
+  for (const [digit, system] of Object.entries(canonical)) {
+    for (const suffix of ["", "r"]) {
+      const alias = digit + suffix;
+      const definitions = byAlias.get(alias) || [];
+      assert.equal(definitions.length, 1, "Exactly one loader-owned definition for c:" + alias);
+      const { source, file } = definitions[0];
+      assert.equal(file, "TBH Tool Kit/Draw/Others/Change Layer.lsp", alias + " source");
+      const layer = "Hvacduct-" + system.toLowerCase() + (suffix ? "-shading" : "");
+      assert.ok(source.includes('(defun c:' + alias + ' () (_SetCLayer "' + layer + '"))'),
+        "c:" + alias + " must target " + layer);
+    }
+  }
+});
+
+test("all four Grille interactive system selectors accept and apply exactly the canonical order", async () => {
+  const source = await fs.readFile(path.join(toolkitRoot, "TBH Tool Kit", "Draw", "Create", "Grille.lsp"), "utf8");
+  const prompts = source.split("Select system [1-SA/2-RA/3-OA/4-EA/5-TA]").length - 1;
+  const keywords = source.split('initget "1 2 3 4 5 SA RA OA EA TA"').length - 1;
+  assert.equal(prompts, 4, "all four independent Grille branches must prompt correct system numbers");
+  assert.equal(keywords, 4, "all four branches must accept five numbers and five aliases");
+  for (const [digit, system] of Object.entries(canonical)) {
+    const expected = '((or (= sys_input "' + digit + '") (= sys_input "' + system + '")) (setq sys_name "' + system + '" prefix "Hvac-' + system + '"))';
+    assert.equal(source.split(expected).length - 1, 4, "all Grille branches: " + digit + "=" + system);
+  }
 });
 
 test("CD displayed order agrees with cd:norm-type, including OA and EA", async () => {
