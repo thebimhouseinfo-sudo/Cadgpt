@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateLispSource } from "../dist/cadgpt/tools/lisp-harness.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tbh = path.join(root, "resources", "cad", "internal-lisp", "tbh-toolkit", "TBH Tool Kit", "Draw");
@@ -85,4 +86,13 @@ test("MD preserves manual ATT adjustments, justification, values, hidden metadat
   assert.doesNotMatch(reflow, /\(cons (?:1|50) /, "do not overwrite attribute content or text rotation");
   assert.match(frame, /\(assoc 41 ed\)/, "handle X scale");
   assert.match(frame, /\(assoc 42 ed\)/, "handle Y scale");
+});
+
+test("modified MD Lisp passes the real AutoLISP syntax preflight", async () => {
+  const source = await read("Modify/Modify Duct.lsp");
+  const verdict = validateLispSource(source, ["MD"], {
+    profile: "syntax",
+    fileName: "Modify Duct.lsp",
+  });
+  assert.equal(verdict.valid, true, JSON.stringify(verdict.diagnostics));
 });
