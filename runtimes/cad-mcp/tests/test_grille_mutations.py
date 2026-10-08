@@ -88,10 +88,13 @@ class GrilleToolsTests(unittest.TestCase):
         self.doc.entities = {"A10": self.grille, "B10": self.tag}
         self.p1 = patch("services.handle_service.get_active_document", return_value=self.doc)
         self.p2 = patch("services.entity_service._doc", return_value=self.doc)
+        self.p3 = patch("services.block_service._doc", return_value=self.doc)
         self.p1.start()
         self.p2.start()
+        self.p3.start()
         self.addCleanup(self.p1.stop)
         self.addCleanup(self.p2.stop)
+        self.addCleanup(self.p3.stop)
 
     def test_update_multiple_atts_in_one_handle_lookup_then_idempotent_retry(self):
         first = update_grille_attributes("a10", {"AIR_FLOW": "400", "SIZE": "500x500"},
