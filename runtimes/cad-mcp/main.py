@@ -14,6 +14,7 @@ from tools import (
     drawing_anchor_tools,
     entity_tools,
     geometry_tools,
+    grille_tools,
     host_tools,
     inventory_tools,
     layer_tools,
@@ -35,6 +36,7 @@ observation_tools.register(mcp)
 block_tools.register(mcp)
 host_tools.register(mcp)
 geometry_tools.register(mcp)
+grille_tools.register(mcp)
 modify_tools.register(mcp)
 destructive_tools.register(mcp)
 lisp_tools.register(mcp)
