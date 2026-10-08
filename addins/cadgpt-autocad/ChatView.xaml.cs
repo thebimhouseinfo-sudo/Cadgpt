@@ -35,6 +35,7 @@ namespace CadGpt.AutoCad
         private bool _pollInProgress;
         private bool _pairInProgress;
         private bool _pairWasConfirmed;
+        private bool _observedHumanPower;
         private readonly BindingHeaderEvidence _headerEvidence =
             new BindingHeaderEvidence();
         private WeakReference<AcDocument>? _boundDocumentReference;
@@ -303,7 +304,8 @@ namespace CadGpt.AutoCad
 
                 if (string.IsNullOrWhiteSpace(_pairId))
                 {
-                    RefreshHeaderFromLocalContext(false);
+                    RefreshHeaderFromLocalContext(
+                        _observedHumanPower);
                     return;
                 }
 
@@ -330,9 +332,18 @@ namespace CadGpt.AutoCad
                                 status.Drawing);
                         }
 
+                        // Only an authoritative session response can
+                        // change Human Power mode. Missing/failed pairing
+                        // polls must not override the last observed mode.
+                        if (status.SessionReady)
+                        {
+                            _observedHumanPower =
+                                status.SessionReady &&
+                                status.HumanPower;
+                        }
+
                         RefreshHeaderFromLocalContext(
-                            status.SessionReady &&
-                            status.HumanPower);
+                            _observedHumanPower);
                         RefreshBackgroundJobs(
                             status.BackgroundJobs);
                         return;
@@ -355,7 +366,8 @@ namespace CadGpt.AutoCad
                         await EnsurePairWindowAsync(token);
                     }
 
-                    RefreshHeaderFromLocalContext(false);
+                    RefreshHeaderFromLocalContext(
+                        _observedHumanPower);
                 }
                 catch (AddinControlException)
                 {
@@ -904,6 +916,7 @@ namespace CadGpt.AutoCad
         {
             _darkChrome = !_darkChrome;
             ApplyBaseChromeTheme();
+            ApplyHeaderTheme(_observedHumanPower);
             WebViewProfile.TrySaveChromeTheme(
                 _darkChrome
                     ? "dark"
