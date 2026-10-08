@@ -45,7 +45,7 @@ test("MMA validates type and returns nil for unresolved system (no wcmatch on ni
 
 test("TC error handler cleans up DCL file and dialog on cancel/error without throwing", async () => {
   const code=await read("Special/TBH Calc.lsp");
-  assert.match(code, /\(defun c:TC \(\/ \*error* /, "TC declares local *error*");
+  assert.match(code, /\(defun c:TC \(\/ \*error\* /, "TC declares local *error*");
   const handler=portion(code,"(defun *error* ",";; 2. CONFIGURATION");
   assert.match(handler, /\(numberp dcl_id\)/);
   assert.match(handler, /\(vl-catch-all-apply 'close \(list file_handle\)\)/);
