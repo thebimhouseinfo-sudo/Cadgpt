@@ -34,12 +34,13 @@ test("FACE_SIZE and MODEL are hidden and independent of legacy SIZE on grille an
 
 test("GT upgrades an existing grille, tags inherit both values, and reactor uses verified handle links", async () => {
   const s = await read("Annotation/MEP Properties.lsp");
-  const init = fragment(s, "(defun GT:InitGrilleAttributes ", "(defun c:GT ");
+  const init = fragment(s, "(defun GT:EnsureGrilleAttributeDefs ", "(defun GT:InitGrilleAttributes ");
   assert.match(init, /GT:GrilleAttributeTags/);
   assert.match(init, /if changed \(GT:SyncBlockAttributes bName\)/);
   const gt = fragment(s, "(defun c:GT ", "EXISTING DWG UPGRADE:");
   assert.match(gt, /hadAttrs/);
   assert.match(gt, /GT:InitGrilleAttributes ent layer/);
+  assert.match(gt, /GT:EnsureGrilleAttributeDefs ent/);
   assert.match(gt, /GT:GetBlockAttributes ent/);
   assert.match(gt, /GT:InsertTagWithPreview ent data tagBName/);
   const setter = fragment(s, "(defun GT:SetTagAttributes ", "(defun GT:InsertTagWithPreview ");
@@ -54,7 +55,8 @@ test("GT upgrades an existing grille, tags inherit both values, and reactor uses
 test("GRILLE_ATTR_UPGRADE handles existing GR-* blocks, does not use TAG_NUMBER for identity and copies only new values", async () => {
   const s = await read("Annotation/MEP Properties.lsp");
   const upgrade = fragment(s, "(defun c:GRILLE_ATTR_UPGRADE ", "(defun c:CG ");
-  assert.match(upgrade, /GT:InitGrilleAttributes/);
+  assert.match(upgrade, /GT:EnsureGrilleAttributeDefs/);
+  assert.match(upgrade, /assoc -3 \(entget \(vlax-vla-object->ename linked\)/);
   assert.match(upgrade, /GT:EnsureTagHiddenAttributes/);
   assert.match(upgrade, /GT:GetLinkedTag/);
   assert.match(upgrade, /GT:TagBelongsToGrille/);
