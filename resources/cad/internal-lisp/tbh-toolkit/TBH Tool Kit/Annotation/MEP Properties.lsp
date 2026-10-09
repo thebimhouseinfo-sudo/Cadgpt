@@ -3,7 +3,7 @@
 ;;;
 ;;; File        : MEP Properties.lsp
 ;;; Module      : Annotation
-;;; Command     : MEP_Properties_Create, FDT, GT, GRILLE_UPDATE
+;;; Command     : MEP_Properties_Create, FDT, GT, GRILLE_UPDATE, GRILLE_ATTR_UPGRADE
 ;;; Description : Real-time properties automation, XData synchronization, and flexible duct/cushion sizing.
 ;;;
 ;;;
