@@ -45,19 +45,40 @@
     (progn
       (setq newAtt (vla-AddAttribute blkDef 100.0 1 prompt (vlax-3d-point '(0 0 0)) tag ""))
       (vla-put-Invisible newAtt :vlax-true)
+      T
     )
+    nil
   )
+)
+
+(defun GT:GrilleAttributeTags ()
+  ;; SIZE is the existing neck-size field; FACE_SIZE and MODEL stay separate.
+  '("OBJECT_TYPE" "TAG_NUMBER" "AIR_FLOW" "SIZE" "FLEX_DUCT_SIZE"
+    "CUSHION_HEAD" "SYSTEM" "GRILLE_TYPE" "FACE_SIZE" "MODEL")
+)
+
+(defun GT:SyncBlockAttributes (bName / prior result)
+  (setq prior *MEP_REACTOR_LOCK*)
+  (setq *MEP_REACTOR_LOCK* T)
+  (setq result (vl-catch-all-apply 'vl-cmdf (list "_.ATTSYNC" "_N" bName)))
+  (setq *MEP_REACTOR_LOCK* prior)
+  (if (vl-catch-all-error-p result)
+    (progn
+      (princ (strcat "\n[GT] ATTSYNC failed: " bName " / "
+                     (vl-catch-all-error-message result)))
+      nil)
+    T)
 )
 
 ;;; ===========================================================================
 ;;; 3. COMMAND: MEP_Properties_Create
 ;;; ===========================================================================
-(defun c:MEP_Properties_Create (/ doc blks ss i ent obj bName blkDef layer system tags attData)
+(defun c:MEP_Properties_Create (/ doc blks ss i ent obj bName blkDef layer system tags attData changed uniqueBlocks old tStr)
   (setq doc (vla-get-activedocument (vlax-get-acad-object))
         blks (vla-get-blocks doc))
   (vla-startundomark doc)
 
-  (setq tags '("OBJECT_TYPE" "TAG_NUMBER" "AIR_FLOW" "SIZE" "FLEX_DUCT_SIZE" "CUSHION_HEAD" "SYSTEM" "GRILLE_TYPE"))
+  (setq tags (GT:GrilleAttributeTags))
 
   (setq ss (ssget "X" '((0 . "INSERT") (8 . "Hvac-EAGrille,Hvac-SAGrille,Hvac-RAGrille,Hvac-OAGrille,Hvac-TAGrille"))))
   (if (not ss) (progn (princ "\nNo blocks found on specified layers.") (exit)))
@@ -77,8 +98,11 @@
 
   (foreach bName uniqueBlocks
     (setq blkDef (vla-item blks bName))
-    (foreach tag tags (add_mep_attrib_vla blkDef tag (strcat "Enter " tag)))
-    (vl-cmdf "_.ATTSYNC" "_N" bName)
+    (setq changed nil)
+    (foreach tag tags
+      (if (add_mep_attrib_vla blkDef tag (strcat "Enter " tag))
+        (setq changed T)))
+    (if changed (GT:SyncBlockAttributes bName))
   )
 
   ;; Fill actual values
@@ -598,6 +622,22 @@
 )
 
 ;; =========================
+;; ENSURE HIDDEN ATTDEFs ON EXISTING TAG BLOCKS
+;; =========================
+(defun GT:EnsureTagHiddenAttributes (bName / doc blkDef changed)
+  (setq changed nil)
+  (if (tblsearch "BLOCK" bName)
+    (progn
+      (setq doc (vla-get-ActiveDocument (vlax-get-acad-object))
+            blkDef (vla-Item (vla-get-Blocks doc) bName))
+      (foreach tag '("FACE_SIZE" "MODEL")
+        (if (add_mep_attrib_vla blkDef tag (strcat "Enter " tag))
+          (setq changed T)))
+      (if changed (GT:SyncBlockAttributes bName))))
+  changed
+)
+
+;; =========================
 ;; RANDOM SUFFIX
 ;; =========================
 (defun GT:RandSfx (/ ms fr)
@@ -670,7 +710,7 @@
 
       ;; Invisible ATTDEFs
       (setq yMin -450.0)
-      (foreach tag '("FLEX_DUCT_SIZE" "CUSHION_HEAD" "SYSTEM" "GRILLE_TYPE")
+      (foreach tag '("FLEX_DUCT_SIZE" "CUSHION_HEAD" "SYSTEM" "GRILLE_TYPE" "FACE_SIZE" "MODEL")
         (add-att tag yMin T)
         (setq yMin (- yMin 150.0))
       )
@@ -679,6 +719,7 @@
     )
     (GT:Log (strcat "Block '" bname "' already exists."))
   )
+  (GT:EnsureTagHiddenAttributes bname)
 )
 
 
@@ -877,7 +918,7 @@
     (if matched
       (progn
         (if (or (not val) (= (vl-string-trim " " val) ""))
-          (setq val "-")
+          (setq val (if (member tag '("FACE_SIZE" "MODEL")) "" "-"))
         )
         (GT:Log (strcat "Set " tag " = " val))
         (setq needsChange nil)
@@ -1014,19 +1055,18 @@
 ;; =========================
 ;; INITIALIZE GRILLE ATTRIBUTES
 ;; =========================
-(defun GT:InitGrilleAttributes (ent layer / obj bName bDef blks doc system tags)
+(defun GT:InitGrilleAttributes (ent layer / obj bName bDef blks doc system tags changed att tStr)
   (setq obj (vlax-ename->vla-object ent))
   (setq doc (vla-get-activedocument (vlax-get-acad-object)))
   (setq blks (vla-get-blocks doc))
   (setq bName (vla-get-effectivename obj))
   (setq bDef (vla-item blks bName))
-  (setq tags '("OBJECT_TYPE" "TAG_NUMBER" "AIR_FLOW" "SIZE" "FLEX_DUCT_SIZE" "CUSHION_HEAD" "SYSTEM" "GRILLE_TYPE"))
-
+  (setq tags (GT:GrilleAttributeTags)
+        changed nil)
   (foreach tag tags
-    (add_mep_attrib_vla bDef tag (strcat "Enter " tag))
-  )
-
-  (vl-cmdf "_.ATTSYNC" "_N" bName)
+    (if (add_mep_attrib_vla bDef tag (strcat "Enter " tag))
+      (setq changed T)))
+  (if changed (GT:SyncBlockAttributes bName))
 
   (cond
     ((= layer "Hvac-SAGrille") (setq system "Supply Air"))
@@ -1053,7 +1093,7 @@
 ;; =========================
 ;; MAIN COMMAND: GT
 ;; =========================
-(defun c:GT (/ ent data doc blks sysName tagBName obj layer validLayers kw)
+(defun c:GT (/ ent data doc blks sysName tagBName obj layer validLayers kw hadAttrs)
 
   (vl-load-com)
 
@@ -1076,7 +1116,8 @@
   (setq layer (vla-get-layer obj))
   (setq validLayers '("Hvac-SAGrille" "Hvac-RAGrille" "Hvac-OAGrille" "Hvac-EAGrille" "Hvac-TAGrille"))
 
-  (if (/= (vla-get-hasattributes obj) :vlax-true)
+  (setq hadAttrs (= (vla-get-hasattributes obj) :vlax-true))
+  (if (not hadAttrs)
     (progn
       (if (not (vl-position layer validLayers))
         (progn
@@ -1099,6 +1140,9 @@
       (GT:InitGrilleAttributes ent layer)
     )
   )
+  ;; Migrate selected grilles that already have legacy attributes.
+  (if (and hadAttrs (vl-position layer validLayers))
+    (GT:InitGrilleAttributes ent layer))
 
   (GT:Log (strcat "Entity type: " (cdr (assoc 0 (entget ent)))))
 
