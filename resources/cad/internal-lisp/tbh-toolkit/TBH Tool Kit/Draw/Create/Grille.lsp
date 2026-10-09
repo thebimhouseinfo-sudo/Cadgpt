@@ -198,7 +198,7 @@
   )
 )
 
-(defun Grille:Eggcrate (/ sys_input sys_name layer_main layer_shade pt_c w h prefix g1 g2 g3 g4 h1 h2 h3 h4 dx dy blk_name ss_blk ent_last_prev spline1 spline2 ent_rect ent_next eg_grid_space)
+(defun Grille:Eggcrate (/ sys_input sys_name layer_main layer_shade pt_c w h prefix g1 g2 g3 g4 h1 h2 h3 h4 dx dy blk_name ss_blk ent_last_prev spline1 spline2 ent_rect ent_next eg_grid_space blk_ent)
   (initget "1 2 3 4 5 SA RA OA EA TA")
   (setq sys_input (getkword "\nSelect system [1-SA/2-RA/3-OA/4-EA/5-TA] <2>: "))
   (if (not sys_input) (setq sys_input "2"))
@@ -276,7 +276,8 @@
   (command "_.block" blk_name pt_c ss_blk "")
 
   (command "_.insert" blk_name pt_c 1.0 1.0 0.0)
-  (command "_.chprop" (entlast) "" "_layer" layer_main "")
+  (setq blk_ent (entlast))
+  (command "_.chprop" blk_ent "" "_layer" layer_main "")
 
   ;; Change layer of entities inside block definition to correct layers
   (Grille:FixBlockLayers blk_name layer_main layer_shade layer_temp)
@@ -286,14 +287,17 @@
 
   ;; Initialize MEP attributes if MEP Properties is loaded
   (if (and (boundp 'GT:InitGrilleAttributes) GT:InitGrilleAttributes)
-    (GT:InitGrilleAttributes (entlast) layer_main)
+    (GT:InitGrilleAttributes blk_ent layer_main)
   )
   (if (and (boundp 'GT:SetAttrValue) GT:SetAttrValue)
-    (GT:SetAttrValue (entlast) "GRILLE_TYPE" "Eggcrate")
+    (progn
+      (GT:SetAttrValue blk_ent "GRILLE_TYPE" "Eggcrate")
+      (GT:SetAttrValue blk_ent "FACE_SIZE" (strcat (rtos w 2 0) "x" (rtos h 2 0)))
+    )
   )
   (setvar "OSMODE" *gr_old_osmode*)
   (princ "\n--- Done. Rotate to set installation direction ---")
-  (command "_.rotate" (entlast) "" pt_c pause)
+  (command "_.rotate" blk_ent "" pt_c pause)
   (princ (strcat "\nSuccess: " blk_name))
 )
 
@@ -386,6 +390,7 @@
   )
   (if (and (boundp 'GT:SetAttrValue) GT:SetAttrValue)
     (GT:SetAttrValue blk_ent "GRILLE_TYPE" "Bar Grille")
+    (GT:SetAttrValue blk_ent "FACE_SIZE" (strcat (rtos w 2 0) "x" (rtos h 2 0)))
   )
   (setvar "OSMODE"  *gr_old_osmode*)
   (princ "\n--- Done. Rotate to set installation direction ---")
@@ -482,6 +487,7 @@
   )
   (if (and (boundp 'GT:SetAttrValue) GT:SetAttrValue)
     (GT:SetAttrValue blk_ent "GRILLE_TYPE" "Double Deflection")
+    (GT:SetAttrValue blk_ent "FACE_SIZE" (strcat (rtos w 2 0) "x" (rtos h 2 0)))
   )
   (setvar "OSMODE"  *gr_old_osmode*)
   (princ "\n--- Done. Rotate to set installation direction ---")
@@ -492,7 +498,7 @@
 ;;; =============================================================================
 ;;; 4. SIDEWALL GRILLE
 ;;; =============================================================================
-(defun Grille:Sidewall (/ sys_input sys_name layer_main layer_temp pt_c w prefix dx pt1 pt2 pt3 pt4 pt5 pt6 blk_name ss_blk ent_next ent_last_prev)
+(defun Grille:Sidewall (/ sys_input sys_name layer_main layer_temp pt_c w prefix dx pt1 pt2 pt3 pt4 pt5 pt6 blk_name ss_blk ent_next ent_last_prev blk_ent)
   (initget "1 2 3 4 5 SA RA OA EA TA")
   (setq sys_input (getkword "\nSelect system [1-SA/2-RA/3-OA/4-EA/5-TA] <2>: "))
   (if (not sys_input) (setq sys_input "2"))
@@ -541,7 +547,8 @@
   (command "_.block" blk_name pt_c ss_blk "")
 
   (command "_.insert" blk_name pt_c 1.0 1.0 0.0)
-  (command "_.chprop" (entlast) "" "_layer" layer_main "")
+  (setq blk_ent (entlast))
+  (command "_.chprop" blk_ent "" "_layer" layer_main "")
 
   ;; Change layer of entities inside block definition to correct layers
   (Grille:FixBlockLayers blk_name layer_main nil layer_temp)
@@ -551,14 +558,15 @@
 
   ;; Initialize MEP attributes if MEP Properties is loaded
   (if (and (boundp 'GT:InitGrilleAttributes) GT:InitGrilleAttributes)
-    (GT:InitGrilleAttributes (entlast) layer_main)
+    (GT:InitGrilleAttributes blk_ent layer_main)
   )
   (if (and (boundp 'GT:SetAttrValue) GT:SetAttrValue)
-    (GT:SetAttrValue (entlast) "GRILLE_TYPE" "Side Wall")
+    (GT:SetAttrValue blk_ent "GRILLE_TYPE" "Side Wall")
   )
+  ;; Side Wall prompts for W only; leave FACE_SIZE empty rather than guessing.
   (setvar "OSMODE" *gr_old_osmode*)
   (princ "\n--- Done. Rotate to set installation direction ---")
-  (command "_.rotate" (entlast) "" pt_c pause)
+  (command "_.rotate" blk_ent "" pt_c pause)
   (princ (strcat "\nSuccess: " blk_name))
 )
 
