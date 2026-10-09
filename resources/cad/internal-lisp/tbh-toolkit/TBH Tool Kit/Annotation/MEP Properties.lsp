@@ -1178,6 +1178,81 @@
 )
 
 ;;; ===========================================================================
+;;; EXISTING DWG UPGRADE: preserve old ATT values and link identity.
+;;; Invoke GRILLE_ATTR_UPGRADE to add FACE_SIZE and MODEL on legacy grilles
+;;; and existing GR-* tags. Unlinked tags get empty fields (no guessing).
+;;; ===========================================================================
+(defun GT:CopyExtendedFields (tagObj data / att tag val changed)
+  (setq changed nil)
+  (if (= (vla-get-HasAttributes tagObj) :vlax-true)
+    (foreach att (vlax-invoke tagObj 'GetAttributes)
+      (setq tag (strcase (vla-get-TagString att)))
+      (if (member tag '("FACE_SIZE" "MODEL"))
+        (progn
+          (setq val (GT:GetAttr tag data))
+          (if (not val) (setq val ""))
+          (if (/= (vla-get-TextString att) val)
+            (progn
+              (vla-put-TextString att val)
+              (setq changed T)))))))
+  changed
+)
+
+(defun c:GRILLE_ATTR_UPGRADE (/ ss ts i ent obj layer name countGrilles countTags
+                                countDefs countLinked linked belongs priorLock)
+  (vl-load-com)
+  (setq countGrilles 0 countTags 0 countDefs 0 countLinked 0)
+  (setq ss (ssget "X" '((0 . "INSERT")
+                       (8 . "Hvac-SAGrille,Hvac-RAGrille,Hvac-OAGrille,Hvac-EAGrille,Hvac-TAGrille"))))
+  (if ss
+    (progn
+      (setq i 0)
+      (repeat (sslength ss)
+        (setq ent (ssname ss i)
+              obj (vlax-ename->vla-object ent)
+              layer (vla-get-Layer obj))
+        (GT:InitGrilleAttributes ent layer)
+        (setq countGrilles (1+ countGrilles)
+              i (1+ i)))))
+  ;; Older GR-* tags have unique definitions. Ensure both hidden ATTDEFs.
+  (setq ts (ssget "X" '((0 . "INSERT") (8 . "Hvac-GrilleTag"))))
+  (if ts
+    (progn
+      (setq i 0)
+      (repeat (sslength ts)
+        (setq obj (vlax-ename->vla-object (ssname ts i))
+              name (vla-get-EffectiveName obj))
+        (if (wcmatch (strcase name) "GR-*")
+          (progn
+            (setq countTags (1+ countTags))
+            (if (GT:EnsureTagHiddenAttributes name)
+              (setq countDefs (1+ countDefs)))))
+        (setq i (1+ i)))))
+  ;; Link provenance is authoritative. Do not match copies by TAG_NUMBER.
+  ;; Synchronize only the new ATT values, never any legacy data field.
+  (if ss
+    (progn
+      (setq i 0
+            priorLock *MEP_REACTOR_LOCK*
+            *MEP_REACTOR_LOCK* T)
+      (repeat (sslength ss)
+        (setq obj (vlax-ename->vla-object (ssname ss i))
+              linked (GT:GetLinkedTag obj))
+        (if linked
+          (progn
+            (setq belongs (GT:TagBelongsToGrille linked obj))
+            (if (and belongs (GT:CopyExtendedFields linked (GT:GetBlockAttributes obj)))
+              (setq countLinked (1+ countLinked)))))
+        (setq i (1+ i)))
+      (setq *MEP_REACTOR_LOCK* priorLock)))
+  (princ (strcat "\nGRILLE_ATTR_UPGRADE: " (itoa countGrilles) " grilles, "
+                 (itoa countTags) " tags, "
+                 (itoa countDefs) " updated tag definitions, "
+                 (itoa countLinked) " linked tags synchronized."))
+  (princ)
+)
+
+;;; ===========================================================================
 ;;; COMMAND: CG  (Copy Grille)
 ;;; Runs the standard COPY command exactly as normal.
 ;;; After the user finishes, strips MEP_TAG_LINK XData from every newly
