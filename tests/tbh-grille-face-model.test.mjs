@@ -53,7 +53,7 @@ test("GT upgrades an existing grille, tags inherit both values, and reactor uses
 
 test("GRILLE_ATTR_UPGRADE handles existing GR-* blocks, does not use TAG_NUMBER for identity and copies only new values", async () => {
   const s = await read("Annotation/MEP Properties.lsp");
-  const upgrade = fragment(s, "(defun c:GRILLE_ATTR_UPGRADE ", ";;; ===========================================================================\n;;; COMMAND: CG ");
+  const upgrade = fragment(s, "(defun c:GRILLE_ATTR_UPGRADE ", "(defun c:CG ");
   assert.match(upgrade, /GT:InitGrilleAttributes/);
   assert.match(upgrade, /GT:EnsureTagHiddenAttributes/);
   assert.match(upgrade, /GT:GetLinkedTag/);
