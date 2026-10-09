@@ -1055,19 +1055,25 @@
 ;; =========================
 ;; INITIALIZE GRILLE ATTRIBUTES
 ;; =========================
-(defun GT:InitGrilleAttributes (ent layer / obj bName bDef blks doc system tags changed att tStr)
-  (setq obj (vlax-ename->vla-object ent))
-  (setq doc (vla-get-activedocument (vlax-get-acad-object)))
-  (setq blks (vla-get-blocks doc))
-  (setq bName (vla-get-effectivename obj))
-  (setq bDef (vla-item blks bName))
-  (setq tags (GT:GrilleAttributeTags)
+(defun GT:EnsureGrilleAttributeDefs (ent / obj bName bDef blks doc tags changed)
+  ;; Definition-only upgrade: never rewrite legacy ATTRIBUTE reference values.
+  (setq obj (vlax-ename->vla-object ent)
+        doc (vla-get-activedocument (vlax-get-acad-object))
+        blks (vla-get-blocks doc)
+        bName (vla-get-effectivename obj)
+        bDef (vla-item blks bName)
+        tags (GT:GrilleAttributeTags)
         changed nil)
   (foreach tag tags
     (if (add_mep_attrib_vla bDef tag (strcat "Enter " tag))
       (setq changed T)))
   (if changed (GT:SyncBlockAttributes bName))
+  changed
+)
 
+(defun GT:InitGrilleAttributes (ent layer / obj system att tStr)
+  (GT:EnsureGrilleAttributeDefs ent)
+  (setq obj (vlax-ename->vla-object ent))
   (cond
     ((= layer "Hvac-SAGrille") (setq system "Supply Air"))
     ((= layer "Hvac-RAGrille") (setq system "Return Air"))
@@ -1140,9 +1146,9 @@
       (GT:InitGrilleAttributes ent layer)
     )
   )
-  ;; Migrate selected grilles that already have legacy attributes.
+  ;; On legacy grilles, add only missing definitions; keep other ATT values.
   (if (and hadAttrs (vl-position layer validLayers))
-    (GT:InitGrilleAttributes ent layer))
+    (GT:EnsureGrilleAttributeDefs ent))
 
   (GT:Log (strcat "Entity type: " (cdr (assoc 0 (entget ent)))))
 
@@ -1211,7 +1217,7 @@
         (setq ent (ssname ss i)
               obj (vlax-ename->vla-object ent)
               layer (vla-get-Layer obj))
-        (GT:InitGrilleAttributes ent layer)
+        (GT:EnsureGrilleAttributeDefs ent)
         (setq countGrilles (1+ countGrilles)
               i (1+ i)))))
   ;; Older GR-* tags have unique definitions. Ensure both hidden ATTDEFs.
@@ -1240,7 +1246,11 @@
               linked (GT:GetLinkedTag obj))
         (if linked
           (progn
-            (setq belongs (GT:TagBelongsToGrille linked obj))
+            ;; A copied legacy grille can keep a stale forward link. Require
+            ;; an actual back-link on the tag before changing its new ATT values.
+            (setq belongs
+              (and (assoc -3 (entget (vlax-vla-object->ename linked) '("MEP_TAG_LINK")))
+                   (GT:TagBelongsToGrille linked obj)))
             (if (and belongs (GT:CopyExtendedFields linked (GT:GetBlockAttributes obj)))
               (setq countLinked (1+ countLinked)))))
         (setq i (1+ i)))
