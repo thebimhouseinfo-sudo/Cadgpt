@@ -143,3 +143,23 @@ Additional boundary: if DWG marker, AppData and host registry are all lost, loca
 Unchanged scope: M0a Grille selection issue, independent J01X XData integrity, all 41 legacy tool contracts, no TabSortV2-2.lsp edits, no production DWG modification, human-approved milestone merges only.
 
 Planning status: ready for fresh Critic Review of exact Revision-9 blob, not yet REVIEW_PASS or implementation-ready by virtue of this Planner update. No code/runtime/AutoLISP/main mutation.
+
+
+## Human-invoked independent CR — Revision 9
+Target plan blob: 903015342a1d064980731cd007d099c5b6ef727e
+Verdict: CHANGES_REQUIRED (source-based CR in conversation, not a persisted GSA Job CRITIC_REVIEW Verification)
+- CR9-01 / IMPORTANT: Job caller intent was not immutably bound to its originating journal_instance_id/epoch. Adoption could replace the journal and allow old operation_id to be treated as a new operation on the same anchor.
+- CR9-02 / IMPORTANT: Headers/epochs could remain valid after restoring only the per-operation journal to before a successful COPY. Missing operation row could be mistaken for a new operation, even with a caller IN_FLIGHT and altered DWG.
+
+## Planner repair — Revision 10
+Exact target plan blob: 827f8a901746ee93f5761d1f4faf65be71b74674
+Status: PLANNER_RESOLVED_AWAITING_NEW_INDEPENDENT_CR — 21/21 document assertions passed, NOT a new CR/Reviewer verdict.
+
+| CR finding | Repair owner and behavior | Required validation |
+| --- | --- | --- |
+| CR9-01 | J03C0 + J03C-CLIENT + J03C1: persist caller's immutable original anchor + journal_instance_id/epoch + operation_id before dispatch; require current trusted marker, AppData header, host index and reservation match on every invocation/lookup/reconnect. Adoption retires old epoch; new explicit human intent uses new ID/epoch. Old intent => JOURNAL_EPOCH_CONFLICT before COM, including missing journal record. | Fault-injected Job IN_FLIGHT under E1, DWG adopted to E2, retry same id: no COM and JOURNAL_EPOCH_CONFLICT. Explicit user new action under E2 remains separate. |
+| CR9-02 | J03C0 append-only independent operation reservation manifest with monotonic sequence/checkpoint and independently mirrored integrity digest/high-water; J03C-CLIENT and J03C1 persist dispatch fences before COM. If caller dispatch possible or reservation exists and journal row is absent => UNKNOWN_OUTCOME/JOURNAL_INCOMPLETE; never automatically re-admit. | COPY succeeds; restore only journal operations to earlier checkpoint while DWG contains copy, caller IN_FLIGHT, header/epoch and independent manifest unchanged: missing id detected, ZERO new COPY. Tampered/missing index, mismatched checkpoints and partial crashes block v2 writes until reconciliation. |
+
+Reviewer guardrails: no 'exactly once' promise if DWG/AppData/host ledger all lost together; preserve current 41 legacy tool contracts; do not touch TabSortV2-2.lsp; no early dependency from M0a Grille fix to J03C journal expansion; native R22.0 host E2E is required before implementation-level PASS.
+
+Disposition: Rev10 source plan repaired and committed; awaiting fresh independent CR against exact blob. Historical Review PASS of Rev8 does not transfer. No source implementation, runtime, AutoLISP, DWG, AppData or main changes.
