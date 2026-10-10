@@ -26,15 +26,17 @@ test("Reasoning Job can READ authorized other folders but WRITE only its own run
     const globalDir = path.join(root, "data", "common");
     const jobFile = path.join(jobDir, "JOB.md");
     const siblingInput = path.join(siblingDir, "runtime", "prior.json");
+    const ownerLisp = path.join(siblingDir, "lisp", "system-collector.lsp");
     const referenceFile = path.join(globalDir, "evidence.json");
     const drawingRoot = path.join(root, "drawings", "test-anchor");
     const otherResult = path.join(drawingRoot, "jobs", "mto-result");
     const otherPath = path.join(drawingRoot, "systems", "system.json");
-    for (const folder of [jobDir, path.dirname(siblingInput), generalDir, globalDir, otherResult, path.dirname(otherPath)]) {
+    for (const folder of [jobDir, path.dirname(siblingInput), path.dirname(ownerLisp), generalDir, globalDir, otherResult, path.dirname(otherPath)]) {
       await fs.mkdir(folder, { recursive: true });
     }
     await fs.writeFile(jobFile, "# Grille Tag\n## Steps\n", "utf8");
     await fs.writeFile(siblingInput, "{\"readonly\":true}", "utf8");
+    await fs.writeFile(ownerLisp, '(defun c:CG_OWNER_COLLECT () (princ))\n', "utf8");
     await fs.writeFile(referenceFile, "{\"reference\":true}", "utf8");
     await fs.writeFile(otherPath, "{\"other\":true}", "utf8");
 
@@ -45,6 +47,14 @@ test("Reasoning Job can READ authorized other folders but WRITE only its own run
       return w.runWithToolLease(lease, () => handlers.get(tool)(args));
     };
     const prepared = await runtime.prepareJobRuntimeForExecution(work.executionId, "grille-tag", jobFile);
+    // Existing owner Job LISP can be resolved/borrowed without making its
+    // runtime or generated files writable by this borrowing Job.
+    const { resolveLispSourceForCommandDiscovery } = await import("../dist/cadgpt/tools/cad-proxy.js");
+    assert.equal(await resolveLispSourceForCommandDiscovery(ownerLisp), await fs.realpath(ownerLisp));
+    await assert.rejects(
+      resolveLispSourceForCommandDiscovery(path.join(siblingDir, "lisp", "missing.lsp")),
+      /ENOENT/
+    );
     assert.equal(runtime.reasoningJobStorageScopeWasEntered(work.executionId), true);
     const raw = path.join(prepared.runtime_root, "raw-data.json");
 
@@ -73,6 +83,16 @@ test("Reasoning Job can READ authorized other folders but WRITE only its own run
       assert.equal(rejected.isError, true, "WRITE must fail outside own runtime/result: " + target);
       await assert.rejects(fs.stat(target), /ENOENT/);
     }
+
+    // Borrowed collector outputs are still owned by the source Job:
+    // borrower may inspect, but cannot modify or delete those same bytes.
+    const foreignEdit = await run("file_edit", {
+      path: siblingInput,
+      old_text: "readonly",
+      new_text: "borrower-wrote",
+    });
+    assert.equal(foreignEdit.isError, true);
+    assert.equal(await fs.readFile(siblingInput, "utf8"), '{"readonly":true}');
 
     for (const file of [siblingInput, referenceFile, otherPath]) {
       const readable = await run("file_read", { path: file });
