@@ -28,16 +28,25 @@ jobs:
       - name: Smoke controlled Lisp and Job authoring lifecycle
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path @(
-            "appdata/libraries/lisp", "appdata/libraries/jobs", "appdata/registry/user",
-            "appdata/workspace/lisp-draft", "appdata/workspace/job-draft", "appdata/data/runs",
-            "appdata/runtime/dynamic-lisp", "appdata/drawings", "appdata/state", "appdata/logs"
-          ) | Out-Null
+          # CI AppData must be external to the repository. Production rejects
+          # repo-local appdata intentionally; the old fixture was invalid.
+          $managedRoot = Join-Path $env:RUNNER_TEMP "cadgpt-authoring-$PID"
+          New-Item -ItemType Directory -Force -Path $managedRoot | Out-Null
+          foreach ($relative in @(
+            "libraries/lisp", "libraries/jobs", "registry/user",
+            "workspace/lisp-draft", "workspace/job-draft", "data/runs",
+            "runtime/dynamic-lisp", "drawings", "state", "logs"
+          )) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $managedRoot $relative) | Out-Null
+          }
+          if ($managedRoot.StartsWith((Get-Location).Path, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "CI AppData must not be under the source checkout"
+          }
 
           $env:CAD_MCP_PYTHON = "python"
           $env:CAD_MCP_ENTRY = "runtimes\cad-mcp\main.py"
           $env:MCP_TOKEN = "ci-authoring-token"
-          $env:CADGPT_APPDATA_ROOT = (Resolve-Path "appdata").Path
+          $env:CADGPT_APPDATA_ROOT = $managedRoot
           $env:CADGPT_BUILD_PROFILE = "development"
           $mcpUrl = "http://127.0.0.1:3000/mcp/ci-authoring-token"
           $proc = Start-Process -FilePath "node" -ArgumentList "dist/index.js" -PassThru -NoNewWindow
@@ -115,25 +124,22 @@ jobs:
               if ($writeRoots -notcontains $required) { throw "Generic writable root missing: $required" }
             }
 
-            $blockedLibrary = (Resolve-Path "appdata/libraries/jobs/tbh-toolkit/JOB.md").Path
-            $blockedEdit = Invoke-Work 7 "file_edit" @{
-              path=$blockedLibrary;
-              expected_sha256=("0" * 64);
-              old_text="# Job: TBH Toolkit Command";
-              new_text="# Job: SHOULD-NOT-WRITE"
+            # Create isolated, user-owned test libraries: tbh-toolkit is
+            # an INTERNAL reserved ID and must never be used for CI promotion.
+            $ciJobLib = "ci-authoring-jobs"
+            $ciLispLib = "ci-authoring-lisp"
+            $jobTargetRoot = Join-Path $managedRoot "libraries/jobs/$ciJobLib"
+            $helperTargetRoot = Join-Path $managedRoot "libraries/lisp/$ciLispLib"
+            $jobLib = Invoke-Work 7 "library_create" @{
+              kind="job"; library_id=$ciJobLib; name="CI Authoring Jobs"; target_path=$jobTargetRoot
             }
-            if ($blockedEdit.result.isError -ne $true) { throw "Generic file_edit mutated permanent Job library" }
-
-            $jobDraftRoot = (Resolve-Path "appdata/workspace/job-draft").Path
-            $checkoutDraftPath = Join-Path $jobDraftRoot "tbh-toolkit\checkout-smoke\JOB.md"
-            $checkout = Invoke-Work 8 "job_checkout" @{
-              registry_id="tbh.job.toolkit-command";
-              draft_path=$checkoutDraftPath
+            if ($jobLib.result.isError -eq $true) { throw "CI Job Library creation failed" }
+            $lispLib = Invoke-Work 8 "library_create" @{
+              kind="lisp"; library_id=$ciLispLib; name="CI Authoring Lisp"; target_path=$helperTargetRoot
             }
-            if ($checkout.result.isError -eq $true) { throw "job_checkout failed" }
-            $checkoutPath = $checkout.result.structuredContent.data.draft_path
-            if (-not [System.IO.Path]::IsPathRooted($checkoutPath) -or -not $checkoutPath.StartsWith($jobDraftRoot, [System.StringComparison]::OrdinalIgnoreCase)) { throw "job_checkout escaped absolute Job workspace" }
-
+            if ($lispLib.result.isError -eq $true) { throw "CI Lisp Library creation failed" }
+            $jobDraftRoot = Join-Path $managedRoot "workspace/job-draft"
+            $lispDraftRoot = Join-Path $managedRoot "workspace/lisp-draft"
             $jobDraft = @'
           # Job: CI Authoring Integrity
 
@@ -171,7 +177,7 @@ jobs:
           - Job promotion returns a registered managed Job.
           '@
             $jobDraft = ($jobDraft -split "`n" | ForEach-Object { $_ -replace '^          ', '' }) -join "`n"
-            $jobDraftPath = Join-Path $jobDraftRoot "tbh-toolkit\ci-authoring\JOB.md"
+            $jobDraftPath = Join-Path $jobDraftRoot "$ciJobLib\ci-authoring\JOB.md"
             $createdJob = Invoke-Work 9 "file_create" @{
               path=$jobDraftPath;
               content=$jobDraft
@@ -183,12 +189,12 @@ jobs:
               throw "Valid Job draft failed job_draft_validate"
             }
 
-            $jobTargetRoot = (Resolve-Path "appdata/libraries/jobs/tbh-toolkit").Path
+            $jobTargetRoot = Join-Path $managedRoot "libraries/jobs/$ciJobLib"
             $jobTargetPath = Join-Path $jobTargetRoot "ci-authoring\JOB.md"
             $jobPromotion = Invoke-Work 11 "job_promote_draft" @{
               draft_path=$jobDraftPath;
               target_path=$jobTargetPath;
-              library_id="tbh-toolkit";
+              library_id=$ciJobLib;
               relative_path="ci-authoring/JOB.md";
               overwrite=$false;
               metadata=@{
@@ -209,10 +215,37 @@ jobs:
 
             $registeredJob = Invoke-Discovery 12 "registry_get" @{ id="ci.job.authoring-integrity"; kind="job" }
             if ($registeredJob.result.isError -eq $true) { throw "Promoted Job missing from User Registry" }
+            # Check permanent-library write denial and the supported
+            # checkout/refinement lifecycle against the real promoted fixture.
+            $blockedLibrary = Join-Path $jobTargetRoot "ci-authoring/JOB.md"
+            if (-not (Test-Path $blockedLibrary)) { throw "Promoted Job file is missing" }
+            $hashBefore = (Get-FileHash $blockedLibrary -Algorithm SHA256).Hash
+            $blockedEdit = Invoke-Work 16 "file_edit" @{
+              path=$blockedLibrary;
+              expected_sha256=("0" * 64);
+              old_text="# Job: CI Authoring Integrity";
+              new_text="# Job: SHOULD-NOT-WRITE"
+            }
+            if ($blockedEdit.result.isError -ne $true) { throw "Generic file_edit mutated permanent Job library" }
+            if ((Get-FileHash $blockedLibrary -Algorithm SHA256).Hash -ne $hashBefore) {
+              throw "Permanent Job changed despite blocked mutation"
+            }
+
+            $checkoutDraftPath = Join-Path $jobDraftRoot "$ciJobLib/checkout-smoke/JOB.md"
+            $checkout = Invoke-Work 17 "job_checkout" @{
+              registry_id="ci.job.authoring-integrity";
+              draft_path=$checkoutDraftPath
+            }
+            if ($checkout.result.isError -eq $true) { throw "job_checkout failed" }
+            $checkoutPath = $checkout.result.structuredContent.data.draft_path
+            if (-not [IO.Path]::IsPathRooted($checkoutPath) -or
+                -not $checkoutPath.StartsWith($jobDraftRoot, [StringComparison]::OrdinalIgnoreCase) -or
+                -not (Test-Path $checkoutPath)) { throw "job_checkout did not create a scoped draft" }
+
 
             $helperDraft = @'
           ;;; =============================================================================
-          ;;; TBH-HEADER-START
+          ;;; CADGPT-HEADER-START
           ;;;
           ;;; File         : ci-helper.lsp
           ;;; Module       : CI
@@ -226,15 +259,15 @@ jobs:
           ;;; Notes        : CI-only helper promotion fixture.
           ;;; Revision     : CI authoring integrity smoke.
           ;;;
-          ;;; TBH-HEADER-END
+          ;;; CADGPT-HEADER-END
           ;;; =============================================================================
 
           (defun ci-helper-add (a b) (+ a b))
           (princ)
           '@
             $helperDraft = ($helperDraft -split "`n" | ForEach-Object { $_ -replace '^          ', '' }) -join "`n"
-            $lispDraftRoot = (Resolve-Path "appdata/workspace/lisp-draft").Path
-            $helperDraftPath = Join-Path $lispDraftRoot "tbh-toolkit\ci-helper.lsp"
+            $lispDraftRoot = Join-Path $managedRoot "workspace/lisp-draft"
+            $helperDraftPath = Join-Path $lispDraftRoot "$ciLispLib\ci-helper.lsp"
             $createdHelper = Invoke-Work 13 "file_create" @{
               path=$helperDraftPath;
               content=$helperDraft
@@ -244,18 +277,18 @@ jobs:
             $helperValidation = Invoke-Work 14 "lisp_draft_validate" @{
               path=$helperDraftPath;
               expected_commands=@();
-              profile="tbh"
+              profile="cadgpt"
             }
             if ($helperValidation.result.isError -eq $true -or $helperValidation.result.structuredContent.data.valid -ne $true) {
               throw "Helper-only Lisp failed validation"
             }
 
-            $helperTargetRoot = (Resolve-Path "appdata/libraries/lisp/tbh-toolkit").Path
+            $helperTargetRoot = Join-Path $managedRoot "libraries/lisp/$ciLispLib"
             $helperTargetPath = Join-Path $helperTargetRoot "CI\ci-helper.lsp"
             $helperPromotion = Invoke-Work 15 "lisp_promote_draft" @{
               draft_path=$helperDraftPath;
               target_path=$helperTargetPath;
-              library_id="tbh-toolkit";
+              library_id=$ciLispLib;
               relative_path="CI/ci-helper.lsp";
               overwrite=$false;
               metadata=@{
