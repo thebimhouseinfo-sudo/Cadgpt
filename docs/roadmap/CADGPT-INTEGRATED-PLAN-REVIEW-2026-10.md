@@ -118,3 +118,28 @@ Review target: exact GitHub plan blob; previous Round-1 findings were compared o
 - APPROVAL LIMIT: PASS applies only to architecture/planning completeness of this exact blob. It does not certify real COM behavior, cross-process locks, journal implementation, Office workbook safety, or p95 latency. Each still needs implementation-level code+test review, five CI gates and accepted disposable-DWG E2E evidence; no production merge authorized by this planning review.
 
 Review-loop result: ROUND1_CHANGES_REQUIRED → REVISION8_ROUND2_PASS. Exact plan blob must be re-reviewed after any edits; leave plan text unchanged to preserve this review target.
+
+
+## Human-invoked CR — Revision 8
+Target plan blob: 2ea27e892277e892a53b7c14556950b4b09c79d5
+Verdict: CHANGES_REQUIRED — independent conversation-level source/plan critique, not a persisted GSA CRITIC_REVIEW Job Verification.
+- CR8-01 / IMPORTANT: no distinction between a truly new DWG without a journal and a previously journaled drawing whose AppData history was lost. Missing journal cannot itself be evidence of a safe first execution.
+- CR8-02 / IMPORTANT: J03C requires stable operation_id but did not assign responsibility for creating and persisting it before the first dispatch from Job orchestration, so regenerated IDs on restart could duplicate CAD entities.
+- CR8-03 / MINOR: active plan sections retained older revision labels/ambiguous historical operation-kind wording.
+Human requested Planner repair, not a production change or automatic release.
+
+## Planner repair — Revision 9 (CR pending)
+Exact updated plan blob: 903015342a1d064980731cd007d099c5b6ef727e
+Status: PLANNER_RESOLVED_AWAITING_NEW_CR — 21/21 source-level plan consistency assertions met; NOT a new independent Reviewer/CR verdict.
+
+| Finding | Owner and resolution | Implementation evidence required |
+| --- | --- | --- |
+| CR8-01 | J03C0 journal bootstrap adds persisted CAD DWG journal marker + AppData sidecar + separate host index; controlled two-phase registration, user-approved DWG save when applicable, explicit trusted virgin creation vs unknown pre-existing adoption; fail closed on partial/full loss | Valid/missing/corrupt marker-sidecar-index combinations, copied DWG, Save As, restored backup, unsaved marker, cross-machine move, interrupted bootstrap, loss of all metadata; no automatic replay of an unknown old intent |
+| CR8-02 | J03C-CLIENT makes managed Job orchestrator persist one immutable operation_id + original request + action key before dispatch and reload it after stop/restart; separate read-only owner-authorized lookup; direct v2 caller must persist its own stable ID | Crash before persist, after persist before send, after COM before response, duplicate workers, changed plan/task IDs, Job A→B delegation, user STOP, explicit newly authorized action; no regenerated-id duplicate |
+| CR8-03 | Revision 9 active header, operational stop/go table and CR8 mapping; older dispositions explicitly labeled archived/superseded, preserving historic record; active key excludes kind | Read active J03C0/J03C-CLIENT/J03C1/C2/C3, traceability and stop-go; no historical label posing as current authoritative state |
+
+Additional boundary: if DWG marker, AppData and host registry are all lost, local software cannot prove the drawing was never journaled. This is UNKNOWN_PROVENANCE/manual reconciliation, not green "new drawing" initialization. No exactly-once guarantee across split DWG/AppData commits.
+
+Unchanged scope: M0a Grille selection issue, independent J01X XData integrity, all 41 legacy tool contracts, no TabSortV2-2.lsp edits, no production DWG modification, human-approved milestone merges only.
+
+Planning status: ready for fresh Critic Review of exact Revision-9 blob, not yet REVIEW_PASS or implementation-ready by virtue of this Planner update. No code/runtime/AutoLISP/main mutation.
