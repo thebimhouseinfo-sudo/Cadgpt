@@ -25,7 +25,8 @@ test("Job local compatibility fast path reads only the small epoch state and lea
 
     const initial =
       await compat.getJobLocalCompatStatus();
-    assert.equal(initial.source_epoch, 1);
+    assert.equal(initial.source_epoch, 2);
+    assert.match(initial.source_fingerprint, /^[a-f0-9]{64}$/);
     assert.equal(initial.checked_epoch, 0);
     assert.equal(initial.update_required, true);
     const repairGuide = await fs.readFile(
@@ -71,6 +72,8 @@ test("Job local compatibility fast path reads only the small epoch state and lea
     assert.deepEqual(fast.pending_actions, [
       "external registration follow-up",
     ]);
+    assert.equal(fast.update_reason, null);
+    assert.equal(fast.checked_fingerprint, fast.source_fingerprint);
 
     const callbacks = new Map();
     const fakeServer = {
@@ -219,6 +222,34 @@ test("Job local compatibility fast path reads only the small epoch state and lea
       }),
       "utf8"
     );
+
+    const checked = callbacks.get("job_local_compat_mark_checked");
+    const incomplete = await checked({
+      scanned_user_jobs: 0,
+      report_summary: "not scanned",
+      pending_actions: [],
+      blocked_job_ids: [],
+    });
+    assert.equal(incomplete.isError, true);
+    assert.match(JSON.stringify(incomplete), /JOB_LOCAL_COMPAT_SCAN_COUNT_MISMATCH/);
+    const completed = await checked({
+      scanned_user_jobs: 1,
+      report_summary: "one real User Job inspected and reported",
+      pending_actions: [],
+      blocked_job_ids: [],
+    });
+    assert.equal(completed.isError, undefined, JSON.stringify(completed));
+
+    const blockedMarker = await checked({
+      scanned_user_jobs: 1,
+      report_summary: "one affected Job awaits human approval",
+      pending_actions: ["grille-tag flow still needs human test"],
+      blocked_job_ids: ["custom-job"],
+    });
+    assert.equal(blockedMarker.isError, undefined, JSON.stringify(blockedMarker));
+    const blockedPrepare = await callbacks.get("job_runtime_prepare")({ id: "custom-job" });
+    assert.equal(blockedPrepare.isError, true);
+    assert.match(JSON.stringify(blockedPrepare), /JOB_LOCAL_COMPAT_JOB_BLOCKED/);
 
     const getJob = callbacks.get("job_get");
     const scanRead = await getJob({

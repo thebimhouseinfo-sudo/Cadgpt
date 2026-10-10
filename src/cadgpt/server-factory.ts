@@ -424,7 +424,7 @@ export function createMcpServer(sessionKey: string): McpServer {
         "CadGPT has FILE, CAD and HYBRID execution paths. FILE is user authoring/data-only; CAD is CAD-only; HYBRID is the controlled successor when FILE authoring must continue while performing a real CAD test. CAD MCP activates only on actual CAD demand. User-created/imported Lisp/Job lives in real per-user AppData. Repo-bundled TBH Tool Kit is Internal Registry/install content under resources/cad/internal-lisp/** and is never resolved through user AppData.",
         "Job behavior is execution-mode driven. Official Internal Registry direct Jobs (for example id=tbh) must be dispatched with job_run_direct and use bounded built-in CadGPT executors with no model planning. The Internal Direct Job path is authoritative: if job_run_direct fails or times out, do NOT bypass it by manually calling lower-level Lisp/CAD tools such as cad__cad_load_lisp_file; surface the Job failure so the implementation can be fixed. User Registry .py Jobs are also direct and use job_run_direct with CadGPT's fixed Python runtime. User .md Jobs are reasoning Jobs. For .md Jobs follow knowledge/jobs/REASONING_HARNESS.md: execute read-only observations first, then PLAN -> REVIEW -> REVISE if needed -> EXEC -> READBACK -> NEXT per reasoning/mutation stage. Re-plan/review later stages from the new drawing state instead of assuming an upfront whole-workflow plan remains valid. Internal review does not pause for user confirmation; defer uncertain items when safe, continue the workflow, and report unresolved items at the end.",
         "JOB STEPS STATUS REPORTING — For User Reasoning Jobs, report each verified meaningful Job Step to the user with its step name and PASS result. For every step failure, immediately report the original tool code/message and log evidence, identify whether the failure is in CadGPT source/runtime/bridge versus Job data only when grounded, list steps not executed, and then stop. A Lisp load with loaded=false or missing confirmation is NEVER success, even if the MCP transport call itself succeeded. Do not silently re-route, bypass or mark Job Steps ✓. Before resetting Job Steps on terminal error, send the user-facing failure report.",
-        "LOCAL JOB COMPATIBILITY — before normal User Job create/run/refine, call the lightweight job_local_compat_status first. Matching epoch is the fast path: do not inspect all Job packages. A mismatch means jobcreate CONTRACT UPDATE mode must scan/fix local User Jobs through normal authority, report blocked external actions, then call job_local_compat_mark_checked. JOB_LOCAL_COMPAT_EPOCH is only a local-repair signal, not a general Job version.",
+        "LOCAL JOB COMPATIBILITY — before normal User Job create/run/refine, call job_local_compat_status (small epoch+contract fingerprint check). If update_required, notify the user that Custom Job behavior changed and request jobcreate CONTRACT UPDATE BEFORE executing that Job. Read knowledge/jobs/LOCAL_COMPAT_UPDATE.md, inspect installed Job.md sources, report affected/unchanged/blocked, ask user permission for business-flow changes, validate/test/promote affected Jobs, then mark checked. Do not treat updating the CadGPT runtime as updating the User's AppData JOB.md. Surface pending_actions even after an earlier scan was marked checked. A Reasoning Job must read current JOB.md and verify the named raw/entry condition BEFORE branch-specific LISP/CAD execution; never re-use older chat choices.",
         "Never assume AutoCAD ActiveDocument is the target; use explicit drawing contexts.",
         "All file mutations require absolute canonical target paths and allowed-root verification. Relative/CWD-authorized mutation is forbidden.",
         "Human Power is an explicit human-only emergency capability for the CURRENT active work execution. Never self-activate it. Use it only after the human explicitly authorizes Human Power for the current task. It expires with work stop/release/expiry/replacement or human_power_stop. It is platform recovery state, never Job metadata.",
@@ -771,10 +771,23 @@ export function createMcpServer(sessionKey: string): McpServer {
           ? [
               "",
               "",
-              "⚠ Job build contract affecting local Custom Jobs has changed.",
-              "Before the next User Job create/run/update, jobcreate will scan and repair local Jobs to the current contract, then report the result.",
+              `⚠ CUSTOM JOB CONTRACT UPDATE REQUIRED (epoch ${jobCompat.source_epoch})`,
+              "CadGPT Job behavior changed. Existing Custom Jobs in AppData must be checked before they can run.",
+              "Please run jobcreate CONTRACT UPDATE: inspect registered JOB.md workflows, report affected Jobs and ask approval before updating their business flow.",
+              "Until the scan is completed, CadGPT blocks User Job execution; it will not silently overwrite Job definitions.",
             ].join("\n")
-          : "";
+          : (jobCompat.pending_actions.length || jobCompat.blocked_job_ids.length)
+            ? [
+                "",
+                "",
+                "⚠ CUSTOM JOB UPDATES STILL PENDING",
+                ...(jobCompat.blocked_job_ids.length
+                  ? [`Blocked Custom Jobs: ${jobCompat.blocked_job_ids.join(", ")}`]
+                  : []),
+                ...jobCompat.pending_actions.slice(0, 8).map((item) => `- ${item}`),
+                "These Custom Job corrections have NOT necessarily been applied. Blocked Jobs must pass jobcreate CONTRACT UPDATE before execution.",
+              ].join("\n")
+            : "";
 
       const launch = await prepareCadLaunch(sessionKey, {
         autoBindSingle: true,

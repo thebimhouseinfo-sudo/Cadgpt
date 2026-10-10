@@ -148,17 +148,30 @@ async function loadJobs(): Promise<JobEntry[]> {
 }
 
 async function assertJobLocalCompatReady(
-  action: string
+  action: string,
+  jobId?: string
 ): Promise<void> {
   const status = await getJobLocalCompatStatus();
-  if (!status.update_required) return;
+  if (!status.update_required) {
+    const blocked = jobId && status.blocked_job_ids.some(
+      (id) => id.toLowerCase() === jobId.trim().toLowerCase()
+    );
+    if (blocked) {
+      throw new Error(
+        `JOB_LOCAL_COMPAT_JOB_BLOCKED: Custom Job '${jobId}' has unresolved compatibility repairs. Notify the user and run jobcreate CONTRACT UPDATE for this Job before ${action}; do not execute the old JOB.md.`
+      );
+    }
+    return;
+  }
   throw new Error(
     [
       "JOB_LOCAL_COMPAT_UPDATE_REQUIRED:",
       `local Custom Jobs have not been checked for the current Job compatibility epoch before ${action}.`,
-      "Run job_local_compat_status, then use jobcreate CONTRACT UPDATE mode to scan User Registry Jobs, inspect/fix only affected local Job packages, validate/re-check them, report any externally blocked action, and finally call job_local_compat_mark_checked.",
+      "Report the contract change to the user and request the jobcreate CONTRACT UPDATE scan before continuing. Use job_local_compat_status and knowledge/jobs/LOCAL_COMPAT_UPDATE.md. Inspect each registered User Job, identify outdated raw-first branches, Job Steps, HYBRID assumptions and source-error reporting; do not overwrite business choices without user approval. Report updated/unchanged/blocked Jobs and only then call job_local_compat_mark_checked.",
       `source_epoch=${status.source_epoch}`,
       `checked_epoch=${status.checked_epoch}`,
+      `update_reason=${status.update_reason}`,
+      `source_fingerprint=${status.source_fingerprint}`,
     ].join(" ")
   );
 }
@@ -379,8 +392,11 @@ export function registerJobDiscoveryTools(server: McpServer): void {
               ? "deep_scan_required"
               : "fast_path",
             instruction: status.update_required
-              ? "Job build contract affecting local Custom Jobs changed. Before normal User Job create/run/update work, read knowledge/jobs/LOCAL_COMPAT_UPDATE.md and use jobcreate CONTRACT UPDATE mode: enumerate User Registry Jobs, inspect package/source only then, repair affected Jobs through the normal checkout/validate/test/promote lifecycle, report any blocked external action, then mark the epoch checked."
-              : "Compatibility signal matches. Do not deep-scan local Job packages.",
+              ? "ATTENTION: Job behavior/contract changed. Notify the user and request a jobcreate CONTRACT UPDATE scan BEFORE starting a User Job. Follow knowledge/jobs/LOCAL_COMPAT_UPDATE.md. Inspect each installed User Job, ask approval for changes to its business workflow, validate/test/promote affected Jobs, and report the results before marking this source contract checked."
+              : status.pending_actions.length || status.blocked_job_ids.length
+                ? "Compatibility scan finished but Custom Job repairs are pending. Show pending_actions and blocked_job_ids to the user; do not run any blocked User Job or claim it was repaired."
+
+                : "Compatibility signal matches. Do not deep-scan local Job packages.",
           }
         );
       } catch (error) {
@@ -435,10 +451,22 @@ export function registerJobDiscoveryTools(server: McpServer): void {
         jobs.sort((a, b) =>
           String(a.id ?? "").localeCompare(String(b.id ?? ""))
         );
+        const compat = await getJobLocalCompatStatus();
         return toolResult("job_list", {
           jobs,
           count: jobs.length,
           rules: "knowledge/jobs/JOB_RULES.md",
+          job_contract_compatibility: {
+            update_required: compat.update_required,
+            source_epoch: compat.source_epoch,
+            checked_epoch: compat.checked_epoch,
+            update_reason: compat.update_reason,
+            pending_actions: compat.pending_actions,
+            blocked_job_ids: compat.blocked_job_ids,
+            ...(compat.update_required
+              ? { instruction: "Notify the user and run jobcreate CONTRACT UPDATE before executing a Custom Job." }
+              : {}),
+          },
         });
       } catch (error) {
         return toolError("job_list", error);
@@ -488,11 +516,23 @@ export function registerJobDiscoveryTools(server: McpServer): void {
         const executionMode =
           path.extname(real).toLowerCase() === ".py" ? "direct" : "reasoning";
         const bundle = await inspectJobBundle(real);
+        const compat = await getJobLocalCompatStatus();
+        const blocked = compat.blocked_job_ids.some(
+          (id) => id.toLowerCase() === entry.id.toLowerCase()
+        );
         return toolResult("job_get", {
           id: entry.id,
           title: entry.title,
           library_id: entry.library_id,
           registry: "user",
+          contract_compatibility: {
+            update_required: compat.update_required,
+            blocked,
+            update_reason: compat.update_reason,
+            ...(compat.update_required || blocked
+              ? { instruction: "Notify the user: this Custom Job requires jobcreate CONTRACT UPDATE before normal execution. Do not silently use an outdated JOB.md." }
+              : {}),
+          },
           path: real,
           relative_path: relative,
           execution_mode: executionMode,
@@ -713,7 +753,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Mark Local Job Compatibility Scan Complete",
       description:
-        "After jobcreate CONTRACT UPDATE mode has scanned all User Registry Jobs for the current compatibility signal, repaired/validated affected local Jobs, and produced a report, persist the small checked marker. Pending external actions are recorded but do not force the full scan to repeat.",
+        "After jobcreate CONTRACT UPDATE has scanned all registered User Jobs and reported its findings to the user, mark the contract checked. Record pending_actions AND blocked_job_ids for any affected Job still requiring approval, tests or promotion; blocked Jobs remain non-executable while compatible Jobs can run. Reject incorrect scan counts.",
       inputSchema: {
         scanned_user_jobs: z
           .number()
@@ -728,18 +768,38 @@ export function registerJobAuthoringTools(server: McpServer): void {
           .max(100)
           .optional()
           .default([]),
+        blocked_job_ids: z.array(z.string().min(1).max(160))
+          .max(100)
+          .describe("REQUIRED explicit review: [] only if every affected User Job was repaired/accepted; otherwise list registered IDs whose changes are untested/unpromoted. These Jobs remain blocked."),
       },
     },
     async ({
       scanned_user_jobs,
       report_summary,
       pending_actions,
+      blocked_job_ids,
     }) => {
       try {
+        const registryJobs = await loadJobs();
+        if (scanned_user_jobs !== registryJobs.length) {
+          throw new Error(
+            `JOB_LOCAL_COMPAT_SCAN_COUNT_MISMATCH: received scanned_user_jobs=${scanned_user_jobs}; actual registered User Jobs=${registryJobs.length}. Read job_list/job_get and inspect all User Jobs before marking the local compatibility contract checked.`
+          );
+        }
+        const canonicalIds = new Map(registryJobs.map(
+          (job) => [job.id.toLowerCase(), job.id]
+        ));
+        const blocked = [...new Set(blocked_job_ids.map((id) => id.toLowerCase()))];
+        if (blocked.some((id) => !canonicalIds.has(id))) {
+          throw new Error(
+            "JOB_LOCAL_COMPAT_BLOCKED_JOB_UNKNOWN: blocked_job_ids must refer only to registered User Jobs."
+          );
+        }
         await markJobLocalCompatChecked({
           scanned_user_jobs,
           report_summary,
           pending_actions,
+          blocked_job_ids: blocked.map((id) => canonicalIds.get(id)!),
         });
         return toolResult(
           "job_local_compat_mark_checked",
@@ -747,6 +807,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
             ...(await getJobLocalCompatStatus()),
             scanned_user_jobs,
             pending_actions,
+            blocked_job_ids: blocked.map((id) => canonicalIds.get(id)!),
           }
         );
       } catch (error) {
@@ -784,7 +845,8 @@ export function registerJobAuthoringTools(server: McpServer): void {
         let jobFile: string;
         if (id) {
           await assertJobLocalCompatReady(
-            "running a User Reasoning Job"
+            "running a User Reasoning Job",
+            id
           );
           const jobs = await loadJobs();
           const entry = jobs.find(
@@ -1128,7 +1190,8 @@ export function registerJobAuthoringTools(server: McpServer): void {
         }
 
         await assertJobLocalCompatReady(
-          "running a User Job"
+          "running a User Job",
+          id
         );
         const jobs = await loadJobs();
         const entry = jobs.find(
