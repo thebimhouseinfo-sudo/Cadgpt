@@ -94,3 +94,12 @@ Status: PLANNER_RESOLVED_AWAITING_NEW_CR (no official CR verdict for this blob)
 Consistency checks: 16/16 revision-6 plan assertions passed; no old "J05C depends J05B" text, no J04/J06A nearest/intersection duplication, no legacy c:CG-clear test, no change to TabSortV2-2.lsp scope.
 This is PLANNER evidence, not test/AutoCAD proof. All implementation acceptance gates remain outstanding.
 Fresh independent CR must bind to exact revision-6 blob; previous revision-3 PASS and revision-5 CHANGES_REQUIRED cannot be reused for revision 6.
+
+
+## Planner→Reviewer Loop — Revision 7, Round 1
+Target plan blob SHA: 17d8a39f0d9e0fee268a93178ecde79aff2f07f7
+Status: CHANGES_REQUIRED (same-turn role-separated planning review; not official GSA Job Verification)
+- RV7-01 / IMPORTANT / Operation identity contradiction. J03C1 says the journal lookup key may contain operation kind, while J03C2 promises that reusing the same operation_id for a different kind is rejected. A key separated by kind could allow two executions for the same ID; primary key must omit kind and store/check kind as immutable metadata. Evidence: J03C1 first bullet vs J03C2 last sentence.
+- RV7-02 / IMPORTANT / Persistent journal authorization. J03C1 correctly removes transient Job/session ID from the lookup key, but a later unrelated Job that knows an ID may read previous result or claim/replay it unless journal ownership and authorized resume/delegation are specified. Keep stable identity separate from access control, authorize current lease/drawing and durable owner or explicit continuation capability; deny cross-Job replay without proof. Evidence: journal identity/rebind path and current CAD proxy lease/binding policy.
+- RV7-03 / MINOR / Deterministic retry hash. A payload hash using *current* source state after mutation can differ on a retry, so the request hash must derive from original canonical caller preconditions, while actual CAD state is separately validated against recorded pre/post evidence. Evidence: J03C2 source preconditions and J03C1 reconciliation.
+Route: Planner revision 8; review exact new blob. This planning-only review has no live AutoCAD evidence.
