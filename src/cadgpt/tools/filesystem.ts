@@ -87,7 +87,7 @@ function currentWritableRoots(): string[] {
     currentToolLease().workId
   );
   if (reasoningScope) return [...new Set(jobRoots)];
-  if (jobRoots.length) return [...new Set([...jobRoots, ...humanPowerRoots])];
+  if (jobRoots.length) return [...new Set(jobRoots)];
   return [
     ...new Set([
       ...getWritableRoots(),
