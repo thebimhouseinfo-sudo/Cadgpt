@@ -15,7 +15,10 @@ import {
   isCadGptSourcePath,
 } from "../runtime/human-power.js";
 import { drawingMetadataRootsForExecution, drawingMetadataWritableRootsForExecution } from "../runtime/drawing-persistence.js";
-import { jobRuntimeWritableRootsForExecution } from "../runtime/job-runtime.js";
+import {
+  jobRuntimeWritableRootsForExecution,
+  reasoningJobStorageScopeWasEntered,
+} from "../runtime/job-runtime.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
 const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".py"]);
@@ -76,15 +79,19 @@ function currentWritableRoots(): string[] {
   } catch {
     jobRoots = [];
   }
-  const ordinaryRoots = jobRoots.length
-    ? jobRoots
-    : [
-        ...getWritableRoots(),
-        ...currentWritableDrawingMetadataRoots(),
-      ];
+  // Reasoning Job file writes are limited to its own runtime and exact
+  // Drawing Anchor result namespace. After finish, fail closed until Work
+  // retires: never restore generic workspace/data/drawing-root access.
+  // Direct Jobs retain their pre-existing executor/file behavior.
+  const reasoningScope = reasoningJobStorageScopeWasEntered(
+    currentToolLease().workId
+  );
+  if (reasoningScope) return [...new Set(jobRoots)];
+  if (jobRoots.length) return [...new Set(jobRoots)];
   return [
     ...new Set([
-      ...ordinaryRoots,
+      ...getWritableRoots(),
+      ...currentWritableDrawingMetadataRoots(),
       ...humanPowerRoots,
     ]),
   ];

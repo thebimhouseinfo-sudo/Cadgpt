@@ -77,12 +77,19 @@ export async function cleanupExecutionState(
   }
 
   try {
-    const { cleanupJobRuntimeForExecution } = await import(
-      "./job-runtime.js"
-    );
-    result.job_runtime_cleanup =
-      await cleanupJobRuntimeForExecution(executionId);
-    result.job_runtime_cleaned = true;
+    const {
+      cleanupJobRuntimeForExecution,
+      clearReasoningJobStorageScopeForExecution,
+    } = await import("./job-runtime.js");
+    try {
+      result.job_runtime_cleanup =
+        await cleanupJobRuntimeForExecution(executionId);
+      result.job_runtime_cleaned = true;
+    } finally {
+      // Full Work retirement (not job_runtime_finish) ends the restrictive
+      // Reasoning Job file scope. Does not alter the Direct Job executor.
+      clearReasoningJobStorageScopeForExecution(executionId);
+    }
   } catch (error) {
     result.errors.push(
       `Job runtime cleanup: ${errorText(error)}`

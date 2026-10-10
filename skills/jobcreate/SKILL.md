@@ -199,6 +199,25 @@ For reasoning `.md`, every step must retain its agreed semantic purpose, explici
 
 For direct `.py`, keep the script deterministic, use explicit inputs, fail loudly, and when a drawing is bound target only the exact `CADGPT_DRAWING_*` identity supplied by CadGPT. Do not guess `ActiveDocument` or scan for a convenient drawing. Direct execution runs with `CADGPT_JOB_RUNTIME_ROOT` as CWD; use that for raw/intermediate data. Resolve permanent package-relative helpers/assets from `CADGPT_JOB_ROOT`, not process CWD. When supplied, `CADGPT_JOB_RESULT_ROOT` is the only Job-owned final drawing-result location.
 
+For **Reasoning JOB.md authoring**, make the storage boundary explicit in
+every created or updated Job:
+- Keep a unique `<job-root>` for each Job, including its own `runtime/**`.
+  Collector LISP writes raw data there (never into another Job package,
+  Drawing Anchor root, or external input folder).
+- Request `job_runtime_prepare` before working-data mutation; record the
+  returned `runtime_root` and `job_steps.path`.
+- Raw, intermediate files and Job Steps are writable ONLY in that Job's
+  `runtime/**`. Publish final persistent drawing output ONLY through the
+  exact `drawing_job_result_location` result folder:
+  `drawings/<verified-anchor>/jobs/<job-name>-result/**`.
+- Inputs under other authorized managed folders, other Job results and
+  user-supplied folders are **read-only**. If processing must modify an
+  external input, first copy it into this Job's runtime and work on the copy.
+- Validation must simulate at least one allowed runtime write, one allowed
+  result write, a read-only foreign input, and denials for workspace/data,
+  another Job's runtime/result, and the Drawing Anchor parent.
+- No Direct Job changes: existing `.py` executor policy stays as-is.
+
 Do not broaden tool access merely because a tool is available.
 
 Run:

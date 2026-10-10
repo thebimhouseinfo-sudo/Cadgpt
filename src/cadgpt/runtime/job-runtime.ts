@@ -40,6 +40,19 @@ const contextsBySystemToolId =
 const executionByJobRoot =
   new Map<string, string>();
 
+// Only Reasoning Jobs need file-tool write boundaries. Direct Python Jobs
+// use their existing fixed executor; this marker never applies to them.
+// Keep the boundary after job_runtime_finish until the parent Work ends.
+const reasoningScopedExecutions = new Set<string>();
+
+export function reasoningJobStorageScopeWasEntered(executionId: string): boolean {
+  return reasoningScopedExecutions.has(executionId);
+}
+
+export function clearReasoningJobStorageScopeForExecution(executionId: string): void {
+  reasoningScopedExecutions.delete(executionId);
+}
+
 /**
  * Job Steps is only a per-Job checklist; never a workflow engine or a
  * persistent source of truth. It stays under Job-owned runtime scratch.
@@ -428,6 +441,13 @@ export async function prepareJobRuntimeForExecution(
           executionId,
           context
         );
+        if (resetRuntime) {
+          // Direct Job starts a separate fixed executor: do not inherit
+          // Reasoning Job's file-tool policy into this execution mode.
+          reasoningScopedExecutions.delete(executionId);
+        } else {
+          reasoningScopedExecutions.add(executionId);
+        }
         return context;
       } catch (error) {
         if (
