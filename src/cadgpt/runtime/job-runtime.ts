@@ -121,6 +121,11 @@ async function removeIfEmpty(
 }
 
 /** Foreground Job contexts retained across logical MCP sessions. */
+/** Detached runtime contexts can outlive the original ChatGPT execution. */
+export function activeDetachedJobRuntimeToolIds(): string[] {
+  return [...contextsBySystemToolId.keys()];
+}
+
 export function activeForegroundJobRuntimeExecutionIds(): string[] {
   return [...contextsByExecution.keys()];
 }
