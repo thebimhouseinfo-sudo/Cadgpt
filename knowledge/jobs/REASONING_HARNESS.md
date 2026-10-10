@@ -6,6 +6,22 @@ Before a normal User Reasoning Job starts, call `job_local_compat_status`. If it
 
 At the start of every actual Reasoning Job run, call `job_runtime_prepare(id=<registered-job-id>)` before any file mutation. Starting a Job automatically releases stale foreground/SYSTEM Job authority from the same logical chat, but it does not delete prior runtime bytes. Use the returned `runtime_root` for all raw/intermediate working data. If `recovery_pending=true`, drain/verify/delete the preserved pending work before or as part of the new run according to the Job contract.
 
+## Storage rule for Reasoning Job steps
+
+After `job_runtime_prepare`, use only its `runtime_root` for collected raw,
+CSV/JSON, collector output, Job Steps and intermediate processing. For
+final persistent output call `drawing_job_result_location` and write only
+to that Job's returned `jobs/<job-name>-result/**` directory under the
+verified Drawing Anchor. Never use the entire Drawing Anchor, another
+Job's runtime/result, or a general workspace/data root as a writable
+fallback. Authorized external inputs/other Job results may be read
+but must not be edited, deleted or overwritten. If a step needs to transform
+such input, copy it into the current Job's runtime first. On a denied
+write report the original permission error; do not enable Human Power or
+change Job tool family to bypass the boundary. The restrictions survive
+`job_runtime_finish` until the parent Work ends. This is a Reasoning
+Job FILE/SYSTEM data rule, not a change to the Direct Job executor.
+
 ## Run-start source and routing discipline
 
 The permanent managed `JOB.md` is the **only current workflow definition**.
