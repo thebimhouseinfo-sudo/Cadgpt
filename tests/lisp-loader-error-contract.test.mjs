@@ -83,6 +83,6 @@ test("Job Steps harness requires user-visible PASS/FAIL source diagnostics and n
   assert.match(harness, /loaded=false/);
   assert.match(harness, /loaded=true/);
   assert.match(harness, /CadGPT platform\/source failure/);
-  assert.match(harness, /before the runtime\s+resets Job Steps/);
+  assert.match(harness, /before the runtime\s+resets Job Steps/i);
   assert.match(harness, /do not silently call another lower-level/);
 });
