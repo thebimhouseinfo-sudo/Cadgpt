@@ -40,17 +40,17 @@ const contextsBySystemToolId =
 const executionByJobRoot =
   new Map<string, string>();
 
-// An execution that prepared a User Job may not fall back to generic
-// workspace/data write access after job_runtime_finish or a Job transition.
-// Clear only when the Work itself is destroyed.
-const jobScopedExecutions = new Set<string>();
+// Only Reasoning Jobs need file-tool write boundaries. Direct Python Jobs
+// use their existing fixed executor; this marker never applies to them.
+// Keep the boundary after job_runtime_finish until the parent Work ends.
+const reasoningScopedExecutions = new Set<string>();
 
-export function jobStorageScopeWasEntered(executionId: string): boolean {
-  return jobScopedExecutions.has(executionId);
+export function reasoningJobStorageScopeWasEntered(executionId: string): boolean {
+  return reasoningScopedExecutions.has(executionId);
 }
 
-export function clearJobStorageScopeForExecution(executionId: string): void {
-  jobScopedExecutions.delete(executionId);
+export function clearReasoningJobStorageScopeForExecution(executionId: string): void {
+  reasoningScopedExecutions.delete(executionId);
 }
 
 /**
@@ -441,7 +441,7 @@ export async function prepareJobRuntimeForExecution(
           executionId,
           context
         );
-        jobScopedExecutions.add(executionId);
+        if (!resetRuntime) reasoningScopedExecutions.add(executionId);
         return context;
       } catch (error) {
         if (
