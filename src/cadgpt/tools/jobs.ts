@@ -516,11 +516,23 @@ export function registerJobDiscoveryTools(server: McpServer): void {
         const executionMode =
           path.extname(real).toLowerCase() === ".py" ? "direct" : "reasoning";
         const bundle = await inspectJobBundle(real);
+        const compat = await getJobLocalCompatStatus();
+        const blocked = compat.blocked_job_ids.some(
+          (id) => id.toLowerCase() === entry.id.toLowerCase()
+        );
         return toolResult("job_get", {
           id: entry.id,
           title: entry.title,
           library_id: entry.library_id,
           registry: "user",
+          contract_compatibility: {
+            update_required: compat.update_required,
+            blocked,
+            update_reason: compat.update_reason,
+            ...(compat.update_required || blocked
+              ? { instruction: "Notify the user: this Custom Job requires jobcreate CONTRACT UPDATE before normal execution. Do not silently use an outdated JOB.md." }
+              : {}),
+          },
           path: real,
           relative_path: relative,
           execution_mode: executionMode,
