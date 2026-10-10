@@ -120,6 +120,11 @@ async function removeIfEmpty(
   }
 }
 
+/** Foreground Job contexts retained across logical MCP sessions. */
+export function activeForegroundJobRuntimeExecutionIds(): string[] {
+  return [...contextsByExecution.keys()];
+}
+
 export function activeJobRuntimeForExecution(
   executionId: string
 ): JobRuntimeContext | null {
