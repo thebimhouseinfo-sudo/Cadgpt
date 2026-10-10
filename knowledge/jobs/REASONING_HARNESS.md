@@ -6,6 +6,37 @@ Before a normal User Reasoning Job starts, call `job_local_compat_status`. If it
 
 At the start of every actual Reasoning Job run, call `job_runtime_prepare(id=<registered-job-id>)` before any file mutation. Starting a Job automatically releases stale foreground/SYSTEM Job authority from the same logical chat, but it does not delete prior runtime bytes. Use the returned `runtime_root` for all raw/intermediate working data. If `recovery_pending=true`, drain/verify/delete the preserved pending work before or as part of the new run according to the Job contract.
 
+## Run-start source and routing discipline
+
+The permanent managed `JOB.md` is the **only current workflow definition**.
+Each invocation starts with `job_runtime_prepare`, which returns the
+`workflow.source_sha256` and freshly read `workflow.content`.
+Follow those returned bytes, not a prior assistant summary, the chat history,
+a remembered stage number, or instructions that were only discussed but were
+never promoted to the managed Job package. The Work being HYBRID grants tool
+availability, not permission to skip Job branching.
+
+Before executing a conditional branch, inspect the **actual input condition**
+named by this Job's entry step, using managed file/CAD read tools. A Job may
+check raw files, final result files, or both; do not substitute one for another.
+A `recovery_pending` flag is only a hint that scratch exists, never proof
+that the Job's own raw-data condition is true. If the check fails, STOP rather
+than assume empty/nonempty. Follow the exact branch in current `JOB.md`.
+
+When a Job step requires a choice, ask only those choices valid for that
+observed condition; wait for an explicit answer. Never reuse a choice from a
+previous invocation. After a choice, execute its specified action and stopping
+point. A load-only choice loads the declared Lisp and **stops** even if the
+general Job definition contains additional stages. A failed tool must not be
+reported as successful or bypassed by switching branches.
+
+On a new invocation, repeat entry checks. Only carry unfinished raw/results
+forward under the Job's explicit recovery instructions; neither old choices
+nor model-inferred routes are persistent workflow state. If the returned
+`workflow.content` conflicts with the user's latest requested change, report
+the unpromoted Job definition and route that requested change to `jobcreate`;
+do not silently treat the chat instruction as a permanent edit.
+
 ## Runtime loop
 
 For each Job step:
