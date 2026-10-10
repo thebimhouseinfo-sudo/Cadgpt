@@ -163,3 +163,12 @@ Status: PLANNER_RESOLVED_AWAITING_NEW_INDEPENDENT_CR — 21/21 document assertio
 Reviewer guardrails: no 'exactly once' promise if DWG/AppData/host ledger all lost together; preserve current 41 legacy tool contracts; do not touch TabSortV2-2.lsp; no early dependency from M0a Grille fix to J03C journal expansion; native R22.0 host E2E is required before implementation-level PASS.
 
 Disposition: Rev10 source plan repaired and committed; awaiting fresh independent CR against exact blob. Historical Review PASS of Rev8 does not transfer. No source implementation, runtime, AutoLISP, DWG, AppData or main changes.
+
+
+## Final plan acceptance — Revision 11 (2026-10-10)
+- Target plan blob: `6dafa70fe214bbf5fb8dd177d1a22e1511c58d9f`.
+- Human accepted the plan and authorized beginning phased implementation.
+- Independent source review verdict: PASS_WITH_FINDINGS on planning architecture; CR10-01 one-mutation-RPC and CR10-02 saved-vs-live checkpoint contracts resolved. This is not a persisted GSA CRITIC_REVIEW Verification or a live AutoCAD test.
+- Minor follow-up: PR metadata and Review Ledger synchronization (this entry).
+- Implementation priority: M0a/J00+J01 Grille/Tag bulk-selection reproduction and narrowly-scoped repair; keep `TabSortV2-2.lsp` untouched. M0x/J01X separate.
+- Release controls: milestone-specific branch, source + test review, CI, disposable-DWG real R22.0 gate and explicit human-approved merge to main; no claim of runtime readiness from this review.
