@@ -174,9 +174,15 @@ Pending external action:
 
 After all registered User Jobs have been inspected, show the report to
 the user, then call `job_local_compat_mark_checked` with the **actual number
-of registered User Jobs examined**, report summary and all pending external
-actions. The tool rejects a scan count inconsistent with the registry.
+of registered User Jobs examined**, report summary, all pending actions,
+and `blocked_job_ids`: the exact registered IDs of affected Jobs whose
+changes have NOT been accepted, tested, or promoted. The tool rejects
+a scan count inconsistent with the registry and unknown blocked IDs.
+A Job in `blocked_job_ids` stays non-executable until the updater
+completes its repairs and the marker is rechecked with that ID removed.
+Unaffected Jobs remain usable after the initial compatibility scan.
 Pending/unpromoted user changes must be clearly reported as pending,
 not described as already applied; they remain visible at subsequent CadGPT
 launches even if the completed compatibility scan itself does not repeat.
 Do not mark the epoch checked before enumeration/inspection has occurred.
+Do not mark an unpromoted Job as already repaired merely to make it runnable.
