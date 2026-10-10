@@ -257,16 +257,18 @@ Canonical private helper ownership is:
 <job-root>/tools/**        # other private helper/script/assets
 ```
 
-Private Job helpers are declared/resolved by the owning Job only. They are not independent global/user Registry capabilities. A Job-owned internal Lisp helper:
+Private Job helpers remain owned and maintained by their Job. A different Job may use an existing owner's internal helper (including LISP) without copying it, promoting it to a global Registry capability, or taking ownership of its outputs. A Job-owned internal Lisp helper:
 
 - is authored, versioned, tested, checked out and promoted with its owning Job;
 - is declared locally by the Job contract so the Job can resolve and load it;
-- is loaded on demand only when that Job requires it;
+- is loaded on demand when the owner or another Job needs to use it;
 - is not added to the global/user Lisp Registry;
 - is not discoverable as an independent reusable Lisp capability;
 - must not be moved into a shared Lisp Library merely to bypass missing Job-bundle tooling.
 
 The same ownership rule applies to `tools/**`: checkout, validation hashing and promotion preserve those assets with the Job, but they are not separately registered globally.
+
+**Borrowing rule:** A Job may use an existing Job's internal tool and read the files/results it produces (subject to normal read permissions). The tool keeps its original hard-coded output location and **the Job owning the tool also owns the resulting files**. Borrowing does not give the caller permission to edit, delete, relocate or take ownership of those files. The borrowing Job writes its own processed data/results only to its own authorized destinations.
 
 This differs from a Job-owned dynamic derivative: an internal helper is authored specifically for the Job, while a dynamic derivative is seeded from a registered proven Lisp and then changes only declared dynamic sections.
 
