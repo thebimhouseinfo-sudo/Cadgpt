@@ -39,6 +39,7 @@ interface JobLocalCompatState {
   scanned_user_jobs?: number;
   report_summary?: string;
   pending_actions?: string[];
+  blocked_job_ids?: string[];
 }
 
 function statePath(): string {
@@ -72,6 +73,7 @@ export async function getJobLocalCompatStatus(): Promise<{
   update_reason: "epoch_changed" | "contract_changed" | null;
   update_required: boolean;
   pending_actions: string[];
+  blocked_job_ids: string[];
   report_summary: string | null;
 }> {
   const state = await readState();
@@ -98,6 +100,9 @@ export async function getJobLocalCompatStatus(): Promise<{
     )
       ? state.pending_actions.map(String)
       : [],
+    blocked_job_ids: Array.isArray(state.blocked_job_ids)
+      ? state.blocked_job_ids.map(String)
+      : [],
     report_summary:
       typeof state.report_summary === "string"
         ? state.report_summary
@@ -109,6 +114,7 @@ export async function markJobLocalCompatChecked(input: {
   scanned_user_jobs: number;
   report_summary: string;
   pending_actions: string[];
+  blocked_job_ids?: string[];
 }): Promise<void> {
   const target = statePath();
   await fs.mkdir(path.dirname(target), {
@@ -127,6 +133,7 @@ export async function markJobLocalCompatChecked(input: {
       input.scanned_user_jobs,
     report_summary: input.report_summary,
     pending_actions: input.pending_actions,
+    blocked_job_ids: input.blocked_job_ids ?? [],
   };
   try {
     await fs.writeFile(
