@@ -40,6 +40,19 @@ const contextsBySystemToolId =
 const executionByJobRoot =
   new Map<string, string>();
 
+// An execution that prepared a User Job may not fall back to generic
+// workspace/data write access after job_runtime_finish or a Job transition.
+// Clear only when the Work itself is destroyed.
+const jobScopedExecutions = new Set<string>();
+
+export function jobStorageScopeWasEntered(executionId: string): boolean {
+  return jobScopedExecutions.has(executionId);
+}
+
+export function clearJobStorageScopeForExecution(executionId: string): void {
+  jobScopedExecutions.delete(executionId);
+}
+
 /**
  * Job Steps is only a per-Job checklist; never a workflow engine or a
  * persistent source of truth. It stays under Job-owned runtime scratch.
@@ -428,6 +441,7 @@ export async function prepareJobRuntimeForExecution(
           executionId,
           context
         );
+        jobScopedExecutions.add(executionId);
         return context;
       } catch (error) {
         if (
