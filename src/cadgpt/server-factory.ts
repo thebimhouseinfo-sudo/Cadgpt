@@ -42,6 +42,7 @@ import { registerJobDynamicLispTools } from "./tools/job-dynamic-lisp.js";
 import { registerSkillTools } from "./tools/skills.js";
 import { registerCapabilityRegistryTools } from "./tools/registry.js";
 import { registerFilesystemTools } from "./tools/filesystem.js";
+import { registerJobSystemHelperTools } from "./tools/job-system-helper.js";
 import { registerKnowledgeTools } from "./tools/knowledge.js";
 import { registerLispHarnessTools } from "./tools/lisp-harness.js";
 import { registerLispWorkspaceTools } from "./tools/lisp-workspace.js";
@@ -259,6 +260,7 @@ function registerStableProductionSurface(server: McpServer): void {
   registerSkillTools(server);
   registerCapabilityRegistryTools(server);
   registerFilesystemTools(server);
+  registerJobSystemHelperTools(server);
   registerKnowledgeTools(server);
   registerLispHarnessTools(server);
   registerLispWorkspaceTools(server);
