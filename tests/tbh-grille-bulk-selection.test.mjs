@@ -44,7 +44,7 @@ test("M0a: Grille ATT upgrade uses one pass per block definition and safe handle
 test("M0a: no unrelated bulk owner changes to CG, GT or callback", async () => {
   const s = await fs.readFile(file, "utf8");
   const reactor = segment(s, "(defun mep_collect_targets ", "(defun mep_auto_update_callback ");
-  assert.doesNotMatch(reactor, /ssgetfirst/);
+  assert.doesNotMatch(reactor, /\(ssgetfirst\s*\)/, "no actual PICKFIRST lookup in reactor");
   const copy = segment(s, "(defun c:CG ", "(princ \"\\n-> Type GT");
   assert.match(copy, /\(command "_.COPY"\)/);
   const tag = segment(s, "(defun c:GT ", ";;; ===========================================================================\n;;; EXISTING DWG UPGRADE");
