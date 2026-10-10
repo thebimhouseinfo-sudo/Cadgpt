@@ -19,6 +19,32 @@ import { cleanupExecutionState } from "../runtime/execution-cleanup.js";
 import { handoffVerifiedDrawingMetadataRoot } from "../runtime/drawing-persistence.js";
 import { toCadgptPath } from "../lib/path-security.js";
 
+/**
+ * Jobs are HYBRID unless a specific non-hybrid exception is explicitly set.
+ * Legacy Job callers that choose FILE/CAD based on the first step cannot
+ * accidentally disable the other capability. Other Work types are unchanged.
+ */
+export function resolveWorkExecutionPath(input: {
+  ownerType: WorkOwnerType;
+  executionPath?: ExecutionPath;
+  jobNonHybridPath?: "file" | "cad";
+}): ExecutionPath {
+  if (input.ownerType === "job") {
+    return input.jobNonHybridPath ?? "hybrid";
+  }
+  if (input.jobNonHybridPath) {
+    throw new Error(
+      "JOB_NONHYBRID_OVERRIDE_ONLY_FOR_JOB: override applies only to Job Work."
+    );
+  }
+  if (!input.executionPath) {
+    throw new Error(
+      "EXECUTION_PATH_REQUIRED: non-Job Work must specify file, cad, or hybrid."
+    );
+  }
+  return input.executionPath;
+}
+
 export function registerWorkControlTools(
   server: McpServer,
   options: {
@@ -48,11 +74,16 @@ export function registerWorkControlTools(
     {
       title: "Start or Reuse CadGPT Work",
       description:
-        "Start execution only when there is no compatible existing work. If this conversation already has a work_handle but the connector replaced the MCP session, pass continuation_execution_id + continuation_authority_token so CadGPT resumes that exact work first. A bound HYBRID drawing workspace should be reused for later Job/Lisp authoring and CAD queries instead of starting a new work generation.",
+        "Start execution only when there is no compatible existing work. ALL Job Work defaults to HYBRID (CAD + FILE/SYSTEM) even if execution_path=file or cad was passed by an older caller. Only an explicitly approved non-hybrid Job should use job_nonhybrid_path=file/cad. For non-Job Work, execution_path remains required. Continue an existing work_handle when the MCP session rotates; never invent a drawing binding.",
       inputSchema: {
         owner_type: z.enum(["skill", "job", "direct-cad", "file"]),
         owner_id: z.string().min(1).max(160),
-        execution_path: z.enum(["file", "cad", "hybrid"]),
+        execution_path: z.enum(["file", "cad", "hybrid"]).optional().describe(
+          "Non-Job Work requires this. Job Work defaults to HYBRID even when a legacy caller passes file/cad; use job_nonhybrid_path for an explicit exception."
+        ),
+        job_nonhybrid_path: z.enum(["file", "cad"]).optional().describe(
+          "Explicit exception for a Job intentionally restricted to one capability. Never infer this from the Job's tools or the first step."
+        ),
         continuation_execution_id: z.string().min(1).optional(),
         continuation_authority_token: z.string().min(1).optional(),
       },
@@ -83,10 +114,16 @@ export function registerWorkControlTools(
       owner_type,
       owner_id,
       execution_path,
+      job_nonhybrid_path,
       continuation_execution_id,
       continuation_authority_token,
     }) => {
       try {
+        const requestedPath = resolveWorkExecutionPath({
+          ownerType: owner_type,
+          executionPath: execution_path,
+          jobNonHybridPath: job_nonhybrid_path,
+        });
         if (continuation_execution_id || continuation_authority_token) {
           if (!continuation_execution_id || !continuation_authority_token) {
             throw new Error(
@@ -105,10 +142,10 @@ export function registerWorkControlTools(
           );
           const requestedCompatible =
             resumed.executionPath === "hybrid" ||
-            resumed.executionPath === execution_path;
+            resumed.executionPath === requestedPath;
           if (!requestedCompatible) {
             throw new Error(
-              `EXECUTION_PATH_MISMATCH: existing work is '${resumed.executionPath}' and cannot satisfy requested '${execution_path}'.`
+              `EXECUTION_PATH_MISMATCH: existing work is '${resumed.executionPath}' and cannot satisfy requested '${requestedPath}'.`
             );
           }
 
@@ -161,7 +198,7 @@ export function registerWorkControlTools(
           existing &&
           existing.ownerType === owner_type &&
           existing.ownerId === owner_id.trim() &&
-          existing.executionPath === execution_path
+          existing.executionPath === requestedPath
         ) {
           const toolSurface = await options.prepareFamilies(
             existing.executionPath,
@@ -193,13 +230,24 @@ export function registerWorkControlTools(
           sessionKey: options.sessionKey,
           ownerType: owner_type as WorkOwnerType,
           ownerId: owner_id,
-          executionPath: execution_path as ExecutionPath,
+          executionPath: requestedPath,
         });
 
-        // Work A can be HYBRID while Job B needs FILE only. A new work
-        // generation must not silently discard A's CAD-verified drawing
-        // metadata scope. Transfer only the single previously authorized
-        // drawing root, not CAD capability or old Job write scopes.
+        // Preserve only previously verified in-session drawing identity for a
+        // HYBRID successor. No CAD MCP call, implicit ActiveDocument guess, or
+        // cross-session bind; the first CAD operation rechecks document lifetime.
+        const drawingHandoff =
+          previousExecution && requestedPath === "hybrid"
+            ? (await import("../session/drawing-binding.js"))
+                .handoffSingleBoundDrawingForExecution(
+                  previousExecution,
+                  work.executionId
+                )
+            : null;
+
+        // Work A can be HYBRID while Job B may explicitly opt out to FILE.
+        // Preserve only the known drawing metadata root as read-only; never
+        // inherit another Job's writable result authority.
         const inheritedDrawingRoot = previousExecution
           ? handoffVerifiedDrawingMetadataRoot(
               previousExecution,
@@ -240,6 +288,17 @@ export function registerWorkControlTools(
           ...(toolSurface ? { tool_surface: toolSurface } : {}),
           note:
             "IMPORTANT: Use work_handle.execution_id + work_handle.authority_token as required parameters for every file_*, job_*, lisp_*, cad__*, drawing_* tool call. work_capabilities are internal privilege flags unrelated to tool availability.",
+          ...(drawingHandoff
+            ? {
+                drawing_handoff: {
+                  inherited: true,
+                  drawing_id: drawingHandoff.drawing_id,
+                  name: drawingHandoff.name,
+                  full_name: drawingHandoff.full_name,
+                  note: "Single verified binding was inherited from this chat; next CAD call revalidates its runtime document identity.",
+                },
+              }
+            : {}),
           ...(inheritedDrawingRoot ? {
             drawing_metadata_handoff: {
               inherited: true,

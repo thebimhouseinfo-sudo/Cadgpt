@@ -202,6 +202,36 @@ export async function bindDrawing(document: string): Promise<BoundDrawing> {
   return bindDrawingForExecution(lease.workId, document);
 }
 
+/**
+ * Transfer exactly one verified drawing identity to a new HYBRID Work in the
+ * same logical session. Caller is responsible for enforcing session ownership
+ * and for cleaning the old Work after the transfer. This does not contact CAD
+ * or bind by filename: the first operation still validates the document's
+ * runtime_document_identity, so close/reopen cannot retarget the binding.
+ *
+ * Never guess which drawing a multi-drawing Work intended to use.
+ */
+export function handoffSingleBoundDrawingForExecution(
+  sourceExecutionId: string,
+  targetExecutionId: string
+): BoundDrawing | null {
+  if (sourceExecutionId === targetExecutionId) return null;
+  const old = contexts.get(sourceExecutionId);
+  if (!old || old.size !== 1) return null;
+  if ((contexts.get(targetExecutionId)?.size ?? 0) > 0) return null;
+
+  const original = [...old.values()][0];
+  const inherited: BoundDrawing = {
+    ...original,
+    execution_id: targetExecutionId,
+  };
+  contexts.set(
+    targetExecutionId,
+    new Map([[inherited.drawing_id, inherited]])
+  );
+  return { ...inherited };
+}
+
 export function getBoundDrawingsForExecution(executionId: string): BoundDrawing[] {
   return [...executionContexts(executionId).values()];
 }
