@@ -662,6 +662,12 @@ export function hasActiveToolLeaseForExecution(executionId: string): boolean {
   return hasActiveLeaseForWork(executionId);
 }
 
+export function activeJobWorkExecutionIds(): string[] {
+  return [...registrations.values()]
+    .filter((work) => work.ownerType === "job" && !work.closing)
+    .map((work) => work.executionId);
+}
+
 /** Retire another idle Job work without possessing its chat/authority token.
  * Called only by the server's explicit Job transition, never a public tool.
  * Do not retire a plain CAD add-in work that temporarily ran a Job.
