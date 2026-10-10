@@ -85,7 +85,15 @@ jobs:
 
             $initial = Invoke-Mcp 2 "tools/list" @{}
             $initialNames = @($initial.result.tools | ForEach-Object { $_.name })
-            if ($initialNames -contains "file_roots") { throw "FILE family loaded before admission/work" }
+            # The complete tool surface is registered at initialization,
+            # but invoking a FILE tool without a valid work handle must fail.
+            if ($initialNames -notcontains "file_roots") { throw "FILE tool missing from stable surface" }
+            $unauthorized = Invoke-Tool 18 "file_roots" @{
+              execution_id="exec:forged"; authority_token="forged"
+            }
+            if (-not $unauthorized.error -and $unauthorized.result.isError -ne $true) {
+              throw "Unadmitted client accessed FILE capability without authority"
+            }
 
             $admit = Invoke-Tool 3 "cadgpt_admission" @{ user_turn="@cadgpt run authoring integrity smoke"; invocation_source="mention" }
             if ($admit.result.structuredContent.data.mode -ne "active") { throw "CadGPT session was not claimed" }
