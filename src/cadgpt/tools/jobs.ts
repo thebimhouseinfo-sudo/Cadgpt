@@ -393,8 +393,9 @@ export function registerJobDiscoveryTools(server: McpServer): void {
               : "fast_path",
             instruction: status.update_required
               ? "ATTENTION: Job behavior/contract changed. Notify the user and request a jobcreate CONTRACT UPDATE scan BEFORE starting a User Job. Follow knowledge/jobs/LOCAL_COMPAT_UPDATE.md. Inspect each installed User Job, ask approval for changes to its business workflow, validate/test/promote affected Jobs, and report the results before marking this source contract checked."
-              : status.pending_actions.length
-                ? "Compatibility scan finished but some Custom Job updates are still pending. Surface pending_actions to the user; do not claim those Jobs were repaired."
+              : status.pending_actions.length || status.blocked_job_ids.length
+                ? "Compatibility scan finished but Custom Job repairs are pending. Show pending_actions and blocked_job_ids to the user; do not run any blocked User Job or claim it was repaired."
+
                 : "Compatibility signal matches. Do not deep-scan local Job packages.",
           }
         );
