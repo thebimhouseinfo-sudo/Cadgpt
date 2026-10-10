@@ -22,6 +22,8 @@ change Job tool family to bypass the boundary. The restrictions survive
 `job_runtime_finish` until the parent Work ends. This is a Reasoning
 Job FILE/SYSTEM data rule, not a change to the Direct Job executor.
 
+A Reasoning Job may use an internal helper (including LISP) belonging to another **existing** Job. The helper still writes to its owner's built-in paths; its produced files remain owned by the helper's Job. The borrower may read authorized outputs, but must not edit/delete them or treat them as its own files. The borrower's own outputs stay in its own runtime/result. Do not copy or re-register the borrowed helper.
+
 ## Run-start source and routing discipline
 
 The permanent managed `JOB.md` is the **only current workflow definition**.
