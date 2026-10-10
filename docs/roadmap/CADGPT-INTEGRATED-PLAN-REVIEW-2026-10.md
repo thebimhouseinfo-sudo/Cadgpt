@@ -71,3 +71,26 @@ Status: PLANNER_RESOLVED_PENDING_NEW_CR (no CR review result assigned to this re
 
 Planner consistency recheck: all 16 Job Pack headings present, no stale J05C-J05B dependency, no duplicated nearest/intersection ownership, TabSortV2-2 excluded, main and runtime untouched.
 Human-requested next step is an independent Critic Review of exact revision-5 blob. Neither the revision-3 PASS nor the preliminary revision-4 findings constitute a verdict for revision 5.
+
+## CR Revision 5 — preliminary source-bound findings (request: "cr kiểm lại")
+Target plan blob SHA: efb3516e9fb25942d45455727c115be08a041826
+Verdict: CHANGES_REQUIRED (conversation-level independent code/plan review; NOT an official persisted GSA CRITIC_REVIEW Verification)
+- CR5-01 / IMPORTANT — the 41 existing manifest tools lack explicit risk/family/visibility labels, so immediately applying fail-closed could interrupt current production behavior.
+- CR5-02 / IMPORTANT — CAD query, reading Editor/PICKFIRST selection and modifying Editor selection state are different safety contracts.
+- CR5-03 / IMPORTANT — creating geometry/blocks/annotations after a timed-out successful COM call can duplicate entities if blindly retried.
+- CR5-04 / MINOR — c:CG is a COPY-and-unlink-NEW-grilles operation, not a standalone link-clear command; tests must protect originals.
+
+## Planner repair — revision 6
+Target plan blob SHA: 66d5635d58e00bcce679a79103e55cf4d1820e61
+Status: PLANNER_RESOLVED_AWAITING_NEW_CR (no official CR verdict for this blob)
+
+| Finding | Implementation-plan owner and change | Mandatory implementation evidence | Disposition |
+| --- | --- | --- | --- |
+| CR5-01 | J03A: classify all 41 baseline tools, golden schema/behavior inventory, shadow decisions, reversible opt-in enforcement, fail-closed new tools; J03B central policy for named and gateway | 41-row policy, zero unexplained shadow mismatch, no loss of established tool access, unknown/internal denied, flag rollback, real host smoke | PLANNED |
+| CR5-02 | J04-Q pure geometry query; J04-S read-only Editor selection snapshot; J04-E optional guarded state-changing Editor selection operation | Selected handles/state unchanged for read APIs; no reactor/objectModified callbacks; reject stale state; mutation default-off until net46/R22.0 host E2E | PLANNED |
+| CR5-03 | J03C: durable operation-id/payload-hash journal and UNKNOWN_OUTCOME reconciliation; J05A/B/C consume it | Duplicate concurrent POST, lost reply, timeout/crash, undo/erase/reopen/Save As, conflict payload, partial batch; verified handle readback only | PLANNED |
+| CR5-04 | J01X: explicit c:CG fixture = COPY then unlink new grille only; verify original tag/grille link remains and third-party XData untouched | Single/multiple grille, tags, aborted copy, original/copy handle and RegApp-by-RegApp snapshot, linked-tag owner check, undo/redo | PLANNED |
+
+Consistency checks: 16/16 revision-6 plan assertions passed; no old "J05C depends J05B" text, no J04/J06A nearest/intersection duplication, no legacy c:CG-clear test, no change to TabSortV2-2.lsp scope.
+This is PLANNER evidence, not test/AutoCAD proof. All implementation acceptance gates remain outstanding.
+Fresh independent CR must bind to exact revision-6 blob; previous revision-3 PASS and revision-5 CHANGES_REQUIRED cannot be reused for revision 6.
