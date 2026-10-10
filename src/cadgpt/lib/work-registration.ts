@@ -657,6 +657,28 @@ export function releaseWorkRegistration(
   return { ...work, capabilities: [...work.capabilities] };
 }
 
+/** Internal transition guard; a live ToolLease may still be executing CAD/IO. */
+export function hasActiveToolLeaseForExecution(executionId: string): boolean {
+  return hasActiveLeaseForWork(executionId);
+}
+
+/** Retire another idle Job work without possessing its chat/authority token.
+ * Called only by the server's explicit Job transition, never a public tool.
+ * Do not retire a plain CAD add-in work that temporarily ran a Job.
+ */
+export function retireIdleJobWorkForExecution(executionId: string): boolean {
+  const work = registrations.get(executionId);
+  if (!work || work.ownerType !== "job") return false;
+  if (hasActiveLeaseForWork(executionId)) {
+    throw new Error("JOB_TRANSITION_BUSY: prior Job still has an in-flight tool call.");
+  }
+  if (activeBySession.get(work.sessionKey) === executionId) {
+    activeBySession.delete(work.sessionKey);
+  }
+  registrations.delete(executionId);
+  return true;
+}
+
 export function activeExecutionForSession(sessionKey: string): string | null {
   cleanup();
   return activeBySession.get(sessionKey) ?? null;
