@@ -154,6 +154,35 @@ app.post("/addin-control/pair/release/:pairId", (req, res) => {
   });
 });
 
+// Explicit AutoCAD IExtensionApplication.Terminate signal, authenticated by
+// the add-in control secret and a live pair. A WebView recreation does NOT call
+// this endpoint. No CAD drawing data or pending Job result files are deleted.
+app.post("/addin-control/host/closed/:pairId", async (req, res) => {
+  if (!authorizeAddinControl(req, res)) return;
+  const released = releaseAddinPairing(req.params.pairId);
+  if (!released) {
+    res.json({ ok: true, released: false, terminalized: false });
+    return;
+  }
+  try {
+    const { terminalizeIdleJobAuthorities } =
+      await import("./cadgpt/runtime/job-transition.js");
+    const terminal = await terminalizeIdleJobAuthorities({
+      reason: "cad_host_closed",
+    });
+    res.json({ ok: true, released: true, terminalized: true,
+      jobs: terminal.system_jobs.length +
+        terminal.foreground_executions.length });
+  } catch (error) {
+    // Do not interrupt an actual in-flight call. Next explicit Job start
+    // retries the guarded terminal transition across old sessions.
+    res.status(409).json({
+      ok: false, released: true, terminalized: false, pending: true,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
 app.get("/addin-control/binding/:pairId", async (req, res) => {
   if (!authorizeAddinControl(req, res)) return;
   try {
