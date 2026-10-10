@@ -757,8 +757,8 @@ export function registerJobAuthoringTools(server: McpServer): void {
           .optional()
           .default([]),
         blocked_job_ids: z.array(z.string().min(1).max(160))
-          .max(100).optional().default([])
-          .describe("Registered User Job IDs whose required compatibility repairs are untested/unpromoted; these Jobs remain blocked until explicitly repaired."),
+          .max(100)
+          .describe("REQUIRED explicit review: [] only if every affected User Job was repaired/accepted; otherwise list registered IDs whose changes are untested/unpromoted. These Jobs remain blocked."),
       },
     },
     async ({
