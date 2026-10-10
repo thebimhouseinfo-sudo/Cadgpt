@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateLispSource } from "../dist/cadgpt/tools/lisp-harness.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const file = path.join(root, "resources/cad/internal-lisp/tbh-toolkit/TBH Tool Kit/Annotation/MEP Properties.lsp");
@@ -51,4 +52,20 @@ test("M0a: no unrelated bulk owner changes to CG, GT or callback", async () => {
   assert.match(copy, /\(command "_.COPY"\)/);
   const tag = segment(s, "(defun c:GT ", ";;; ===========================================================================\n;;; EXISTING DWG UPGRADE");
   assert.match(tag, /GT:InsertTagWithPreview/);
+});
+
+
+test("M0a: standalone selection probe is read-only and passes TBH AutoLISP preflight", async () => {
+  const probe = await fs.readFile(path.join(root, "resources/cad/diagnostics/M0A_SELECTION_PROBE.lsp"), "utf8");
+  const check = validateLispSource(probe, ["CGM0APROBE"], {
+    profile: "syntax", fileName: "M0A_SELECTION_PROBE.lsp"
+  });
+  assert.equal(check.valid, true, JSON.stringify(check.diagnostics));
+  for (const forbidden of ["entmod", "entmake", "entdel", "vla-put-", "command ", "vl-cmdf", "sssetfirst", "setvar"]) {
+    assert.equal(probe.toLowerCase().includes("(" + forbidden), false,
+      "read-only probe cannot mutate AutoCAD: " + forbidden);
+  }
+  assert.match(probe, /\(vl-catch-all-apply 'ssget '\(\)\)/, "real interactive ssget path");
+  assert.match(probe, /\(sslength selection\)/);
+  assert.match(probe, /MEP_TAG_LINK/, "linked grille evidence is collected read-only");
 });
