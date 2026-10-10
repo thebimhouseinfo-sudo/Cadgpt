@@ -353,7 +353,12 @@ def _verified_load_expression(lisp_path: str, token: str) -> str:
     ok = f"CADGPT_OK:{token}"
     err = f"CADGPT_ERR:{token}:"
     load_dir = os.path.dirname(lisp_path).replace("\\", "/")
+    pending = f"CADGPT_PENDING:{token}"
     return (
+        # An async SendCommand can remain queued after a timeout. When the
+        # pending sentinel has already been restored, suppress the late load
+        # rather than silently changing CAD after CadGPT reported failure.
+        f'(if (= (getvar "USERS5") "{pending}") '
         "(progn "
         "(vl-load-com) "
         f"(setq *cadgpt-load-dir* \"{load_dir}\") "
@@ -362,7 +367,7 @@ def _verified_load_expression(lisp_path: str, token: str) -> str:
         "(if (vl-catch-all-error-p *cadgpt-load-result*) "
         f"(setvar \"USERS5\" (strcat \"{err}\" (substr (vl-catch-all-error-message *cadgpt-load-result*) 1 180))) "
         f"(setvar \"USERS5\" \"{ok}\")) "
-        "(princ))"
+        "(princ)))"
     )
 
 
@@ -382,8 +387,12 @@ def load_lisp_file(path: str, document=None) -> dict:
     log_path = str(_safe_getvar(doc, "LOGFILENAME", "") or "")
     log_start = _log_position(log_path)
 
+    if not _safe_setvar(doc, "USERS5", pending):
+        raise LispServiceError(
+            "CADGPT_LISP_SENTINEL_UNAVAILABLE: AutoCAD rejected USERS5; "
+            "no LISP load command was queued."
+        )
     _safe_setvar(doc, "LOGFILEMODE", 1)
-    _safe_setvar(doc, "USERS5", pending)
 
     try:
         _send(
