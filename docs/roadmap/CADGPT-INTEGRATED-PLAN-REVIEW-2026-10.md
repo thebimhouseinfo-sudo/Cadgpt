@@ -50,3 +50,24 @@ Remaining execution risks (not review blockers):
 5. p95 improvement remains a measurable objective, not a guaranteed speedup.
 
 Planning outcome: READY_FOR_IMPLEMENTATION_SCHEDULING after user instruction; source/main merge NOT AUTHORIZED by this plan review.
+
+## Preliminary CR checklist on revision 4 — NOT an independent GSA Critic Verification
+Target plan blob SHA: e75108717333075d14cc2e071e501d77e789f3f1
+Status: CHANGES_REQUIRED (informal same-chat source review, not official GSA CR)
+
+- CR-R4-01 / IMPORTANT: J04 and J06A both claimed nearest/intersection geometry endpoints, creating duplicated capability ownership and ambiguous maintenance/testing.
+- CR-R4-02 / IMPORTANT: J05C Annotation incorrectly depended on J05B Geometry Creation although annotation can target existing DWG geometry.
+- CR-R4-03 / IMPORTANT: GT:LinkGrilleAndTag may affect unrelated RegApp XData when processing -3 records. A source-pattern suspicion is NOT proof of loss. Require a dedicated red regression and conditional fix rather than coupling to the bulk-selection investigation.
+
+## Planner repair — revision 5
+Target plan blob SHA: efb3516e9fb25942d45455727c115be08a041826
+Status: PLANNER_RESOLVED_PENDING_NEW_CR (no CR review result assigned to this revision yet)
+
+| Finding | Disposition | Evidence to be obtained when implementing |
+| --- | --- | --- |
+| CR-R4-01 | J04 solely implements read-only cad_find_nearest/cad_find_intersections; J06A composes graph/clearance and separately gated advanced edits | Primitive query results never imply connectivity; graph trace requires edge provenance and disconnected-crossing counterexample |
+| CR-R4-02 | J05C depends on J03/J04 only, with a pre-existing geometry fixture; J05B not required | Full annotation workflow runs when geometry-creation family is unavailable |
+| CR-R4-03 | Separate J01X XData preservation Job Pack and M0x milestone; independently release after host verification, with no automatic LISP rewrite | Pre/post third-party RegApp XData, MEP_TAG_LINK, ATT and undo/redo snapshots for GT/c:CG/COPY/ERASE; if risk does not reproduce, NO_CHANGE_REQUIRED |
+
+Planner consistency recheck: all 16 Job Pack headings present, no stale J05C-J05B dependency, no duplicated nearest/intersection ownership, TabSortV2-2 excluded, main and runtime untouched.
+Human-requested next step is an independent Critic Review of exact revision-5 blob. Neither the revision-3 PASS nor the preliminary revision-4 findings constitute a verdict for revision 5.
