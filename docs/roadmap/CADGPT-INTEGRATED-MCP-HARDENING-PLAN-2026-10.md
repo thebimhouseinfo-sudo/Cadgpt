@@ -1,7 +1,7 @@
-# CadGPT Integrated Implementation Plan — Draft revision 4 (for CR)
+# CadGPT Integrated Implementation Plan — Planner revision 5 (CR pending)
 Date: 2026-10-10
 Canonical baseline: main @ 8e21ef3ae3bd4b9102aeb8f09531a06638ee9f2f
-Status: REVISION_4_CR_PENDING; planning-only, no runtime mutation. Previous review PASS applies exclusively to revision 3.
+Status: REVISION_5_REVIEW_PENDING; planning-only, no runtime mutation. Previous review PASS applies exclusively to revision 3. Preliminary Rev4 CR findings have been addressed but do not constitute an independent CR verdict for Rev5.
 Review evidence: docs/roadmap/CADGPT-INTEGRATED-PLAN-REVIEW-2026-10.md.
 
 ## Objective
@@ -11,7 +11,7 @@ Harden the existing single-bound-drawing CadGPT, reproduce/fix the bulk Grille +
 - One source repo: thebimhouseinfo-sudo/Cadgpt. main is the sole production source of truth. Use one named implementation integration branch, with checkpoint-specific commits, tests, artifacts and review; do not merge a failed checkpoint or scatter changes over unmerged branches.
 - AutoCAD R22.0 (2018) + legacy .NET 4.6-compatible add-in remains a supported acceptance target.
 - Preserve the single primary binding and no add-in idle timeout; preserve drawing anchor identity, explicit rebind, header colors, managed Jobs, SYSTEM/CAD lease separation, job result directories and user data.
-- Preserve Tag ownership by two-way XData/handles; SIZE (neck size) distinct from optional FACE_SIZE and MODEL (invisible); no TAG_NUMBER-only auto-sync.
+- Preserve Tag ownership by two-way XData/handles; SIZE (neck size) distinct from optional FACE_SIZE and MODEL (invisible); no TAG_NUMBER-only auto-sync. Scope MEP_TAG_LINK changes so unrelated RegApp XData remains untouched. Source-code patterns are risk evidence, not proof of observed data loss.
 - Do not edit TabSortV2-2.lsp. Change only proven Grille/Grille Tag-related Lisp faults; do not mass-refactor the TBH Toolkit.
 - Do not clone the entire AutoCAD API, expose arbitrary command strings, or grant unrestricted Python shell access. No speculative rewrites of transport or add-in.
 - This plan is not an instruction to manipulate a production DWG. Live E2E requires a disposable copy and user-controlled host. No default use of an active drawing as a QA fixture, even when an AutoCAD session is bound.
@@ -26,7 +26,7 @@ Harden the existing single-bound-drawing CadGPT, reproduce/fix the bulk Grille +
 - runtimes/cad-mcp/services/entity_service.py still scans ModelSpace/layouts for each handle, swallowing some COM enumeration failures; modify_service.py repeatedly uses _find_entity for each handle.
 - src/cadgpt/session/drawing-binding.ts calls listOpenDrawings and setActiveDocument for each activation; cad-upstream.ts re-lists tools in activate after connect discovery; mcp-session-manager.ts queues non-GET by transport.
 - src/cadgpt/tools/jobs.ts holds CAD host lock around a whole Direct Python Job when bound; src/cadgpt/tools/job-system-helper.ts invokes trusted, hash-presented Python helpers under user OS permissions (not a sandbox); filesystem binary writer checks only a PK prefix, not OOXML integrity.
-- MEP Properties.lsp uses :vlr-objectModified callbacks with attribute write/sync; current Grille tests are primarily static source assertions and syntax preflight. Failure when region-selecting a drawing with many grilles/tags has been reported but exact command/error stage is not yet reproduced.
+- MEP Properties.lsp uses :vlr-objectModified callbacks with attribute write/sync; current Grille tests are primarily static source assertions and syntax preflight. Failure when region-selecting a drawing with many grilles/tags has been reported but exact command/error stage is not yet reproduced. GT:LinkGrilleAndTag has a generic -3 record removal expression; third-party RegApp XData loss is a separate unverified risk requiring test evidence.
 - Five existing CI workflows passed after PR #46, but GitHub CI alone is not real AutoCAD E2E.
 
 ## Execution packaging, finite work units and gates
@@ -42,8 +42,14 @@ J01 GRILLE SELECTION DEFECT (high-priority independent bounded Job after J00):
 - Diagnose before fix: reproduce in disposable DWG at scales 1/10/100/500 mixed grille/tag/text/duct objects. Separate A) selection-only window/crossing/PICKFIRST when no drawing mutation occurs, from B) MOVE/COPY/ERASE/ATT edits after selection, C) GT/TG/GRR/GRILLE_ATTR_UPGRADE, D) two drawings and reopening. Capture exact error text, command, event callback sequence, modified HANDLE and whether a callback actually fired. If selection-only fails without callbacks, do not implement a reactor deferral as a guessed fix.
 - Inspect MEP Properties.lsp callback and per-drawing reactor lifecycle; TG global selected entity cleanup; Ensure* ATTDEF/ATTSYNC; dual XData links, clone/delete/undo/redo, missing backlink; evaluate global reactor lock on exceptions.
 - Fix only demonstrated failure; if callback writes during unsafe database notification, queue handle-based updates and commit only at a safe command boundary, guarded against re-entry and identity drift. Do not defer when it would silently drop manual AIR_FLOW updates; prove scheduling. When the bug cannot be reproduced on an authorized fixture, mark ROOT_CAUSE_UNVERIFIED and produce a bounded read-only logging/probe plan; do not ship an unproven reactor rewrite.
-- Explicit invariants to test before changing XData: MEP_TAG_LINK forward/back handles, legacy back-link behavior, no TAG_NUMBER fallback from the reactor, preservation of unrelated XData apps even when deleting/copying/tagging. Current candidate paths include GT:LinkGrilleAndTag and c:CG removing all -3 records, and TG's global *TG_SELECTED_ENTITY* cleanup on error; implement isolated corrections only if test shows fault. Preserve all existing grille fields, including manual FLEX_DUCT_SIZE priority, optional blank FACE_SIZE/MODEL and original neck SIZE.
+- Selection-defect invariants: MEP_TAG_LINK forward/back handles, legacy back-link behavior, no TAG_NUMBER fallback, no loss of unrelated XData, manual FLEX_DUCT_SIZE priority, optional FACE_SIZE/MODEL and original neck SIZE. For the selection failure, inspect GT:LinkGrilleAndTag, c:CG and TG global selected entity only as causal evidence. Independently verify non-selection XData preservation in J01X; do not bundle an unproven XData rewrite into J01.
 - Exit: no selection/modify exceptions or data corruption on mixed 500 objects; correct sync and links after undo/reopen; compare pre/post handle, ATTRIB, XData and object counts; tests include real COM/CAD behavior, not solely regex. Explicit unchanged-source SHA guard for TabSortV2-2.lsp. If the authorized AutoCAD host is unavailable, only code/simulation verdict can be reached, not live acceptance.
+
+J01X GRILLE / TAG XDATA PRESERVATION (independent after J00, not contingent on reproducing the bulk-selection error):
+- Audit GT:LinkGrilleAndTag and c:CG and identify exact XData write/delete semantics on AutoCAD R22.0; document differences between filtered entget for MEP_TAG_LINK and unfiltered entget. Do not infer data loss solely from an -3 source pattern.
+- Negative-control fixture: attach MEP_TAG_LINK and at least two unrelated registered-app XData payloads to both Grille and Tag. Record before/after handle identities, each RegApp payload, ATT fields and forward/back MEP_TAG_LINK. Run GT insertion, re-link, c:CG clear, COPY, ERASE and UNDO/REDO on disposable DWG.
+- If loss is observed, apply the smallest app-specific change without blanket removal of third-party -3 records. Test malformed/missing handles, repeated GT (idempotency), copied-grille ownership and exact preservation of non-target RegApp payloads. If not reproduced, preserve source and mark NO_CHANGE_REQUIRED with attached evidence.
+- Exit: PASS_NO_CHANGE_REQUIRED or PASS_FIXED with real host pre/post XData snapshots, or BLOCKED_REAL_CAD_VALIDATION when no authorized host is available. No TabSortV2-2.lsp edits. Release and review independently from J01 and J02.
 
 J02 SYSTEM SECURITY / EXCEL (before MTO automation or broad writes):
 - Review and bind helper source trust to promoted Job bundle identity and checked source hash, rather than caller-chosen hash alone. Restrict draft execution to authorized development context. Document Python's OS permission boundary; Python subprocess is not sandboxed merely by a Job root and a sanitized environment. If untrusted helper source remains runnable as the user, reject/disable that execution path until actual OS isolation is proven (a separate architecture gate); do not silently mark access controls PASS.
@@ -59,10 +65,11 @@ J03 CAD MCP FOUNDATION (dependency for MCP expansion):
 - Dedicated technical spike (no production modifications): attempt needed spatial window/crossing selection, Editor preselection and one bounded transaction on actual R22.0 AutoCAD/net46 add-in host, documenting UI-thread/DocumentLock behavior and deployment compatibility. Prefer stable Python COM when sufficient; adopt a .NET Editor/Transaction bridge only if the spike proves it necessary and safe. Unknown bridge feasibility blocks that capability, not unrelated Python COM work.
 - Exit: batch lookup parity, missing-vs-incomplete errors, no gateway bypass through direct proxy/gateway, deterministic manifest generation/schema parity, host spike decision record; existing 41 tools regression PASS.
 
-J04 MCP QUERY / SELECTION / BATCH READ (first expansion slice):
-- Proposed capabilities: cad_query_entities; cad_select_by_region (window/crossing/polygon); cad_selection_snapshot (including editor preselection if available); cad_get_entities_batch; cad_get_blocks_batch; cad_read_attributes_batch; cad_get_geometry_metrics; cad_get_bounding_boxes; cad_find_nearest; cad_find_intersections; cad_query_spatial_relation.
-- Paginated results, query limits, incomplete/COM-busy explicit errors. Selection snapshot keyed to bound drawing lifetime and handles, TTL/invalidation rules; no stale PICKFIRST reliance in reactors. Pagination cursor must bind to drawing identity, query hash and stable snapshot/revision: reject cursor on edits, reopen or expired snapshot rather than silently skip/duplicate results. If no stable cursor/snapshot is feasible, advertise offset-less bounded results with explicit incomplete flag. Batch responses include matched, returned, skipped, errors, next cursor, fully_scanned.
-- Exit: 1/100/1000/5000-object fixture queries comparable to AutoCAD selection and no silent truncation; pagination remains correct when DWG mutates between pages; verify no overflow/unbounded COM loop; measure speedups versus individual reads and do not mandate a numerical gain if fixture sizes differ.
+J04 MCP QUERY / SELECTION / BATCH READ (read-only geometric primitives, first expansion slice):
+- Proposed capabilities: cad_query_entities; cad_select_by_region (window/crossing/polygon); cad_selection_snapshot (including editor preselection); cad_get_entities_batch; cad_get_blocks_batch; cad_read_attributes_batch; cad_get_geometry_metrics; cad_get_bounding_boxes; cad_find_nearest; cad_find_intersections; cad_query_spatial_relation.
+- Sole owner of cad_find_nearest and cad_find_intersections. Nearest returns distance-ranked handles and closest points; intersection returns coordinates/parameters for an explicitly bounded entity pair. Require WCS, 2D versus 3D mode, tolerance and exact versus bounding-box-approximate status. Do NOT infer connected HVAC systems, route topology or perform geometry edits.
+- Paginated results, query limits, incomplete/COM-busy explicit errors. Selection snapshot keyed to drawing lifetime and handles, TTL/invalidation; no stale PICKFIRST fallback in reactors. Cursor binds drawing identity, query hash and stable snapshot/revision; reject on drawing edits, reopen or expiry rather than silently skip/duplicate. Without stable snapshot, return bounded incomplete status instead of false completion.
+- Exit: 1/100/1000/5000 entity fixtures; primitive nearest/intersection coordinates verified against CAD; no silent truncation; pagination invalidation test and speed comparison against per-entity reads.
 
 J05A MCP BLOCK & ATTRIBUTE WRITE (depends J02–J04; independent Job Pack):
 - Insert existing block at explicit 3D point and rotation/scale; get/edit ATTRIB in batch by block handle and exact tag; read/update dynamic block properties when supported by R22.0; inspect definitions and optional scoped ATTSYNC.
@@ -75,15 +82,16 @@ J05B MCP GEOMETRY CREATE & BASIC EDIT (depends J03–J04; independent Job Pack):
 - Scenarios: draw simple HVAC equipment footprint and duct centerlines in test DWG, confirm layer/geometry and no unintended objects.
 - Exit: correct geometry and units (WCS/UCS/OCS), undo/redo, invalid-coordinate, locked-layer and unsupported-entity negative controls.
 
-J05C MCP ANNOTATION (depends J05B; independent Job Pack):
-- Create/edit TEXT, MTEXT, dimension, multileader, hatch and table; verify style existence, hatch boundaries, annotation space and current scale. No silent style/substitute guessing.
-- Scenario: annotated duct+grille schedule area including leaders and dimensions, preserving native CAD editability.
-- Exit: visual + structured annotation readback in R22.0, undo/redo and error cases.
+J05C MCP ANNOTATION (depends J03 and J04; independently releasable, NO dependency on J05B):
+- Create/edit TEXT, MTEXT, dimension, multileader, hatch and table, with style existence, hatch contour, annotation-space and scale validation. No silent style/substitute guessing.
+- Consumer fixture: annotate PRE-EXISTING duct and grille geometry in a supplied disposable DWG, including leader and dimension and schedule table. No new geometry creation is required; test with J05B tools absent/disabled.
+- Exit: visual and structured native annotation readback on R22.0, undo/redo, invalid style/leader/hatch boundary negative tests.
 
-J06A MCP ADVANCED GEOMETRY & TOPOLOGY (depends J04–J05B; independent Job Pack):
-- Offset, array, trim/extend, fillet/chamfer where reliable; nearest/intersection geometry; topology/clearance queries with tolerance, explicit WCS units and HVAC interpretation constraints.
-- Scenario: trace FCU↔duct↔fitting geometry; crossing does NOT automatically mean connected.
-- Exit: benchmark and geometry discrepancy report on known test fixtures; unsupported primitives honestly reported.
+J06A MCP ADVANCED GEOMETRY & TOPOLOGY (depends J04 for topology read; J05B ONLY for geometry mutation):
+- DO NOT recreate cad_find_nearest, cad_find_intersections or any J04 primitive query. Consume J04 geometry results to build multi-entity connectivity graphs, HVAC path tracing and continuity reasoning with port/end-point evidence, tolerances, 2D/3D projection rules and clearance/clash classification. A crossing is not automatically an HVAC connection.
+- Separately, after J05B safety gates, support bounded OFFSET, ARRAY, TRIM/EXTEND and FILLET/CHAMFER edits. Topology READ can be accepted without these MUTATION tools; advanced write sub-scope has its own preview/undo/transaction release gate.
+- Consumer scenarios: trace FCU to grille using a known graph with crossing-but-disconnected ducts; classify clearance between two elements. Geometry edit scenario runs only on an authorized test copy.
+- Exit: graph edge provenance and deterministic expected paths, no duplicated J04 endpoints, correct tolerances and negative disconnected-crossing fixture. Unsupported COM/R22.0 edit paths are explicitly reported.
 
 J06B MCP CAD METADATA & NAMESPACED DATA (depends J03 and J05A; independent Job Pack):
 - Drawing units/UCS and style reads, scoped XData and Extension Dictionary reader/writer, carefully preserving *other apps'* XData and ownership/lifetime.
@@ -133,6 +141,7 @@ Maintain backup/copy for each authorized test drawing and its local metadata/res
 | User requirement | Owning Job Pack | Required evidence | Decision |
 | --- | --- | --- | --- |
 | Bulk selection of Grille and Grille Tag no longer errors | J01 | Reproducing exact exception; 1/10/100/500 mixed-object live CAD tests + unchanged ATT/XData invariants | Fixed only when root cause proven |
+| Unrelated XData of other apps survives Grille/Tag operations | J01X | Pre/post RegApp XData snapshot for GT/c:CG/COPY/ERASE/UNDO with negative controls | Independently fixed or NO_CHANGE_REQUIRED with proof |
 | TabSortV2-2 remains untouched | J01/J09 | Diff/source SHA compare to baseline | Hard no-change gate |
 | Existing CAD functionality remains | J00/J03/J09 | All 41 baseline tool contracts + AutoCAD smoke | No regressions |
 | Broader ordinary CAD actions | J04/J05A/J05B/J05C | Query, ATT, create and annotation consumer workflows | Functional coverage, not numeric quota |
@@ -142,21 +151,22 @@ Maintain backup/copy for each authorized test drawing and its local metadata/res
 | Main remains source of truth | All milestones/J09 | One active branch per milestone, scoped commits, review and human-gated merge, then a fresh branch from main | No long-lived unmerged drift |
 
 ## Delivery milestones and dependencies
-- M0a (early bugfix) = J00 minimal reproducible baseline + J01 demonstrated Grille/Tag selection defect and regression. User-approved live CAD smoke and independent release decision; do NOT wait for unrelated Excel hardening to close this milestone.
-- M0b (SYSTEM safety) = J02, with its own permission + real workbook evidence and human-gated release. Its implementation may reuse J00 observability/test harness.
+- M0a (early bugfix) = J00 minimal reproducible baseline + J01 Grille/Tag selection defect. User-approved CAD smoke and independent release; not blocked by unrelated XData or Excel work.
+- M0x (XData integrity) = J01X after J00, independently verifiable and releasable even if J01 root cause remains unknown. As J01/J01X may both touch MEP Properties.lsp, only one milestone branch may modify the shared file at a time; merge the accepted first change, begin a NEW branch from latest main and rerun ATT/XData regression for the second.
+- M0b (SYSTEM safety) = J02, its own permission + workbook evidence and human-gated release. Reuses J00 test harness.
 - M1 = J03 then J04: fail-closed manifest, handle lookup, reliable selection and batch read; release only after CAD read parity and security tests.
 - M2a = J05A (Block/ATT update) and the Grille Tag consumer acceptance. Independently releasable when verified.
-- M2b = J05B (basic geometry) and J05C (annotation), each with separate Job Pack sign-off; they need not wait for unrelated M2a experiments after shared dependencies pass.
-- M3 = J06A (geometry/topology), J06B (namespaced metadata) and J06C (Xref/layout/export) independently and only where consumer demand/feasibility justifies; J07 latency low-risk after J03/J04 and measured baseline. Each may be merged as a proven, enabled-by-default-safe or default-off feature-gated milestone.
+- M2b = J05B basic geometry and J05C annotation, both independent after J03/J04. J05C does NOT depend on J05B and tests native annotation against existing geometry while geometry-creation tools are disabled.
+- M3 = J06A composed connectivity/clearance (reuses J04 spatial primitives; separate advanced mutation gate after J05B), J06B namespaced metadata and J06C Xref/layout/export, independently only when demand justifies. J07 latency low-risk follows J03/J04 and baseline. No duplicate nearest/intersection endpoints or fake-complete topology.
 - M4 = J08A/B only when actual queue/lock benchmark justifies the change, then J09 final integrated replay and release decision.
 - Use one active branch and one source of truth: accepted milestone → commit/evidence → Reviewer PASS + user-controlled AutoCAD smoke → explicit Human approval → merge main → retire work branch → start next branch from latest main. Do not stockpile future Job Pack commits on the branch being merged. Unaccepted work is never represented as production-ready.
 - A release tag/doctor status applies to precisely the reviewed commit; after each milestone merge, compare full diff and run the five CI gates plus the affected real-host smoke. If AutoCAD cannot be run, retain a blocked host gate and do not claim release PASS.
 
 
-## Operational stop/go decisions (revision 4)
+## Operational stop/go decisions (revision 5)
 | Decision | Trigger | Required disposition |
 | --- | --- | --- |
-| Grille root cause not reproducible | Only user report, no exact error/trace | ROOT_CAUSE_UNVERIFIED; read-only probe and user-assisted fixture capture, no speculative LISP edits |
+| Grille root cause not reproducible | Only user report, no exact error/trace | ROOT_CAUSE_UNVERIFIED; bounded read-only probe; independently verify XData in J01X even if J01 blocked |
 | Real CAD host inaccessible | Offline CI PASS but R22.0 cannot be exercised | BLOCKED_REAL_CAD_VALIDATION for affected milestone, not release PASS |
 | Tool risk metadata missing/drifted | Added manifest tool with no reviewed policy | CI fail closed; do not expose via named or generic gateway |
 | Selection cursor stale | DWG revision/identity, query or TTL changed | Fail and require fresh snapshot, no inaccurate "complete" report |
@@ -165,3 +175,12 @@ Maintain backup/copy for each authorized test drawing and its local metadata/res
 | SYSTEM-only job attempts CAD re-entry | Claimed detach without enforced isolation | Reject/hold CAD lock and fail privilege boundary test |
 | Latency improvement insignificant | Same host/fixture p95 unchanged or worsens | Keep simpler implementation; avoid risky queue rewrite |
 | Live DWG or AppData differs after rollback | Anchor, metadata, ATT/XData mismatch | Stop release; recover disposable fixture and investigate |
+
+## Planner disposition of preliminary revision-4 CR findings
+| Finding | Revision-5 correction | Mandatory evidence |
+| --- | --- | --- |
+| CR-R4-01 J04/J06A overlap | J04 exclusively owns read-only nearest/intersection. J06A composes connectivity graphs, paths, clearance using J04; advanced edits follow J05B | Primitive output has only handles/points; graph includes connection provenance, non-connected crossings remain separate |
+| CR-R4-02 Annotation incorrectly depends on Geometry Creation | J05C depends only J03/J04 and works on existing DWG objects | Annotation fixture PASS with J05B absent or disabled |
+| CR-R4-03 third-party XData risk | New independent J01X, M0x release gate and App-specific XData regression | GT/relink/c:CG/COPY/ERASE and undo/redo pre/post each RegApp; conditional fix only on proven loss |
+
+Revision-5 status: AWAITING_NEW_CR. Preliminary findings are not a persisted independent critic verdict; revision-3 PASS cannot be reused. No runtime, LISP or AutoCAD data modified.
