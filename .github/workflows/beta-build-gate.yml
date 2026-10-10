@@ -1,11 +1,11 @@
-name: CadGPT Beta Build Gate
+name: CadGPT Runtime Roadmap Gate
 
 on:
   pull_request:
     branches: [main]
 
 jobs:
-  beta-build-contract:
+  runtime-roadmap-contract:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,13 +14,13 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Verify beta dependency/AppData contract
+      - name: Verify current runtime roadmap and managed AppData contract
         shell: pwsh
         run: |
           foreach ($required in @(
             "package-lock.json",
             "runtimes/cad-mcp/requirements.lock.txt",
-            "ROADMAP.md",
+            "docs/roadmap/CADGPT-QUALITY-GATES-2026-10.md",
             "setup.bat",
             "run.bat",
             "knowledge/jobs/JOB_RULES.md",
@@ -28,7 +28,9 @@ jobs:
           )) {
             if (-not (Test-Path -LiteralPath $required)) { throw "Missing Beta artifact: $required" }
           }
-          $setup = Get-Content "setup.bat" -Raw
+          $setup = Get-Content "scripts/setup-core.bat" -Raw
+          $driver = Get-Content "setup.bat" -Raw
+          if ($driver -notmatch 'scripts\\setup-core\.bat') { throw "Setup driver does not delegate to core" }
           foreach ($marker in @(
             "npm ci",
             "requirements.lock.txt",
@@ -47,7 +49,7 @@ jobs:
             if ($setup -notmatch [regex]::Escape($marker)) { throw "setup.bat missing managed-AppData marker: $marker" }
           }
           if ($setup -match "appdata\\libraries\\lisp") { throw "setup.bat must not hard-code the default AppData root as write authority" }
-          Write-Host "Beta configurable managed-AppData contract OK"
+          Write-Host "Runtime roadmap and externally managed AppData contract OK"
 
       - name: Install locked Node dependencies
         run: npm ci
@@ -130,7 +132,15 @@ jobs:
 
             $initialTools = Invoke-Mcp "tools/list" @{}
             $initialNames = @($initialTools.result.tools | ForEach-Object { $_.name })
-            if ($initialNames -contains "file_roots") { throw "FILE family loaded before admission/work" }
+            # Stable pre-registered surface is intentional; proof is negative
+            # execution authorization, not the absence of a tool name.
+            if ($initialNames -notcontains "file_roots") { throw "FILE tool missing from stable surface" }
+            $unauthorized = Invoke-Tool "file_roots" @{
+              execution_id="exec:forged"; authority_token="forged"
+            }
+            if (-not $unauthorized.error -and $unauthorized.result.isError -ne $true) {
+              throw "Unadmitted client accessed FILE capability without authority"
+            }
 
             $admit = Invoke-Tool "cadgpt_admission" @{ user_turn="@cadgpt run beta authoring gate"; invocation_source="mention" }
             if ($admit.result.structuredContent.data.mode -ne "active") { throw "CadGPT session was not claimed" }
@@ -208,7 +218,10 @@ jobs:
               file_name="TBH Smoke.lsp"; module="Beta"; command="TBHSMOKE";
               description="TBH exception"; target_library_id="tbh-toolkit"; mutating=$false; uses_com=$false
             }
-            if ($tbhScaffold.result.structuredContent.data.content -notmatch "TBH-HEADER-START") { throw "TBH authoring exception missing" }
+            if ($tbhScaffold.result.isError -ne $true -or
+                $tbhScaffold.result.structuredContent.data.error -notmatch "INTERNAL_LIBRARY_RESERVED") {
+              throw "Internal TBH library accepted as a User Lisp scaffold target"
+            }
 
             $checkoutDraft = Join-Path $managedRoot "workspace\lisp-draft\ci-user-lib\UserHello.lsp"
             $checkout = Invoke-Work "lisp_checkout" @{
@@ -226,9 +239,9 @@ jobs:
             if ($draftValid.result.structuredContent.data.valid -ne $true) { throw "CadGPT checkout draft failed validation" }
 
             $managedValid = Invoke-Work "lisp_validate" @{
-              path=(Resolve-Path "resources/cad/internal-lisp/tbh-toolkit/Setup Xref/XRlayer.lsp").Path; expected_commands=@("XRLAYER"); profile="syntax"
+              path=(Join-Path $managedLibraryTarget "UserHello.lsp"); expected_commands=@("USERHELLO"); profile="syntax"
             }
-            if ($managedValid.result.structuredContent.data.valid -ne $true) { throw "Untouched imported Lisp should pass syntax validation without header normalization" }
+            if ($managedValid.result.structuredContent.data.valid -ne $true) { throw "Managed imported Lisp should pass syntax validation without header normalization" }
 
             $badPath = Join-Path $managedRoot "workspace\lisp-draft\CI_BAD.lsp"
             $bad = $scaffoldSource -replace "\(defun c:BETASMOKE \(/ \)", "(defun c:BETASMOKE (/ x)`n  (let ((x 1)) (princ x))"
