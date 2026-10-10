@@ -450,7 +450,7 @@ export function registerJobDiscoveryTools(server: McpServer): void {
     {
       title: "Load CadGPT Job",
       description:
-        "Load one official Internal Job or one concrete User Job. Internal Jobs expose read-only metadata; User Jobs resolve to managed AppData source.",
+        "Load one official Internal Job or one concrete User Job. Always treat the CURRENT managed JOB.md returned here as the workflow source of truth, not older chat instructions or earlier run choices. Internal Jobs expose read-only metadata; User Jobs resolve to managed AppData source.",
       inputSchema: { id: z.string().min(1).describe("Canonical Job registry id returned by job_list/registry_list") },
     },
     async ({ id }) => {
@@ -496,6 +496,7 @@ export function registerJobDiscoveryTools(server: McpServer): void {
           relative_path: relative,
           execution_mode: executionMode,
           content,
+          source_sha256: sha256(content),
           bundle_sha256: bundle.sha256,
           bundle_files: bundle.files,
           ...(executionMode === "reasoning"
@@ -761,7 +762,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Prepare Job Runtime",
       description:
-        "Authorize one Reasoning Job runtime. Starting Job B releases stale Job A runtime/SYSTEM authority but preserves files. If this conversation already has exactly one CAD-verified drawing metadata root (possibly handed off from Job A into FILE work), this call also prepares Job B's own drawing result folder without CAD rebind; Job A's result remains readable only. Supply a registered User Job id or an absolute managed Job draft path.",
+        "Authorize a Reasoning Job runtime and return a FRESH copy of its active JOB.md so the model can follow current branching rules on EVERY invocation. Re-evaluate read-only start conditions (raw/result existence) in the order specified by that JOB.md, then ask only its actual conditional user choices. Do not reuse previous-run route decisions or instructions merely discussed in chat. Starting Job B releases stale Job A authority without deleting files. Supply registered User Job id or managed draft path.",
       inputSchema: {
         id: z.string().min(1).optional(),
         draft_path: z
@@ -821,6 +822,15 @@ export function registerJobAuthoringTools(server: McpServer): void {
             )}`;
         }
 
+        // Read the authoritative current Job definition BEFORE transitioning
+        // prior Job authority. A failed source read cannot stop another Job.
+        const workflowSource = await fs.readFile(jobFile, "utf8");
+        if (path.extname(jobFile).toLowerCase() !== ".md") {
+          throw new Error(
+            "JOB_RUNTIME_REASONING_SOURCE_REQUIRED: use job_run_direct for .py Jobs."
+          );
+        }
+        const workflowSha256 = sha256(workflowSource);
         const lease = currentToolLease();
         const transition =
           await releasePriorJobAuthorityForStart({
@@ -854,6 +864,12 @@ export function registerJobAuthoringTools(server: McpServer): void {
             job_id: runtime.job_id,
             job_name: runtime.job_name,
             job_root: runtime.job_root,
+            workflow: {
+              source_path: jobFile,
+              source_sha256: workflowSha256,
+              content: workflowSource,
+              instruction: "This is the current promoted JOB.md, freshly read for this run. Follow its exact entry conditions and user choice branches. Do not follow previous chat decisions if the file differs. Inspect the actual raw/result folders as required before choosing any route.",
+            },
             runtime_root:
               runtime.runtime_root,
             runtime_display_path:
