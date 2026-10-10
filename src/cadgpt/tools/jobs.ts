@@ -29,6 +29,7 @@ import {
 } from "../runtime/drawing-persistence.js";
 import {
   activeJobRuntimeForExecution,
+  jobStepsPath,
   cleanupJobRuntimeForExecution,
   cleanupJobRuntimeForSystemLease,
   detachJobRuntimeForSystemLease,
@@ -864,6 +865,10 @@ export function registerJobAuthoringTools(server: McpServer): void {
             job_id: runtime.job_id,
             job_name: runtime.job_name,
             job_root: runtime.job_root,
+            job_steps: {
+              path: jobStepsPath(runtime),
+              instruction: "Use this Job-owned runtime/JOB_STEPS.md to record the actual steps for this invocation, with - [ ] pending, - [✓] verified PASS, - [✗] FAIL. Change only the CURRENT step after tool/readback evidence; never advance past an unchecked or failed required step. On run finish, error+finish, stop, or another Job replacing this Job, CadGPT resets progress marks to [ ] without deleting the file, raw, result, or metadata. On a later run, reconcile this checklist to the newly read JOB.md and observed raw/result state before proceeding.",
+            },
             workflow: {
               source_path: jobFile,
               source_sha256: workflowSha256,
