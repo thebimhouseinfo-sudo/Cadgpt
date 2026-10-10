@@ -37,6 +37,40 @@ nor model-inferred routes are persistent workflow state. If the returned
 the unpromoted Job definition and route that requested change to `jobcreate`;
 do not silently treat the chat instruction as a permanent edit.
 
+## Job Steps (per-Job runtime checklist)
+
+Custom Reasoning Jobs stay plain Markdown. The promoted `JOB.md` remains
+the immutable workflow contract. Each Job has one ephemeral checklist at
+`<job-root>/runtime/JOB_STEPS.md`, returned as `job_steps.path` by
+`job_runtime_prepare`. Use existing managed file tools; no new Job tool,
+parser, checkpoint engine, or global controller.
+
+On each new run, freshly read `workflow.content`, inspect the actual entry
+condition, and create/reconcile `JOB_STEPS.md` to that workflow and the
+currently selected branch. The file contains a short header with Job ID,
+`workflow.source_sha256`, drawing identity if applicable, and the actual
+observed entry condition. Use an ordered checklist with only:
+`- [ ]` pending, `- [✓]` verified successful, `- [✗]` failed.
+Ask explicit user choices only when the current Job step requires them.
+Do not invent a choice from old chat history or auto-expand unselected branches.
+
+Work on one required step at a time. After a tool completes, verify its
+readback/postcondition, then use `file_edit` with the current hash to mark
+that step `[✓]`. On failure, mark `[✗]`, report the real error and stop
+instead of advancing. A `[ ]` or `[✗]` required step blocks the next
+step; neither sending a tool call nor a model assertion counts as PASS.
+
+On Job success, error/stop, or replacement by a new Job, the CadGPT runtime
+restores ✓/✗ markers to `[ ]` in that Job's `runtime/JOB_STEPS.md`.
+It never deletes the checklist, actual raw data, results, or metadata.
+Driver-crash recovery also resets progress marks at the next run's prepare,
+then rechecks evidence before repeating any potentially mutating step.
+Repeated prepare for the SAME active Job preserves its current marks.
+Always reconcile an older checklist against the fresh JOB.md SHA, real raw/
+result content, and current branch before using it. A load-Lisp-then-wait
+choice is an intentional stop for that invocation, not a declaration that
+other Job stages have completed.
+
 ## Runtime loop
 
 For each Job step:
