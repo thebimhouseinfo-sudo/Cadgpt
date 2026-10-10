@@ -13,6 +13,15 @@ Investigate the reported error during selecting/manipulating multiple blocks con
 - Capture baseline number of blocks by relevant layers: Hvac-SAGrille, Hvac-RAGrille, Hvac-OAGrille, Hvac-EAGrille, Hvac-TAGrille and Hvac-GrilleTag.
 - Before each mutation take per-entity handle + block effective name + exact existing ATT snapshot, plus all RegApp XData payloads by app (including MEP_TAG_LINK and unrelated apps where present). Record forward and reverse tag ownership.
 
+## Read-only isolation probe (run BEFORE testing the patch)
+
+A standalone tool is provided at `resources/cad/diagnostics/M0A_SELECTION_PROBE.lsp`. It is not registered in the toolkit loader and does not write to the drawing.
+
+1. On the **disposable** DWG, load the probe from the M0a test worktree using AutoCAD `APPLOAD`, or `(load "D:/00 Other Works/Vibecode/Cadgpt-M0a-Test/resources/cad/diagnostics/M0A_SELECTION_PROBE.lsp")`.
+2. Run `CGM0APROBE`, select mixed objects with Window then repeat with Crossing at 1/10/100/500 scale, and record the exact F2 command history. It will report selected total, INSERT, Grille, GrilleTag, linked Grille and other counts; it does not edit the selection or object data.
+3. Compare **selection-only** output on the unpatched existing AutoCAD/toolkit load with the M0a candidate. If selection-only fails before MEP_Properties_Create or GRILLE_ATTR_UPGRADE, this ATTSYNC candidate is **not confirmed as a fix**. Record ROOT_CAUSE_UNVERIFIED and the exact command/error; avoid merging.
+4. Only after the probe should a user explicitly approve loading candidate MEP Properties.lsp on the disposable DWG and running mutations. Do not change the permanent TBH Toolkit loader during the test.
+
 ## Bounded test matrix
 
 | Case | Fixture | Action | Evidence/acceptance |
