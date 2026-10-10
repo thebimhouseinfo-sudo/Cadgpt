@@ -8,10 +8,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const file = path.join(root, "resources/cad/internal-lisp/tbh-toolkit/TBH Tool Kit/Annotation/MEP Properties.lsp");
 
 function segment(source, from, to) {
-  const i = source.indexOf(from);
-  const j = source.indexOf(to, i + from.length);
+  // GitHub Windows runners may check out the LISP file with CRLF line endings.
+  const normalized = source.replace(/\r\n/g, "\n");
+  const i = normalized.indexOf(from);
+  const j = normalized.indexOf(to, i + from.length);
   assert.ok(i !== -1 && j > i, "Expected AutoLISP section: " + from);
-  return source.slice(i, j);
+  return normalized.slice(i, j);
 }
 
 test("M0a: bulk operations snapshot INSERT handles before ATTSYNC and resolve live objects later", async () => {
