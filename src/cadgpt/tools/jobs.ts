@@ -29,6 +29,7 @@ import {
 } from "../runtime/drawing-persistence.js";
 import {
   activeJobRuntimeForExecution,
+  jobStepsPath,
   cleanupJobRuntimeForExecution,
   cleanupJobRuntimeForSystemLease,
   detachJobRuntimeForSystemLease,
@@ -450,7 +451,7 @@ export function registerJobDiscoveryTools(server: McpServer): void {
     {
       title: "Load CadGPT Job",
       description:
-        "Load one official Internal Job or one concrete User Job. Internal Jobs expose read-only metadata; User Jobs resolve to managed AppData source.",
+        "Load one official Internal Job or one concrete User Job. Always treat the CURRENT managed JOB.md returned here as the workflow source of truth, not older chat instructions or earlier run choices. Internal Jobs expose read-only metadata; User Jobs resolve to managed AppData source.",
       inputSchema: { id: z.string().min(1).describe("Canonical Job registry id returned by job_list/registry_list") },
     },
     async ({ id }) => {
@@ -496,6 +497,7 @@ export function registerJobDiscoveryTools(server: McpServer): void {
           relative_path: relative,
           execution_mode: executionMode,
           content,
+          source_sha256: sha256(content),
           bundle_sha256: bundle.sha256,
           bundle_files: bundle.files,
           ...(executionMode === "reasoning"
@@ -761,7 +763,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Prepare Job Runtime",
       description:
-        "Authorize one Reasoning Job runtime. Starting Job B releases stale Job A runtime/SYSTEM authority but preserves files. If this conversation already has exactly one CAD-verified drawing metadata root (possibly handed off from Job A into FILE work), this call also prepares Job B's own drawing result folder without CAD rebind; Job A's result remains readable only. Supply a registered User Job id or an absolute managed Job draft path.",
+        "Authorize a Reasoning Job runtime and return a FRESH copy of its active JOB.md so the model can follow current branching rules on EVERY invocation. Re-evaluate read-only start conditions (raw/result existence) in the order specified by that JOB.md, then ask only its actual conditional user choices. Do not reuse previous-run route decisions or instructions merely discussed in chat. Starting Job B releases stale Job A authority without deleting files. Supply registered User Job id or managed draft path.",
       inputSchema: {
         id: z.string().min(1).optional(),
         draft_path: z
@@ -821,14 +823,35 @@ export function registerJobAuthoringTools(server: McpServer): void {
             )}`;
         }
 
+        // Read the authoritative current Job definition BEFORE transitioning
+        // prior Job authority. A failed source read cannot stop another Job.
+        const workflowSource = await fs.readFile(jobFile, "utf8");
+        if (path.extname(jobFile).toLowerCase() !== ".md") {
+          throw new Error(
+            "JOB_RUNTIME_REASONING_SOURCE_REQUIRED: use job_run_direct for .py Jobs."
+          );
+        }
+        const workflowSha256 = sha256(workflowSource);
         const lease = currentToolLease();
-        const transition =
-          await releasePriorJobAuthorityForStart({
-            executionId:
-              lease.workId,
-            sessionKey:
-              lease.sessionKey,
-          });
+        const activeRuntime = activeJobRuntimeForExecution(lease.workId);
+        // Compare canonical filesystem identities; Windows may supply a
+        // short 8.3 alias for the same Job directory.
+        const currentRoot = await fs.realpath(path.dirname(jobFile));
+        const sameActiveJob = Boolean(
+          activeRuntime &&
+          activeRuntime.job_id === jobId &&
+          (process.platform === "win32"
+            ? activeRuntime.job_root.toLowerCase() === currentRoot.toLowerCase()
+            : activeRuntime.job_root === currentRoot)
+        );
+        // A repeat prepare for the SAME active Job is a continuation,
+        // not a new Job start. Preserve its Job Steps and tool authority.
+        const transition = sameActiveJob
+          ? { resumed_same_active_job: true }
+          : await releasePriorJobAuthorityForStart({
+              executionId: lease.workId,
+              sessionKey: lease.sessionKey,
+            });
         const runtime =
           await prepareJobRuntimeForExecution(
             lease.workId,
@@ -854,6 +877,16 @@ export function registerJobAuthoringTools(server: McpServer): void {
             job_id: runtime.job_id,
             job_name: runtime.job_name,
             job_root: runtime.job_root,
+            job_steps: {
+              path: jobStepsPath(runtime),
+              instruction: "Use this Job-owned runtime/JOB_STEPS.md to record the actual steps for this invocation, with - [ ] pending, - [✓] verified PASS, - [✗] FAIL. Change only the CURRENT step after tool/readback evidence; never advance past an unchecked or failed required step. On run finish, error+finish, stop, or another Job replacing this Job, CadGPT resets progress marks to [ ] without deleting the file, raw, result, or metadata. On a later run, reconcile this checklist to the newly read JOB.md and observed raw/result state before proceeding.",
+            },
+            workflow: {
+              source_path: jobFile,
+              source_sha256: workflowSha256,
+              content: workflowSource,
+              instruction: "This is the current promoted JOB.md, freshly read for this run. Follow its exact entry conditions and user choice branches. Do not follow previous chat decisions if the file differs. Inspect the actual raw/result folders as required before choosing any route.",
+            },
             runtime_root:
               runtime.runtime_root,
             runtime_display_path:

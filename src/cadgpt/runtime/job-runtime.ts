@@ -40,6 +40,47 @@ const contextsBySystemToolId =
 const executionByJobRoot =
   new Map<string, string>();
 
+/**
+ * Job Steps is only a per-Job checklist; never a workflow engine or a
+ * persistent source of truth. It stays under Job-owned runtime scratch.
+ */
+export const JOB_STEPS_FILENAME = "JOB_STEPS.md";
+
+export function jobStepsPath(context: JobRuntimeContext): string {
+  return path.join(context.runtime_root, JOB_STEPS_FILENAME);
+}
+
+/** Reset ONLY the ✓/✗ progress marks, preserving Job steps and raw/result data. */
+export async function resetJobStepsForRuntime(runtimeRoot: string): Promise<boolean> {
+  const file = path.join(runtimeRoot, JOB_STEPS_FILENAME);
+  return withFileMutationLocks([file], async () => {
+    let info;
+    try {
+      info = await fs.lstat(file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    if (!info.isFile() || info.isSymbolicLink()) {
+      throw new Error("JOB_STEPS_NOT_REGULAR_FILE: refusing to alter unexpected Job Steps asset.");
+    }
+    const original = await fs.readFile(file, "utf8");
+    const restored = original.replace(
+      /^(\s*-\s*)\[(?:✓|✗|v|x|X)\](?=\s)/gm,
+      "$1[ ]"
+    );
+    if (restored === original) return false;
+    const tmp = path.join(runtimeRoot, `.${JOB_STEPS_FILENAME}.${process.pid}.${Date.now()}.tmp`);
+    try {
+      await fs.writeFile(tmp, restored, { encoding: "utf8", flag: "wx" });
+      await fs.rename(tmp, file);
+    } finally {
+      await fs.rm(tmp, { force: true }).catch(() => undefined);
+    }
+    return true;
+  });
+}
+
 function systemToolKey(toolId: string): string {
   return toolId.trim().toLowerCase();
 }
@@ -150,11 +191,17 @@ export function jobRuntimeWritableRootsForExecution(
 
 async function cleanupJobRuntimeContext(
   context: JobRuntimeContext,
-  ownerId: string
+  ownerId: string,
+  options: { resetJobSteps?: boolean } = {}
 ): Promise<Record<string, unknown>> {
   let removedEmptyResultRoots = 0;
   const jobsParents = new Set<string>();
   try {
+    // FINISH, STOP, failed Job, or new Job: restore the Job Steps marks.
+    // On an internal re-prepare of the same active Job, keep its progress.
+    const stepsReset = options.resetJobSteps === false
+      ? false
+      : await resetJobStepsForRuntime(context.runtime_root);
     for (const resultRoot of context.result_roots) {
       jobsParents.add(path.dirname(resultRoot));
       if (await removeIfEmpty(resultRoot)) {
@@ -172,6 +219,8 @@ async function cleanupJobRuntimeContext(
       job_id: context.job_id,
       job_name: context.job_name,
       runtime_root: context.runtime_root,
+      job_steps_path: jobStepsPath(context),
+      job_steps_reset: stepsReset,
       removed_empty_result_roots:
         removedEmptyResultRoots,
     };
@@ -241,7 +290,8 @@ export async function cleanupJobRuntimeForSystemLease(
 }
 
 export async function cleanupJobRuntimeForExecution(
-  executionId: string
+  executionId: string,
+  options: { resetJobSteps?: boolean } = {}
 ): Promise<Record<string, unknown>> {
   const context =
     contextsByExecution.get(executionId);
@@ -252,7 +302,7 @@ export async function cleanupJobRuntimeForExecution(
       removed_empty_result_roots: 0,
     };
   }
-  return cleanupJobRuntimeContext(context, executionId);
+  return cleanupJobRuntimeContext(context, executionId, options);
 }
 
 export async function prepareJobRuntimeForExecution(
@@ -300,7 +350,8 @@ export async function prepareJobRuntimeForExecution(
         ) === jobRootKey(jobRoot)
       ) {
         await cleanupJobRuntimeForExecution(
-          executionId
+          executionId,
+          { resetJobSteps: false }
         );
       }
 
@@ -348,8 +399,16 @@ export async function prepareJobRuntimeForExecution(
           }
         }
 
+        // A freshly claimed run resets stale ✓/✗ marks (including after a
+        // driver crash), but repeated prepare in the SAME active execution
+        // keeps its progress; none of this touches actual raw/results.
+        if (!current || jobRootKey(current.job_root) !== rootKey) {
+          await resetJobStepsForRuntime(runtimeRoot);
+        }
         const runtimeEntries =
-          await fs.readdir(runtimeRoot);
+          (await fs.readdir(runtimeRoot)).filter(
+            (entry) => entry !== JOB_STEPS_FILENAME
+          );
         const context: JobRuntimeContext = {
           execution_id: executionId,
           job_id: jobId,
