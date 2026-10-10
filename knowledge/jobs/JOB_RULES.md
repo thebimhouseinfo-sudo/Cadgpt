@@ -51,6 +51,29 @@ A step must **not** directly edit permanent `appdata/libraries/**` source/assets
 - **Tool** = concrete execution mechanism, for example CAD MCP query, CAD MCP command execution, or managed file read/edit
 - **Harness** = quality gate used by a Skill or Job validation process
 
+## Default Job Work capability
+
+A Job always starts with `execution_path=hybrid` (CAD + FILE/SYSTEM)
+regardless of whether its current step only needs CAD tools or only SYSTEM
+tools. CadGPT enforces this at `cadgpt_work_start`, including calls from older
+clients that still pass `execution_path=file` or `cad`. This is a Work capability
+default, **not** permission to run every tool at every Job step: the step's
+allowed tools, active Work credentials, sandbox, result ownership and CAD
+drawing binding remain mandatory. HYBRID registers both tool families lazily;
+it does not itself activate CAD MCP or automatically choose an AutoCAD drawing.
+
+Only the small minority of explicitly designated non-HYBRID Jobs may pass
+`job_nonhybrid_path=file` or `job_nonhybrid_path=cad` to
+`cadgpt_work_start`. Never infer an exception from available tools or the
+first/current step. Non-Job Work types keep their requested execution path.
+
+On a Job switch in the same logical chat, HYBRID Work can inherit exactly
+one previously verified bound drawing identity, retaining its AutoCAD
+runtime-document ID. Zero or multiple bound drawings require an explicit bind.
+A reused binding is revalidated at the first CAD action, so a closed and
+reopened same-name DWG is not silently adopted. No cross-session binding
+inheritance or expansion of drawing-result write authority is permitted.
+
 ## Job execution modes
 
 CadGPT has two execution modes:
