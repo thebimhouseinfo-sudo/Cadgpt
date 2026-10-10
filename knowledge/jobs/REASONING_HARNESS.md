@@ -62,6 +62,13 @@ step; neither sending a tool call nor a model assertion counts as PASS.
 
 On Job success, error/stop, or replacement by a new Job, the CadGPT runtime
 restores ✓/✗ markers to `[ ]` in that Job's `runtime/JOB_STEPS.md`.
+After a terminal failure, first record the failed step and its actual error in the
+user-facing report, then invoke `job_runtime_finish` (foreground) so the list
+is restored; for detached SYSTEM work invoke `job_system_release` instead.
+Do not finish during an ordinary user-choice pause; keep that run available
+until user replies. An intentional "load Lisp then wait for new raw" stop point
+may finish the current invocation after load verification, without completing
+any unexecuted Job stages.
 It never deletes the checklist, actual raw data, results, or metadata.
 Driver-crash recovery also resets progress marks at the next run's prepare,
 then rechecks evidence before repeating any potentially mutating step.
