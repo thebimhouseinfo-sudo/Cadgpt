@@ -37,10 +37,20 @@ jobs:
             if ($run -notmatch [regex]::Escape($action)) { throw "run.bat missing driver action: $action" }
           }
           if ($run -notmatch "cadgpt-tray\.ps1") { throw "run.bat does not delegate to CadGPT tray runtime" }
+          # setup.bat intentionally delegates to scripts/setup-core.bat. Verify
+          # the real call graph rather than requiring a legacy inline marker.
           $setup = Get-Content setup.bat -Raw
-          if ($setup -notmatch 'run\.bat" install') { throw "setup.bat does not install CadGPT tray startup" }
-          if ($setup -notmatch "HKCU|tray") { throw "setup.bat does not express tray/startup migration" }
-          Write-Host "Tray-based BAT/startup contract OK"
+          $core = Get-Content scripts/setup-core.bat -Raw
+          $tray = Get-Content cadgpt-tray.ps1 -Raw
+          $launcher = Get-Content cadgpt-tray.vbs -Raw
+          if ($setup -notmatch 'scripts\\setup-core\.bat') { throw "setup.bat no longer delegates to setup core" }
+          if ($core -notmatch 'run\.bat" install') { throw "setup core no longer installs the startup tray" }
+          if ($run -notmatch 'wscript.+cadgpt-tray\.vbs') { throw "run.bat no longer uses the hidden VBS launcher" }
+          if ($run -notmatch 'cadgpt-tray\.ps1" -InstallStartup') { throw "run.bat install does not register startup" }
+          if ($tray -notmatch '\$StartupKey\s*=\s*"HKCU:') { throw "tray startup is no longer user-scoped" }
+          if ($tray -notmatch 'New-ItemProperty\s+-Path\s+\$StartupKey') { throw "tray startup registry writer is missing" }
+          if ($launcher -notmatch 'WshShell\.Run cmd, 0, False') { throw "VBS launcher no longer starts hidden" }
+          Write-Host "Tray BAT -> setup core -> per-user hidden launcher contract OK"
       - name: Verify safe internal AutoLISP smoke fixture
         shell: pwsh
         run: |
