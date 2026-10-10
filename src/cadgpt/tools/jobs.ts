@@ -516,20 +516,6 @@ export function registerJobDiscoveryTools(server: McpServer): void {
         const executionMode =
           path.extname(real).toLowerCase() === ".py" ? "direct" : "reasoning";
         const bundle = await inspectJobBundle(real);
-        // A registered Job may lend its EXISTING private AutoLISP without
-        // lending its filesystem write authority or switching the active Job.
-        // Only the owner Job's own runtime receives collector-generated raw.
-        // We publish concrete verified paths from the bundle; callers never
-        // guess the library, job root, or a drawing anchor.
-        const ownerRoot = path.dirname(real);
-        const borrowedLisp = bundle.files
-          .filter((file) =>
-            /^(?:lisp|dynamic-lisp)\/.+\.lsp$/i.test(file)
-          )
-          .map((file) => ({
-            relative_path: file,
-            path: path.join(ownerRoot, ...file.split("/")),
-          }));
         const compat = await getJobLocalCompatStatus();
         const blocked = compat.blocked_job_ids.some(
           (id) => id.toLowerCase() === entry.id.toLowerCase()
@@ -554,15 +540,6 @@ export function registerJobDiscoveryTools(server: McpServer): void {
           source_sha256: sha256(content),
           bundle_sha256: bundle.sha256,
           bundle_files: bundle.files,
-          borrowed_capabilities: {
-            owner_job_id: entry.id,
-            owner_job_root: ownerRoot,
-            owner_raw_root: path.join(ownerRoot, "runtime"),
-            lisp: borrowedLisp,
-            access: "borrow_existing_only",
-            instruction:
-              "Another active Reasoning Job may load an EXISTING verified owner LISP via cad__cad_load_lisp_file without starting/replacing the owner Job. Collector-owned raw stays under owner_raw_root (written by the owner LISP itself); borrower can READ it when authorized but must not file_create/edit/delete there. Borrower processes a copy in its own runtime and publishes only to its own drawing_job_result_location. Do not alter the owner's JOB.md, code, Job Steps, runtime, result, or active lease. Verify the owner's collector actually uses its own raw directory before calling; if unknown, stop and report.",
-          },
           ...(executionMode === "reasoning"
             ? { harness: "knowledge/jobs/REASONING_HARNESS.md" }
             : {}),
