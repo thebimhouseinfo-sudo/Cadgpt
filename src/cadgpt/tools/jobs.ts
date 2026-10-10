@@ -974,6 +974,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
           toolId: runtime.job_id,
           jobId: runtime.job_id,
           jobName,
+          jobRoot: runtime.job_root,
           sessionKey: callLease.sessionKey,
           readableRoots:
             drawingMetadataRootsForExecution(
