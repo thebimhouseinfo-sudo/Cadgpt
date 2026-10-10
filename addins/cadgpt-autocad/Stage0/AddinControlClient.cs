@@ -215,6 +215,18 @@ namespace CadGpt.AutoCad.Stage0
                 token);
         }
 
+        // Explicit shutdown notification; not sent on WebView recreation.
+        public Task<AddinReleaseResponse> NotifyHostClosedAsync(
+            string pairId,
+            CancellationToken token)
+        {
+            return SendAsync<AddinReleaseResponse>(
+                "POST",
+                "/addin-control/host/closed/" +
+                Uri.EscapeDataString(pairId),
+                token);
+        }
+
         private async Task<T> SendAsync<T>(
             string method,
             string relativePath,
