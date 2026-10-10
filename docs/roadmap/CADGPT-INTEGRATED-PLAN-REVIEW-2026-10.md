@@ -18,3 +18,12 @@ Verdict: CHANGES_REQUIRED
 - RV7 / MINOR / Branch release strategy: retain one integration branch (user preference) but ensure checkpoint evidence and baseline reconciliation, optional feature flags for new write tools, and final merge only after human release decision.
 
 Route: Planner to repair revision 2, then reread and re-review exact blob.
+
+## Round 2 — revision 2
+Target document blob SHA: 7a808a0f2e791f6c7d23102f059eacd29455e490
+Verdict: CHANGES_REQUIRED (2 remaining implementation sequencing issues)
+
+- RV8 / IMPORTANT / main-source-of-truth drift: plan kept *all* implemented work unmerged until a single final J09 integration, despite 15 finite Job Packs. This makes the integration branch long-lived and diverging, directly counter to the project's recent lessons learned. Set human-gated per-milestone reviewed merge to main, one active work branch at any time, and prevent a partially accepted capability from becoming available by default.
+- RV9 / IMPORTANT / urgent fix sequencing: M0 grouped J01 Grille selection repair with unrelated J02 SYSTEM/Excel and could delay the already reported CAD defect. Split M0 into M0a (J00 + root-cause J01 for early user acceptance) and M0b (J02). Both need their own smoke/rollback gate.
+
+Route: Planner revision 3 then fresh plan reread/review; no production change.
