@@ -32,6 +32,9 @@ namespace CadGpt.AutoCad
 
         public static void Shutdown()
         {
+            // Only AutoCAD host termination revokes Job authority globally.
+            // Recreate()/palette refresh must preserve the existing pair.
+            _view?.NotifyCadHostClosed();
             DisposeCurrent();
         }
 
