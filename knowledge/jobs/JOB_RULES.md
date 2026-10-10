@@ -169,9 +169,27 @@ The first four entries are permanent Job definition/executable assets. `runtime/
 
 ## Local Custom Job compatibility signal
 
-CadGPT uses `JOB_LOCAL_COMPAT_EPOCH` only as a lightweight signal that an installed source change may require existing User Jobs in local AppData to be checked or repaired. It is **not** the Job-system version and must not change for ordinary features, documentation edits, optimizations or other compatible changes.
+CadGPT uses `JOB_LOCAL_COMPAT_EPOCH` as a lightweight signal that
+a source behavior change may require already-installed User Jobs in AppData
+to be checked or repaired. It is **not** a Job-system version. Contract
+epoch **2** covers HYBRID by default, `runtime/JOB_STEPS.md`, current
+`JOB.md` retrieval, correct branch-entry checks and original platform/Lisp
+error reporting. Any future source change that affects how existing Custom
+Jobs are executed MUST update the versioned Job behavior documents and
+the local compatibility instructions; do not hide behavior changes only in
+CadGPT implementation source. Bump the epoch for incompatible changes.
+The small source-contract fingerprint catches subsequent changes to these
+documents even if the epoch was not bumped.
 
-Before normal User Job create/run/update work, CadGPT performs only the O(1) `job_local_compat_status` comparison between the source epoch and the small local checked marker. When they match, do not enumerate or inspect Job packages.
+Before normal User Job create/run/update work, CadGPT performs the O(1)
+`job_local_compat_status` check (epoch + fingerprint against the local
+checked marker). On mismatch, visibly notify the user and request a
+`jobcreate` CONTRACT UPDATE scan of actual User Job definitions. Do not
+quietly start an outdated User Job or assume a CadGPT core update has also
+replaced its permanent AppData `JOB.md`. When there is no mismatch, do
+not enumerate or inspect Job packages. Any unresolved pending actions
+from an earlier scan must still be displayed to the user without
+rerunning a full scan every time.
 
 When they differ, `jobcreate` enters **CONTRACT UPDATE** mode:
 
