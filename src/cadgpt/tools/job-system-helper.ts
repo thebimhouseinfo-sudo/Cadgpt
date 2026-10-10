@@ -125,7 +125,7 @@ export function registerJobSystemHelperTools(server: McpServer): void {
           CADGPT_JOB_RESULT_ROOT: resultRoot,
         };
         const { stdout, stderr } = await execFileAsync(
-          pythonExecutable(), ["-I", snapshot, realInput], {
+          pythonExecutable(), ["-I", "-X", "utf8", snapshot, realInput], {
             cwd: realRuntime,
             env,
             windowsHide: true,
