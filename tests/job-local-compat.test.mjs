@@ -228,6 +228,7 @@ test("Job local compatibility fast path reads only the small epoch state and lea
       scanned_user_jobs: 0,
       report_summary: "not scanned",
       pending_actions: [],
+      blocked_job_ids: [],
     });
     assert.equal(incomplete.isError, true);
     assert.match(JSON.stringify(incomplete), /JOB_LOCAL_COMPAT_SCAN_COUNT_MISMATCH/);
@@ -235,8 +236,20 @@ test("Job local compatibility fast path reads only the small epoch state and lea
       scanned_user_jobs: 1,
       report_summary: "one real User Job inspected and reported",
       pending_actions: [],
+      blocked_job_ids: [],
     });
     assert.equal(completed.isError, undefined, JSON.stringify(completed));
+
+    const blockedMarker = await checked({
+      scanned_user_jobs: 1,
+      report_summary: "one affected Job awaits human approval",
+      pending_actions: ["grille-tag flow still needs human test"],
+      blocked_job_ids: ["custom-job"],
+    });
+    assert.equal(blockedMarker.isError, undefined, JSON.stringify(blockedMarker));
+    const blockedPrepare = await callbacks.get("job_runtime_prepare")({ id: "custom-job" });
+    assert.equal(blockedPrepare.isError, true);
+    assert.match(JSON.stringify(blockedPrepare), /JOB_LOCAL_COMPAT_JOB_BLOCKED/);
 
     const getJob = callbacks.get("job_get");
     const scanRead = await getJob({
