@@ -833,13 +833,23 @@ export function registerJobAuthoringTools(server: McpServer): void {
         }
         const workflowSha256 = sha256(workflowSource);
         const lease = currentToolLease();
-        const transition =
-          await releasePriorJobAuthorityForStart({
-            executionId:
-              lease.workId,
-            sessionKey:
-              lease.sessionKey,
-          });
+        const activeRuntime = activeJobRuntimeForExecution(lease.workId);
+        const currentRoot = path.resolve(path.dirname(jobFile));
+        const sameActiveJob = Boolean(
+          activeRuntime &&
+          activeRuntime.job_id === jobId &&
+          (process.platform === "win32"
+            ? activeRuntime.job_root.toLowerCase() === currentRoot.toLowerCase()
+            : activeRuntime.job_root === currentRoot)
+        );
+        // A repeat prepare for the SAME active Job is a continuation,
+        // not a new Job start. Preserve its Job Steps and tool authority.
+        const transition = sameActiveJob
+          ? { resumed_same_active_job: true }
+          : await releasePriorJobAuthorityForStart({
+              executionId: lease.workId,
+              sessionKey: lease.sessionKey,
+            });
         const runtime =
           await prepareJobRuntimeForExecution(
             lease.workId,
