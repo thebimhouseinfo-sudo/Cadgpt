@@ -33,6 +33,20 @@ export interface JobTransitionCleanup {
   };
 }
 
+// Serialize host-close and Job-start transitions within one driver process.
+let transitionTail: Promise<void> = Promise.resolve();
+async function serializeJobTransition<T>(action: () => Promise<T>): Promise<T> {
+  const prior = transitionTail;
+  let release!: () => void;
+  transitionTail = new Promise<void>((resolve) => { release = resolve; });
+  await prior;
+  try {
+    return await action();
+  } finally {
+    release();
+  }
+}
+
 /**
  * The installed CadGPT driver is a single-user Job runtime. Starting a new
  * user-requested Job replaces idle Job authority even if the old Job belongs
@@ -41,7 +55,7 @@ export interface JobTransitionCleanup {
  * Never terminate an actual in-flight tool or SYSTEM file call. Authority
  * revocation precedes cleanup so an old session cannot claim another task.
  */
-export async function terminalizeIdleJobAuthorities(input: {
+async function terminalizeIdleJobAuthoritiesUnlocked(input: {
   excludeSessionKey?: string;
   excludeExecutionId?: string;
   reason: "new_job" | "cad_host_closed";
@@ -108,11 +122,20 @@ export async function terminalizeIdleJobAuthorities(input: {
   };
 }
 
+export async function terminalizeIdleJobAuthorities(input: {
+  excludeSessionKey?: string;
+  excludeExecutionId?: string;
+  reason: "new_job" | "cad_host_closed";
+}): Promise<JobTransitionCleanup["retired_other_sessions"]> {
+  return serializeJobTransition(() => terminalizeIdleJobAuthoritiesUnlocked(input));
+}
+
 /** New Job B terminals old Job A, even if A lived in a different chat. */
 export async function releasePriorJobAuthorityForStart(input: {
   executionId: string;
   sessionKey: string;
 }): Promise<JobTransitionCleanup> {
+  return serializeJobTransition(async () => {
   const localLeases = activeJobSystemLeasesForSession(input.sessionKey);
   for (const lease of localLeases) {
     if (jobSystemLeaseHasInFlightCall(lease.tool_id)) {
@@ -121,7 +144,7 @@ export async function releasePriorJobAuthorityForStart(input: {
       );
     }
   }
-  const retired = await terminalizeIdleJobAuthorities({
+  const retired = await terminalizeIdleJobAuthoritiesUnlocked({
     excludeSessionKey: input.sessionKey,
     excludeExecutionId: input.executionId,
     reason: "new_job",
@@ -156,4 +179,5 @@ export async function releasePriorJobAuthorityForStart(input: {
     released_system_jobs: releasedSystemJobs,
     retired_other_sessions: retired,
   };
+  });
 }
