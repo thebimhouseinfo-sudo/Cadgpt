@@ -27,3 +27,26 @@ Verdict: CHANGES_REQUIRED (2 remaining implementation sequencing issues)
 - RV9 / IMPORTANT / urgent fix sequencing: M0 grouped J01 Grille selection repair with unrelated J02 SYSTEM/Excel and could delay the already reported CAD defect. Split M0 into M0a (J00 + root-cause J01 for early user acceptance) and M0b (J02). Both need their own smoke/rollback gate.
 
 Route: Planner revision 3 then fresh plan reread/review; no production change.
+
+## Round 3 — revision 3
+Target document blob SHA: 31b4c1f494145b0caa7afffc67083483a5c951d3
+Verdict: PASS (planning specification only; not a code/security test or live AutoCAD acceptance)
+
+Review evidence:
+- Explicit source evidence for 41 manifest tools, filter limits and manifest gateway.
+- Every prior RV1–RV9 planning finding is mapped to a named pack/contract and explicit acceptance criterion.
+- Two early release gates M0a/M0b avoid delaying urgent Grille selection defect behind Excel, with one active work branch and human-reviewed milestone merges to main.
+- Isolated J05A/B/C, J06A/B/C, J08A/B avoid mega-Job scope and provide separately verifiable outcomes.
+- User-stated no-change scope for TabSortV2-2 and source-SHA guard is explicit.
+- Fail-closed authority of named proxy and generic manifest gateway, one-shot preview/confirmation, drawing identity, runtime compliance and actual .NET feasibility are addressed.
+- Live CAD/COM behavior remains UNKNOWN until tested on authorized disposable DWG; current plan correctly requires BLOCKED_REAL_CAD_VALIDATION instead of inventing PASS.
+- Real source code, .lsp files, production DWG and AutoCAD workspace are untouched by this planning loop.
+
+Remaining execution risks (not review blockers):
+1. Exact selection error stage is not yet known; test A/B/C scenarios before changing reactor.
+2. Windows CAD/COM acceptance requires a running supported R22.0 host and captured evidence.
+3. A Python helper is trusted code, not an OS sandbox; J02 must gate any untrusted execution.
+4. Additional 40–55 CAD capabilities are a planning envelope, not a commitment to ship unneeded API clones; each family may remain BLOCKED by unsupported host semantics.
+5. p95 improvement remains a measurable objective, not a guaranteed speedup.
+
+Planning outcome: READY_FOR_IMPLEMENTATION_SCHEDULING after user instruction; source/main merge NOT AUTHORIZED by this plan review.
