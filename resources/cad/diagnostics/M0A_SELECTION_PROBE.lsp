@@ -3,6 +3,8 @@
 ;;; Command: CGM0APROBE. Select with Window/Crossing or normal grips.
 ;;; No entmod, entmake, COM writes, reactors, layer or sysvar changes.
 
+(vl-load-com)
+
 (defun c:CGM0APROBE (/ *error* selection ent data layer idx
                        total inserts grilles tags others linked)
   (defun *error* (msg)
