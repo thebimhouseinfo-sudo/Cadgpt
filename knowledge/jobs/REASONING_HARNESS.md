@@ -56,9 +56,27 @@ Do not invent a choice from old chat history or auto-expand unselected branches.
 
 Work on one required step at a time. After a tool completes, verify its
 readback/postcondition, then use `file_edit` with the current hash to mark
-that step `[✓]`. On failure, mark `[✗]`, report the real error and stop
-instead of advancing. A `[ ]` or `[✗]` required step blocks the next
+that step `[✓]`. A CAD tool that returns `loaded=false` is a FAILURE even
+when transport succeeded; Load Lisp PASS requires `loaded=true`.
+On failure, mark `[✗]`, notify the user immediately, and stop instead
+of advancing. A `[ ]` or `[✗]` required step blocks the next
 step; neither sending a tool call nor a model assertion counts as PASS.
+
+**User-visible step reporting is mandatory**: after each meaningful Job step,
+report `✓ Job / Step name — verified result` concisely. On any failure,
+report `✗ Job / Step name — FAILED` with the actual tool/error code, original
+message, relevant LISP/file path and CAD log excerpt if present, plus which
+steps were NOT executed and whether raw/result/CAD data were changed.
+Never replace the source error with a vague "blocked" statement.
+If the error originates from CadGPT source, path-policy, bridge, CAD MCP or
+tool authority, call it a **CadGPT platform/source failure**, not a user
+workflow mistake. If origin is not confirmed, say "origin not established"
+and retain the original error rather than guessing.
+When the Job tool itself is broken, do not silently call another lower-level
+tool, switch branches, enable Human Power or fabricate success. Surface the
+fault so CadGPT source can be repaired and re-tested before re-execution.
+Preserve failure information in the user-visible response BEFORE the runtime
+resets Job Steps on finish/switch.
 
 On Job success, error/stop, or replacement by a new Job, the CadGPT runtime
 restores ✓/✗ markers to `[ ]` in that Job's `runtime/JOB_STEPS.md`.

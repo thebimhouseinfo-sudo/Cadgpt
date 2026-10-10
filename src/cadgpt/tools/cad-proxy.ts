@@ -327,6 +327,54 @@ function isToolErrorResult(value: unknown): boolean {
   );
 }
 
+/**
+ * A CAD MCP call may return a transport-successful payload with loaded=false.
+ * Turn it into a *tool failure* carrying the actual upstream error and log.
+ * Otherwise a Reasoning Job can mistakenly mark its Load Lisp step PASS.
+ * Keep this as a small diagnostic adapter, not another Job engine.
+ */
+export function verifiedLispLoadFailureResult(
+  raw: unknown,
+  sourcePath: string,
+  drawingId: string
+) {
+  const payload = extractUpstreamPayload(raw);
+  const loaded = findPayloadField(payload, "loaded");
+  if (!isToolErrorResult(raw) && loaded === true) return null;
+
+  const reported = findPayloadField(payload, "error");
+  const upstreamMessage =
+    typeof reported === "string" && reported.trim()
+      ? reported.trim().slice(0, 2000)
+      : "AutoCAD did not confirm the Lisp load completed successfully.";
+  const reportedLog = findPayloadField(payload, "log_tail");
+  const logTail =
+    typeof reportedLog === "string" ? reportedLog.slice(-4000) : "";
+  const errorCode =
+    loaded === false ? "CADGPT_LISP_LOAD_FAILED" : "CADGPT_LISP_LOAD_UNVERIFIED";
+  const response = {
+    ok: false,
+    tool: "cad__cad_load_lisp_file",
+    summary: `${errorCode}: ${upstreamMessage}`,
+    data: {
+      error_code: errorCode,
+      error: upstreamMessage,
+      loaded: false,
+      source_path: sourcePath,
+      drawing_id: drawingId,
+      log_tail: logTail,
+      failure_scope: "CADGPT_LISP_SOURCE_OR_RUNTIME",
+      next_action:
+        "Report this failed Job step to the user with the original error. Do not mark it PASS, run the unloaded command, or silently bypass the Job's loader.",
+    },
+  };
+  return {
+    isError: true,
+    content: [{ type: "text" as const, text: JSON.stringify(response) }],
+    structuredContent: response,
+  };
+}
+
 function schemaNodeToZod(schema: unknown): z.ZodTypeAny {
   if (!schema || typeof schema !== "object") return z.any();
   const node = schema as {
@@ -673,21 +721,20 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
               { path: lispPath }
             );
 
-            const loaded = findPayloadField(
-              extractUpstreamPayload(result),
-              "loaded"
+            const failure = verifiedLispLoadFailureResult(
+              result, lispPath, binding.drawing_id
             );
-            if (!isToolErrorResult(result) && loaded === true) {
-              const owned = lispCommandSet(
-                currentToolLease().workId,
-                binding.drawing_id
-              );
-              for (const command of commands) owned.add(command);
-              recordCadCandidateSuccess(
-                currentToolLease().workId,
-                loadLispPublicName
-              );
-            }
+            if (failure) return failure as any;
+
+            const owned = lispCommandSet(
+              currentToolLease().workId,
+              binding.drawing_id
+            );
+            for (const command of commands) owned.add(command);
+            recordCadCandidateSuccess(
+              currentToolLease().workId,
+              loadLispPublicName
+            );
             return result as any;
           });
         } catch (error) {
