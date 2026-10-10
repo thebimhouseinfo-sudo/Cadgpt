@@ -834,7 +834,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
         const workflowSha256 = sha256(workflowSource);
         const lease = currentToolLease();
         const activeRuntime = activeJobRuntimeForExecution(lease.workId);
-        const currentRoot = path.resolve(path.dirname(jobFile));
+        // Compare canonical filesystem identities; Windows may supply a
+        // short 8.3 alias for the same Job directory.
+        const currentRoot = await fs.realpath(path.dirname(jobFile));
         const sameActiveJob = Boolean(
           activeRuntime &&
           activeRuntime.job_id === jobId &&
