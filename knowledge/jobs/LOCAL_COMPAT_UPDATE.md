@@ -5,10 +5,22 @@ This file is the repair instruction carried by the current `JOB_LOCAL_COMPAT_EPO
 ## Current signal
 
 ```text
-JOB_LOCAL_COMPAT_EPOCH = 1
+JOB_LOCAL_COMPAT_EPOCH = 2
 ```
 
 Epoch 1 exists because the Job storage/runtime contract changed in ways that can make already-installed local Custom Jobs non-compliant.
+
+Epoch 2 (2026-10-10) is a **behavior/compatibility update**, not a general
+Job-format migration: Jobs now default to HYBRID Work, a Reasoning Job reads
+its current promoted `JOB.md` on every run, maintains `runtime/JOB_STEPS.md`
+with verified step PASS/FAIL, and reports actual tool/source failures to users.
+An unchanged local Job may still be compatible; each installed Job must be
+inspected against the new execution behavior before the marker is checked.
+The source fingerprint in the compatibility status also detects future edits
+to the three versioned Job behavior documents without rescanning AppData
+until a mismatch is seen. A source implementation change which alters Job
+behavior **must update these source-owned contracts**; do not hide new
+behavior in runtime code while leaving the versioned contract unchanged.
 
 ## Target discovery
 
@@ -39,6 +51,57 @@ Mark a Job `AFFECTED` only when the real local Job shows one or more of these co
 Do **not** classify a Job as affected merely because it has `dynamic-lisp/**`; that directory is persistent executable state and remains valid.
 
 Do **not** remove a global Registry capability when ownership is ambiguous or another Job may depend on it. Classify that external cleanup as `REVIEW_REQUIRED` and report it.
+
+## Epoch 2 behavior detectors (all registered Custom Jobs)
+
+Use the CURRENT promoted `JOB.md` returned by `job_get`, not old chat
+summaries, previous Job Steps, or a locally remembered script. Inspect
+every User Registry Job (including its relevant private Lisp/helpers) for:
+
+- Entry conditions that are missing, reversed, or read from an unrelated
+  result folder. The actual input check (e.g. raw empty/nonempty) MUST be
+  performed before tools belonging to the selected branch; being a
+  `HYBRID` Job does not justify eagerly loading CAD Lisp.
+- Conditional choices that differ from the most recently *approved and
+  promoted* Job contract, including Update/Skip and Load Lisp/Check raw,
+  the exact stopping point of a load-only choice, and the behavior of Skip.
+  Do NOT infer or silently change user business rules; report conflicts
+  and ask the user how to update the Job.
+- Reasoning step success criteria that mark PASS just because a tool was
+  called, do not verify postconditions (Load Lisp requires `loaded=true`),
+  or permit advancing after a required step failed.
+- Missing per-Job `runtime/JOB_STEPS.md` discipline: use the supplied
+  `job_steps.path`, check off ONLY evidence-backed steps and report each
+  meaningful step/actual platform error to the user. On terminal finish,
+  failure, or Job switch, the runtime resets just ✓/✗ marks, not raw/data.
+- Outdated FILE-only/CAD-only Work assumptions: the default Job execution
+  path is HYBRID. A true non-HYBRID exception must be deliberate, not a
+  guess based on the first tool. CAD operations still require a valid
+  drawing binding, tool authority, and path gate.
+- Any Job that says to work around a failed CadGPT loader, suppress the
+  original LISP source/CAD MCP error, bypass policy, or silently continue.
+  Report the original error and stop for source repair instead.
+
+**Concrete Grille Tag regression scenario** (use ONLY when the examined
+Job is `grille-tag`, preserving the user's approved contract):
+`check actual raw -> empty: Stage 1 -> Stage 2 -> Stage 3;
+nonempty: ask Update/Skip; Update: ask Load Lisp/Check raw;
+Skip: Check raw; Load Lisp: load then report and STOP until a new user request`.
+The raw check precedes any branch-specific Lisp loading. The update/skip
+choice is never copied from a prior run. If local `JOB.md` has a different
+route, classify AFFECTED and request user confirmation to patch through
+jobcreate instead of replacing its instructions silently.
+
+**Action/gate**: At activation, show that the contract changed and
+`jobcreate` must scan local Jobs. Inspect and report
+UNCHANGED / AFFECTED / BLOCKED for every registered User Job. Before
+changing an AFFECTED Job's business flow, display the proposed narrow
+change and get user acceptance. Use job_checkout -> patch -> validate ->
+real affected-path test -> user approval -> job_promote_draft. If human
+testing is unavailable, mark NOT TESTED / BLOCKED, do NOT claim the
+local Job was updated. The compatibility scan report must be given to
+the user, including pending work and the fact that affected/unpromoted
+Jobs may still follow their old behavior.
 
 ## Epoch 1 repair rules
 
@@ -87,7 +150,7 @@ For every changed Job, re-check at minimum:
 Produce one concise scan report with this shape:
 
 ```text
-CadGPT Job Contract Update — epoch 1
+CadGPT Job Contract Update — epoch 2
 
 Scanned:
 Affected:
@@ -109,4 +172,11 @@ Pending external action:
 - <exact gate/action, or NONE>
 ```
 
-After all User Jobs have been inspected, call `job_local_compat_mark_checked` with the scan count, report summary and all pending external actions. Pending actions remain visible but do not cause the full local scan to repeat on every later Job call.
+After all registered User Jobs have been inspected, show the report to
+the user, then call `job_local_compat_mark_checked` with the **actual number
+of registered User Jobs examined**, report summary and all pending external
+actions. The tool rejects a scan count inconsistent with the registry.
+Pending/unpromoted user changes must be clearly reported as pending,
+not described as already applied; they remain visible at subsequent CadGPT
+launches even if the completed compatibility scan itself does not repeat.
+Do not mark the epoch checked before enumeration/inspection has occurred.
