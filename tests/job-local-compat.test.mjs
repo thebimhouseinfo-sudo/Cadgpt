@@ -25,7 +25,8 @@ test("Job local compatibility fast path reads only the small epoch state and lea
 
     const initial =
       await compat.getJobLocalCompatStatus();
-    assert.equal(initial.source_epoch, 1);
+    assert.equal(initial.source_epoch, 2);
+    assert.match(initial.source_fingerprint, /^[a-f0-9]{64}$/);
     assert.equal(initial.checked_epoch, 0);
     assert.equal(initial.update_required, true);
     const repairGuide = await fs.readFile(
@@ -71,6 +72,8 @@ test("Job local compatibility fast path reads only the small epoch state and lea
     assert.deepEqual(fast.pending_actions, [
       "external registration follow-up",
     ]);
+    assert.equal(fast.update_reason, null);
+    assert.equal(fast.checked_fingerprint, fast.source_fingerprint);
 
     const callbacks = new Map();
     const fakeServer = {
@@ -219,6 +222,21 @@ test("Job local compatibility fast path reads only the small epoch state and lea
       }),
       "utf8"
     );
+
+    const checked = callbacks.get("job_local_compat_mark_checked");
+    const incomplete = await checked({
+      scanned_user_jobs: 0,
+      report_summary: "not scanned",
+      pending_actions: [],
+    });
+    assert.equal(incomplete.isError, true);
+    assert.match(JSON.stringify(incomplete), /JOB_LOCAL_COMPAT_SCAN_COUNT_MISMATCH/);
+    const completed = await checked({
+      scanned_user_jobs: 1,
+      report_summary: "one real User Job inspected and reported",
+      pending_actions: [],
+    });
+    assert.equal(completed.isError, undefined, JSON.stringify(completed));
 
     const getJob = callbacks.get("job_get");
     const scanRead = await getJob({
