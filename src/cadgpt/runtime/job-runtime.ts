@@ -441,7 +441,13 @@ export async function prepareJobRuntimeForExecution(
           executionId,
           context
         );
-        if (!resetRuntime) reasoningScopedExecutions.add(executionId);
+        if (resetRuntime) {
+          // Direct Job starts a separate fixed executor: do not inherit
+          // Reasoning Job's file-tool policy into this execution mode.
+          reasoningScopedExecutions.delete(executionId);
+        } else {
+          reasoningScopedExecutions.add(executionId);
+        }
         return context;
       } catch (error) {
         if (
