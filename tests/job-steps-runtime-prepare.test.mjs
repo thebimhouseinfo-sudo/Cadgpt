@@ -50,7 +50,11 @@ test("job_runtime_prepare rereads promoted Markdown and preserves same-active-Jo
     assert.equal(first.workflow.content, originalSource);
     assert.equal(first.workflow.source_sha256,
       createHash("sha256").update(originalSource).digest("hex"));
-    assert.equal(first.job_steps.path, path.join(path.dirname(sourcePath), "runtime", "JOB_STEPS.md"));
+    assert.equal(
+      first.job_steps.path.toLowerCase(),
+      path.join(await fs.realpath(path.dirname(sourcePath)), "runtime", "JOB_STEPS.md").toLowerCase(),
+      "Windows canonical realpath may expand 8.3 short directory aliases"
+    );
 
     await fs.writeFile(first.job_steps.path, "- [✓] Check raw\n- [ ] Stage 1\n", "utf8");
     const newSource = "# Grille Tag\n\n## Stage 1\nCheck raw data\n## Stage 2\nLoad Lisp\n";
