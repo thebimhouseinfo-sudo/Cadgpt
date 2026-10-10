@@ -48,6 +48,21 @@ function enrichCadError(error: unknown, stderrTail: string): Error {
   });
 }
 
+/** Keep CAD MCP alive across ordinary Job transitions; isolate Human Power. */
+export function shouldResetCadUpstreamForContext(input: {
+  connected: boolean;
+  requestedExecutionId: string | null;
+  requestedHumanPower: boolean;
+  connectedExecutionId: string | null;
+  connectedHumanPower: boolean;
+}): boolean {
+  if (!input.connected || !input.requestedExecutionId) return false;
+  if (input.connectedHumanPower !== input.requestedHumanPower) return true;
+  return input.requestedHumanPower &&
+    input.connectedExecutionId !== null &&
+    input.connectedExecutionId !== input.requestedExecutionId;
+}
+
 class CadUpstream {
   private phase: CadUpstreamPhase = "sleeping";
   private client: Client | null = null;
@@ -125,16 +140,17 @@ class CadUpstream {
       requestedHumanPower = false;
     }
 
-    const contextChanged =
-      Boolean(this.client && this.transport) &&
-      Boolean(requestedExecutionId) &&
-      (
-        this.connectedHumanPower !== requestedHumanPower ||
-        (
-          this.connectedExecutionId !== null &&
-          this.connectedExecutionId !== requestedExecutionId
-        )
-      );
+    // In normal (non-Human-Power) work, the Python CAD MCP process is
+    // execution-independent. Reusing it avoids costly process respawns on
+    // every Job/chat handoff. Human Power is execution-scoped and MUST still
+    // restart the process on mode or owning-execution changes.
+    const contextChanged = shouldResetCadUpstreamForContext({
+      connected: Boolean(this.client && this.transport),
+      requestedExecutionId,
+      requestedHumanPower,
+      connectedExecutionId: this.connectedExecutionId,
+      connectedHumanPower: this.connectedHumanPower,
+    });
     if (contextChanged) {
       await this.shutdown();
     }
