@@ -5,6 +5,7 @@ export interface JobSystemLease {
   tool_id: string;
   job_id: string;
   job_name: string;
+  job_root?: string;
   session_key: string;
   readable_roots: string[];
   writable_roots: string[];
@@ -44,6 +45,7 @@ export function acquireJobSystemLease(input: {
   toolId: string;
   jobId: string;
   jobName: string;
+  jobRoot?: string;
   sessionKey: string;
   readableRoots: string[];
   writableRoots: string[];
@@ -65,6 +67,7 @@ export function acquireJobSystemLease(input: {
     tool_id: input.toolId.trim(),
     job_id: input.jobId.trim(),
     job_name: input.jobName.trim() || input.jobId.trim(),
+    job_root: input.jobRoot ? path.resolve(input.jobRoot) : undefined,
     session_key: input.sessionKey,
     readable_roots: [...new Set(input.readableRoots.map((root) => path.resolve(root)))],
     writable_roots: [...new Set(input.writableRoots.map((root) => path.resolve(root)))],

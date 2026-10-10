@@ -585,4 +585,165 @@ export function registerFilesystemTools(server: McpServer): void {
     }
   );
 
+  // Binary workbook operations are SYSTEM-only. Unlike text file APIs, they
+  // never interpret .xlsx bytes as UTF-8 or expose arbitrary host directories.
+  const binarySystem = () => {
+    const lease = currentJobSystemLease();
+    if (!lease || !lease.job_root) {
+      throw new Error("SYSTEM_BINARY_LEASE_REQUIRED: prepare/acquire a Job SYSTEM lease first.");
+    }
+    return lease;
+  };
+  const binaryExtension = (target: string) => {
+    if (path.extname(target).toLowerCase() !== ".xlsx") {
+      throw new Error("SYSTEM_BINARY_XLSX_ONLY: only .xlsx workbooks are supported.");
+    }
+  };
+  const readWorkbook = async (target: string) => {
+    binaryExtension(target);
+    const stat = await fs.stat(target);
+    if (!stat.isFile()) throw new Error("SYSTEM_BINARY_FILE_REQUIRED");
+    return fs.readFile(target);
+  };
+  const binaryReadable = (lease: ReturnType<typeof binarySystem>) =>
+    [lease.job_root!, ...lease.readable_roots, ...lease.writable_roots];
+  const decodeWorkbook = (input: string) => {
+    if (input.length > 6 * 1024 * 1024 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input)) {
+      throw new Error("SYSTEM_BINARY_BASE64_INVALID_OR_TOO_LARGE");
+    }
+    const bytes = Buffer.from(input, "base64");
+    if (bytes.length > 4 * 1024 * 1024 || bytes.toString("base64") !== input) {
+      throw new Error("SYSTEM_BINARY_BASE64_INVALID_OR_TOO_LARGE");
+    }
+    if (bytes.length < 4 || bytes.subarray(0, 2).toString("ascii") !== "PK") {
+      throw new Error("SYSTEM_BINARY_NOT_XLSX_ZIP");
+    }
+    return bytes;
+  };
+  const binaryPublish = async (target: string, bytes: Buffer, expected?: string) =>
+    withFileMutationLocks([target], async () => {
+      let oldHash: string | null = null;
+      try {
+        const old = await readWorkbook(target);
+        oldHash = sha256(old);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      if (oldHash !== null && (!expected || oldHash !== expected)) {
+        throw new Error("RESOURCE_CONFLICT: binary workbook exists or its hash changed.");
+      }
+      if (oldHash === null && expected) {
+        throw new Error("RESOURCE_CONFLICT: workbook disappeared.");
+      }
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      const temp = path.join(path.dirname(target), "." + path.basename(target) + "." + randomUUID() + ".tmp");
+      try {
+        await fs.writeFile(temp, bytes, { flag: "wx" });
+        if (sha256(await fs.readFile(temp)) !== sha256(bytes)) {
+          throw new Error("SYSTEM_BINARY_STAGING_VERIFY_FAILED");
+        }
+        // Revalidate the destination immediately before publication; a
+        // foreign writer does not participate in our in-process file lock.
+        let latestHash: string | null = null;
+        try { latestHash = sha256(await fs.readFile(target)); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        if (latestHash !== oldHash) {
+          throw new Error("RESOURCE_CONFLICT: workbook changed before publish.");
+        }
+        // Never unlink the destination before rename. If the workbook is open
+        // or Windows refuses replacement, the old workbook is preserved.
+        await fs.rename(temp, target);
+        if (sha256(await fs.readFile(target)) !== sha256(bytes)) {
+          throw new Error("SYSTEM_BINARY_PUBLISH_VERIFY_FAILED");
+        }
+      } finally {
+        await fs.rm(temp, { force: true }).catch(() => undefined);
+      }
+      return {
+        path: toCadgptPath(target),
+        absolute_path: target,
+        bytes: bytes.length,
+        sha256: sha256(bytes),
+        sha256_before: oldHash,
+      };
+    });
+
+  server.registerTool(
+    "file_binary_read",
+    {
+      title: "Read a SYSTEM-authorized Excel workbook",
+      description: "Return byte-exact base64 for one .xlsx within the current Job SYSTEM readable roots (max 1 MiB). For larger files use a Job-owned Python helper.",
+      inputSchema: { path: z.string() },
+    },
+    async ({ path: input }) => {
+      try {
+        const lease = binarySystem();
+        const target = await resolveAllowedPath(input, { allowedRoots: binaryReadable(lease) });
+        const bytes = await readWorkbook(target);
+        if (bytes.length > 1024 * 1024) throw new Error("SYSTEM_BINARY_READ_TOO_LARGE: use a Job-owned helper.");
+        return toolResult("file_binary_read", {
+          path: toCadgptPath(target),
+          absolute_path: target,
+          bytes: bytes.length,
+          sha256: sha256(bytes),
+          content_base64: bytes.toString("base64"),
+        });
+      } catch (error) { return toolError("file_binary_read", error); }
+    }
+  );
+
+  server.registerTool(
+    "file_binary_copy",
+    {
+      title: "Copy an Excel workbook within SYSTEM lease",
+      description: "Byte-exact copy of an authorized .xlsx template to a Job runtime/result root. Existing destinations require expected_sha256 for guarded replacement.",
+      inputSchema: {
+        source_path: z.string(),
+        target_path: z.string(),
+        expected_sha256: z.string().length(64).optional(),
+      },
+    },
+    async ({ source_path, target_path, expected_sha256 }) => {
+      try {
+        const lease = binarySystem();
+        const source = await resolveAllowedPath(source_path, { allowedRoots: binaryReadable(lease) });
+        const target = await resolveAbsoluteMutationPath(target_path, {
+          forCreate: true, allowedRoots: lease.writable_roots, label: "SYSTEM Job writable scope",
+        });
+        binaryExtension(source);
+        binaryExtension(target);
+        if (source === target) throw new Error("SYSTEM_BINARY_SAME_SOURCE_TARGET");
+        const bytes = await readWorkbook(source);
+        const result = await binaryPublish(target, bytes, expected_sha256);
+        return toolResult("file_binary_copy", { source: toCadgptPath(source), ...result });
+      } catch (error) { return toolError("file_binary_copy", error); }
+    }
+  );
+
+  server.registerTool(
+    "file_binary_write",
+    {
+      title: "Write an Excel workbook within SYSTEM lease",
+      description: "Create or hash-guard replace a .xlsx from base64 (max 4 MiB); stage and verify before publication. This is byte I/O, not a spreadsheet editor.",
+      inputSchema: {
+        path: z.string(),
+        content_base64: z.string(),
+        expected_sha256: z.string().length(64).optional(),
+      },
+    },
+    async ({ path: input, content_base64, expected_sha256 }) => {
+      try {
+        const lease = binarySystem();
+        const target = await resolveAbsoluteMutationPath(input, {
+          forCreate: true, allowedRoots: lease.writable_roots, label: "SYSTEM Job writable scope",
+        });
+        binaryExtension(target);
+        const bytes = decodeWorkbook(content_base64);
+        return toolResult("file_binary_write", await binaryPublish(target, bytes, expected_sha256));
+      } catch (error) { return toolError("file_binary_write", error); }
+    }
+  );
+
 }
