@@ -8,7 +8,7 @@ import { getAppDataRoot } from "../lib/appdata.js";
 import { isHvacKnowledgePath } from "../lib/knowledge-storage.js";
 import { getAllowedRoots, getRepoRoot, getWritableRoots, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
-import { currentHumanPower, currentToolLease, activeWorkForSession } from "../lib/work-registration.js";
+import { currentHumanPower, currentToolLease } from "../lib/work-registration.js";
 import { currentJobSystemLease } from "../runtime/system-lease.js";
 import {
   auditHumanPowerSourceMutation,
@@ -17,7 +17,7 @@ import {
 import { drawingMetadataRootsForExecution, drawingMetadataWritableRootsForExecution } from "../runtime/drawing-persistence.js";
 import {
   jobRuntimeWritableRootsForExecution,
-  jobStorageScopeWasEntered,
+  reasoningJobStorageScopeWasEntered,
 } from "../runtime/job-runtime.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
@@ -79,18 +79,15 @@ function currentWritableRoots(): string[] {
   } catch {
     jobRoots = [];
   }
-  // Job Work MUST call job_runtime_prepare before any file mutation.
-  // Once a Work entered the Job execution scope, finishing the Job never
-  // silently restores generic workspace/data/drawing-root write access.
-  const lease = currentToolLease();
-  const work = activeWorkForSession(lease.sessionKey);
-  const jobOnly = work?.executionId === lease.workId &&
-    work.ownerType === "job";
-  const enteredJob = jobStorageScopeWasEntered(lease.workId);
-  if ((jobOnly || enteredJob) && !jobRoots.length) return [];
-  // Explicit Human Power is developer/source-repair authority, not a
-  // reason to enlarge a running Job's data output destinations.
-  if (jobRoots.length) return [...new Set(jobRoots)];
+  // Reasoning Job file writes are limited to its own runtime and exact
+  // Drawing Anchor result namespace. After finish, fail closed until Work
+  // retires: never restore generic workspace/data/drawing-root access.
+  // Direct Jobs retain their pre-existing executor/file behavior.
+  const reasoningScope = reasoningJobStorageScopeWasEntered(
+    currentToolLease().workId
+  );
+  if (reasoningScope) return [...new Set(jobRoots)];
+  if (jobRoots.length) return [...new Set([...jobRoots, ...humanPowerRoots])];
   return [
     ...new Set([
       ...getWritableRoots(),
