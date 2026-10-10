@@ -156,9 +156,11 @@ async function assertJobLocalCompatReady(
     [
       "JOB_LOCAL_COMPAT_UPDATE_REQUIRED:",
       `local Custom Jobs have not been checked for the current Job compatibility epoch before ${action}.`,
-      "Run job_local_compat_status, then use jobcreate CONTRACT UPDATE mode to scan User Registry Jobs, inspect/fix only affected local Job packages, validate/re-check them, report any externally blocked action, and finally call job_local_compat_mark_checked.",
+      "Report the contract change to the user and request the jobcreate CONTRACT UPDATE scan before continuing. Use job_local_compat_status and knowledge/jobs/LOCAL_COMPAT_UPDATE.md. Inspect each registered User Job, identify outdated raw-first branches, Job Steps, HYBRID assumptions and source-error reporting; do not overwrite business choices without user approval. Report updated/unchanged/blocked Jobs and only then call job_local_compat_mark_checked.",
       `source_epoch=${status.source_epoch}`,
       `checked_epoch=${status.checked_epoch}`,
+      `update_reason=${status.update_reason}`,
+      `source_fingerprint=${status.source_fingerprint}`,
     ].join(" ")
   );
 }
@@ -379,8 +381,10 @@ export function registerJobDiscoveryTools(server: McpServer): void {
               ? "deep_scan_required"
               : "fast_path",
             instruction: status.update_required
-              ? "Job build contract affecting local Custom Jobs changed. Before normal User Job create/run/update work, read knowledge/jobs/LOCAL_COMPAT_UPDATE.md and use jobcreate CONTRACT UPDATE mode: enumerate User Registry Jobs, inspect package/source only then, repair affected Jobs through the normal checkout/validate/test/promote lifecycle, report any blocked external action, then mark the epoch checked."
-              : "Compatibility signal matches. Do not deep-scan local Job packages.",
+              ? "ATTENTION: Job behavior/contract changed. Notify the user and request a jobcreate CONTRACT UPDATE scan BEFORE starting a User Job. Follow knowledge/jobs/LOCAL_COMPAT_UPDATE.md. Inspect each installed User Job, ask approval for changes to its business workflow, validate/test/promote affected Jobs, and report the results before marking this source contract checked."
+              : status.pending_actions.length
+                ? "Compatibility scan finished but some Custom Job updates are still pending. Surface pending_actions to the user; do not claim those Jobs were repaired."
+                : "Compatibility signal matches. Do not deep-scan local Job packages.",
           }
         );
       } catch (error) {
@@ -435,10 +439,21 @@ export function registerJobDiscoveryTools(server: McpServer): void {
         jobs.sort((a, b) =>
           String(a.id ?? "").localeCompare(String(b.id ?? ""))
         );
+        const compat = await getJobLocalCompatStatus();
         return toolResult("job_list", {
           jobs,
           count: jobs.length,
           rules: "knowledge/jobs/JOB_RULES.md",
+          job_contract_compatibility: {
+            update_required: compat.update_required,
+            source_epoch: compat.source_epoch,
+            checked_epoch: compat.checked_epoch,
+            update_reason: compat.update_reason,
+            pending_actions: compat.pending_actions,
+            ...(compat.update_required
+              ? { instruction: "Notify the user and run jobcreate CONTRACT UPDATE before executing a Custom Job." }
+              : {}),
+          },
         });
       } catch (error) {
         return toolError("job_list", error);
@@ -736,6 +751,12 @@ export function registerJobAuthoringTools(server: McpServer): void {
       pending_actions,
     }) => {
       try {
+        const registryJobs = await loadJobs();
+        if (scanned_user_jobs !== registryJobs.length) {
+          throw new Error(
+            `JOB_LOCAL_COMPAT_SCAN_COUNT_MISMATCH: received scanned_user_jobs=${scanned_user_jobs}; actual registered User Jobs=${registryJobs.length}. Read job_list/job_get and inspect all User Jobs before marking the local compatibility contract checked.`
+          );
+        }
         await markJobLocalCompatChecked({
           scanned_user_jobs,
           report_summary,
