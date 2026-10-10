@@ -82,6 +82,18 @@ every User Registry Job (including its relevant private Lisp/helpers) for:
   original LISP source/CAD MCP error, bypass policy, or silently continue.
   Report the original error and stop for source repair instead.
 
+- A **Reasoning** Job that collects raw data outside its *own*
+  `<job-root>/runtime/**`, writes final output outside its exact
+  `drawing_job_result_location` returned
+  `drawings/<anchor>/jobs/<job-name>-result/**`, or edits an authorized
+  external input / another Job's runtime or result. Such a Job is AFFECTED
+  and needs a narrow user-reviewed source fix, not a broad filesystem
+  permission exception. Test both allowed destinations and rejection of
+  another Job's runtime/result, generic workspace/data and Drawing Anchor
+  parent. A read-only dependency on another folder is allowed and should
+  remain readable under its original authorization. **Do not migrate
+  Direct Python Jobs solely for this Reasoning file-output rule.**
+
 **Concrete Grille Tag regression scenario** (use ONLY when the examined
 Job is `grille-tag`, preserving the user's approved contract):
 `check actual raw -> empty: Stage 1 -> Stage 2 -> Stage 3;
