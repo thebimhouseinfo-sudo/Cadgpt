@@ -167,6 +167,41 @@ The first four entries are permanent Job definition/executable assets. `runtime/
 
 `runtime/**` is never part of the promoted Job bundle, never copied by checkout/promotion and never included in the permanent bundle hash. Changing `runtime/**` therefore cannot create a Job version/conflict. `dynamic-lisp/**`, despite its name, is a persistent executable derivative and is **not** scratch runtime.
 
+## Reasoning Job data isolation — two writable destinations
+
+This rule applies to **User Reasoning Jobs (JOB.md)** and their FILE/SYSTEM
+tool calls. Direct Python Jobs continue to use their existing fixed executor
+contract; this rule does not introduce a new Direct Job sandbox or migration.
+
+Each reusable Job has its **own** managed folder
+`appdata/libraries/jobs/<library-id>/<job-name>/`. During an execution,
+the following is the complete data-writing policy:
+
+| Purpose | Authorized location | Access |
+| --- | --- | --- |
+| Collected raw, CSV/JSON intermediates, progress `JOB_STEPS.md`, working and debug data | `<this-job-root>/runtime/**` | READ/WRITE |
+| Final drawing-specific Job product | **exact** folder returned by `drawing_job_result_location`: `drawings/<verified-anchor>/jobs/<job-name>-result/**` | READ/WRITE only after authorization |
+| Other Job packages, runtimes and results; global data/workspace; user-supplied inputs | Only those paths granted by normal read-only tool authority | READ ONLY, never write/edit/delete |
+| Parent of Drawing Anchor results, other Job result folders, drawing knowledge/system/metadata | Normal authorized read only | NEVER WRITE |
+
+`job_runtime_prepare` MUST happen before any Reasoning Job working-data
+mutation. Always copy/convert imported data into `runtime/**` for working
+transforms; never modify an input in its original location. No stage may
+construct its own drawing-root or choose an alternate result folder. Call
+`drawing_job_result_location` before publishing final output and use the
+exact authorized path it returns. External folders are never writable merely
+because the Job has permission to read them.
+
+This FILE/SYSTEM write restriction is enforced by runtime tool scopes, not
+just markdown advice. Completing `job_runtime_finish` does NOT restore
+generic workspace, data, or drawing-root write permission within that Work.
+A Job-owned dynamic Lisp in `dynamic-lisp/**` is a persistent *program
+asset*, modified only through controlled `job_dynamic_lisp_prepare/patch`
+and authoring/promotion gates; it is NEVER an extra raw/result-output root.
+Likewise, `jobcreate` may edit separate drafts via its explicit authority,
+not through Reasoning Job output permissions. No Human Power/alternative
+tool workaround may silently bypass these Job storage rules.
+
 ## Local Custom Job compatibility signal
 
 CadGPT uses `JOB_LOCAL_COMPAT_EPOCH` as a lightweight signal that
