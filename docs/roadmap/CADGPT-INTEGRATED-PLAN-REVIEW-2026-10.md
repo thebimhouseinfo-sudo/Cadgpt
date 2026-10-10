@@ -103,3 +103,18 @@ Status: CHANGES_REQUIRED (same-turn role-separated planning review; not official
 - RV7-02 / IMPORTANT / Persistent journal authorization. J03C1 correctly removes transient Job/session ID from the lookup key, but a later unrelated Job that knows an ID may read previous result or claim/replay it unless journal ownership and authorized resume/delegation are specified. Keep stable identity separate from access control, authorize current lease/drawing and durable owner or explicit continuation capability; deny cross-Job replay without proof. Evidence: journal identity/rebind path and current CAD proxy lease/binding policy.
 - RV7-03 / MINOR / Deterministic retry hash. A payload hash using *current* source state after mutation can differ on a retry, so the request hash must derive from original canonical caller preconditions, while actual CAD state is separately validated against recorded pre/post evidence. Evidence: J03C2 source preconditions and J03C1 reconciliation.
 Route: Planner revision 8; review exact new blob. This planning-only review has no live AutoCAD evidence.
+
+
+## Planner→Reviewer Loop — Revision 8, Round 2
+Target plan blob SHA: 2ea27e892277e892a53b7c14556950b4b09c79d5
+Verdict: PASS — planning specification only (same-turn Planner → role-separated Reviewer loop)
+Review target: exact GitHub plan blob; previous Round-1 findings were compared only after examining the new source. Not an independently executed GSA Job Verification and not an AutoCAD smoke result.
+
+- RV7-01 RESOLVED: stable unique key uses Drawing Anchor + operation_id; operation KIND is immutable record metadata and a mismatched KIND with same key causes conflict. No second lookup namespace per kind.
+- RV7-02 RESOLVED: persistent identity is separate from access. Every journal read/reconcile requires current authorized CAD lease and durable owner or delegated continuation capability, with no existence disclosure to unauthorized callers; negative/revocation tests specified.
+- RV7-03 RESOLVED: server hashes original validated effective request, not changed live DWG; physical state is checked separately against pre/post evidence; retry with same request cannot be justified as a new create.
+- CR6-01/02/03 RESOLVED IN PLAN: cross-session stable journaling, legacy 41-tool migration including COPY/MIRROR v2 without signature break and legacy no automatic retry, and server-authoritative canonical SHA-256.
+- PRESERVED: M0a Grille bulk-selection priority; J01X unrelated XData preservation; no TabSortV2-2.lsp edits; J04 read-only vs Editor state controls; 41-tool shadow migration and real AutoCAD host gates; single reviewed milestone branch then main as source of truth.
+- APPROVAL LIMIT: PASS applies only to architecture/planning completeness of this exact blob. It does not certify real COM behavior, cross-process locks, journal implementation, Office workbook safety, or p95 latency. Each still needs implementation-level code+test review, five CI gates and accepted disposable-DWG E2E evidence; no production merge authorized by this planning review.
+
+Review-loop result: ROUND1_CHANGES_REQUIRED → REVISION8_ROUND2_PASS. Exact plan blob must be re-reviewed after any edits; leave plan text unchanged to preserve this review target.
