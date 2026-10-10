@@ -69,6 +69,13 @@ export async function terminalizeIdleJobAuthorities(input: {
       );
     }
   }
+  for (const toolId of orphanSystemIds) {
+    if (jobSystemLeaseHasInFlightCall(toolId)) {
+      throw new Error(
+        `JOB_TRANSITION_BUSY: detached Job '${toolId}' is completing a SYSTEM call.`
+      );
+    }
+  }
   for (const executionId of new Set([...foregroundIds, ...jobWorkIds])) {
     if (hasActiveToolLeaseForExecution(executionId)) {
       throw new Error(
