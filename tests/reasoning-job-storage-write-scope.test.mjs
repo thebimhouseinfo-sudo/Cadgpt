@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 test("Reasoning Job can READ authorized other folders but WRITE only its own runtime and Drawing Anchor result", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-reasoning-write-"));
@@ -35,6 +36,7 @@ test("Reasoning Job can READ authorized other folders but WRITE only its own run
       await fs.mkdir(folder, { recursive: true });
     }
     await fs.writeFile(jobFile, "# Grille Tag\n## Steps\n", "utf8");
+    await fs.writeFile(path.join(siblingDir, "JOB.md"), "# Existing owner Job\n", "utf8");
     await fs.writeFile(siblingInput, "{\"readonly\":true}", "utf8");
     await fs.writeFile(ownerLisp, '(defun c:CG_OWNER_COLLECT () (princ))\n', "utf8");
     await fs.writeFile(referenceFile, "{\"reference\":true}", "utf8");
@@ -88,6 +90,7 @@ test("Reasoning Job can READ authorized other folders but WRITE only its own run
     // borrower may inspect, but cannot modify or delete those same bytes.
     const foreignEdit = await run("file_edit", {
       path: siblingInput,
+      expected_sha256: createHash("sha256").update('{"readonly":true}').digest("hex"),
       old_text: "readonly",
       new_text: "borrower-wrote",
     });
