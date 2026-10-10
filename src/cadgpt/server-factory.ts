@@ -776,13 +776,16 @@ export function createMcpServer(sessionKey: string): McpServer {
               "Please run jobcreate CONTRACT UPDATE: inspect registered JOB.md workflows, report affected Jobs and ask approval before updating their business flow.",
               "Until the scan is completed, CadGPT blocks User Job execution; it will not silently overwrite Job definitions.",
             ].join("\n")
-          : jobCompat.pending_actions.length
+          : (jobCompat.pending_actions.length || jobCompat.blocked_job_ids.length)
             ? [
                 "",
                 "",
                 "⚠ CUSTOM JOB UPDATES STILL PENDING",
+                ...(jobCompat.blocked_job_ids.length
+                  ? [`Blocked Custom Jobs: ${jobCompat.blocked_job_ids.join(", ")}`]
+                  : []),
                 ...jobCompat.pending_actions.slice(0, 8).map((item) => `- ${item}`),
-                "The compatibility scan was checked, but the above corrections have NOT necessarily been applied.",
+                "These Custom Job corrections have NOT necessarily been applied. Blocked Jobs must pass jobcreate CONTRACT UPDATE before execution.",
               ].join("\n")
             : "";
 
