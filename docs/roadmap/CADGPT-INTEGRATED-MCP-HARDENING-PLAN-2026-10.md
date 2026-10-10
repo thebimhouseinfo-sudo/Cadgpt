@@ -1,7 +1,7 @@
-# CadGPT Integrated Implementation Plan — Reviewed revision 2
+# CadGPT Integrated Implementation Plan — Reviewed revision 3
 Date: 2026-10-10
 Canonical baseline: main @ 8e21ef3ae3bd4b9102aeb8f09531a06638ee9f2f
-Status: PLANNING_REVIEW_ROUND_2; planning-only, no runtime mutation.
+Status: PLANNING_REVIEW_ROUND_3; planning-only, no runtime mutation.
 Review evidence: docs/roadmap/CADGPT-INTEGRATED-PLAN-REVIEW-2026-10.md.
 
 ## Objective
@@ -29,7 +29,7 @@ Harden the existing single-bound-drawing CadGPT, reproduce/fix the bulk Grille +
 - Five existing CI workflows passed after PR #46, but GitHub CI alone is not real AutoCAD E2E.
 
 ## Execution packaging, finite work units and gates
-This roadmap contains separate finite implementation Jobs, not a single mega-Job. One integration branch may hold reviewed checkpoint commits; preserve committed, traceable progress with no parallel uncontrolled branch divergence. Each Job Pack is independently closable with evidence; never treat the entire roadmap as one Job. Stage optional write families behind rollout gates, keep them disabled by default until accepted, and merge the branch only after integrated regression, real host acceptance, and final human approval. If production main advances, reconcile and re-test instead of force-pushing or resetting unrelated work.
+This roadmap contains separate finite implementation Jobs, not a single mega-Job. Keep exactly one active implementation work branch at any time, with checkpoint-specific commits and evidence. Each finite Job Pack has its own completion gate; avoid treating the full roadmap as a mega-Job. For each independently releasable milestone, run relevant CI+real-host regression and seek explicit Human approval, merge the accepted milestone into main, then synchronize/recreate the same-named work branch from new main before the next milestone. Do not allow long-lived, unmerged changes to drift away from main. Stage new write families behind explicit rollout gates, default-off until accepted. Never merge a failing or unverified milestone. If production main advances, reconcile and re-test instead of force-pushing or resetting unrelated work.
 
 J00 BASELINE / TEST HARNESS (dependency for all):
 - Capture tool manifest, drawing+add-in version and fixed datasets without revealing client designs.
@@ -109,7 +109,7 @@ J08B MCP TRANSPORT CONCURRENCY (depends J08A and measured congestion; independen
 - Exit: concurrency/cancellation/fault injection tests across two sessions and mixed SYSTEM/CAD; no request-response contamination, lost notification, deadlock or duplicated execution.
 - Exit: no cross-job writes, deadlock, lost work/lease or header/session reconnect regression, and demonstrated net latency benefit. No speculative whole-transport rewrite.
 
-J09 INTEGRATION / RELEASE (after all elected Job Packs, with explicit release gate):
+J09 FINAL INTEGRATION / ACCEPTANCE (after all *elected* Job Packs, with explicit release gate):
 - Test on a user-authorized disposable copy of the actual DWG with AutoCAD R22.0 and real add-in. Before/after snapshots of object/handle counts, complete grille and tag ATT fields, two-way XData links, other registered-app XData, layers, Drawing Anchor, current drawing ID and target files. Test binding/mismatch, sleep/wake, header color, startup hidden, Job A→B, selection-only versus MOVE/COPY/ERASE of 500 mixed objects, GT/TG/GRR and MEP fields, Excel schedule copy/update and newly added MCP business workflows. No production DWG is used as a test fixture.
 - Check manifest generation, Python 3.11/3.14, Windows tests, all five CI workflows, docs, family-level tool discoverability, default-visible surface size/latency, rollback, and review of production code AND test scripts. Each accepted tool must pass a documented consumer scenario. Tag/release and merge only after explicit human acceptance.
 - Exit: attached evidence of real DWG smoke, latency before/after, zero critical regressions and rollback instructions.
@@ -127,7 +127,7 @@ Acceptance categories: API contract, real drawing identity, permissions, geometr
 No blanket "PASS" from source regex assertions. If host is unavailable, status is BLOCKED_REAL_CAD_VALIDATION, not PASS.
 
 ## Risk and rollback
-Maintain backup/copy for each live acceptance drawing, record anchor and command before mutation; never mutate the user's live active DWG automatically. Implementation commits checkpoint-scoped for selective revert; no hard reset, no force push. Gate unfinished mutation families default-off; preserve previous stable tool-set behind capability toggles, with fail-closed feature enablement. A failed checkpoint halts dependent changes, not unrelated completed Job Packs. Reconcile updated main at a controlled checkpoint, rerun tests on new baseline. main unchanged until integrated review and explicit merge authorization.
+Maintain backup/copy for each live acceptance drawing, record anchor and command before mutation; never mutate the user's live active DWG automatically. Implementation commits checkpoint-scoped for selective revert; no hard reset, no force push. New mutation families default-off pending their own E2E gate; preserve previous stable tool-set behind fail-closed capability toggles. A failed checkpoint halts dependent changes, not unrelated accepted Job Packs. At each stable milestone: reviewer checks code+tests, CI passes, real AutoCAD smoke is accepted, Human approves release, then merge milestone into main; reconcile the one work branch to the new main before the next pack. main always contains the last accepted release, never an unreviewed experiment.
 
 ## Traceability / acceptance map
 | User requirement | Owning Job Pack | Required evidence | Decision |
@@ -139,12 +139,15 @@ Maintain backup/copy for each live acceptance drawing, record anchor and command
 | Advanced editing, Xref, metadata and topology | J06A/J06B/J06C | Domain-specific fixtures + host gate | Unsupported features explicit |
 | Excel and Job SYSTEM safety | J02 | Real OOXML workbooks and permission/cleanup negative tests | No corrupt/misplaced writes |
 | Measured latency improvement | J00/J07/J08A/J08B | Same-drawing p50/p95 + queue/RPC counts, crash/recovery | No correctness regression |
-| Main remains source of truth | All/J09 | One integration branch; per-pack commits and final reviewed merge | Human release authorization required |
+| Main remains source of truth | All milestones/J09 | One active work branch, scoped pack commits, review and human-gated milestone merges | No long-lived unmerged drift |
 
 ## Delivery milestones and dependencies
-- M0 = J00 + root-cause verified J01 + J02: stable data & grille correctness.
-- M1 = J03 + J04: hardened tool manifest and reliable selection/batch read.
-- M2 = J05A, J05B, J05C: ordinary CAD mutation and annotation coverage.
-- M3 = J06A/B/C as selected by evidence plus J07: advanced cover and measured low-risk latency improvements.
-- M4 = J08A/B only when measured bottleneck justifies; then J09 final host acceptance and merge decision.
-- Multiple Job Packs can reuse the same single integration branch but need separate task completion/evidence records and explicit milestone gates. No parallel writes to the same source file.
+- M0a (early bugfix) = J00 minimal reproducible baseline + J01 demonstrated Grille/Tag selection defect and regression. User-approved live CAD smoke and independent release decision; do NOT wait for unrelated Excel hardening to close this milestone.
+- M0b (SYSTEM safety) = J02, with its own permission + real workbook evidence and human-gated release. Its implementation may reuse J00 observability/test harness.
+- M1 = J03 then J04: fail-closed manifest, handle lookup, reliable selection and batch read; release only after CAD read parity and security tests.
+- M2a = J05A (Block/ATT update) and the Grille Tag consumer acceptance. Independently releasable when verified.
+- M2b = J05B (basic geometry) and J05C (annotation), each with separate Job Pack sign-off; they need not wait for unrelated M2a experiments after shared dependencies pass.
+- M3 = J06A (geometry/topology), J06B (namespaced metadata) and J06C (Xref/layout/export) independently and only where consumer demand/feasibility justifies; J07 latency low-risk after J03/J04 and measured baseline. Each may be merged as a proven, enabled-by-default-safe or default-off feature-gated milestone.
+- M4 = J08A/B only when actual queue/lock benchmark justifies the change, then J09 final integrated replay and release decision.
+- Use one active branch and one source of truth: accepted milestone → commit/evidence → Reviewer PASS + user-controlled AutoCAD smoke → explicit Human approval → merge main → update/recreate work branch from latest main. Unaccepted packs remain solely in work branch and are never represented as production-ready.
+- A release tag/doctor status applies to precisely the reviewed commit; after each milestone merge, compare full diff and run the five CI gates plus the affected real-host smoke. If AutoCAD cannot be run, retain a blocked host gate and do not claim release PASS.
