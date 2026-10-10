@@ -122,6 +122,10 @@ test("SYSTEM helper executes only a hash-pinned Job-owned Python tool", async (t
       const ok = await call({ script_path: helper, expected_sha256: hash(script), input_json_path: input });
       assert.equal(ok.isError, undefined, errorText(ok));
       assert.deepEqual(JSON.parse(data(ok).stdout), { value: 17 });
+      await fs.writeFile(input, JSON.stringify({ value: "Cửa gió" }));
+      const unicode = await call({ script_path: helper, expected_sha256: hash(script), input_json_path: input });
+      assert.equal(unicode.isError, undefined, errorText(unicode));
+      assert.deepEqual(JSON.parse(data(unicode).stdout), { value: "Cửa gió" });
       assert.equal((await call({
         script_path: helper, expected_sha256: "0".repeat(64), input_json_path: input,
       })).isError, true);
