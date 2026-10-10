@@ -73,77 +73,101 @@
 ;;; ===========================================================================
 ;;; 3. COMMAND: MEP_Properties_Create
 ;;; ===========================================================================
-(defun c:MEP_Properties_Create (/ doc blks ss i ent obj bName blkDef layer system tags attData changed uniqueBlocks old tStr)
+;;; M0a: ATTSYNC may rebuild block attribute references. Never iterate
+;;; a pre-ATTSYNC selection set after a definition edit. Capture stable
+;;; INSERT handles before modifying a block definition and rebind by handle.
+(defun GT:SelectionHandles (ss / i ent handles)
+  (setq handles nil)
+  (if ss
+    (progn
+      (setq i 0)
+      (repeat (sslength ss)
+        (setq ent (ssname ss i))
+        (if (and (= (type ent) 'ENAME) (assoc 5 (entget ent)))
+          (setq handles (cons (cdr (assoc 5 (entget ent))) handles)))
+        (setq i (1+ i)))))
+  (reverse handles))
+
+(defun GT:ResolveInsertHandle (handle / ent ed)
+  (if (= (type handle) 'STR)
+    (progn
+      (setq ent (handent handle))
+      (if (and (= (type ent) 'ENAME)
+               (setq ed (entget ent))
+               (= (cdr (assoc 0 ed)) "INSERT"))
+        ent
+        nil))
+    nil))
+
+(defun c:MEP_Properties_Create (/ doc blks ss handles handle ent obj bName blkDef layer
+                                  system tags attData changed uniqueBlocks old tStr i eff)
+  (vl-load-com)
   (setq doc (vla-get-activedocument (vlax-get-acad-object))
-        blks (vla-get-blocks doc))
-  (vla-startundomark doc)
-
-  (setq tags (GT:GrilleAttributeTags))
-
-  (setq ss (ssget "X" '((0 . "INSERT") (8 . "Hvac-EAGrille,Hvac-SAGrille,Hvac-RAGrille,Hvac-OAGrille,Hvac-TAGrille"))))
-  (if (not ss) (progn (princ "\nNo blocks found on specified layers.") (exit)))
-
-  ;; Only scan each unique block definition once
-  (setq uniqueBlocks '())
-  (setq i 0)
-  (repeat (sslength ss)
-    (setq ent (ssname ss i)
-          obj (vlax-ename->vla-object ent)
-          bName (vla-get-effectivename obj))
-    (if (not (vl-position bName uniqueBlocks))
-      (setq uniqueBlocks (cons bName uniqueBlocks))
-    )
-    (setq i (1+ i))
-  )
-
-  (foreach bName uniqueBlocks
-    (setq blkDef (vla-item blks bName))
-    (setq changed nil)
-    (foreach tag tags
-      (if (add_mep_attrib_vla blkDef tag (strcat "Enter " tag))
-        (setq changed T)))
-    (if changed (GT:SyncBlockAttributes bName))
-  )
-
-  ;; Fill actual values
-  (setq i 0)
-  (repeat (sslength ss)
-    (setq ent (ssname ss i)
-          obj (vlax-ename->vla-object ent)
-          layer (vla-get-layer obj)
-          attData nil)
-
-    (if (= (vla-get-hasattributes obj) :vlax-true)
-      (foreach att (vlax-invoke obj 'GetAttributes)
-        (setq attData (cons (cons (vla-get-tagstring att) (vla-get-textstring att)) attData))
-      )
-    )
-
-    (cond
-      ((= layer "Hvac-SAGrille") (setq system "Supply Air"))
-      ((= layer "Hvac-RAGrille") (setq system "Return Air"))
-      ((= layer "Hvac-EAGrille") (setq system "Exhaust Air"))
-      ((= layer "Hvac-OAGrille") (setq system "Outside Air"))
-      ((= layer "Hvac-TAGrille") (setq system "Transfer Air"))
-      (t (setq system "Unknown Air"))
-    )
-
-    (foreach att (vlax-invoke obj 'GetAttributes)
-      (setq tStr (vla-get-tagstring att))
-      (setq old (assoc tStr attData))
-      (if (and old (/= (cdr old) ""))
-        (vla-put-textstring att (cdr old))
-        (if (= tStr "SYSTEM") (vla-put-textstring att system))
-      )
-      (if (and (= tStr "OBJECT_TYPE") (= (vla-get-textstring att) "")) (vla-put-textstring att "Air Terminal"))
-    )
-    (setq i (1+ i))
-  )
-  (princ (strcat "\nSuccess: Processed " (itoa i) " blocks."))
-  (mep_start_reactor)
-  (vla-endundomark doc)
-  (princ)
-)
+        blks (vla-get-blocks doc)
+        tags (GT:GrilleAttributeTags)
+        ss (ssget "X" '((0 . "INSERT")
+             (8 . "Hvac-EAGrille,Hvac-SAGrille,Hvac-RAGrille,Hvac-OAGrille,Hvac-TAGrille")))
+        handles (GT:SelectionHandles ss))
+  (if (not handles)
+    (princ "\nNo blocks found on specified layers.")
+    (progn
+      (vla-startundomark doc)
+      (setq uniqueBlocks nil)
+      (foreach handle handles
+        (setq ent (GT:ResolveInsertHandle handle))
+        (if ent
+          (progn
+            (setq obj (vlax-ename->vla-object ent)
+                  eff (vl-catch-all-apply 'vla-get-EffectiveName (list obj)))
+            (if (and (not (vl-catch-all-error-p eff))
+                     (not (member eff uniqueBlocks)))
+              (setq uniqueBlocks (cons eff uniqueBlocks))))))
+      ;; One ATTSYNC per definition, never one per selected INSERT.
+      (foreach bName uniqueBlocks
+        (setq blkDef (vla-item blks bName)
+              changed nil)
+        (foreach tag tags
+          (if (add_mep_attrib_vla blkDef tag (strcat "Enter " tag))
+            (setq changed T)))
+        (if changed (GT:SyncBlockAttributes bName)))
+      ;; Resolve by stable handles only AFTER all ATTSYNC calls complete.
+      (setq i 0)
+      (foreach handle handles
+        (setq ent (GT:ResolveInsertHandle handle))
+        (if ent
+          (progn
+            (setq obj (vlax-ename->vla-object ent)
+                  layer (vla-get-layer obj)
+                  attData nil)
+            (if (= (vla-get-HasAttributes obj) :vlax-true)
+              (foreach att (vlax-invoke obj 'GetAttributes)
+                (setq attData
+                  (cons (cons (vla-get-TagString att) (vla-get-TextString att))
+                        attData))))
+            (setq system
+              (cond
+                ((= layer "Hvac-SAGrille") "Supply Air")
+                ((= layer "Hvac-RAGrille") "Return Air")
+                ((= layer "Hvac-EAGrille") "Exhaust Air")
+                ((= layer "Hvac-OAGrille") "Outside Air")
+                ((= layer "Hvac-TAGrille") "Transfer Air")
+                (T "Unknown Air")))
+            (if (= (vla-get-HasAttributes obj) :vlax-true)
+              (foreach att (vlax-invoke obj 'GetAttributes)
+                (setq tStr (vla-get-TagString att)
+                      old (assoc tStr attData))
+                (if (and old (/= (cdr old) ""))
+                  (vla-put-TextString att (cdr old))
+                  (if (= tStr "SYSTEM")
+                    (vla-put-TextString att system)))
+                (if (and (= tStr "OBJECT_TYPE")
+                         (= (vla-get-TextString att) ""))
+                  (vla-put-TextString att "Air Terminal"))))
+            (setq i (1+ i)))))
+      (princ (strcat "\nSuccess: Processed " (itoa i) " blocks."))
+      (mep_start_reactor)
+      (vla-endundomark doc)))
+  (princ))
 
 ;;; ===========================================================================
 ;;; 4. AUTO-UPDATE LOGIC (REACTOR)
@@ -1204,63 +1228,83 @@
   changed
 )
 
-(defun c:GRILLE_ATTR_UPGRADE (/ ss ts i ent obj layer name countGrilles countTags
-                                countDefs countLinked linked belongs priorLock)
+(defun c:GRILLE_ATTR_UPGRADE (/ ss ts grilleHandles tagHandles handle ent obj
+                                 name linked belongs bName uniqueGrilleBlocks
+                                 uniqueTagBlocks grilleDefHandles pair
+                                 countGrilles countTags countDefs countLinked priorLock)
   (vl-load-com)
-  (setq countGrilles 0 countTags 0 countDefs 0 countLinked 0)
-  (setq ss (ssget "X" '((0 . "INSERT")
-                       (8 . "Hvac-SAGrille,Hvac-RAGrille,Hvac-OAGrille,Hvac-EAGrille,Hvac-TAGrille"))))
-  (if ss
-    (progn
-      (setq i 0)
-      (repeat (sslength ss)
-        (setq ent (ssname ss i)
-              obj (vlax-ename->vla-object ent)
-              layer (vla-get-Layer obj))
-        (GT:EnsureGrilleAttributeDefs ent)
-        (setq countGrilles (1+ countGrilles)
-              i (1+ i)))))
-  ;; Older GR-* tags have unique definitions. Ensure both hidden ATTDEFs.
-  (setq ts (ssget "X" '((0 . "INSERT") (8 . "Hvac-GrilleTag"))))
-  (if ts
-    (progn
-      (setq i 0)
-      (repeat (sslength ts)
-        (setq obj (vlax-ename->vla-object (ssname ts i))
-              name (vla-get-EffectiveName obj))
-        (if (wcmatch (strcase name) "GR-*")
+  (setq countGrilles 0 countTags 0 countDefs 0 countLinked 0
+        ss (ssget "X" '((0 . "INSERT")
+            (8 . "Hvac-SAGrille,Hvac-RAGrille,Hvac-OAGrille,Hvac-EAGrille,Hvac-TAGrille")))
+        ts (ssget "X" '((0 . "INSERT") (8 . "Hvac-GrilleTag")))
+        ;; Both snapshots must be taken BEFORE the first ATTSYNC.
+        grilleHandles (GT:SelectionHandles ss)
+        tagHandles (GT:SelectionHandles ts)
+        uniqueGrilleBlocks nil
+        uniqueTagBlocks nil
+        grilleDefHandles nil)
+
+  ;; Collect definition owners without modifying selection-set entries.
+  (foreach handle grilleHandles
+    (setq ent (GT:ResolveInsertHandle handle))
+    (if ent
+      (progn
+        (setq obj (vlax-ename->vla-object ent)
+              name (vl-catch-all-apply 'vla-get-EffectiveName (list obj)))
+        (setq countGrilles (1+ countGrilles))
+        (if (and (not (vl-catch-all-error-p name))
+                 (not (member name uniqueGrilleBlocks)))
+          (progn
+            (setq uniqueGrilleBlocks (cons name uniqueGrilleBlocks))
+            (setq grilleDefHandles (cons (cons name handle) grilleDefHandles)))))))
+
+  ;; ATTSYNC once per grille definition; re-resolve first known owner.
+  (foreach pair grilleDefHandles
+    (setq ent (GT:ResolveInsertHandle (cdr pair)))
+    (if ent (GT:EnsureGrilleAttributeDefs ent)))
+
+  ;; Tag definitions may be rebuilt; never revisit the old ENAME afterward.
+  (foreach handle tagHandles
+    (setq ent (GT:ResolveInsertHandle handle))
+    (if ent
+      (progn
+        (setq obj (vlax-ename->vla-object ent)
+              name (vl-catch-all-apply 'vla-get-EffectiveName (list obj)))
+        (if (and (not (vl-catch-all-error-p name))
+                 (wcmatch (strcase name) "GR-*"))
           (progn
             (setq countTags (1+ countTags))
-            (if (GT:EnsureTagHiddenAttributes name)
-              (setq countDefs (1+ countDefs)))))
-        (setq i (1+ i)))))
-  ;; Link provenance is authoritative. Do not match copies by TAG_NUMBER.
-  ;; Synchronize only the new ATT values, never any legacy data field.
-  (if ss
-    (progn
-      (setq i 0
-            priorLock *MEP_REACTOR_LOCK*
-            *MEP_REACTOR_LOCK* T)
-      (repeat (sslength ss)
-        (setq obj (vlax-ename->vla-object (ssname ss i))
-              linked (GT:GetLinkedTag obj))
+            (if (not (member name uniqueTagBlocks))
+              (setq uniqueTagBlocks (cons name uniqueTagBlocks))))))))
+  (foreach bName uniqueTagBlocks
+    (if (GT:EnsureTagHiddenAttributes bName)
+      (setq countDefs (1+ countDefs))))
+
+  ;; Linked tag ownership stays authoritative; do not use TAG_NUMBER.
+  (setq priorLock *MEP_REACTOR_LOCK*
+        *MEP_REACTOR_LOCK* T)
+  (foreach handle grilleHandles
+    (setq ent (GT:ResolveInsertHandle handle))
+    (if ent
+      (progn
+        (setq obj (vlax-ename->vla-object ent)
+              linked (vl-catch-all-apply 'GT:GetLinkedTag (list obj)))
+        (if (vl-catch-all-error-p linked) (setq linked nil))
         (if linked
           (progn
-            ;; A copied legacy grille can keep a stale forward link. Require
-            ;; an actual back-link on the tag before changing its new ATT values.
             (setq belongs
-              (and (assoc -3 (entget (vlax-vla-object->ename linked) '("MEP_TAG_LINK")))
+              (and (assoc -3 (entget (vlax-vla-object->ename linked)
+                                   '("MEP_TAG_LINK")))
                    (GT:TagBelongsToGrille linked obj)))
-            (if (and belongs (GT:CopyExtendedFields linked (GT:GetBlockAttributes obj)))
-              (setq countLinked (1+ countLinked)))))
-        (setq i (1+ i)))
-      (setq *MEP_REACTOR_LOCK* priorLock)))
+            (if (and belongs
+                     (GT:CopyExtendedFields linked (GT:GetBlockAttributes obj)))
+              (setq countLinked (1+ countLinked)))))))
+  (setq *MEP_REACTOR_LOCK* priorLock)
   (princ (strcat "\nGRILLE_ATTR_UPGRADE: " (itoa countGrilles) " grilles, "
-                 (itoa countTags) " tags, "
-                 (itoa countDefs) " updated tag definitions, "
-                 (itoa countLinked) " linked tags synchronized."))
-  (princ)
-)
+                 (itoa countTags) " tags, " (itoa countDefs)
+                 " updated tag definitions, " (itoa countLinked)
+                 " linked tags synchronized."))
+  (princ)))
 
 ;;; ===========================================================================
 ;;; COMMAND: CG  (Copy Grille)
