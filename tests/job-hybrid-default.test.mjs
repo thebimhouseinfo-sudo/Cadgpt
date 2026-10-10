@@ -11,6 +11,7 @@ import * as binding from "../dist/cadgpt/session/drawing-binding.js";
 import * as persistence from "../dist/cadgpt/runtime/drawing-persistence.js";
 import { cadUpstream } from "../dist/cadgpt/runtime/cad-upstream.js";
 import { cleanupExecutionState } from "../dist/cadgpt/runtime/execution-cleanup.js";
+import { markFamilyLoaded } from "../dist/cadgpt/lib/runtime-state.js";
 
 test("Job execution mode is HYBRID by default, legacy FILE/CAD are normalized; rare exceptions are explicit", () => {
   for (const path of [undefined, "file", "cad", "hybrid"]) {
@@ -50,6 +51,8 @@ test("hybrid Job A->B carries exactly one same-chat drawing ID and supports both
     },
     async upgradeToHybrid() { throw new Error("Work upgrade should NOT be necessary for default Job"); },
   });
+  // Real HYBRID preparation marks the CAD family loaded before cleanup.
+  markFamilyLoaded("cad");
   const original = cadUpstream.callTool;
   let cadCalls = 0;
   cadUpstream.callTool = async (name) => {
