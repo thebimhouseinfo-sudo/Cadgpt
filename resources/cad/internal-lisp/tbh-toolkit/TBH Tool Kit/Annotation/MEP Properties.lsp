@@ -1256,7 +1256,7 @@
                  (not (member name uniqueGrilleBlocks)))
           (progn
             (setq uniqueGrilleBlocks (cons name uniqueGrilleBlocks))
-            (setq grilleDefHandles (cons (cons name handle) grilleDefHandles))))))
+            (setq grilleDefHandles (cons (cons name handle) grilleDefHandles)))))))
 
   ;; ATTSYNC once per grille definition; re-resolve first known owner.
   (foreach pair grilleDefHandles
@@ -1275,7 +1275,7 @@
           (progn
             (setq countTags (1+ countTags))
             (if (not (member name uniqueTagBlocks))
-              (setq uniqueTagBlocks (cons name uniqueTagBlocks)))))))
+              (setq uniqueTagBlocks (cons name uniqueTagBlocks))))))))
   (foreach bName uniqueTagBlocks
     (if (GT:EnsureTagHiddenAttributes bName)
       (setq countDefs (1+ countDefs))))
@@ -1304,7 +1304,7 @@
                  (itoa countTags) " tags, " (itoa countDefs)
                  " updated tag definitions, " (itoa countLinked)
                  " linked tags synchronized."))
-  (princ))
+  (princ)))
 
 ;;; ===========================================================================
 ;;; COMMAND: CG  (Copy Grille)
