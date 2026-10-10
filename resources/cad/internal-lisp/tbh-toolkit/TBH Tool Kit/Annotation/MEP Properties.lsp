@@ -1230,7 +1230,7 @@
 
 (defun c:GRILLE_ATTR_UPGRADE (/ ss ts grilleHandles tagHandles handle ent obj
                                  name linked belongs bName uniqueGrilleBlocks
-                                 uniqueTagBlocks grilleDefHandles found
+                                 uniqueTagBlocks grilleDefHandles pair
                                  countGrilles countTags countDefs countLinked priorLock)
   (vl-load-com)
   (setq countGrilles 0 countTags 0 countDefs 0 countLinked 0
