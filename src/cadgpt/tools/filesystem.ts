@@ -642,9 +642,22 @@ export function registerFilesystemTools(server: McpServer): void {
         if (sha256(await fs.readFile(temp)) !== sha256(bytes)) {
           throw new Error("SYSTEM_BINARY_STAGING_VERIFY_FAILED");
         }
-        // Windows rename does not guarantee replacement of an existing opened
-        // workbook. Refuse if it cannot replace; never delete the old file first.
+        // Revalidate the destination immediately before publication; a
+        // foreign writer does not participate in our in-process file lock.
+        let latestHash: string | null = null;
+        try { latestHash = sha256(await fs.readFile(target)); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        if (latestHash !== oldHash) {
+          throw new Error("RESOURCE_CONFLICT: workbook changed before publish.");
+        }
+        // Never unlink the destination before rename. If the workbook is open
+        // or Windows refuses replacement, the old workbook is preserved.
         await fs.rename(temp, target);
+        if (sha256(await fs.readFile(target)) !== sha256(bytes)) {
+          throw new Error("SYSTEM_BINARY_PUBLISH_VERIFY_FAILED");
+        }
       } finally {
         await fs.rm(temp, { force: true }).catch(() => undefined);
       }
