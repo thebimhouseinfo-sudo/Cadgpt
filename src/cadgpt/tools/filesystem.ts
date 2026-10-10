@@ -8,14 +8,17 @@ import { getAppDataRoot } from "../lib/appdata.js";
 import { isHvacKnowledgePath } from "../lib/knowledge-storage.js";
 import { getAllowedRoots, getRepoRoot, getWritableRoots, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
-import { currentHumanPower, currentToolLease } from "../lib/work-registration.js";
+import { currentHumanPower, currentToolLease, activeWorkForSession } from "../lib/work-registration.js";
 import { currentJobSystemLease } from "../runtime/system-lease.js";
 import {
   auditHumanPowerSourceMutation,
   isCadGptSourcePath,
 } from "../runtime/human-power.js";
 import { drawingMetadataRootsForExecution, drawingMetadataWritableRootsForExecution } from "../runtime/drawing-persistence.js";
-import { jobRuntimeWritableRootsForExecution } from "../runtime/job-runtime.js";
+import {
+  jobRuntimeWritableRootsForExecution,
+  jobStorageScopeWasEntered,
+} from "../runtime/job-runtime.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 
 const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".py"]);
@@ -76,15 +79,22 @@ function currentWritableRoots(): string[] {
   } catch {
     jobRoots = [];
   }
-  const ordinaryRoots = jobRoots.length
-    ? jobRoots
-    : [
-        ...getWritableRoots(),
-        ...currentWritableDrawingMetadataRoots(),
-      ];
+  // Job Work MUST call job_runtime_prepare before any file mutation.
+  // Once a Work entered the Job execution scope, finishing the Job never
+  // silently restores generic workspace/data/drawing-root write access.
+  const lease = currentToolLease();
+  const work = activeWorkForSession(lease.sessionKey);
+  const jobOnly = work?.executionId === lease.workId &&
+    work.ownerType === "job";
+  const enteredJob = jobStorageScopeWasEntered(lease.workId);
+  if ((jobOnly || enteredJob) && !jobRoots.length) return [];
+  // Explicit Human Power is developer/source-repair authority, not a
+  // reason to enlarge a running Job's data output destinations.
+  if (jobRoots.length) return [...new Set(jobRoots)];
   return [
     ...new Set([
-      ...ordinaryRoots,
+      ...getWritableRoots(),
+      ...currentWritableDrawingMetadataRoots(),
       ...humanPowerRoots,
     ]),
   ];
