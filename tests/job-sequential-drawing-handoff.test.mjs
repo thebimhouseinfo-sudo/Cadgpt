@@ -41,7 +41,8 @@ persistence.authorizeDrawingMetadataRootForExecution(workA.executionId, root);
 
 test("A hybrid Grille Tag → B file-only Create System inherits only verified drawing read authority", async () => {
   const started = await callbacks.get("cadgpt_work_start")({
-    owner_type: "job", owner_id: "create-system", execution_path: "file",
+    owner_type: "job", owner_id: "create-system",
+    execution_path: "file", job_nonhybrid_path: "file",
   });
   assert.equal(started.structuredContent?.data?.reused, false, JSON.stringify(started));
   assert.equal(started.structuredContent?.data?.drawing_metadata_handoff?.inherited, true);
