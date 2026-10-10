@@ -29,7 +29,7 @@ export type ToolAuthority =
 
 export function toolAuthority(toolName: string): ToolAuthority {
   if (CONTROL_TOOLS.has(toolName)) return "control";
-  if (toolName === "job_system_release") return "system";
+  if (toolName === "job_system_release" || toolName === "job_system_run_helper") return "system";
   if (DISCOVERY_TOOLS.has(toolName)) return "session";
   if (toolName.startsWith("file_")) return "work-or-system";
   return "work";
