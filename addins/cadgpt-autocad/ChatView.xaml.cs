@@ -1103,6 +1103,33 @@ namespace CadGpt.AutoCad
             _initializeCts = null;
         }
 
+        // Called only from IExtensionApplication.Terminate, never from
+        // palette recreation. Best-effort, bounded notification: shutdown
+        // must not hang AutoCAD if the local driver has disappeared.
+        internal void NotifyCadHostClosed()
+        {
+            if (string.IsNullOrWhiteSpace(_pairId))
+            {
+                return;
+            }
+
+            try
+            {
+                var pairId = _pairId!;
+                using (var cts = new CancellationTokenSource(
+                    TimeSpan.FromMilliseconds(1500)))
+                {
+                    var notification = Task.Run(
+                        () => _control.NotifyHostClosedAsync(pairId, cts.Token));
+                    notification.Wait(TimeSpan.FromMilliseconds(1800));
+                }
+            }
+            catch
+            {
+                // Job transition has a safe fallback on next explicit Job.
+            }
+        }
+
         public void Dispose()
         {
             if (_disposed)
