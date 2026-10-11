@@ -251,11 +251,11 @@ export function registerCadGptControlTool(
         } else {
           continuationPolicy = {
             existing_work_action:
-              "No compatible FILE/HYBRID work is active. Call cadgpt_work_start(owner_type=file, owner_id=job-authoring or lisp-authoring, execution_path=file) to get execution_id + authority_token, then use those for all authoring tool calls.",
+              "No compatible work is active. Call cadgpt_work_start(owner_type=file, owner_id=job-authoring or lisp-authoring) with omitted execution_path (defaults HYBRID); do not bind or activate CAD until requested.",
             start_new_work: true,
             owner_type: "file",
             owner_id: surface === "cl" ? "lisp-authoring" : "job-authoring",
-            execution_path: "file",
+            execution_path: "hybrid",
           };
         }
       } else if (surface === "kug" || surface === "kud") {
@@ -283,11 +283,11 @@ export function registerCadGptControlTool(
           };
         } else if (surface === "kug") {
           continuationPolicy = {
-            existing_work_action: "No compatible work is active. Start FILE work with owner_type=file, owner_id=knowledge-updater-global and execution_path=file; CAD is optional.",
+            existing_work_action: "No compatible work is active. Start HYBRID work with owner_type=file and owner_id=knowledge-updater-global; CAD activation is deferred until needed.",
             start_new_work: true,
             owner_type: "file",
             owner_id: "knowledge-updater-global",
-            execution_path: "file",
+            execution_path: "hybrid",
           };
         } else {
           continuationPolicy = {
@@ -330,11 +330,11 @@ export function registerCadGptControlTool(
         } else {
           continuationPolicy = {
             existing_work_action:
-              "No compatible work is active. Start standalone cad-mcp-dev FILE work. A drawing workspace is optional and only needed for live CAD validation.",
+              "No compatible work is active. Start standalone cad-mcp-dev HYBRID work. CAD activation remains optional until validation is requested.",
             start_new_work: true,
             owner_type: "skill",
             owner_id: "cad-mcp-dev",
-            execution_path: "file",
+            execution_path: "hybrid",
             development_only: true,
           };
         }
