@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { registerJobResultAccessTools } from "../dist/cadgpt/tools/job-result-access.js";
 import { registerJobResultPatchTools, registerJobResultBatchPatchTools } from "../dist/cadgpt/tools/job-result-patch.js";
+import { installTrustedResultPatchApproval } from "../dist/cadgpt/runtime/result-patch-approval.js";
 import * as work from "../dist/cadgpt/lib/work-registration.js";
 import { checkAdmission, revokeSessionAdmissions } from "../dist/cadgpt/lib/admission.js";
 import * as binding from "../dist/cadgpt/session/drawing-binding.js";
@@ -55,6 +56,25 @@ test("stored metadata fast path uses verified Drawing Anchor without contacting 
       assert.equal(read.structuredContent?.ok, true, JSON.stringify(read));
       assert.equal(read.structuredContent.data.content.necksize, "300x300");
       assert.equal(read.structuredContent.data.source, "stored_metadata");
+      const firstPatch = {
+        job_result: "grille-tag-result", relative_file: "result.json",
+        expected_sha256: read.structuredContent.data.sha256,
+        field_path: ["necksize"], expected_previous_value: "300x300",
+        new_value: "400x400",
+      };
+      const deniedWithoutHumanScope = await callbacks.get("file_job_result_patch")(firstPatch);
+      assert.equal(deniedWithoutHumanScope.structuredContent?.ok, false);
+      assert.match(JSON.stringify(deniedWithoutHumanScope), /JOB_RESULT_APPROVAL_REQUIRED/);
+      installTrustedResultPatchApproval({
+        execution_id: current.executionId,
+        drawing_anchor: "anchor-verified",
+        ...firstPatch,
+        updates: [{
+          field_path: firstPatch.field_path,
+          expected_previous_value: firstPatch.expected_previous_value,
+          new_value: firstPatch.new_value,
+        }],
+      });
       const patch = await callbacks.get("file_job_result_patch")({
         job_result: "grille-tag-result", relative_file: "result.json",
         expected_sha256: read.structuredContent.data.sha256,
@@ -72,6 +92,27 @@ test("stored metadata fast path uses verified Drawing Anchor without contacting 
         new_value: "500x500",
       });
       assert.equal(conflict.structuredContent?.ok, false, "stale SHA must not overwrite");
+      const approvedBatch = {
+        job_result: "grille-tag-result", relative_file: "result.json",
+        expected_sha256: patch.structuredContent.data.sha256,
+        updates: [
+          { field_path: ["grilles", "0", "necksize"], record_handle: "A1",
+            expected_previous_value: "300x300", new_value: "400x400" },
+          { field_path: ["grilles", "1", "necksize"], record_handle: "A2",
+            expected_previous_value: "300x300", new_value: "400x400" },
+        ],
+      };
+      installTrustedResultPatchApproval({
+        execution_id: current.executionId, drawing_anchor: "anchor-verified",
+        ...approvedBatch,
+      });
+      const outOfScope = await callbacks.get("file_job_result_patch_batch")({
+        ...approvedBatch,
+        updates: [{ field_path: ["grilles", "1", "necksize"],
+          expected_previous_value: "300x300", new_value: "400x400" }],
+      });
+      assert.equal(outOfScope.structuredContent?.ok, false);
+      assert.match(JSON.stringify(outOfScope), /JOB_RESULT_SCOPE_DENIED/);
       const batch = await callbacks.get("file_job_result_patch_batch")({
         job_result: "grille-tag-result", relative_file: "result.json",
         expected_sha256: patch.structuredContent.data.sha256,
