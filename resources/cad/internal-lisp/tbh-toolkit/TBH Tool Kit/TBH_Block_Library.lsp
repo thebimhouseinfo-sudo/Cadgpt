@@ -281,8 +281,8 @@
                 is-xref (vl-catch-all-apply 'vla-get-IsXRef (list block)))
           (if (and (not (vl-catch-all-error-p is-layout))
                    (not (vl-catch-all-error-p is-xref))
-                   (not is-layout)
-                   (not is-xref))
+                   (= is-layout :vlax-false)
+                   (= is-xref :vlax-false))
             (progn
               (setq scan
                 (vl-catch-all-apply 'tbhbl:find-sample-in-owner
