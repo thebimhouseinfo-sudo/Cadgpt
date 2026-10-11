@@ -20,7 +20,7 @@ test("per-Job lazy scan indexes valid AutoLISP and invalidates only changed asse
     await fs.writeFile(lisp, "(defun c:TESTCMD () (princ))\n");
     await fs.writeFile(path.join(root, "registry", "user", "libraries.json"),
       JSON.stringify({ libraries: [{ id: "test-library", kind: "job",
-        name: "Test", mode: "managed", enabled: true }] }));
+        name: "Test", mode: "managed", managed_path: jobRoot, enabled: true }] }));
     await fs.writeFile(path.join(root, "registry", "user", "capabilities.json"),
       JSON.stringify({ version: 1, entries: [{
         id: "testjob", kind: "job", library_id: "test-library",
