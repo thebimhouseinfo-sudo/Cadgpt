@@ -9,7 +9,7 @@ import { validateLispSource } from "../tools/lisp-harness.js";
 export interface ExportedJobCapability {
   kind: "tool";
   registry: "user";
-  class: "job.candidate.lisp";
+  class: "job.exported.lisp";
   id: string;
   name: string;
   job_id: string;
@@ -18,7 +18,9 @@ export interface ExportedJobCapability {
   source_sha256: string;
   source_bundle_sha256: string;
   required_work: "hybrid";
-  callable: false;
+  callable: true;
+  prepare_tool: "job_capability_prepare";
+  run_tool: "cad__cad_run_lisp_command";
   summary: string;
 }
 
@@ -168,7 +170,7 @@ export async function ensureJobCapabilityIndex(jobId: string): Promise<JobCapabi
       capabilities.push({
         kind: "tool",
         registry: "user",
-        class: "job.candidate.lisp",
+        class: "job.exported.lisp",
         id: "custom:" + job.id + ":" + command,
         name: command,
         job_id: job.id,
@@ -177,8 +179,10 @@ export async function ensureJobCapabilityIndex(jobId: string): Promise<JobCapabi
         source_sha256: result.sha256,
         source_bundle_sha256: bundle.sha256,
         required_work: "hybrid",
-        callable: false,
-        summary: "Verified AutoLISP command candidate; not independently invocable until the capability dispatcher is registered.",
+        callable: true,
+        prepare_tool: "job_capability_prepare",
+        run_tool: "cad__cad_run_lisp_command",
+        summary: "Prepare this verified Job-owned AutoLISP with job_capability_prepare, then execute it through cad__cad_run_lisp_command under the same bound Work.",
       });
     }
   }
