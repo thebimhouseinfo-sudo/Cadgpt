@@ -6,6 +6,8 @@ import path from "node:path";
 import {
   ensureJobCapabilityIndex, getVerifiedJobCapability,
 } from "../dist/cadgpt/lib/job-capability-index.js";
+import { registerCapabilityRegistryTools } from "../dist/cadgpt/tools/registry.js";
+import { registerJobAuthoringTools } from "../dist/cadgpt/tools/jobs.js";
 
 test("per-Job lazy scan indexes valid AutoLISP and invalidates only changed assets", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "cg-cap-index-"));
@@ -29,6 +31,21 @@ test("per-Job lazy scan indexes valid AutoLISP and invalidates only changed asse
     const first = await ensureJobCapabilityIndex("testjob");
     assert.equal(first.capabilities.length, 1, JSON.stringify(first));
     assert.equal(first.capabilities[0].command, "TESTCMD");
+    assert.equal(first.capabilities[0].callable, true);
+    assert.equal(first.capabilities[0].prepare_tool, "job_capability_prepare");
+    assert.equal(first.capabilities[0].run_tool, "cad__cad_run_lisp_command");
+    const callbacks = new Map();
+    const stub = { registerTool(name, _schema, cb) { callbacks.set(name, cb); } };
+    registerCapabilityRegistryTools(stub);
+    registerJobAuthoringTools(stub);
+    assert.equal(callbacks.has("job_capability_prepare"), true);
+    const registry = await callbacks.get("registry_list")({
+      kind: "tool", registry: "user", limit: 100,
+    });
+    assert.equal(registry.structuredContent?.ok, true, JSON.stringify(registry));
+    assert.equal(registry.structuredContent.data.entries.some((x) =>
+      x.id === "custom:testjob:TESTCMD" && x.callable === true), true);
+
     const second = await ensureJobCapabilityIndex("testjob");
     assert.equal(second.scanned_at, first.scanned_at, "unchanged bundle should reuse index");
     const resolved = await getVerifiedJobCapability("custom:testjob:TESTCMD");
