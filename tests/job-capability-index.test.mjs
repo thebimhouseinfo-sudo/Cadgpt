@@ -64,6 +64,14 @@ test("per-Job lazy scan indexes valid AutoLISP and invalidates only changed asse
     const resolved = await getVerifiedJobCapability("custom:testjob:TESTCMD");
     assert.equal(await fs.realpath(resolved.absolute_path), await fs.realpath(lisp));
     await fs.writeFile(lisp, "(defun c:TESTCMD () (princ \"modified\"))\n");
+    const staleDiscovery = await callbacks.get("registry_list")({
+      kind: "tool", registry: "user", limit: 100,
+    });
+    assert.equal(staleDiscovery.structuredContent?.ok, true);
+    assert.equal(staleDiscovery.structuredContent.data.entries.some((x) =>
+      x.id === "custom:testjob:TESTCMD"), false,
+      "changed source must not be advertised callable from the old cache");
+
     const third = await ensureJobCapabilityIndex("testjob");
     assert.notEqual(third.bundle_sha256, first.bundle_sha256);
     assert.notEqual(third.capabilities[0].source_sha256, first.capabilities[0].source_sha256);
