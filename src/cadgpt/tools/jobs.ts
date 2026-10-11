@@ -756,6 +756,37 @@ export async function executeInternalDirectJob(
 
 export function registerJobAuthoringTools(server: McpServer): void {
   server.registerTool(
+    "job_capability_prepare",
+    {
+      title: "Prepare Verified Custom Job AutoLISP Capability",
+      description:
+        "Load a source-verified reusable Custom Job Lisp command without starting the parent Job. Execute it only through the normal cad__cad_run_lisp_command tool, which enforces bound-drawing and execution ownership.",
+      inputSchema: {
+        id: z.string().min(1),
+        drawing_id: z.string().optional(),
+      },
+    },
+    async ({ id, drawing_id }) => {
+      try {
+        const { capability, absolute_path } = await getVerifiedJobCapability(id);
+        const loaded = await loadVerifiedLispForCurrentWork(
+          absolute_path, drawing_id, [capability.command]
+        );
+        if (!loaded.loaded)
+          throw new Error("JOB_CAPABILITY_LISP_LOAD_FAILED: " + capability.id);
+        return toolResult("job_capability_prepare", {
+          id: capability.id, loaded: true, command: capability.command,
+          drawing_id: loaded.drawing_id,
+          run_tool: "cad__cad_run_lisp_command",
+          run_arguments: { name: capability.command, args: [], drawing_id: loaded.drawing_id },
+        });
+      } catch (error) {
+        return toolError("job_capability_prepare", error);
+      }
+    }
+  );
+
+  server.registerTool(
     "job_local_compat_mark_checked",
     {
       title: "Mark Local Job Compatibility Scan Complete",
