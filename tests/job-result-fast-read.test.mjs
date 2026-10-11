@@ -85,6 +85,17 @@ test("stored metadata fast path uses verified Drawing Anchor without contacting 
       assert.equal(patch.structuredContent.data.cad_sync, "not_performed");
       const updated = JSON.parse(await fs.readFile(path.join(dir, "result.json"), "utf8"));
       assert.equal(updated.necksize, "400x400");
+      // Regrant exactly the stale original request to reach the SHA CAS check.
+      // Reusing the previous one-time grant would only test grant consumption.
+      installTrustedResultPatchApproval({
+        execution_id: current.executionId, drawing_anchor: "anchor-verified",
+        ...firstPatch,
+        updates: [{
+          field_path: firstPatch.field_path,
+          expected_previous_value: firstPatch.expected_previous_value,
+          new_value: firstPatch.new_value,
+        }],
+      });
       const conflict = await callbacks.get("file_job_result_patch")({
         job_result: "grille-tag-result", relative_file: "result.json",
         expected_sha256: read.structuredContent.data.sha256,
@@ -92,6 +103,7 @@ test("stored metadata fast path uses verified Drawing Anchor without contacting 
         new_value: "500x500",
       });
       assert.equal(conflict.structuredContent?.ok, false, "stale SHA must not overwrite");
+      assert.match(JSON.stringify(conflict), /RESOURCE_CONFLICT/);
       const approvedBatch = {
         job_result: "grille-tag-result", relative_file: "result.json",
         expected_sha256: patch.structuredContent.data.sha256,
