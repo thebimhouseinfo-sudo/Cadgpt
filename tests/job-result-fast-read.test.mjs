@@ -1,0 +1,75 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import { registerJobResultAccessTools } from "../dist/cadgpt/tools/job-result-access.js";
+import * as work from "../dist/cadgpt/lib/work-registration.js";
+import { checkAdmission, revokeSessionAdmissions } from "../dist/cadgpt/lib/admission.js";
+import * as binding from "../dist/cadgpt/session/drawing-binding.js";
+import { cadUpstream } from "../dist/cadgpt/runtime/cad-upstream.js";
+
+test("stored metadata fast path uses verified Drawing Anchor without contacting CAD", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "cg-v2-result-"));
+  const oldRoot = process.env.CADGPT_APPDATA_ROOT;
+  process.env.CADGPT_APPDATA_ROOT = root;
+  const session = "v2-result-fast-read";
+  checkAdmission(session, "@cg", "mention");
+  const current = work.createWorkRegistration({
+    sessionKey: session, ownerType: "file", ownerId: "v2-result", executionPath: "hybrid",
+  });
+  const callbacks = new Map();
+  registerJobResultAccessTools({ registerTool(name, _cfg, fn) { callbacks.set(name, fn); } });
+  const original = cadUpstream.callTool;
+  let cadCount = 0;
+  cadUpstream.callTool = async (name) => {
+    cadCount++;
+    if (name === "acad_list_open_documents")
+      return [{ name: "A.dwg", full_name: "/mock/A.dwg",
+        runtime_document_id: "mock-1", host: "autocad" }];
+    throw new Error("Unexpected CAD call: " + name);
+  };
+  try {
+    const bound = await binding.bindDrawingForExecution(current.executionId, "/mock/A.dwg");
+    bound.drawing_anchor = "anchor-verified";
+    bound.anchor_verified_readback = true;
+    const dir = path.join(root, "drawings", "anchor-verified", "jobs", "grille-tag-result");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "result.json"), JSON.stringify({ necksize: "300x300" }));
+    const before = cadCount;
+    const lease = work.acquireToolLease({
+      sessionKey: session, executionId: current.executionId,
+      authorityToken: current.authorityToken, tool: "file_job_result_read", family: "filesystem",
+    });
+    await work.runWithToolLease(lease, async () => {
+      const listed = await callbacks.get("file_job_result_read")({ job_result: "grille-tag-result" });
+      assert.equal(listed.structuredContent?.ok, true, JSON.stringify(listed));
+      assert.deepEqual(listed.structuredContent.data.files, ["result.json"]);
+      const read = await callbacks.get("file_job_result_read")({
+        job_result: "grille-tag-result", relative_file: "result.json",
+      });
+      assert.equal(read.structuredContent?.ok, true, JSON.stringify(read));
+      assert.equal(read.structuredContent.data.content.necksize, "300x300");
+      assert.equal(read.structuredContent.data.source, "stored_metadata");
+      const escaped = await callbacks.get("file_job_result_read")({
+        job_result: "../grille-tag-result", relative_file: "result.json",
+      });
+      assert.equal(escaped.structuredContent?.ok, false);
+      bound.anchor_verified_readback = false;
+      const unverified = await callbacks.get("file_job_result_read")({
+        job_result: "grille-tag-result", relative_file: "result.json",
+      });
+      assert.equal(unverified.structuredContent?.ok, false);
+    });
+    assert.equal(cadCount, before, "stored result must not activate CAD MCP");
+  } finally {
+    cadUpstream.callTool = original;
+    work.releaseWorkRegistration(current.executionId, current.authorityToken, session);
+    binding.clearExecutionDrawingContexts(current.executionId);
+    revokeSessionAdmissions(session);
+    if (oldRoot === undefined) delete process.env.CADGPT_APPDATA_ROOT;
+    else process.env.CADGPT_APPDATA_ROOT = oldRoot;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
