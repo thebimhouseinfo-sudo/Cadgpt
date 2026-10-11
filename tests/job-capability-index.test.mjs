@@ -32,7 +32,7 @@ test("per-Job lazy scan indexes valid AutoLISP and invalidates only changed asse
     const second = await ensureJobCapabilityIndex("testjob");
     assert.equal(second.scanned_at, first.scanned_at, "unchanged bundle should reuse index");
     const resolved = await getVerifiedJobCapability("custom:testjob:TESTCMD");
-    assert.equal(resolved.absolute_path, lisp);
+    assert.equal(await fs.realpath(resolved.absolute_path), await fs.realpath(lisp));
     await fs.writeFile(lisp, "(defun c:TESTCMD () (princ \"modified\"))\n");
     const third = await ensureJobCapabilityIndex("testjob");
     assert.notEqual(third.bundle_sha256, first.bundle_sha256);
