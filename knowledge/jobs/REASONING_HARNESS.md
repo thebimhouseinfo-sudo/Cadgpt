@@ -72,9 +72,12 @@ observed entry condition. Use an ordered checklist with only:
 Ask explicit user choices only when the current Job step requires them.
 Do not invent a choice from old chat history or auto-expand unselected branches.
 
-Work on one required step at a time. After a tool completes, verify its
-readback/postcondition, then use `file_edit` with the current hash to mark
-that step `[✓]`. A CAD tool that returns `loaded=false` is a FAILURE even
+Work on one required step at a time. Check the tool's actual success/failure
+result and perform separate readback **only when required by the promoted Job step
+or mandatory platform/storage safety**. Do not add a CAD scan or readback simply
+because an action modified something. Mark that step `[✓]` with `file_edit`
+using the current checklist hash only after the required step succeeded.
+A CAD tool that returns `loaded=false` is a FAILURE even
 when transport succeeded; Load Lisp PASS requires `loaded=true`.
 On failure, mark `[✗]`, notify the user immediately, and stop instead
 of advancing. A `[ ]` or `[✗]` required step blocks the next
@@ -114,40 +117,50 @@ result content, and current branch before using it. A load-Lisp-then-wait
 choice is an intentional stop for that invocation, not a declaration that
 other Job stages have completed.
 
-## Runtime loop
+## Runtime execution — established Custom Jobs
 
-For each Job step:
+For an **already promoted Reasoning Job**, the current `JOB.md` and its
+observed entry condition define the entire sequence of actions. This section
+and `knowledge/cad/WORKFLOW_EXECUTION_HARNESS.md` are consistent:
 
-```text
-READ
-→ PLAN
-→ REVIEW
-→ REVISE if needed
-→ EXEC
-→ READBACK
-→ NEXT
-```
+1. Read the current promoted workflow, inspect only its stated entry condition,
+   and select its required branch. Follow the branch's exact steps and pauses.
+2. Execute the next **required** action and check the result reported by the
+   tool. A tool that reports failure or `loaded=false` is not successful.
+3. Perform a separate readback, review or CAD state inspection **only if** that
+   selected Job step specifically requires it, or the invoked platform/tool
+   enforces it for safety. No generic PLAN→REVIEW→READBACK loop is added.
+4. Record the result in the Job Steps checklist and report it, without inventing
+   workflow stages. When the Job says "load Lisp, then wait", load and stop.
+5. Stop at the selected branch's end or first actual failure. Never switch
+   branches to disguise a failure; retain original error evidence.
 
-Rules:
+For **Job Builder / authoring** (designing or editing a workflow rather than
+executing a promoted Job), normal READ→PLAN→REVIEW→REVISE→IMPLEMENT→TEST
+reasoning applies. That authoring loop is *not* automatically run inside
+the steps of an established Custom Job. Temp tasks use the separate
+one-approval Orchestrator routing policy, not this Job lifecycle.
 
-- Execute read-only observations first when the Job calls for them.
-- Do not assume a plan for later steps is still valid before those steps are reached.
-- A step may change the drawing and therefore change the input for the next step.
-- Build and review only the concrete plan needed for the current reasoning/mutation stage.
-- Review is internal quality control, not a user confirmation prompt.
-- The review may add, remove, defer, or narrow actions when evidence is uncertain.
-- If an item is uncertain but the Job can safely continue without it, defer/skip that item and keep running the workflow.
-- Re-read the drawing after mutation whenever the next step depends on the resulting state.
-- After every filesystem/CAD mutation, re-read the actual target/postcondition before advancing; do not treat the intended path/action as proof of success.
-- When the Job needs a final persistent drawing result, call `drawing_job_result_location` and write only the final result under the returned `jobs/<job-name>-result` path. Never construct or guess the drawing root. Keep raw/intermediate files under the Job runtime.
-- Call `job_runtime_finish` when the Reasoning Job run/test is complete so execution-scoped Job write authority is released and empty result namespaces can be cleaned. It never deletes non-empty runtime data; processed raw/intermediate files must be removed explicitly with `file_delete`.
-- Exception for an independent post-CAD data-processing tail: after every CAD-dependent input is already collected and any required `drawing_job_result_location` has already been resolved, call `job_system_acquire(id=<registered-job-id>)`. From that point the detached tail uses `tool_id=<job-id>` for `file_*` calls instead of the foreground work handle. The Job source owns this decision; CadGPT does not infer or register a backend flag.
-- A Job that acquired SYSTEM authority must always call `job_system_release(tool_id=<job-id>)` when that independent tail ends, including its failure/finally path. Do not call `job_runtime_finish` for the detached runtime; SYSTEM release owns that cleanup.
-- For Job-owned raw/intermediate files under the authorized runtime root, cleanup is transactional: persist the durable result, verify/read back that result, read the raw file hash, then call `file_delete(path=<raw>, expected_sha256=<verified-hash>)`. Delete one processed raw at a time; never delete a raw item before its corresponding durable result is verified. `file_delete` does not remove directories or CadGPT source files.
-- When a step uses dynamic Lisp derived from an already-working command, call `job_dynamic_lisp_prepare` first. If it returns `reused=true`, continue from that persisted Job copy; do not recopy the base source. Patch only the declared changing data/section with `job_dynamic_lisp_patch`, then verified-load that Job-owned Lisp and run the original command. Do not invent an adapter/wrapper around the source command.
-- Repeat PLAN/REVIEW as many times as the workflow needs.
-- Ask the user only when the Job cannot make a safe domain decision from its rules/evidence, or when the requested action requires an explicit user choice.
-- Finish the whole Job when possible, then report completed actions, deferred/unresolved items, and final verification.
+Additional required platform/storage rules:
+
+- Use the actual Drawing Binding and required live CAD checks whenever the
+  Job step needs live drawing state; stored metadata is not live CAD evidence.
+- When a Job needs a final persistent drawing result, call
+  `drawing_job_result_location` and write only under its returned
+  `jobs/<job-name>-result` location. Never guess the drawing root.
+- Call `job_runtime_finish` when the Reasoning Job ends. It does not delete
+  nonempty runtime bytes; processed raw items require explicit deletion.
+- For a Job-owned raw item that the selected workflow actually deletes, first
+  persist the durable result and verify it, then delete that raw by its hash.
+  This is a storage safety prerequisite for deletion, not a general instruction
+  to audit every CAD mutation.
+- An independent post-CAD processing tail uses `job_system_acquire` and
+  `job_system_release` **only when the current Job explicitly includes that
+  tail**. Never detach a Job or borrow SYSTEM authority on speculation.
+- Reuse existing dynamic Lisp through `job_dynamic_lisp_prepare` and patch
+  only the declared data according to the selected Job step.
+- Ask the user only when the selected branch requires a decision or
+  an actual conflict cannot be resolved safely within existing authorization.
 
 ## Direct Jobs
 
