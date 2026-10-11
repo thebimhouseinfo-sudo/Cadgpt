@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { registerTempLispTools } from "../dist/cadgpt/tools/temp-lisp.js";
+import { registerTempLispTools, cleanupTempLispForWork } from "../dist/cadgpt/tools/temp-lisp.js";
 import * as work from "../dist/cadgpt/lib/work-registration.js";
 import { checkAdmission, revokeSessionAdmissions } from "../dist/cadgpt/lib/admission.js";
 
@@ -46,6 +46,12 @@ test("Temp Lisp uses shared runtime, exact Work owner and no Job lifecycle", asy
       });
       assert.equal(deleted.structuredContent?.ok, true, JSON.stringify(deleted));
       await assert.rejects(fs.stat(data.absolute_path), { code: "ENOENT" });
+      const orphan = await tools.get("file_temp_lisp_create")({ source });
+      assert.equal(orphan.structuredContent?.ok, true, JSON.stringify(orphan));
+      const orphanPath = orphan.structuredContent.data.absolute_path;
+      assert.equal(await cleanupTempLispForWork(current.executionId), 1);
+      await assert.rejects(fs.stat(orphanPath), { code: "ENOENT" });
+
     });
     assert.equal(work.activeWorkForSession(session)?.executionId, current.executionId);
   } finally {
