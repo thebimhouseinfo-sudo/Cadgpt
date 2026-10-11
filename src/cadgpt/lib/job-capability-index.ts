@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { getAppDataPath, getUserCapabilitiesPath } from "./appdata.js";
-import { resolveRegisteredAssetPath } from "./user-asset-resolver.js";
+import { resolveRegisteredAssetPath } from "../tools/user-assets.js";
 import { inspectJobBundle } from "./job-bundle.js";
 import { validateLispSource } from "../tools/lisp-harness.js";
 
