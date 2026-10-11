@@ -14,3 +14,6 @@ __pycache__/
 **/bin/
 **/obj/
 .DS_Store
+packages.lock.json
+*.dwl
+*.dwl2
