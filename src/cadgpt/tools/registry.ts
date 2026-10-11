@@ -308,7 +308,8 @@ async function loadEffectiveRegistry(): Promise<Array<Record<string, unknown>>> 
         }
       : entry
   );
-  return [...tools, ...skills, ...bundled, ...internalJobs, ...users, ...exports].sort(
+  const exportedTools = exports as unknown as Array<Record<string, unknown>>;
+  return [...tools, ...skills, ...bundled, ...internalJobs, ...users, ...exportedTools].sort(
     (a, b) =>
       `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`)
   );
