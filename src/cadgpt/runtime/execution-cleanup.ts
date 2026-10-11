@@ -40,6 +40,10 @@ export async function cleanupExecutionState(
     errors: [],
   };
 
+  // A Work-scoped consent grant must not survive stop/rebind/renewal.
+  const { clearTrustedResultPatchApproval } = await import("./result-patch-approval.js");
+  clearTrustedResultPatchApproval(executionId);
+
   const humanPower = consumeHumanPowerCleanup(executionId);
   if (humanPower) {
     try {
