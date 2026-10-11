@@ -27,7 +27,7 @@ interface Grant {
 const grants = new Map<string, Grant>();
 const MAX_AGE_MS = 10 * 60 * 1000;
 const SHA = /^[a-f0-9]{64}$/;
-const KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,180}$/;
+const KEY = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,200}$/;
 const finiteScalar = (v: unknown) =>
   v === null || typeof v === "string" || typeof v === "boolean" ||
   (typeof v === "number" && Number.isFinite(v));
