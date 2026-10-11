@@ -28,6 +28,19 @@ test("per-Job lazy scan indexes valid AutoLISP and invalidates only changed asse
         id: "testjob", kind: "job", library_id: "test-library",
         relative_path: "JOB.md", title: "Test",
       }] }));
+    const privateHelpers = await ensureJobCapabilityIndex("testjob");
+    assert.equal(privateHelpers.capabilities.length, 0,
+      "syntax-valid C: commands are NOT automatically standalone tools");
+    const exportContract = {
+      version: 1, exports: [{
+        command: "TESTCMD", source: "lisp/tool.lsp", standalone: true,
+        input: { args: [] }, output: "cad_tool_result",
+        effect: "cad-write", dependencies: [],
+      }],
+    };
+    await fs.mkdir(path.join(jobRoot, "tools"), { recursive: true });
+    await fs.writeFile(path.join(jobRoot, "tools", "capabilities.json"),
+      JSON.stringify(exportContract));
     const first = await ensureJobCapabilityIndex("testjob");
     assert.equal(first.capabilities.length, 1, JSON.stringify(first));
     assert.equal(first.capabilities[0].command, "TESTCMD");
@@ -55,6 +68,14 @@ test("per-Job lazy scan indexes valid AutoLISP and invalidates only changed asse
     assert.notEqual(third.bundle_sha256, first.bundle_sha256);
     assert.notEqual(third.capabilities[0].source_sha256, first.capabilities[0].source_sha256);
     await fs.writeFile(path.join(jobRoot, "lisp", "duplicate.lsp"), "(defun c:TESTCMD () (princ))\n");
+    exportContract.exports.push({
+      command: "TESTCMD", source: "lisp/duplicate.lsp", standalone: true,
+      input: { args: [] }, output: "cad_tool_result",
+      effect: "cad-write", dependencies: [],
+    });
+    await fs.writeFile(path.join(jobRoot, "tools", "capabilities.json"),
+      JSON.stringify(exportContract));
+
     const ambiguous = await ensureJobCapabilityIndex("testjob");
     assert.equal(ambiguous.capabilities.length, 0);
     assert.equal(ambiguous.unavailable.some((x) => x.reason.includes("Ambiguous")), true);
