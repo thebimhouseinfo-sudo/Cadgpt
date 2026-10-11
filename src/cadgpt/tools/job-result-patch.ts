@@ -6,6 +6,15 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { boundResultDirectory } from "./job-result-access.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { currentToolLease } from "../lib/work-registration.js";
+import { reasoningJobStorageScopeWasEntered } from "../runtime/job-runtime.js";
+
+/** Temp/scoped result patch must not bypass the active Reasoning Job's own-result write fence. */
+function assertStandalonePatchScope(): void {
+  const executionId = currentToolLease().workId;
+  if (reasoningJobStorageScopeWasEntered(executionId))
+    throw new Error("JOB_RESULT_PATCH_SCOPE: active Reasoning Job must use its owned result writer");
+}
 
 const JSON_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.json$/i;
 const PART = /^(?:[A-Za-z_][A-Za-z0-9_-]*|[0-9]+)$/;
@@ -55,6 +64,7 @@ export function registerJobResultPatchTools(server: McpServer): void {
       try {
         if (!JSON_FILE.test(relative_file) || relative_file.includes(".."))
           throw new Error("JOB_RESULT_FILE_INVALID");
+        assertStandalonePatchScope();
         const { drawing_anchor, directory } = await boundResultDirectory(job_result);
         const target = path.join(directory, relative_file);
         const result = await withFileMutationLocks([target], async () => {
@@ -122,6 +132,7 @@ export function registerJobResultBatchPatchTools(server: McpServer): void {
       try {
         if (!JSON_FILE.test(relative_file) || relative_file.includes(".."))
           throw new Error("JOB_RESULT_FILE_INVALID");
+        assertStandalonePatchScope();
         const { drawing_anchor, directory } = await boundResultDirectory(job_result);
         const target = path.join(directory, relative_file);
         const result = await withFileMutationLocks([target], async () => {
