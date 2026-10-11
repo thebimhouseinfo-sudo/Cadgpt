@@ -46,6 +46,9 @@ import {
   releasePriorJobAuthorityForStart,
 } from "../runtime/job-transition.js";
 import { resolveRegisteredAssetPath } from "./user-assets.js";
+import { ensureJobCapabilityIndex, getVerifiedJobCapability } from "../lib/job-capability-index.js";
+import { resolveDrawingContext, activateDrawingContext } from "../session/drawing-binding.js";
+import { cadUpstream } from "../runtime/cad-upstream.js";
 import {
   getBundledLispLibrariesRoot,
 } from "../lib/bundled-assets.js";
@@ -516,6 +519,9 @@ export function registerJobDiscoveryTools(server: McpServer): void {
         const executionMode =
           path.extname(real).toLowerCase() === ".py" ? "direct" : "reasoning";
         const bundle = await inspectJobBundle(real);
+        const exported = await ensureJobCapabilityIndex(entry.id).catch((error: unknown) => ({
+          capabilities: [], unavailable: [{ file: "bundle", reason: error instanceof Error ? error.message : String(error) }],
+        }));
         const compat = await getJobLocalCompatStatus();
         const blocked = compat.blocked_job_ids.some(
           (id) => id.toLowerCase() === entry.id.toLowerCase()
@@ -540,6 +546,7 @@ export function registerJobDiscoveryTools(server: McpServer): void {
           source_sha256: sha256(content),
           bundle_sha256: bundle.sha256,
           bundle_files: bundle.files,
+          capability_scan: { exported: exported.capabilities, unavailable: exported.unavailable },
           ...(executionMode === "reasoning"
             ? { harness: "knowledge/jobs/REASONING_HARNESS.md" }
             : {}),
@@ -893,6 +900,11 @@ export function registerJobAuthoringTools(server: McpServer): void {
             "JOB_RUNTIME_REASONING_SOURCE_REQUIRED: use job_run_direct for .py Jobs."
           );
         }
+        // Mandatory lazy export scan on the next registered Custom Job use.
+        // Scan problems never silently rewrite or prevent the original workflow.
+        if (id) await ensureJobCapabilityIndex(id).catch((error: unknown) => {
+          console.warn("[CadGPT] Custom Job capability scan unavailable:", error);
+        });
         const workflowSha256 = sha256(workflowSource);
         const lease = currentToolLease();
         const activeRuntime = activeJobRuntimeForExecution(lease.workId);
@@ -1209,6 +1221,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
           entry.library_id,
           relative
         );
+        await ensureJobCapabilityIndex(entry.id).catch((error: unknown) => {
+          console.warn("[CadGPT] Direct Job capability scan unavailable:", error);
+        });
         const callLease =
           currentToolLease();
         await releasePriorJobAuthorityForStart({
