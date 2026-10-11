@@ -14,7 +14,7 @@ const FILE_PART = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const ANCHOR = /^[A-Za-z0-9][A-Za-z0-9._-]{0,179}$/;
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 
-async function boundResultDirectory(jobResult: string): Promise<{
+export async function boundResultDirectory(jobResult: string): Promise<{
   drawing_anchor: string; directory: string;
 }> {
   if (!RESULT_ID.test(jobResult) || jobResult.includes(".."))
