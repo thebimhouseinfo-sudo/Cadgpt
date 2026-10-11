@@ -81,3 +81,29 @@ export function registerTempLispTools(server: McpServer): void {
     }
   );
 }
+
+/** Remove orphaned disposable Lisp files belonging to a retiring Work only. */
+export async function cleanupTempLispForWork(executionId: string): Promise<number> {
+  const root = getDynamicLispRoot();
+  const prefix = "cg-temp-" + digest(executionId).slice(0, 16) + "-";
+  const names = await fs.readdir(root).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return [] as string[];
+    throw error;
+  });
+  let removed = 0;
+  for (const name of names) {
+    if (!safeName.test(name) || !name.startsWith(prefix)) continue;
+    const absolute = path.join(root, name);
+    await withFileMutationLocks([absolute], async () => {
+      const stat = await fs.lstat(absolute).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (stat && stat.isFile() && !stat.isSymbolicLink()) {
+        await fs.rm(absolute);
+        removed++;
+      }
+    });
+  }
+  return removed;
+}
