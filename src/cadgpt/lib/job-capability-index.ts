@@ -34,6 +34,36 @@ export interface JobCapabilityIndex {
   unavailable: Array<{ file: string; reason: string }>;
 }
 
+interface StandaloneLispManifest {
+  version: 1;
+  exports: Array<{
+    command: string;
+    source: string;
+    standalone: true;
+    input: { args: [] };
+    output: "cad_tool_result";
+    effect: "cad-readonly" | "cad-write";
+    dependencies: [];
+  }>;
+}
+
+/** No implicit export of C: commands: every callable has a reviewed contract. */
+async function readStandaloneManifest(root: string): Promise<StandaloneLispManifest | null> {
+  const filename = path.join(root, "tools", "capabilities.json");
+  let bytes: string;
+  try {
+    bytes = await fs.readFile(filename, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  if (bytes.length > 100_000) throw new Error("JOB_CAPABILITY_MANIFEST_TOO_LARGE");
+  const parsed = JSON.parse(bytes) as Partial<StandaloneLispManifest>;
+  if (parsed.version !== 1 || !Array.isArray(parsed.exports) || parsed.exports.length > 100)
+    throw new Error("JOB_CAPABILITY_MANIFEST_INVALID");
+  return parsed as StandaloneLispManifest;
+}
+
 interface JobRegistration {
   kind: "job";
   id: string;
@@ -137,59 +167,67 @@ export async function ensureJobCapabilityIndex(jobId: string): Promise<JobCapabi
   const capabilities: ExportedJobCapability[] = [];
   const unavailable: JobCapabilityIndex["unavailable"] = [];
   const root = path.dirname(source);
+  const manifest = await readStandaloneManifest(root);
+  if (!manifest) {
+    unavailable.push({
+      file: "tools/capabilities.json",
+      reason: "No reviewed standalone export contract; C: commands remain private helpers",
+    });
+  }
   const commands = new Set<string>();
   const duplicates = new Set<string>();
-
-  for (const relative of bundle.files) {
-    if (/^tools\//i.test(relative)) {
-      unavailable.push({
-        file: relative,
-        reason: "Standalone SYSTEM/Python helper contract unavailable without Job lease",
-      });
+  for (const entry of manifest?.exports ?? []) {
+    const relative = typeof entry.source === "string"
+      ? entry.source.replaceAll("\\", "/") : "";
+    const command = typeof entry.command === "string"
+      ? entry.command.trim().toUpperCase() : "";
+    if (!/^(?:lisp|dynamic-lisp)\/[A-Za-z0-9_./-]+\.lsp$/i.test(relative) ||
+        relative.includes("..") || !bundle.files.includes(relative) ||
+        !/^[A-Z0-9_-]{1,80}$/.test(command) ||
+        entry.standalone !== true || !entry.input ||
+        !Array.isArray(entry.input.args) || entry.input.args.length !== 0 ||
+        entry.output !== "cad_tool_result" ||
+        !["cad-readonly", "cad-write"].includes(entry.effect) ||
+        !Array.isArray(entry.dependencies) || entry.dependencies.length !== 0) {
+      unavailable.push({ file: relative || "manifest", reason: "Missing or invalid independent input/output/effect/dependency contract" });
       continue;
     }
-    if (!/^(?:lisp|dynamic-lisp)\/.+\.lsp$/i.test(relative)) continue;
+    if (commands.has(command)) {
+      duplicates.add(command);
+      unavailable.push({ file: relative, reason: "Duplicate exported command: " + command });
+      continue;
+    }
+    commands.add(command);
     const absolute = safePath(root, relative);
     const sourceText = await fs.readFile(absolute, "utf8");
-    const result = validateLispSource(sourceText, [], {
+    const result = validateLispSource(sourceText, [command], {
       profile: "syntax", fileName: path.basename(absolute),
     });
-    if (!result.valid) {
-      unavailable.push({ file: relative, reason: "AutoLISP syntax validation failed" });
+    if (!result.valid || !result.commands.includes(command)) {
+      unavailable.push({ file: relative, reason: "Export source or declared C:command failed validation" });
       continue;
     }
-    if (!result.commands.length) {
-      unavailable.push({ file: relative, reason: "No AutoLISP C:command entrypoint" });
-    }
-    for (const command of result.commands) {
-      if (commands.has(command)) {
-        duplicates.add(command);
-        continue;
-      }
-      commands.add(command);
-      capabilities.push({
-        kind: "tool",
-        registry: "user",
-        class: "job.exported.lisp",
-        id: "custom:" + job.id + ":" + command,
-        name: command,
-        job_id: job.id,
-        command,
-        relative_path: relative,
-        source_sha256: result.sha256,
-        source_bundle_sha256: bundle.sha256,
-        required_work: "hybrid",
-        callable: true,
-        prepare_tool: "job_capability_prepare",
-        run_tool: "cad__cad_run_lisp_command",
-        summary: "Prepare this verified Job-owned AutoLISP with job_capability_prepare, then execute it through cad__cad_run_lisp_command under the same bound Work.",
-      });
-    }
+    capabilities.push({
+      kind: "tool",
+      registry: "user",
+      class: "job.exported.lisp",
+      id: "custom:" + job.id + ":" + command,
+      name: command,
+      job_id: job.id,
+      command,
+      relative_path: relative,
+      source_sha256: result.sha256,
+      source_bundle_sha256: bundle.sha256,
+      required_work: "hybrid",
+      callable: true,
+      prepare_tool: "job_capability_prepare",
+      run_tool: "cad__cad_run_lisp_command",
+      summary: "Reviewed standalone AutoLISP (" + entry.effect + ", no positional arguments); prepare and invoke via bound CAD tools.",
+    });
   }
   for (const command of duplicates) {
-    const matches = capabilities.filter((item) => item.command === command);
-    for (const match of matches)
-      unavailable.push({ file: match.relative_path, reason: "Ambiguous command: " + command });
+    for (const match of capabilities.filter((item) => item.command === command))
+      unavailable.push({ file: match.relative_path, reason: "Duplicate exported command: " + command });
   }
   const index: JobCapabilityIndex = {
     version: 1,
