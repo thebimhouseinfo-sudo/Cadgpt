@@ -30,7 +30,7 @@ test("BLL source DWG is physically bundled and compatible with DWG format", asyn
 
 test("BLL handles anonymous template block references and dependencies without pasting entire DWG", async () => {
   const lsp = await source();
-  const sample = part(lsp, "(defun tbhbl:find-source-sample ", "(defun tbhbl:copy-primary-result ");
+  const sample = part(lsp, "(defun tbhbl:sample-effective-name ", "(defun tbhbl:copy-primary-result ");
   const copier = part(lsp, "(defun tbhbl:copy-source-sample ", "(defun tbhbl:copy-block-def ");
   const importing = part(lsp, "(defun tbhbl:insert-from-library ", "(defun tbhbl:write-dcl ");
   assert.match(sample, /tbhbl:find-sample-in-owner/, "locate an actual INSERT in source ModelSpace or layouts");
@@ -39,8 +39,25 @@ test("BLL handles anonymous template block references and dependencies without p
   assert.match(copier, /vla-put-Rotation/, "copied sample rotation is normalized");
   assert.match(importing, /\(substr source-name 1 1\) "\*"/, "anonymous reference is not blindly inserted by its *U name");
   assert.match(importing, /tbhbl:copy-source-sample/, "an existing source INSERT is copied");
-  assert.match(importing, /tbhbl:copy-block-def/, "named block definitions without source INSERT remain supported");
+  const namedFallback = part(lsp, "(defun tbhbl:copy-and-insert-definition ", "(defun tbhbl:insert-from-library ");
+  assert.match(namedFallback, /tbhbl:copy-block-def/, "named block definitions without source INSERT remain supported");
   assert.doesNotMatch(importing, /vl-cmdf|\(command/, "no arbitrary DWG insertion/paste workaround");
+});
+
+test("BLL resolves dynamic anonymous aliases by stable EffectiveName before copying references", async () => {
+  const lsp = await source();
+  const sample = part(lsp, "(defun tbhbl:sample-effective-name ", "(defun tbhbl:copy-primary-result ");
+  const workflow = part(lsp, "(defun tbhbl:insert-from-library ", "(defun tbhbl:write-dcl ");
+  assert.match(sample, /vla-get-EffectiveName/, "an anonymous dynamic INSERT is identified by stable name");
+  assert.match(sample, /\(setq result\s*\(tbhbl:find-source-sample-by-name doc display T\)\)/,
+    "anonymous *U IDs are not the primary identity");
+  assert.match(sample, /\(vla-get-Blocks doc\)/, "also find a source reference nested inside another block");
+  assert.match(sample, /\(= is-layout :vlax-false\)/, "AutoCAD COM booleans require :vlax-false");
+  assert.match(sample, /\(= is-xref :vlax-false\)/, "ignore external XREF content");
+  assert.match(workflow, /Legacy anonymous alias/, "diagnose stale anonymous aliases");
+  assert.match(workflow, /tbhbl:copy-and-insert-definition/, "safe named definition fallback");
+  assert.doesNotMatch(workflow, /Place one source instance in the template/,
+    "do not insist on unsafe numeric *U identity");
 });
 
 test("BLL reads real destination state after CopyObjects rather than retrying uncertain copies", async () => {

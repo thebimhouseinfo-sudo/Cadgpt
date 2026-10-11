@@ -230,7 +230,16 @@
 ;; owner in the destination. Cloning a source INSERT (rather than *U123's
 ;; anonymous block-table record) carries its referenced definition, dynamic
 ;; block data, attributes and dependent nested definitions together.
-(defun tbhbl:find-sample-in-owner (owner name / found item objname itemname)
+(defun tbhbl:sample-effective-name (item / value)
+  ;; A dynamic block reference's Name is an unstable *U number.
+  ;; EffectiveName is the stable author-defined block name.
+  (setq value (vl-catch-all-apply 'vla-get-EffectiveName (list item)))
+  (if (and (not (vl-catch-all-error-p value))
+           (= (type value) 'STR))
+    value
+    nil))
+
+(defun tbhbl:find-sample-in-owner (owner name effective-only / found item objname itemname effective)
   (setq found nil)
   (vlax-for item owner
     (if (not found)
@@ -239,26 +248,62 @@
         (if (and (not (vl-catch-all-error-p objname))
                  (= objname "AcDbBlockReference"))
           (progn
-            (setq itemname (vl-catch-all-apply 'vla-get-Name (list item)))
-            (if (and (not (vl-catch-all-error-p itemname))
-                     (= (strcase itemname) (strcase name)))
+            (setq itemname (vl-catch-all-apply 'vla-get-Name (list item))
+                  effective (tbhbl:sample-effective-name item))
+            (if (or
+                  (and effective
+                       (= (strcase effective) (strcase name)))
+                  (and (not effective-only)
+                       (not (vl-catch-all-error-p itemname))
+                       (= (strcase itemname) (strcase name))))
               (setq found item)))))))
   found)
 
-(defun tbhbl:find-source-sample (doc name display / result lay block)
-  ;; Do not call CopyObjects while a vlax-for is still active.
-  (setq result (tbhbl:find-sample-in-owner (vla-get-ModelSpace doc) name))
-  (if (and (not result) (/= (strcase name) (strcase display)))
-    (setq result (tbhbl:find-sample-in-owner (vla-get-ModelSpace doc) display)))
+(defun tbhbl:find-source-sample-by-name (doc name effective-only / result lay block is-layout is-xref scan)
+  ;; Search ModelSpace, all paper layouts, and finally nested definitions.
+  ;; A reference may be nested in another source block, not directly placed
+  ;; in ModelSpace. No database changes occur during this search.
+  (setq result
+    (tbhbl:find-sample-in-owner
+      (vla-get-ModelSpace doc) name effective-only))
   (if (not result)
     (vlax-for lay (vla-get-Layouts doc)
       (if (and (not result)
                (/= (strcase (vla-get-Name lay)) "MODEL"))
+        (setq result
+          (tbhbl:find-sample-in-owner
+            (vla-get-Block lay) name effective-only)))))
+  (if (not result)
+    (vlax-for block (vla-get-Blocks doc)
+      (if (not result)
         (progn
-          (setq block (vla-get-Block lay))
-          (setq result (tbhbl:find-sample-in-owner block name))
-          (if (and (not result) (/= (strcase name) (strcase display)))
-            (setq result (tbhbl:find-sample-in-owner block display)))))))
+          (setq is-layout (vl-catch-all-apply 'vla-get-IsLayout (list block))
+                is-xref (vl-catch-all-apply 'vla-get-IsXRef (list block)))
+          (if (and (not (vl-catch-all-error-p is-layout))
+                   (not (vl-catch-all-error-p is-xref))
+                   (= is-layout :vlax-false)
+                   (= is-xref :vlax-false))
+            (progn
+              (setq scan
+                (vl-catch-all-apply 'tbhbl:find-sample-in-owner
+                  (list block name effective-only)))
+              (if (not (vl-catch-all-error-p scan))
+                (setq result scan))))))))
+  result)
+
+(defun tbhbl:find-source-sample (doc name display / result)
+  (if (= (substr name 1 1) "*")
+    ;; Anonymous *U numbers are not stable: NEVER pick *U123 merely because
+    ;; its current number matches. Match the intended stable EffectiveName.
+    (setq result
+      (tbhbl:find-source-sample-by-name doc display T))
+    (progn
+      (setq result
+        (tbhbl:find-source-sample-by-name doc name nil))
+      (if (and (not result)
+               (/= (strcase name) (strcase display)))
+        (setq result
+          (tbhbl:find-source-sample-by-name doc display nil)))))
   result)
 
 (defun tbhbl:copy-primary-result (raw owner before / value arr result n item typ)
@@ -345,6 +390,30 @@
                     (vl-catch-all-error-message copied))
             (strcat "Block definition was not found after CopyObjects: " name)))))))
 
+(defun tbhbl:copy-and-insert-definition (source-doc dest-doc source-def point rotation / copied new-def-name inserted)
+  ;; Only named source definitions are imported without a placed reference.
+  ;; Never clone an anonymous *U definition as a replacement for dynamic
+  ;; state; that can silently discard parameters and dependent references.
+  (setq copied (tbhbl:copy-block-def source-doc dest-doc source-def))
+  (if (not (car copied))
+    copied
+    (progn
+      (setq new-def-name
+        (vl-catch-all-apply 'vla-get-Name (list (cadr copied))))
+      (if (vl-catch-all-error-p new-def-name)
+        (list nil "Imported block name cannot be read.")
+        (progn
+          (setq inserted
+            (vl-catch-all-apply 'vla-InsertBlock
+              (list (vla-get-ModelSpace dest-doc)
+                    (vlax-3D-point point)
+                    new-def-name 1.0 1.0 1.0 rotation)))
+          (if (vl-catch-all-error-p inserted)
+            (list nil
+              (strcat "Cannot insert imported named block: "
+                      (vl-catch-all-error-message inserted)))
+            (list T inserted)))))))
+
 (defun tbhbl:insert-from-library (source-path source-name display-name point rotation
                                   / orig-doc source-info source-doc opened source-ref source-def copy-result
                                     new-def-name inserted closed activated)
@@ -363,18 +432,30 @@
         (vl-catch-all-apply 'tbhbl:find-source-sample
           (list source-doc source-name display-name)))
       (cond
-        ;; Preferred: deep-clone a real block reference. This works with
-        ;; anonymous *U names and preserves dynamic definitions/dependencies.
+        ;; Preferred: deep-clone a verified source block reference. Dynamic
+        ;; anonymous references resolve through EffectiveName, not *U number.
         ((and (not (vl-catch-all-error-p source-ref)) source-ref)
          (setq copy-result
            (tbhbl:copy-source-sample
              source-doc orig-doc source-ref point rotation)))
+        ;; Anonymous *U aliases are session-local IDs; if no matching
+        ;; EffectiveName reference remains, import only a NAMED definition
+        ;; whose name matches the stable display key.
         ((= (substr source-name 1 1) "*")
-         (setq copy-result
-           (list nil (strcat
-             "Anonymous block " source-name
-             " has no placed INSERT in SRC/FDM TEMPLATE.dwg. "
-             "Place one source instance in the template, then BLLRELOAD."))))
+         (setq source-def
+           (vl-catch-all-apply 'tbhbl:find-source-definition
+             (list source-doc display-name display-name)))
+         (if (or (vl-catch-all-error-p source-def) (not source-def))
+           (setq copy-result
+             (list nil (strcat
+               "Cannot resolve \"" display-name "\" in SRC/FDM TEMPLATE.dwg. "
+               "Legacy anonymous alias " source-name " is not a stable block ID. "
+               "Place a source INSERT with EffectiveName \"" display-name
+               "\" or provide a named definition with that name, "
+               "then run BLLRELOAD.")))
+           (setq copy-result
+             (tbhbl:copy-and-insert-definition
+               source-doc orig-doc source-def point rotation))))
         (T
          (setq source-def
            (vl-catch-all-apply 'tbhbl:find-source-definition
@@ -382,24 +463,9 @@
          (if (or (vl-catch-all-error-p source-def) (not source-def))
            (setq copy-result
              (list nil (strcat "Block not found in template: " source-name)))
-           (progn
-             (setq copy-result (tbhbl:copy-block-def source-doc orig-doc source-def))
-             (if (car copy-result)
-               (progn
-                 (setq new-def-name
-                   (vl-catch-all-apply 'vla-get-Name (list (cadr copy-result))))
-                 (if (vl-catch-all-error-p new-def-name)
-                   (setq copy-result (list nil "Imported block name cannot be read."))
-                   (progn
-                     (setq inserted
-                       (vl-catch-all-apply 'vla-InsertBlock
-                         (list (vla-get-ModelSpace orig-doc)
-                               (vlax-3D-point point)
-                               new-def-name 1.0 1.0 1.0 rotation)))
-                     (setq copy-result
-                       (if (vl-catch-all-error-p inserted)
-                         (list nil (vl-catch-all-error-message inserted))
-                         (list T inserted)))))))))))
+           (setq copy-result
+             (tbhbl:copy-and-insert-definition
+               source-doc orig-doc source-def point rotation)))))
       ;; A visible source-document fallback changes AutoCAD's active tab.
       ;; Close only what BLL opened, then reactivate the original destination.
       (if (eq opened T)
