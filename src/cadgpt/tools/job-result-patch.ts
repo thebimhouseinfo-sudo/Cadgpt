@@ -72,11 +72,9 @@ export function registerJobResultPatchTools(server: McpServer): void {
             if (typeof handle !== "string" || handle.toLowerCase() !== record_handle.toLowerCase())
               throw new Error("JOB_RESULT_HANDLE_MISMATCH");
           }
-          if (typeof record[field] === "object" || !Object.is(record[field], expected_previous_value))
+          if ((record[field] !== null && typeof record[field] === "object") ||
+              !Object.is(record[field], expected_previous_value))
             throw new Error("RESOURCE_CONFLICT: selected field no longer has approved value");
-          const snapshot = JSON.stringify(object, null, 2) + "\n";
-          const next = Buffer.from(snapshot, "utf8");
-          if (next.length > MAX_BYTES) throw new Error("JOB_RESULT_FILE_TOO_LARGE");
           record[field] = new_value;
           const updated = Buffer.from(JSON.stringify(object, null, 2) + "\n", "utf8");
           if (updated.length > MAX_BYTES) throw new Error("JOB_RESULT_FILE_TOO_LARGE");
