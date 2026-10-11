@@ -76,7 +76,9 @@ Source có thay đổi sau baseline phải đối chiếu và cập nhật imple
 - Namespaced IDs ví dụ `custom:<canonical-job-id>:<capability-id>`. Chống collision; check permission/registered source hash mỗi lần invoke để tránh chạy code đã đổi; fail closed on stale or invalid export.
 - **Dispatcher chạy một capability**, không dùng `job_run_direct` hoặc `job_runtime_prepare`, không chạy lại Stage 1 hay full workflow, không gây Job transition. **Nối scan vào các điểm thực sự khởi chạy User Job** (`job_runtime_prepare` cho Reasoning; `job_run_direct` cho Direct; khi `job_get` chuẩn bị Job thì có thể tận dụng bundle inspection đang thực hiện). Không trigger scan mọi lần `registry_list`/MCP startup. Scan thất bại ở một subtool không được chặn workflow Job hợp lệ. Với capability cần FILE thì dùng FILE/HYBRID; cần cả FILE và CAD thì dùng HYBRID. **CAD-only chỉ gọi CAD MCP**, không ép FILE tool vào CAD-only.
 - Existing Custom Job phải vẫn chạy bình thường nếu helper không thể export; báo trạng thái degraded export, không chặn workflow chính nếu không ảnh hưởng việc thực thi của Job đó. Nếu phát hiện bản thân Job source không hợp lệ theo contract hiện có, giữ hành vi fail-safe hiện hữu.
-- **Versioning:** Job bundle signature riêng phục vụ capability scan; không dùng Global `JOB_LOCAL_COMPAT_EPOCH` làm chỉ mục xuất tool.
+- **Independent capability execution check:** classify each scanned entrypoint before export. AutoLISP in Job-owned lisp/ or dynamic-lisp/ may use the existing approved CAD loader. Data/result operations use A3 typed FILE APIs. A Python file under tools/ is not automatically callable: the existing job_system_run_helper requires a Job SYSTEM lease and Job runtime. Export a Python helper only after an explicitly scoped independent executor is implemented and verified; otherwise mark it unavailable while retaining the parent Custom Job's normal workflow. Unknown helper schema is also unavailable. Never invoke the whole Job just to borrow one helper.
+
+**Versioning:** Job bundle signature riêng phục vụ capability scan; không dùng Global `JOB_LOCAL_COMPAT_EPOCH` làm chỉ mục xuất tool.
 
 **Test:** first use => one scan and valid exports callable; repeat unchanged => no deep scan; bundle hash changed => only this Job rescan; helper có lệnh chưa rõ => unavailable, Job vẫn chạy; wrong mode => được từ chối đúng luật; no duplicate entry; no whole Job lifecycle; crash mid-index-write => index cũ không bị làm sai.
 
@@ -139,6 +141,7 @@ Chạy từ repo root: `npm run build`; `npm test` (build + Node tests); `npm ru
 | T14 | Tool failure after metadata persist | Reports metadata updated / CAD unsynced; no speculative re-scan or rewind |
 | T15 | Normal Job A→B and Direct/Reasoning Job paths | Existing lifecycle and job authority unchanged |
 | T16 | User asks for fresh CAD state | Same-turn live CAD read; metadata cache not misrepresented as current CAD |
+| T17 | Python helper requires Job SYSTEM lease | Not exposed as standalone callable until supported by independent validated executor; parent Job still works |
 
 **Performance acceptance:** record tool counts per scenario, CAD MCP calls, actual full-drawing scan count, redundant prepare/review calls, elapsed duration against baseline. For metadata-complete cases: zero full-drawing scan and no unnecessary Job lifecycle. Time is measured, not assumed.
 
