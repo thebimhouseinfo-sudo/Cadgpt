@@ -546,7 +546,7 @@ export function registerJobDiscoveryTools(server: McpServer): void {
           source_sha256: sha256(content),
           bundle_sha256: bundle.sha256,
           bundle_files: bundle.files,
-          capability_scan: { candidates: exported.capabilities, dispatcher_ready: false, unavailable: exported.unavailable },
+          capability_scan: { exported: exported.capabilities, dispatcher_ready: true, unavailable: exported.unavailable },
           ...(executionMode === "reasoning"
             ? { harness: "knowledge/jobs/REASONING_HARNESS.md" }
             : {}),
