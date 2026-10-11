@@ -773,7 +773,8 @@ export function registerJobAuthoringTools(server: McpServer): void {
           absolute_path, drawing_id, [capability.command]
         );
         if (!loaded.loaded)
-          throw new Error("JOB_CAPABILITY_LISP_LOAD_FAILED: " + capability.id);
+          throw new Error("JOB_CAPABILITY_LISP_LOAD_FAILED: " + capability.id +
+            "; source=" + JSON.stringify(loaded.raw).slice(0, 2500));
         return toolResult("job_capability_prepare", {
           id: capability.id, loaded: true, command: capability.command,
           drawing_id: loaded.drawing_id,
