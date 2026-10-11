@@ -1,3 +1,5 @@
+import { isInternalJobId } from "./internal-jobs.js";
+
 const CONTROL_TOOLS = new Set([
   "cadgpt_control",
   "cadgpt_admission",
@@ -49,6 +51,26 @@ export function toolFamily(toolName: string): string {
     return "cad";
   }
   return "core";
+}
+
+/**
+ * Internal Direct Jobs execute bound-CAD operations, even when their public
+ * entry point shares the job_run_direct name with User Python Jobs.
+ * A CAD-only drawing Work must be able to load TBH; User Direct Jobs keep
+ * the ordinary job-authoring FILE/HYBRID capability gate.
+ */
+export function toolFamilyForInvocation(
+  toolName: string,
+  args: Record<string, unknown>
+): string {
+  if (
+    toolName === "job_run_direct" &&
+    typeof args.id === "string" &&
+    isInternalJobId(args.id)
+  ) {
+    return "cad";
+  }
+  return toolFamily(toolName);
 }
 
 export function toolTargetId(args: Record<string, unknown>, family: string): string {
