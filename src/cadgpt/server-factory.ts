@@ -51,6 +51,7 @@ import { registerCadProxyTools } from "./tools/cad-proxy.js";
 import { registerObservatorTools } from "./tools/observator.js";
 import { registerDrawingPersistenceTools } from "./tools/drawing-persistence.js";
 import { registerJobResultAccessTools } from "./tools/job-result-access.js";
+import { registerJobResultPatchTools } from "./tools/job-result-patch.js";
 import { registerHumanPowerTools } from "./tools/human-power.js";
 import {
   humanPowerErrorLogPath,
@@ -281,6 +282,7 @@ function registerStableProductionSurface(server: McpServer): void {
   registerObservatorTools(server);
   registerDrawingPersistenceTools(server);
   registerJobResultAccessTools(server);
+  registerJobResultPatchTools(server);
   registerHumanPowerTools(server);
 
   if (isDevelopmentBuild()) {
