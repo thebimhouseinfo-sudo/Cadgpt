@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { registerJobResultAccessTools } from "../dist/cadgpt/tools/job-result-access.js";
-import { registerJobResultPatchTools } from "../dist/cadgpt/tools/job-result-patch.js";
+import { registerJobResultPatchTools, registerJobResultBatchPatchTools } from "../dist/cadgpt/tools/job-result-patch.js";
 import * as work from "../dist/cadgpt/lib/work-registration.js";
 import { checkAdmission, revokeSessionAdmissions } from "../dist/cadgpt/lib/admission.js";
 import * as binding from "../dist/cadgpt/session/drawing-binding.js";
@@ -23,6 +23,7 @@ test("stored metadata fast path uses verified Drawing Anchor without contacting 
   const callbacks = new Map();
   registerJobResultAccessTools({ registerTool(name, _cfg, fn) { callbacks.set(name, fn); } });
   registerJobResultPatchTools({ registerTool(name, _cfg, fn) { callbacks.set(name, fn); } });
+  registerJobResultBatchPatchTools({ registerTool(name, _cfg, fn) { callbacks.set(name, fn); } });
   const original = cadUpstream.callTool;
   let cadCount = 0;
   cadUpstream.callTool = async (name) => {
@@ -38,7 +39,7 @@ test("stored metadata fast path uses verified Drawing Anchor without contacting 
     bound.anchor_verified_readback = true;
     const dir = path.join(root, "drawings", "anchor-verified", "jobs", "grille-tag-result");
     await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(path.join(dir, "result.json"), JSON.stringify({ necksize: "300x300" }));
+    await fs.writeFile(path.join(dir, "result.json"), JSON.stringify({ necksize: "300x300", grilles: [{ handle: "A1", necksize: "300x300" }, { handle: "A2", necksize: "300x300" }] }));
     const before = cadCount;
     const lease = work.acquireToolLease({
       sessionKey: session, executionId: current.executionId,
@@ -71,6 +72,34 @@ test("stored metadata fast path uses verified Drawing Anchor without contacting 
         new_value: "500x500",
       });
       assert.equal(conflict.structuredContent?.ok, false, "stale SHA must not overwrite");
+      const batch = await callbacks.get("file_job_result_patch_batch")({
+        job_result: "grille-tag-result", relative_file: "result.json",
+        expected_sha256: patch.structuredContent.data.sha256,
+        updates: [
+          { field_path: ["grilles", "0", "necksize"], record_handle: "A1",
+            expected_previous_value: "300x300", new_value: "400x400" },
+          { field_path: ["grilles", "1", "necksize"], record_handle: "A2",
+            expected_previous_value: "300x300", new_value: "400x400" },
+        ],
+      });
+      assert.equal(batch.structuredContent?.ok, true, JSON.stringify(batch));
+      assert.equal(batch.structuredContent.data.count, 2);
+      const final = JSON.parse(await fs.readFile(path.join(dir, "result.json"), "utf8"));
+      assert.deepEqual(final.grilles.map((g) => g.necksize), ["400x400", "400x400"]);
+      const invalidBatch = await callbacks.get("file_job_result_patch_batch")({
+        job_result: "grille-tag-result", relative_file: "result.json",
+        expected_sha256: batch.structuredContent.data.sha256,
+        updates: [
+          { field_path: ["grilles", "0", "necksize"], record_handle: "A1",
+            expected_previous_value: "400x400", new_value: "500x500" },
+          { field_path: ["grilles", "1", "necksize"], record_handle: "WRONG",
+            expected_previous_value: "400x400", new_value: "500x500" },
+        ],
+      });
+      assert.equal(invalidBatch.structuredContent?.ok, false);
+      const unchanged = JSON.parse(await fs.readFile(path.join(dir, "result.json"), "utf8"));
+      assert.deepEqual(unchanged.grilles.map((g) => g.necksize), ["400x400", "400x400"]);
+
 
       const escaped = await callbacks.get("file_job_result_read")({
         job_result: "../grille-tag-result", relative_file: "result.json",
