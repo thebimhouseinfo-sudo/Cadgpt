@@ -279,8 +279,13 @@ export async function listStoredJobCapabilities(): Promise<ExportedJobCapability
     if (!/^[a-f0-9]{64}\.json$/.test(file)) continue;
     try {
       const index = JSON.parse(await fs.readFile(path.join(indexRoot(), file), "utf8")) as JobCapabilityIndex;
-      if (index.version === 1 && activeIds.has(index.job_id.toLowerCase()) && Array.isArray(index.capabilities))
-        result.push(...index.capabilities);
+      if (index.version !== 1 || !activeIds.has(index.job_id.toLowerCase()) ||
+          !Array.isArray(index.capabilities)) continue;
+      // Registry discovery is cheap, but must never advertise a stale cached
+      // tool as currently callable. Stat-only checks avoid deep rescans.
+      const { source } = await registeredJob(index.job_id);
+      if ((await signatureFor(source)) !== index.signature) continue;
+      result.push(...index.capabilities);
     } catch {
       // Invalid indexes are ignored; next Job invocation will rebuild them.
     }
