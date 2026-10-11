@@ -107,6 +107,13 @@ export async function cleanupExecutionState(
     result.errors.push(`drawing metadata cleanup: ${errorText(error)}`);
   }
 
+  try {
+    const { cleanupTempLispForWork } = await import("../tools/temp-lisp.js");
+    await cleanupTempLispForWork(executionId);
+  } catch (error) {
+    result.errors.push("Temporary Lisp cleanup: " + errorText(error));
+  }
+
   if (loaded.has("cad")) {
     try {
       const [
