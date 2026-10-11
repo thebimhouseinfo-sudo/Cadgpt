@@ -8,6 +8,10 @@ import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { currentToolLease } from "../lib/work-registration.js";
 import { reasoningJobStorageScopeWasEntered } from "../runtime/job-runtime.js";
+import {
+  assertTrustedResultPatchApproval,
+  consumeTrustedResultPatchApproval,
+} from "../runtime/result-patch-approval.js";
 
 /** Temp/scoped result patch must not bypass the active Reasoning Job's own-result write fence. */
 function assertStandalonePatchScope(): void {
@@ -66,8 +70,15 @@ export function registerJobResultPatchTools(server: McpServer): void {
           throw new Error("JOB_RESULT_FILE_INVALID");
         assertStandalonePatchScope();
         const { drawing_anchor, directory } = await boundResultDirectory(job_result);
+        const approvedMutation = {
+          execution_id: currentToolLease().workId,
+          drawing_anchor, job_result, relative_file, expected_sha256,
+          updates: [{ field_path, expected_previous_value, new_value, ...(record_handle ? { record_handle } : {}) }],
+        };
+        assertTrustedResultPatchApproval(approvedMutation);
         const target = path.join(directory, relative_file);
         const result = await withFileMutationLocks([target], async () => {
+          assertTrustedResultPatchApproval(approvedMutation);
           const st = await fs.lstat(target);
           if (!st.isFile() || st.isSymbolicLink() || st.size > MAX_BYTES)
             throw new Error("JOB_RESULT_FILE_UNSUPPORTED");
@@ -95,6 +106,7 @@ export function registerJobResultPatchTools(server: McpServer): void {
           } finally {
             await fs.rm(pending, { force: true }).catch(() => undefined);
           }
+          consumeTrustedResultPatchApproval(approvedMutation.execution_id);
           return { prior_sha256: expected_sha256, sha256: sha(updated) };
         });
         return toolResult("file_job_result_patch", {
@@ -134,8 +146,14 @@ export function registerJobResultBatchPatchTools(server: McpServer): void {
           throw new Error("JOB_RESULT_FILE_INVALID");
         assertStandalonePatchScope();
         const { drawing_anchor, directory } = await boundResultDirectory(job_result);
+        const approvedMutation = {
+          execution_id: currentToolLease().workId,
+          drawing_anchor, job_result, relative_file, expected_sha256, updates,
+        };
+        assertTrustedResultPatchApproval(approvedMutation);
         const target = path.join(directory, relative_file);
         const result = await withFileMutationLocks([target], async () => {
+          assertTrustedResultPatchApproval(approvedMutation);
           const st = await fs.lstat(target);
           if (!st.isFile() || st.isSymbolicLink() || st.size > MAX_BYTES)
             throw new Error("JOB_RESULT_FILE_UNSUPPORTED");
@@ -172,6 +190,7 @@ export function registerJobResultBatchPatchTools(server: McpServer): void {
           } finally {
             await fs.rm(pending, { force: true }).catch(() => undefined);
           }
+          consumeTrustedResultPatchApproval(approvedMutation.execution_id);
           return { sha256: sha(after), count: prepared.length };
         });
         return toolResult("file_job_result_patch_batch", {
