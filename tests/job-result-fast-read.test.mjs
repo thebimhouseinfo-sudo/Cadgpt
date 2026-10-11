@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { registerJobResultAccessTools } from "../dist/cadgpt/tools/job-result-access.js";
+import { registerJobResultPatchTools } from "../dist/cadgpt/tools/job-result-patch.js";
 import * as work from "../dist/cadgpt/lib/work-registration.js";
 import { checkAdmission, revokeSessionAdmissions } from "../dist/cadgpt/lib/admission.js";
 import * as binding from "../dist/cadgpt/session/drawing-binding.js";
@@ -21,6 +22,7 @@ test("stored metadata fast path uses verified Drawing Anchor without contacting 
   });
   const callbacks = new Map();
   registerJobResultAccessTools({ registerTool(name, _cfg, fn) { callbacks.set(name, fn); } });
+  registerJobResultPatchTools({ registerTool(name, _cfg, fn) { callbacks.set(name, fn); } });
   const original = cadUpstream.callTool;
   let cadCount = 0;
   cadUpstream.callTool = async (name) => {
@@ -52,6 +54,24 @@ test("stored metadata fast path uses verified Drawing Anchor without contacting 
       assert.equal(read.structuredContent?.ok, true, JSON.stringify(read));
       assert.equal(read.structuredContent.data.content.necksize, "300x300");
       assert.equal(read.structuredContent.data.source, "stored_metadata");
+      const patch = await callbacks.get("file_job_result_patch")({
+        job_result: "grille-tag-result", relative_file: "result.json",
+        expected_sha256: read.structuredContent.data.sha256,
+        field_path: ["necksize"], expected_previous_value: "300x300",
+        new_value: "400x400",
+      });
+      assert.equal(patch.structuredContent?.ok, true, JSON.stringify(patch));
+      assert.equal(patch.structuredContent.data.cad_sync, "not_performed");
+      const updated = JSON.parse(await fs.readFile(path.join(dir, "result.json"), "utf8"));
+      assert.equal(updated.necksize, "400x400");
+      const conflict = await callbacks.get("file_job_result_patch")({
+        job_result: "grille-tag-result", relative_file: "result.json",
+        expected_sha256: read.structuredContent.data.sha256,
+        field_path: ["necksize"], expected_previous_value: "300x300",
+        new_value: "500x500",
+      });
+      assert.equal(conflict.structuredContent?.ok, false, "stale SHA must not overwrite");
+
       const escaped = await callbacks.get("file_job_result_read")({
         job_result: "../grille-tag-result", relative_file: "result.json",
       });
