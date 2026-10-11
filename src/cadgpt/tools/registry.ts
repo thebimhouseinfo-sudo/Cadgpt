@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { getUserCapabilitiesPath } from "../lib/appdata.js";
+import { listStoredJobCapabilities } from "../lib/job-capability-index.js";
 import { getRepoRoot } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { isDevelopmentBuild } from "../lib/work-registration.js";
@@ -270,11 +271,12 @@ async function loadUserEntries(): Promise<Array<Record<string, unknown>>> {
 }
 
 async function loadEffectiveRegistry(): Promise<Array<Record<string, unknown>>> {
-  const [tools, skills, bundledLisp, users] = await Promise.all([
+  const [tools, skills, bundledLisp, users, exports] = await Promise.all([
     loadToolEntries(),
     loadSkillEntries(),
     listBundledLispEntries(),
     loadUserEntries(),
+    listStoredJobCapabilities(),
   ]);
   const tbhState =
     internalLispGroupLoadedForCurrentDrawing("tbh-toolkit");
@@ -306,7 +308,7 @@ async function loadEffectiveRegistry(): Promise<Array<Record<string, unknown>>> 
         }
       : entry
   );
-  return [...tools, ...skills, ...bundled, ...internalJobs, ...users].sort(
+  return [...tools, ...skills, ...bundled, ...internalJobs, ...users, ...exports].sort(
     (a, b) =>
       `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`)
   );
