@@ -98,3 +98,78 @@ export function registerJobResultPatchTools(server: McpServer): void {
     }
   );
 }
+
+export function registerJobResultBatchPatchTools(server: McpServer): void {
+  server.registerTool(
+    "file_job_result_patch_batch",
+    {
+      title: "Patch Multiple Verified Result Fields Atomically",
+      description:
+        "Apply a bounded user-approved set of field changes to one existing Job result JSON using one SHA compare-and-swap. All field paths and expected prior values must match; all-or-nothing, no CAD access.",
+      inputSchema: {
+        job_result: z.string().min(1),
+        relative_file: z.string().min(1),
+        expected_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        updates: z.array(z.object({
+          field_path: z.array(z.string()).min(1).max(10),
+          expected_previous_value: primitive,
+          new_value: primitive,
+          record_handle: z.string().min(1).max(100).optional(),
+        })).min(1).max(500),
+      },
+    },
+    async ({ job_result, relative_file, expected_sha256, updates }) => {
+      try {
+        if (!JSON_FILE.test(relative_file) || relative_file.includes(".."))
+          throw new Error("JOB_RESULT_FILE_INVALID");
+        const { drawing_anchor, directory } = await boundResultDirectory(job_result);
+        const target = path.join(directory, relative_file);
+        const result = await withFileMutationLocks([target], async () => {
+          const st = await fs.lstat(target);
+          if (!st.isFile() || st.isSymbolicLink() || st.size > MAX_BYTES)
+            throw new Error("JOB_RESULT_FILE_UNSUPPORTED");
+          const before = await fs.readFile(target);
+          if (before.length > MAX_BYTES) throw new Error("JOB_RESULT_FILE_TOO_LARGE");
+          if (sha(before) !== expected_sha256)
+            throw new Error("RESOURCE_CONFLICT: Job result changed since approved read");
+          const object = JSON.parse(before.toString("utf8")) as unknown;
+          const prepared: Array<{ record: Record<string, unknown>; field: string; newValue: unknown }> = [];
+          const seen = new Set<string>();
+          for (const update of updates) {
+            const identity = JSON.stringify(update.field_path);
+            if (seen.has(identity)) throw new Error("JOB_RESULT_DUPLICATE_FIELD_PATH");
+            seen.add(identity);
+            const { record, field } = findLeaf(object, update.field_path);
+            if (update.record_handle !== undefined) {
+              const handle = record.handle ?? record.HANDLE;
+              if (typeof handle !== "string" ||
+                  handle.toLowerCase() !== update.record_handle.toLowerCase())
+                throw new Error("JOB_RESULT_HANDLE_MISMATCH");
+            }
+            if ((record[field] !== null && typeof record[field] === "object") ||
+                !Object.is(record[field], update.expected_previous_value))
+              throw new Error("RESOURCE_CONFLICT: a selected result field changed");
+            prepared.push({ record, field, newValue: update.new_value });
+          }
+          for (const item of prepared) item.record[item.field] = item.newValue;
+          const after = Buffer.from(JSON.stringify(object, null, 2) + "\n", "utf8");
+          if (after.length > MAX_BYTES) throw new Error("JOB_RESULT_FILE_TOO_LARGE");
+          const pending = path.join(directory, "." + path.basename(target) + "." + randomUUID() + ".tmp");
+          try {
+            await fs.writeFile(pending, after, { flag: "wx" });
+            await fs.rename(pending, target);
+          } finally {
+            await fs.rm(pending, { force: true }).catch(() => undefined);
+          }
+          return { sha256: sha(after), count: prepared.length };
+        });
+        return toolResult("file_job_result_patch_batch", {
+          drawing_anchor, job_result, file: relative_file,
+          prior_sha256: expected_sha256, ...result, cad_sync: "not_performed",
+        });
+      } catch (error) {
+        return toolError("file_job_result_patch_batch", error);
+      }
+    }
+  );
+}
