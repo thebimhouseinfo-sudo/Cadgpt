@@ -51,7 +51,7 @@ import { registerCadProxyTools } from "./tools/cad-proxy.js";
 import { registerObservatorTools } from "./tools/observator.js";
 import { registerDrawingPersistenceTools } from "./tools/drawing-persistence.js";
 import { registerJobResultAccessTools } from "./tools/job-result-access.js";
-import { registerJobResultPatchTools } from "./tools/job-result-patch.js";
+import { registerJobResultPatchTools, registerJobResultBatchPatchTools } from "./tools/job-result-patch.js";
 import { registerTempLispTools } from "./tools/temp-lisp.js";
 import { registerHumanPowerTools } from "./tools/human-power.js";
 import {
@@ -284,6 +284,7 @@ function registerStableProductionSurface(server: McpServer): void {
   registerDrawingPersistenceTools(server);
   registerJobResultAccessTools(server);
   registerJobResultPatchTools(server);
+  registerJobResultBatchPatchTools(server);
   registerTempLispTools(server);
   registerHumanPowerTools(server);
 
