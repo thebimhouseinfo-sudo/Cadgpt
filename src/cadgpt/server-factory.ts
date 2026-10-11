@@ -99,6 +99,17 @@ function loadStrictCustomJobHarness(): string {
   }
 }
 
+function loadOrchestratorHarness(): string {
+  try {
+    return fs.readFileSync(
+      path.join(getRepoRoot(), "knowledge", "cad", "ORCHESTRATOR_HARNESS.md"),
+      "utf8"
+    ).trim();
+  } catch {
+    return "";
+  }
+}
+
 function loadCadWorkingKnowledge(): string {
   try {
     return fs
@@ -405,6 +416,7 @@ export async function rehydrateServerForLogicalSession(
 export function createMcpServer(sessionKey: string): McpServer {
   const cadWorkingKnowledge = loadCadWorkingKnowledge();
   const strictCustomJobHarness = loadStrictCustomJobHarness();
+  const orchestratorHarness = loadOrchestratorHarness();
   const server = new McpServer(
     { name: "cadgpt", version: "0.2.1" },
     {
@@ -452,6 +464,9 @@ export function createMcpServer(sessionKey: string): McpServer {
         "cad-mcp-dev remains development-only; ordinary Human Power source repair uses the audited generic file tools and does not turn the user's Job into a development workflow.",
         ...(strictCustomJobHarness
           ? ["STRICT CUSTOM JOB EXECUTION — highest priority for execution scope of established Custom Jobs, without relaxing platform safety or explicit Job conditions:\n" + strictCustomJobHarness]
+          : []),
+        ...(orchestratorHarness
+          ? ["CADGPT ORCHESTRATOR ROUTING — use before selecting execution mode:\n" + orchestratorHarness]
           : []),
       ].join("\n"),
     }
