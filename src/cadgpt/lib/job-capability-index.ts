@@ -228,12 +228,20 @@ export async function listStoredJobCapabilities(): Promise<ExportedJobCapability
     if (error.code === "ENOENT") return [] as string[];
     throw error;
   });
+  const raw = await fs.readFile(getUserCapabilitiesPath(), "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return '{"entries":[]}';
+    throw error;
+  });
+  const parsed = JSON.parse(raw) as { entries?: Array<{ kind?: string; id?: string }> };
+  const activeIds = new Set((parsed.entries ?? [])
+    .filter((item) => item.kind === "job" && typeof item.id === "string")
+    .map((item) => item.id!.toLowerCase()));
   const result: ExportedJobCapability[] = [];
   for (const file of names) {
     if (!/^[a-f0-9]{64}\.json$/.test(file)) continue;
     try {
       const index = JSON.parse(await fs.readFile(path.join(indexRoot(), file), "utf8")) as JobCapabilityIndex;
-      if (index.version === 1 && Array.isArray(index.capabilities))
+      if (index.version === 1 && activeIds.has(index.job_id.toLowerCase()) && Array.isArray(index.capabilities))
         result.push(...index.capabilities);
     } catch {
       // Invalid indexes are ignored; next Job invocation will rebuild them.
