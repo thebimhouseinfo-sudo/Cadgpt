@@ -20,9 +20,9 @@ import { handoffVerifiedDrawingMetadataRoot } from "../runtime/drawing-persisten
 import { toCadgptPath } from "../lib/path-security.js";
 
 /**
- * Jobs are HYBRID unless a specific non-hybrid exception is explicitly set.
- * Legacy Job callers that choose FILE/CAD based on the first step cannot
- * accidentally disable the other capability. Other Work types are unchanged.
+ * ALL Work defaults to HYBRID unless a caller explicitly requests a narrower
+ * non-Job execution path or an approved Job-only non-hybrid exception.
+ * Legacy Job calls using execution_path=file/cad never disable HYBRID.
  */
 export function resolveWorkExecutionPath(input: {
   ownerType: WorkOwnerType;
@@ -37,12 +37,7 @@ export function resolveWorkExecutionPath(input: {
       "JOB_NONHYBRID_OVERRIDE_ONLY_FOR_JOB: override applies only to Job Work."
     );
   }
-  if (!input.executionPath) {
-    throw new Error(
-      "EXECUTION_PATH_REQUIRED: non-Job Work must specify file, cad, or hybrid."
-    );
-  }
-  return input.executionPath;
+  return input.executionPath ?? "hybrid";
 }
 
 export function registerWorkControlTools(
@@ -74,12 +69,12 @@ export function registerWorkControlTools(
     {
       title: "Start or Reuse CadGPT Work",
       description:
-        "Start execution only when there is no compatible existing work. ALL Job Work defaults to HYBRID (CAD + FILE/SYSTEM) even if execution_path=file or cad was passed by an older caller. Only an explicitly approved non-hybrid Job should use job_nonhybrid_path=file/cad. For non-Job Work, execution_path remains required. Continue an existing work_handle when the MCP session rotates; never invent a drawing binding.",
+        "Start execution only when there is no compatible existing work. ALL Work defaults to HYBRID (CAD + FILE/SYSTEM), including skill/direct-cad/file work. Existing Job calls passing legacy execution_path=file/cad remain HYBRID; use job_nonhybrid_path only for an explicitly approved narrow Job. For non-Job work, explicitly supplying execution_path=file/cad remains a supported exception. Continue existing work_handle on MCP rotation; never invent a drawing binding.",
       inputSchema: {
         owner_type: z.enum(["skill", "job", "direct-cad", "file"]),
         owner_id: z.string().min(1).max(160),
         execution_path: z.enum(["file", "cad", "hybrid"]).optional().describe(
-          "Non-Job Work requires this. Job Work defaults to HYBRID even when a legacy caller passes file/cad; use job_nonhybrid_path for an explicit exception."
+          "Optional for non-Job Work: omitted means HYBRID; explicit file/cad remains supported. Job Work defaults to HYBRID even with legacy execution_path=file/cad; use job_nonhybrid_path for an explicit Job-only exception."
         ),
         job_nonhybrid_path: z.enum(["file", "cad"]).optional().describe(
           "Explicit exception for a Job intentionally restricted to one capability. Never infer this from the Job's tools or the first step."
