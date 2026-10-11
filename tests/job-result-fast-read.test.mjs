@@ -100,7 +100,7 @@ test("stored metadata fast path uses verified Drawing Anchor without contacting 
         job_result: "grille-tag-result", relative_file: "result.json",
         expected_sha256: read.structuredContent.data.sha256,
         field_path: ["necksize"], expected_previous_value: "300x300",
-        new_value: "500x500",
+        new_value: "400x400",
       });
       assert.equal(conflict.structuredContent?.ok, false, "stale SHA must not overwrite");
       assert.match(JSON.stringify(conflict), /RESOURCE_CONFLICT/);
