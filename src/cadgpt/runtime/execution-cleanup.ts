@@ -40,6 +40,10 @@ export async function cleanupExecutionState(
     errors: [],
   };
 
+  // A Work-scoped consent grant must not survive stop/rebind/renewal.
+  const { clearTrustedResultPatchApproval } = await import("./result-patch-approval.js");
+  clearTrustedResultPatchApproval(executionId);
+
   const humanPower = consumeHumanPowerCleanup(executionId);
   if (humanPower) {
     try {
@@ -105,6 +109,13 @@ export async function cleanupExecutionState(
     result.drawing_metadata_cleaned = true;
   } catch (error) {
     result.errors.push(`drawing metadata cleanup: ${errorText(error)}`);
+  }
+
+  try {
+    const { cleanupTempLispForWork } = await import("../tools/temp-lisp.js");
+    await cleanupTempLispForWork(executionId);
+  } catch (error) {
+    result.errors.push("Temporary Lisp cleanup: " + errorText(error));
   }
 
   if (loaded.has("cad")) {

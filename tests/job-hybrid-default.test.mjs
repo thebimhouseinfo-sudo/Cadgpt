@@ -30,7 +30,21 @@ test("Job execution mode is HYBRID by default, legacy FILE/CAD are normalized; r
     );
     assert.equal(resolveWorkExecutionPath({ ownerType: "direct-cad", executionPath: path }), path);
   }
-  assert.throws(() => resolveWorkExecutionPath({ ownerType: "file" }), /EXECUTION_PATH_REQUIRED/);
+  for (const ownerType of ["skill", "direct-cad", "file"]) {
+    assert.equal(
+      resolveWorkExecutionPath({ ownerType }),
+      "hybrid",
+      `non-Job owner ${ownerType} defaults to HYBRID`
+    );
+    assert.equal(resolveWorkExecutionPath({ ownerType, executionPath: "hybrid" }), "hybrid");
+    for (const path of ["file", "cad"]) {
+      assert.equal(
+        resolveWorkExecutionPath({ ownerType, executionPath: path }),
+        path,
+        "explicit narrow non-Job Work remains supported"
+      );
+    }
+  }
   assert.throws(() => resolveWorkExecutionPath({
     ownerType: "file", executionPath: "file", jobNonHybridPath: "cad"
   }), /JOB_NONHYBRID_OVERRIDE_ONLY_FOR_JOB/);

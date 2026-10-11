@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { getAppDataRoot } from "../lib/appdata.js";
+import { getAppDataRoot, getDrawingStorageRoot } from "../lib/appdata.js";
 import { isHvacKnowledgePath } from "../lib/knowledge-storage.js";
 import { getAllowedRoots, getRepoRoot, getWritableRoots, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
@@ -95,6 +95,27 @@ function currentWritableRoots(): string[] {
       ...humanPowerRoots,
     ]),
   ];
+}
+
+/**
+ * Generic file mutations cannot bypass the scoped result-patch authorization.
+ * Legitimate Reasoning Jobs retain only their own jobRuntimeWritableRoots,
+ * and explicit Human Power keeps its separately audited override.
+ */
+export function assertNotGenericJobResultMutation(target: string): void {
+  if (currentHumanPower()) return;
+  const root = path.resolve(getDrawingStorageRoot());
+  const rel = path.relative(root, path.resolve(target));
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return;
+  const parts = rel.split(path.sep);
+  if (parts.length < 4 || parts[1] !== "jobs" ||
+      !parts[2].toLowerCase().endsWith("-result")) return;
+  const allowedOwnedRoots = jobRuntimeWritableRootsForExecution(currentToolLease().workId);
+  if (allowedOwnedRoots.some(base => {
+    const relative = path.relative(path.resolve(base), path.resolve(target));
+    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  })) return;
+  throw new Error("JOB_RESULT_SCOPED_PATCH_REQUIRED: generic file mutations cannot edit another Job result");
 }
 
 async function assertNotManagedHvacKnowledgeMutation(target: string): Promise<void> {
@@ -327,6 +348,7 @@ export function registerFilesystemTools(server: McpServer): void {
         });
         assertTextExtension(target);
         await assertNotManagedHvacKnowledgeMutation(target);
+        assertNotGenericJobResultMutation(target);
         const sourceMutation = isCadGptSourcePath(target);
         if (sourceMutation && !currentHumanPower()) {
           throw new Error(
@@ -422,6 +444,7 @@ export function registerFilesystemTools(server: McpServer): void {
         });
         assertTextExtension(target);
         await assertNotManagedHvacKnowledgeMutation(target);
+        assertNotGenericJobResultMutation(target);
         const sourceMutation = isCadGptSourcePath(target);
         if (sourceMutation && !currentHumanPower()) {
           throw new Error(
@@ -524,6 +547,7 @@ export function registerFilesystemTools(server: McpServer): void {
           });
         assertTextExtension(target);
         await assertNotManagedHvacKnowledgeMutation(target);
+        assertNotGenericJobResultMutation(target);
         if (isCadGptSourcePath(target)) {
           throw new Error(
             "SOURCE_DELETE_UNSUPPORTED: generic file_delete never deletes CadGPT source files."

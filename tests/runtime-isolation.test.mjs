@@ -2519,7 +2519,7 @@ test("cg/cl and cg/cj are state-aware with and without a hybrid workspace", asyn
   );
   assert.equal(
     noWorkCl.structuredContent?.continuation_policy?.execution_path,
-    "file"
+    "hybrid"
   );
 
   const noWorkCj = await control({ surface: "cj" });
@@ -2745,7 +2745,7 @@ test("cg/mcp remains unavailable in production and starts standalone dev work on
     );
     assert.equal(
       development.structuredContent?.continuation_policy?.execution_path,
-      "file"
+      "hybrid"
     );
   } finally {
     if (previous === undefined) delete process.env.CADGPT_BUILD_PROFILE;
