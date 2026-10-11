@@ -58,6 +58,16 @@ test("per-Job lazy scan indexes valid AutoLISP and invalidates only changed asse
     const ambiguous = await ensureJobCapabilityIndex("testjob");
     assert.equal(ambiguous.capabilities.length, 0);
     assert.equal(ambiguous.unavailable.some((x) => x.reason.includes("Ambiguous")), true);
+    await fs.writeFile(path.join(root, "registry", "user", "capabilities.json"),
+      JSON.stringify({ version: 1, entries: [] }));
+    const retired = await callbacks.get("registry_list")({
+      kind: "tool", registry: "user", limit: 100,
+    });
+    assert.equal(retired.structuredContent?.ok, true, JSON.stringify(retired));
+    assert.equal(retired.structuredContent.data.entries.some((x) =>
+      x.id === "custom:testjob:TESTCMD"), false,
+      "unregistered Jobs must not leave advertised callable tools");
+
     assert.equal((await fs.readFile(path.join(jobRoot, "JOB.md"), "utf8")),
       "# Test managed job\n", "scanning never edits existing Job workflow");
   } finally {
