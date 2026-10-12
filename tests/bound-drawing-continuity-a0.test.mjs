@@ -367,3 +367,64 @@ test("R09-GREEN: incomplete DWG observation cannot permanently erase an active b
     revokeSessionAdmissions(session);
   }
 });
+
+test("R12: competing same-session Work starts cannot steal the committed drawing", async () => {
+  const session = "a0-r12-competing-transitions";
+  checkAdmission(session, "@cg", "mention");
+  const callbacks = new Map();
+  const waiting = [];
+  registerWorkControlTools({
+    registerTool(name, _schema, callback) { callbacks.set(name, callback); },
+  }, {
+    sessionKey: session,
+    prepareFamilies() {
+      return new Promise(resolve => waiting.push(resolve));
+    },
+    async upgradeToHybrid() { throw Error("Unexpected upgrade"); },
+  });
+  let a;
+  const ids = [];
+  await withFakeCad(async () => {
+    try {
+      a = work.createWorkRegistration({
+        sessionKey: session, ownerType: "direct-cad",
+        ownerId: "drawing-workspace", executionPath: "hybrid",
+      });
+      ids.push(a.executionId);
+      const bound = await drawing.bindDrawingForExecution(a.executionId, DWG.full_name);
+      const first = callbacks.get("cadgpt_work_start")({
+        owner_type: "job", owner_id: "job-first",
+      });
+      const second = callbacks.get("cadgpt_work_start")({
+        owner_type: "job", owner_id: "job-second",
+      });
+      for (let attempt = 0; attempt < 100 && waiting.length < 2; attempt++) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      assert.equal(waiting.length, 2, "both successors must be staged before commit");
+      waiting[1]({ execution_path: "hybrid" });
+      const won = await second;
+      assert.equal(won.structuredContent?.ok, true, JSON.stringify(won));
+      assert.equal(won.structuredContent?.data?.drawing_handoff?.drawing_id, bound.drawing_id);
+      const winner = work.activeWorkForSession(session);
+      ids.push(winner.executionId);
+      assert.equal(winner.ownerId, "job-second");
+
+      waiting[0]({ execution_path: "hybrid" });
+      const lost = await first;
+      assert.equal(lost.structuredContent?.ok, false, JSON.stringify(lost));
+      assert.match(JSON.stringify(lost), /WORK_STAGE_STALE/);
+      assert.equal(work.activeExecutionForSession(session), winner.executionId);
+      const lease = cadLease(session, winner, "r12_after_race");
+      await work.runWithToolLease(lease, async () => {
+        assert.equal(drawing.resolveDrawingContext().drawing_id, bound.drawing_id);
+        await drawing.activateDrawingContext(drawing.resolveDrawingContext());
+      });
+    } finally {
+      const current = work.activeWorkForSession(session);
+      if (current) work.releaseWorkRegistration(current.executionId, current.authorityToken, session);
+      for (const id of ids) drawing.clearExecutionDrawingContexts(id);
+      revokeSessionAdmissions(session);
+    }
+  });
+});
