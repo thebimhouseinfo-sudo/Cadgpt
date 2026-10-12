@@ -2,7 +2,7 @@
 title: CadGPT — Bound Drawing Continuity in an Active Add-in Session
 document_type: DETAILED_IMPLEMENTATION_PLAN
 status: CR_REVIEW_REQUIRED
-review_status: PLANNER_INTERNAL_REVIEW_IN_PROGRESS
+review_status: PLANNER_INTERNAL_PASS_AWAITING_CR
 implementation_status: NOT_STARTED
 priority: P0
 source_repo: thebimhouseinfo-sudo/Cadgpt
@@ -481,3 +481,11 @@ Planner: source/incident hypothesis matrix, P0/P1 routing and minimal fix decisi
 **Round 2 review criteria:** Check that P0 remains open on missing evidence, diagnostics acquisition has an owner and next trigger, mandatory E01-SOURCE/HOST cannot be waived, causal source fix is independent of noncausal P1 enhancements, host test requires the real bound DWG with no forced rebind, and every new wording is consistent with existing CR-approved technical safety gates. Final INTERNAL_PASS is recorded only after a subsequent full-document readback check, including this round's corrections.
 
 **Authority:** This is Planner internal assessment, not an independent GSA Reviewer verification or Critic review. The plan itself authorizes no code change, merge or deployment.
+
+### 13.7 Planner internal review round 2 — PASS (planning only)
+
+**Reviewed input:** GitHub plan blob `0f8047bc6d402a03b47b0053868c99b7d3e494d1` after Round 1 repair. Cross-checked §§3/6/9/11/12/13 for issue closure, causal scope, tests and authority boundaries.
+
+**Results:** CR-G01: no-repro leaves `P0_INCIDENT_OPEN/EVIDENCE_PENDING` with an assigned diagnostic evidence loop and *does not* authorize speculative fixes; CR-G02: E01-SOURCE and E01-HOST continuously exercise the same drawing identity and Work chain and cannot be NOT_APPLICABLE; CR-G03: `INCIDENT_RESOLVED` requires source evidence and real uninterrupted AutoCAD host verification, not CI or smoke PASS; CR-G04: noncausal P1 findings are tracked separately and do not consume P0 scope absent a verified release safety blocker. Earlier atomic handoff, cleanup isolation, fail-closed lifetime validation, cross-session denial, FILE-only capability boundary and Drawing Anchor limits remain intact. **Planner internal plan-level verdict: PASS.**
+
+The committed review record is an addendum only; verify exact final blob via GitHub readback. The verdict is **not** an independent CR verdict, not implementation verification and not a claim the active-session incident has been fixed. No source edit/merge/deploy is authorized by this plan alone.
