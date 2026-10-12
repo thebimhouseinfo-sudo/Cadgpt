@@ -116,7 +116,7 @@ test("E00-SOURCE: continuous paired chat/CAD under one Work never loses drawing 
   });
 });
 
-test("R01-RED: cleanup-before-handoff must not orphan B in an active chat", async () => {
+test("R01-GREEN: cleanup-before-handoff cannot orphan B in an active chat", async () => {
   const session = "a0-r01-deterministic-cleanup-before-handoff";
   checkAdmission(session, "@cg", "mention");
   const callbacks = createCallbacks(session);
@@ -142,7 +142,7 @@ test("R01-RED: cleanup-before-handoff must not orphan B in an active chat", asyn
       });
       current = work.activeWorkForSession(session);
       assert.equal(result.structuredContent.ok, true, JSON.stringify(result));
-      assert.equal(events[0]?.executionId, a.executionId, "forced cleanup never ran");
+      assert.deepEqual(events, [], "A expiration callback must not run before handoff/commit");
       assert.notEqual(current?.executionId, a.executionId);
       assert.equal(
         result.structuredContent.data.drawing_handoff?.drawing_id,
@@ -162,4 +162,80 @@ test("R01-RED: cleanup-before-handoff must not orphan B in an active chat", asyn
       revokeSessionAdmissions(session);
     }
   });
+});
+
+test("R02: failed successor prepare retains Work A and the original drawing", async () => {
+  const session = "a0-r02-failed-prepare-rollback";
+  checkAdmission(session, "@cg", "mention");
+  const callbacks = new Map();
+  let preparedExecutionId = null;
+  registerWorkControlTools({
+    registerTool(name, _schema, callback) { callbacks.set(name, callback); },
+  }, {
+    sessionKey: session,
+    async prepareFamilies(_mode, _owner, executionId) {
+      preparedExecutionId = executionId;
+      throw Error("A0_FORCED_PREPARE_FAILURE");
+    },
+    async upgradeToHybrid() { throw Error("Unexpected upgrade"); },
+  });
+  let a;
+  await withFakeCad(async () => {
+    try {
+      a = work.createWorkRegistration({
+        sessionKey: session, ownerType: "direct-cad",
+        ownerId: "drawing-workspace", executionPath: "hybrid",
+      });
+      const old = await drawing.bindDrawingForExecution(a.executionId, DWG.full_name);
+      const res = await callbacks.get("cadgpt_work_start")({
+        owner_type: "job", owner_id: "mto", execution_path: "hybrid",
+      });
+      assert.equal(res.structuredContent?.ok, false);
+      assert.match(JSON.stringify(res), /A0_FORCED_PREPARE_FAILURE/);
+      assert.notEqual(preparedExecutionId, a.executionId);
+      assert.equal(work.activeExecutionForSession(session), a.executionId);
+      assert.equal(drawing.getBoundDrawingsForExecution(a.executionId)[0]?.drawing_id, old.drawing_id);
+      assert.equal(drawing.getBoundDrawingsForExecution(preparedExecutionId).length, 0);
+      const lease = cadLease(session, a);
+      await work.runWithToolLease(lease, async () => {
+        assert.equal(drawing.resolveDrawingContext().drawing_id, old.drawing_id);
+      });
+    } finally {
+      if (a) {
+        work.releaseWorkRegistration(a.executionId, a.authorityToken, session);
+        drawing.clearExecutionDrawingContexts(a.executionId);
+      }
+      revokeSessionAdmissions(session);
+    }
+  });
+});
+
+test("R17: staged successor credentials cannot acquire a ToolLease", async () => {
+  const session = "a0-r17-stage-not-executable";
+  checkAdmission(session, "@cg", "mention");
+  let a, b;
+  try {
+    a = work.createWorkRegistration({
+      sessionKey: session, ownerType: "direct-cad",
+      ownerId: "drawing-workspace", executionPath: "hybrid",
+    });
+    b = work.createWorkRegistration({
+      sessionKey: session, ownerType: "job", ownerId: "next-job",
+      executionPath: "hybrid", staged: true,
+    });
+    assert.equal(work.activeExecutionForSession(session), a.executionId);
+    assert.throws(() => cadLease(session, b), /NO_ACTIVE_WORK/);
+    assert.throws(() => work.acquireToolLease({
+      tool: "a0_file", family: "filesystem", sessionKey: session,
+      executionId: b.executionId, authorityToken: b.authorityToken,
+    }), /NO_ACTIVE_WORK/);
+    assert.equal(work.cancelStagedWorkRegistration({
+      sessionKey: session, stagedExecutionId: b.executionId,
+      stagedAuthorityToken: b.authorityToken,
+    }), true);
+    assert.equal(work.activeExecutionForSession(session), a.executionId);
+  } finally {
+    if (a) work.releaseWorkRegistration(a.executionId, a.authorityToken, session);
+    revokeSessionAdmissions(session);
+  }
 });
