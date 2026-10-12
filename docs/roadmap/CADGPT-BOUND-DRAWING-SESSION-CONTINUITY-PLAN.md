@@ -2,7 +2,7 @@
 title: CadGPT — Bound Drawing Continuity in an Active Add-in Session
 document_type: DETAILED_IMPLEMENTATION_PLAN
 status: CR_REVIEW_REQUIRED
-review_status: CR_PASS_WITH_MINOR_FINDING
+review_status: PLANNER_INTERNAL_REVIEW_IN_PROGRESS
 implementation_status: NOT_STARTED
 priority: P0
 source_repo: thebimhouseinfo-sudo/Cadgpt
@@ -316,7 +316,7 @@ Planner must iterate internal findings and amendments until explicit INTERNAL_PA
 - **A0.1 baseline:** Record immutable main SHA and working branch SHA; ensure any test scripts are isolated and use mock/disposable DWG. No production DWG mutations.
 - **A0.2 lifecycle inventory:** For `work-registration.ts`, `work-control.ts`, `drawing-binding.ts`, `execution-cleanup.ts`, `job-transition.ts`, `mcp-session-manager.ts`, `server-factory.ts`, and AutoCAD add-in status polling, map exact binding/authority changes, async boundaries, ownership and cleanup triggering.
 - **A0.3 failing tests:** Use real production entrypoints with deterministic injected scheduling. Start R01, R02, R07, R09, R10 and R17 to discover which concrete path can destroy binding while DWG and logical session remain alive. Ensure tests don't confuse intentional FILE-only denial, opened new DWG document lifetime or logical-session disposal with a bug.
-- **A0.4 evidence decision:** produce a root-cause/evidence table of reproducible trigger, before/after Work IDs, bound context count, exact error, source line and falsifying controls. If no relevant reproduction, mark `UNCONFIRMED / REPRODUCTION_REQUIRED`, propose minimal redacted diagnostics and stop speculative fixes. **A0 gate**: identified and tested defective path, or explicit stop.
+- **A0.4 evidence decision:** produce a root-cause/evidence table of reproducible trigger, before/after Work IDs, bound context count, exact error, source line and falsifying controls. If no relevant reproduction, mark `INCIDENT_OPEN / EVIDENCE_PENDING`; stop *speculative repairs*, but continue a bounded investigation loop under §13 with safe diagnostics, next evidence source, owner and next trigger. **A0 gate**: confirmed causal path unlocks a scoped fix; otherwise incident stays OPEN and only evidence work proceeds.
 
 ### 11.2 Conditional A1 — Work transaction
 
@@ -347,7 +347,7 @@ Only for A0-supported binding/cleanup defects:
 
 ### 11.5 Owner / artifacts / blockers
 
-Planner owns plan and A0 decision; Coder owns source/test changes only after explicit user authorization and required review; Tester owns deterministic and host verification evidence; Critic independently reviews revised plan/code. Human supplies a safe real AutoCAD session for A3 only when requested. Required artifacts: lifecycle matrix, root-cause evidence log, tests-to-findings matrix, implementation diff (when authorized), CI and host acceptance record. A0 without reproducible evidence is a legitimate diagnostic STOP, not an implied A1/A2 code-start gate.
+Planner owns plan and A0 decision; Coder owns source/test changes only after explicit user authorization and required review; Tester owns deterministic and host verification evidence; Critic independently reviews revised plan/code. Human supplies a safe real AutoCAD session for A3 only when requested. Required artifacts: lifecycle matrix, root-cause evidence log, tests-to-findings matrix, implementation diff (when authorized), CI and host acceptance record. A0 without reproducible evidence pauses **unproven repairs**, not the P0 investigation: keep INCIDENT_OPEN / EVIDENCE_PENDING and follow the diagnostic loop in §13. No automatic authorization for A1/A2.
 
 ### 11.6 Internal review loop on detailed plan
 
@@ -369,7 +369,7 @@ The A0 root-cause report must classify each verified finding as exactly one of:
 | --- | --- | --- |
 | `INCIDENT_CAUSE` | Reproducible active-session bound-drawing loss through an actual production entrypoint, with matched Work/identity trace and a falsifying control | Open only the directly implicated conditional A1/A2 subphase after review; link red test and minimal patch scope |
 | `INDEPENDENT_DEFECT` | Reproducible separate defect such as STAGED token acceptance that does not itself prove active-session binding loss | Record severity, negative test and separate disposition; security-critical issues block release if unresolved, but implementation needs a distinct explicit scope decision; do not merge into incident patch by inference |
-| `UNCONFIRMED` | Hypothesis, synthetic interleaving with no matching production entrypoint, or missing host evidence | Add safe diagnostic evidence request and STOP; do not start speculative A1/A2 |
+| `UNCONFIRMED / EVIDENCE_PENDING` | Hypothesis, synthetic interleaving without matching production entrypoint or missing host evidence | Maintain INCIDENT_OPEN; choose minimally invasive diagnostic capture, run next controlled reproduction when evidence is available, and reclassify on evidence. Stop only speculative A1/A2 patching, **not** investigation |
 
 A single finding may be reclassified only with new evidence; don't label a source vulnerability as actual incident cause. Each record must state reproduction commit SHA, implicated function, tool error, old/new execution ID, drawing context count, logical session continuity, CAD document lifetime, and test artifacts. Avoid tokens/private data.
 
@@ -395,7 +395,7 @@ Status values for **every** R01–R19 and T01–T18 row: `REQUIRED`, `NOT_APPLIC
 
 | Phase | REQUIRED default | Conditional / N/A rule | Exit |
 | --- | --- | --- | --- |
-| A0 | R01, R02, R07, R09, R10, R17 + baseline happy and falsifying controls | Other R tests are REQUIRED when that source mechanism is implicated; mark N/A only after Reviewer acceptance | Root cause evidence or explicit UNCONFIRMED STOP |
+| A0 | R01, R02, R07, R09, R10, R17 + continuous-session E01 + baseline happy and falsifying controls | Other R tests REQUIRED when mechanism implicated; N/A only with Reviewer acceptance; E01 can be BLOCKED_TEST_SEAM with exact follow-up but never N/A | Causal evidence and scoped-fix decision **or** INCIDENT_OPEN/EVIDENCE_PENDING with owned diagnostic continuation; no incident closure |
 | A1 (if opened) | R01–R06, R10–R12, R14, R17–R18, T01–T04, T08 | R13/R19 mandatory if explicit FILE-only primary identity path changed; remaining tests with touched ownership path become REQUIRED | Source-tested atomic handoff + authorization/rollback |
 | A2 (if opened) | R07–R09, R11, R13, R15–R16, R19, T05–T12 | R17/R18 REQUIRED if touching registration/prepare; N/A with rationale when no related code touched | No false invalidation, proper cleanup, lifetime safety |
 | A3 | All relevant R01–R19 + T01–T18 enumerated with statuses; mandatory security/cross-session/real-close controls may not silently be N/A | Host T scenarios may be BLOCKED_HOST until actual AutoCAD evidence | Separate SOURCE_READY, HOST_VERIFIED, MERGE_READY verdicts |
@@ -411,7 +411,7 @@ Status values for **every** R01–R19 and T01–T18 row: `REQUIRED`, `NOT_APPLIC
 | T17 | Explicit FILE-only then authorized HYBRID on same logical session | FILE never invokes CAD; stored identity only transferable with verified lifetime and correct authority |
 | T18 | In-flight B CAD call while A cleanup / Human Power reset occurs | B's operation not disrupted; safe reset sequencing; no cross-session privilege leak |
 
-**Gate definitions:** `SOURCE_READY` requires complete applicable automated tests, build and CI at a named SHA, reviewed source diff and no unresolved security finding. `HOST_VERIFIED` requires real Windows AutoCAD continuous-use evidence, marked `PASS_RETEST_REQUIRED` until performed. `MERGE_READY` requires SOURCE_READY + host gate satisfying release decision + explicit CR/source review + human merge approval and rollback instructions. Do **not** infer MERGE_READY from CI PASS or replace the host gate with mocks.
+**Gate definitions:** `SOURCE_READY` requires complete applicable automated tests, build and CI at a named SHA, reviewed source diff and no unresolved security finding. `HOST_VERIFIED` requires the mandatory uninterrupted Windows AutoCAD E01-HOST evidence, marked `PASS_RETEST_REQUIRED` until observed. `INCIDENT_RESOLVED` requires both SOURCE_READY and HOST_VERIFIED, the exact bound-DWG invariant, and no forced reconnect; it is unavailable while root cause remains UNCONFIRMED. `MERGE_READY` requires SOURCE_READY + explicit CR/source review + human release decision with host gate satisfied or separately acknowledged as outstanding, and rollback instructions; **MERGE_READY does not mean INCIDENT_RESOLVED** and cannot automatically authorize deployment. Do not infer either from CI PASS or mocks.
 
 ### 12.4 Planner internal review criteria
 
@@ -422,3 +422,58 @@ Planner must review and revise the **whole detailed plan**, not just new text: c
 **Round 1 — CHANGES_REQUIRED:** Reviewed §11 versus §12 and found a presentation ambiguity: earlier §11 says “A1/A2 only if A0 demonstrates a defect” but does not distinguish a causally matching incident from an unrelated security finding. §12.1 now explicitly routes independent defects separately; §§12.2–12.3 supply measurable real-entrypoint fault tests and objective applicability statuses.
 
 **Round 2 — INTERNAL PASS (planning document):** Read back draft blob `ef7111c4c4728c6785c46f97cf390ffd7c772e33`. Verified CR-D01/D02/D03 each map to a repair: routing distinguishes INCIDENT_CAUSE / INDEPENDENT_DEFECT / UNCONFIRMED; fault-injection matrix includes source entrypoints, barriers, invariants and negative controls; T13–T18 are described; source, host and merge gates are separate; no privileges broadened, no source patch or merge approved. In case of overlap, §12's explicit decisions supersede §11. This recorded self-review is **not** a role-isolated independent GSA Reviewer verification, not execution of tests, and not CR PASS. The exact resulting commit/blob must be read back; any further substantive edit reopens internal review.
+
+---
+
+## 13. P0 active-session binding-loss execution correction — CR-G01…G04 (2026-10-12)
+
+**Controlling detail-plan rules:** This section takes precedence over any older §3/§6/§11/§12 A0 `UNCONFIRMED→STOP` wording, generic optional-test wording and any inference that a source build resolves this incident. The **primary deliverable** is to prevent actual bound-DWG context loss while the same add-in logical session, DWG lifetime and continuous user activity remain valid. This is an investigation-and-fix plan only; no product source code or deployment is authorized by its publication.
+
+### 13.1 CR-G01 / CRITICAL — Maintain an owned investigation loop until causal evidence
+
+`P0_INCIDENT_OPEN` is the default and remains so until host-verified resolution. A0 must execute this loop:
+
+1. **Baseline and invariant:** record tested Git SHA, verified binding identity (without leaking private path), Work execution ID/owner/generation, logical session fingerprint, transport identity, add-in local open DWG lifetime and first CAD tool result while user/chat continues; distinguish header display from backend authority.
+2. **Narrow reproduction:** deterministic actual-entrypoint tests first (cleanup-before-handoff, duplicate cleanup, partial enumeration, prepare-failure, transport rotation, same-session Job/Temp handoff), plus a continuous-session integration test E01 in §13.2. Record counterexamples and the first point where authoritative binding disappeared.
+3. **If still `UNCONFIRMED`:** do not implement an assumed fix or end the incident. Record `P0_INCIDENT_OPEN / EVIDENCE_PENDING`, the specific unknown, last disproven hypothesis, evidence owner, the next controlled trigger and expected artifacts. Add a *minimal, safe, event-driven* diagnostic proposal targeting the specific boundary (work transition, binding invalidation or session disposal). Diagnostic changes are a separate reviewed/authorized source step; they **must not** silently rewrite lifecycle or grant authority.
+4. **When evidence is available:** correlate redacted add-in/Work/CAD traces by sequence and logical-session identity; rerun the matching production-path test and its falsifying control. Repeat the loop, update hypotheses, and choose the smallest causal patch. If user host participation is unavailable, status remains `EVIDENCE_PENDING / HOST_RETEST_REQUIRED`, not FIXED or RESOLVED.
+5. **When a causal path is proven:** record `INCIDENT_CAUSE_CONFIRMED` and target *only* implicated A1/A2 substeps with before/after failing test. The root-cause classification must be independent of unrelated security or Job lifecycle defects.
+
+A0's exit is therefore **(a)** scoped confirmed cause enabling reviewed repair, or **(b)** evidence-capture continuation with incident still OPEN. Neither route permits claiming resolution.
+
+### 13.2 CR-G02 — Mandatory E01 uninterrupted-session integration scenario
+
+**E01-SOURCE** is a required end-to-end *production-entrypoint* integration test, not optional/N/A due to conditional A1/A2 implementation. Use one logical add-in session and one previously verified DWG/document lifetime with this ordered path:
+
+`Bind drawing → chat/Work reuse → read-only CAD action → Job A → Job B (metadata/MTO where valid) → Temp HYBRID → chat/Work reuse → authorized CAD action`.
+
+At **every** boundary assert: same logical-session identity and primary bound drawing runtime identity, exactly the expected current Work and one callable authority, correct CAD target, no unapproved drawing_context deletion, no implicit `Connect this drawing`, and no inherited authority across sessions. Track before/after contexts and transitions. Include tab-switch while bound DWG remains open and a separate explicit FILE-only negative control: CAD calls are denied during FILE-only and must be authorized again before use. Use existing test scripts and mock upstream as necessary; if current real callback cannot be driven, record `BLOCKED_TEST_SEAM` with minimal hook proposal and do not declare E01 PASS.
+
+**E01-HOST** repeats the meaningful same sequence in **Windows AutoCAD** on a disposable DWG with actual add-in connection, continuous chat/work, no sleep or CAD restart; verify every intervening CAD action targets that original DWG, not merely a green header. Host evidence consists of redacted diagnostic trace, exact tested build SHA, scenario steps, failure/recovery observation and reviewer signoff. This test is mandatory for incident resolution, even if some separate R/T tests are N/A.
+
+### 13.3 CR-G03 — Distinct incident-resolution acceptance gate
+
+Set:
+- `SOURCE_READY` only after repeatable regression and E01-SOURCE PASS, all applicable R/T security/lifetime controls PASS, build and CI green at exact SHA, and source CR with no blocking findings.
+- `HOST_RETEST_REQUIRED` until E01-HOST actually executes in uninterrupted Windows AutoCAD conditions. No virtual/mocked substitute.
+- `HOST_VERIFIED` only if the bound DWG stays open at the original runtime document identity, real CAD operations and Job/Temp chains continue correctly, no user rebind/AutoCAD restart, no unauthorized context deletion, and no header/backend mismatch masquerading as health. A deliberate close/reopen remains an expected fail-closed negative control.
+- `INCIDENT_RESOLVED` only after SOURCE_READY **and** HOST_VERIFIED with causal failure removed, regression negative controls retained, and human verification accepted. Merely surviving a short smoke test is insufficient if the causal failure was never demonstrated; report the evidence limitation.
+- `MERGE_READY` is a separate release-management decision. A source-only merge exception, if explicitly authorized, must keep `INCIDENT_OPEN/HOST_RETEST_REQUIRED`; never convert it into `INCIDENT_RESOLVED`.
+
+### 13.4 CR-G04 — P0 scope protection versus independent defects
+
+| Queue | Entry | Treatment |
+| --- | --- | --- |
+| **P0: active-session bound-DWG loss** | Verified source path, observed live disconnect or essential diagnostic to capture it | Highest priority; investigation, smallest causal correction, E01-SOURCE and E01-HOST are not blocked by unrelated redesign |
+| **P1: independent defects** | Staged token acceptance, generic Work/Job enhancements and noncausal cleanup edge cases | Document distinct finding with test, severity and explicit scope decision; do not attach broad refactoring to P0 by default |
+| **Safety release blocker** | Independently verified security defect making a proposed release unsafe | Keep separate patch decision/verification, block unsafe release while allowing P0 diagnosis to proceed |
+
+No new tray daemon, poll loop, license system, broad job engine rewrite or session registry unless actual evidence and reviewed decision requires it.
+
+### 13.5 Delivery artifacts and gate ownership
+
+Planner: source/incident hypothesis matrix, P0/P1 routing and minimal fix decision; Tester: failing reproduction trace, E01 source/host execution evidence, exact SHA; Coder: only reviewed and user-authorized scoped test/instrumentation/fix; CR: independently validates causal reasoning, unchanged identity/authority invariants and release evidence. If host evidence is outstanding, write `INCIDENT_OPEN / HOST_RETEST_REQUIRED` with the exact next human action—not a fake closed status.
+
+### 13.6 Planner self-review protocol for this amendment
+
+Perform a full-plan consistency review (especially older STOP and conditional branches), check E01 never N/A, verify no source-only path to INCIDENT_RESOLVED, ensure independent P1 findings cannot hijack P0, and ensure diagnosis can continue without speculative repairs. Record findings and rerun internal review before CR handoff.
