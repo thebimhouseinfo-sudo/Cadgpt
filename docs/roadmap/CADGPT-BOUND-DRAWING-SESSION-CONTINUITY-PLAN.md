@@ -2,7 +2,7 @@
 title: CadGPT — Bound Drawing Continuity in an Active Add-in Session
 document_type: DETAILED_IMPLEMENTATION_PLAN
 status: CR_REVIEW_REQUIRED
-review_status: PLANNER_INTERNAL_REVIEW_IN_PROGRESS
+review_status: PLANNER_INTERNAL_PASS_AWAITING_CR
 implementation_status: NOT_STARTED
 priority: P0
 source_repo: thebimhouseinfo-sudo/Cadgpt
@@ -178,7 +178,7 @@ Existing `createSuccessorWorkRegistration` is **FILE→HYBRID with unchanged own
 
 `drawingBindingStatus` and `activateDrawingContext` presently delete drawing context on a single absence in an otherwise successful `acad_list_open_documents` result. Separate `AVAILABLE`, `OBSERVATION_UNKNOWN` (transport/COM), `OBSERVED_ABSENT` (successful but possibly incomplete list), `CONFIRMED_CLOSED`, and `CONFIRMED_IDENTITY_MISMATCH`. Define positive evidence for destructive invalidation. Do not turn COM failures into empty lists, do not mask a proven close/reopen identity mismatch, do not auto-bind to `ActiveDocument` or same filename. Verify any confirmation policy using bounded/event-driven evidence instead of constant expensive CAD rescans. Until provenance is established, do not claim that incomplete listing caused the live incident.
 
-### 8.5 IMPORTANT CR-04/05/06 — Paths, transitions and persistent identity
+### 8.5 IMPORTANT CR-04, CR-05, CR-06 — Paths, transitions and persistent identity
 
 Cover all Work creation/retirement/disposal entrypoints, including Job A→B, Builder→Custom Job, Direct Job, Temp, workspace activation and cross-session Job terminalization. Coordinate race guards across entrypoints, not only inside the `cadgpt_work_start` callback. A truly ended logical session revokes rights; a transport detach with retained logical identity does not.
 
@@ -228,3 +228,13 @@ The Planner inspected revision 2 against current source contracts and the six in
 **Mandatory stop rules:** (1) Do not fix based only on hypothesis; (2) Do not mark host PASS from mock tests; (3) No automatic rebind to a same-name DWG or another chat; (4) No permissions broadened merely to retain identity; (5) No code/merge/deploy before CR approves the revised plan and the user authorizes implementation.
 
 **Completion of internal loop:** A self-review may be marked PASS only after another independent-in-process Planner pass verifies these repairs against code and the written acceptance matrix. The result and checked blob SHA must be recorded under section 8.8 before handoff to Critic Reviewer.
+
+### 8.8 Internal review round 2 — PASS (planning only)
+
+**Checked input:** revision 3 after internal repair, base blob `ae3b9b600cc03a4e8ed83912fab51e13df95ef7e` (commit `69634274c2f6dc7dcaf7faa24203faf7c386f248`). In this round, Planner detected and repaired one remaining evidence-tracking defect: the CR-04, CR-05, CR-06 heading lacked individually traceable IDs. This is a plan labeling change, not a claim that production tests ran.
+
+**Plan checklist:** CR-01 through CR-06 explicitly tracked; R01–R16 + T01–T18 specified; staged/commit/rollback authority; execution-owned cleanup and lease protection; successful-but-incomplete listing vs service exception; FILE-only permission boundary and remembered non-executable identity; cross-session no-adoption; A0 no-reproduction stop; no sleep assumptions; source tests separate from Windows host checkpoint. **Internal plan review PASS**. Live root cause **UNCONFIRMED**. Independent CR still **PENDING**. No product source edits, merge, deploy, or implementation authorization.
+
+### 8.9 Standing Planner internal-review protocol (CadGPT)
+
+For every future CadGPT Planner draft/revision, *before* presenting the plan to the user or to CR: review the full latest draft against source evidence, constraints, security, testability and prior findings; record self-review findings; revise the same plan; repeat until a documented INTERNAL_PASS or explicitly describe a genuine blocker. Persist the reviewed plan, verify its readback and reference its exact blob SHA. Internal PASS must **never** be represented as independent CR PASS or live/CI test PASS. Do not stop merely after the first revision or commit.
