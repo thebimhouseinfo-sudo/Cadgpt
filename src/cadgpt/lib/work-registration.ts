@@ -32,6 +32,8 @@ export interface WorkRegistration {
   lastActivityAt: string;
   humanPower?: HumanPowerGrant;
   closing?: boolean;
+  /** A prepared successor has no Work/ToolLease authority until commit. */
+  staged?: boolean;
 }
 
 export interface ToolLease {
@@ -187,6 +189,8 @@ export function createWorkRegistration(input: {
   ownerType: WorkOwnerType;
   ownerId: string;
   executionPath: ExecutionPath;
+  /** Used only by atomic Work replacement, never a caller-visible active handle. */
+  staged?: boolean;
 }): WorkRegistration {
   cleanup();
   assertSessionClaimed(input.sessionKey);
@@ -233,7 +237,7 @@ export function createWorkRegistration(input: {
       "WORK_BUSY: current CadGPT work still has an active ToolLease; wait for it to finish before replacing work."
     );
   }
-  if (priorId) {
+  if (priorId && !input.staged) {
     registrations.delete(priorId);
     if (expirationHandler) {
       void Promise.resolve(expirationHandler(priorId)).catch(
@@ -255,6 +259,7 @@ export function createWorkRegistration(input: {
     ownerId,
     ...(input.ownerType === "job" ? { jobId: ownerId } : {}),
     executionPath: input.executionPath,
+    ...(input.staged ? { staged: true } : {}),
     capabilities: ownerId === "cad-mcp-dev" ? ["cad-mcp-dev"] : [],
     driverEpoch: DRIVER_EPOCH,
     generation,
@@ -263,8 +268,50 @@ export function createWorkRegistration(input: {
     lastActivityAt: now,
   };
   registrations.set(executionId, work);
-  activeBySession.set(input.sessionKey, executionId);
+  if (!input.staged) activeBySession.set(input.sessionKey, executionId);
   return { ...work, capabilities: [...work.capabilities] };
+}
+
+/** Commit an already prepared successor synchronously, before retiring A. */
+export function commitStagedWorkRegistration(input: {
+  sessionKey: string;
+  previousExecutionId: string;
+  stagedExecutionId: string;
+  stagedAuthorityToken: string;
+}): WorkRegistration {
+  const next = registrations.get(input.stagedExecutionId);
+  if (!next || !next.staged || next.sessionKey !== input.sessionKey ||
+      next.authorityToken !== input.stagedAuthorityToken ||
+      next.driverEpoch !== DRIVER_EPOCH || next.closing) {
+    throw new Error("WORK_STAGE_INVALID: staged successor is missing or unauthorized.");
+  }
+  const old = registrations.get(input.previousExecutionId);
+  if (!old || old.staged || old.sessionKey !== input.sessionKey ||
+      activeBySession.get(input.sessionKey) !== old.executionId) {
+    throw new Error("WORK_STAGE_STALE: active Work changed during preparation.");
+  }
+  if (hasActiveLeaseForWork(old.executionId) || hasActiveLeaseForWork(next.executionId)) {
+    throw new Error("WORK_BUSY: cannot commit replacement during an active ToolLease.");
+  }
+  // No await between validating the owner and the atomic authority switch.
+  next.staged = false;
+  registrations.delete(old.executionId);
+  activeBySession.set(input.sessionKey, next.executionId);
+  next.lastActivityAt = new Date().toISOString();
+  return { ...next, capabilities: [...next.capabilities] };
+}
+
+/** Cancel only B, leaving A and its drawing binding untouched. */
+export function cancelStagedWorkRegistration(input: {
+  sessionKey: string;
+  stagedExecutionId: string;
+  stagedAuthorityToken: string;
+}): boolean {
+  const next = registrations.get(input.stagedExecutionId);
+  if (!next || !next.staged || next.sessionKey !== input.sessionKey ||
+      next.authorityToken !== input.stagedAuthorityToken) return false;
+  registrations.delete(next.executionId);
+  return true;
 }
 
 
@@ -629,6 +676,7 @@ export function validateWorkHandle(
   if (
     !work ||
     work.closing === true ||
+    work.staged === true ||
     work.sessionKey !== sessionKey ||
     work.authorityToken !== authorityToken ||
     work.driverEpoch !== DRIVER_EPOCH
@@ -875,14 +923,14 @@ export function hasActiveCadCapabilityLease(): boolean {
 
 export function hasActiveCadWork(): boolean {
   return [...registrations.values()].some(
-    (work) => work.executionPath === "cad" || work.executionPath === "hybrid"
+    (work) => !work.staged && (work.executionPath === "cad" || work.executionPath === "hybrid")
   );
 }
 
 export function hasOtherActiveCadWork(executionId: string): boolean {
   return [...registrations.values()].some(
     (work) =>
-      work.executionId !== executionId &&
+      work.executionId !== executionId && !work.staged &&
       (work.executionPath === "cad" || work.executionPath === "hybrid")
   );
 }
