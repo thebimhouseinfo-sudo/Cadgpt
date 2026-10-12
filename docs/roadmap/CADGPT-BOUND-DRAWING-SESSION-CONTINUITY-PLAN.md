@@ -359,7 +359,7 @@ Planner owns plan and A0 decision; Coder owns source/test changes only after exp
 
 ## 12. Detailed plan revision 2 — CR-D01/D02/D03 corrective amendment (2026-10-12)
 
-**Document status: PLANNER_INTERNAL_REVIEW_REQUIRED.** This section supersedes §11 wherever its execution gates or test selection are ambiguous. Original technical plan §§8–10 is unchanged. Independent CR of *this detailed amendment* is pending. No product implementation or CI run is implied.
+**Document status: PLANNER_INTERNAL_PASS_AWAITING_CR.** This section supersedes §11 wherever its execution gates or test selection are ambiguous. Original technical plan §§8–10 is unchanged. Independent CR of *this detailed amendment* is pending. No product implementation or CI run is implied.
 
 ### 12.1 CR-D01: A0 evidence routing without unauthorized scope expansion
 
@@ -416,3 +416,9 @@ Status values for **every** R01–R19 and T01–T18 row: `REQUIRED`, `NOT_APPLIC
 ### 12.4 Planner internal review criteria
 
 Planner must review and revise the **whole detailed plan**, not just new text: cross-check §11 with §12 precedence, confirm all tests map to an entrypoint and applicability, verify routes do not allow source edits without evidence, and check no added runtime mechanics or tool privilege bypass. Internal PASS is planning-only, and independent CR is still required.
+
+### 12.5 Recorded Planner internal review loop
+
+**Round 1 — CHANGES_REQUIRED:** Reviewed §11 versus §12 and found a presentation ambiguity: earlier §11 says “A1/A2 only if A0 demonstrates a defect” but does not distinguish a causally matching incident from an unrelated security finding. §12.1 now explicitly routes independent defects separately; §§12.2–12.3 supply measurable real-entrypoint fault tests and objective applicability statuses.
+
+**Round 2 — INTERNAL PASS (planning document):** Read back draft blob `ef7111c4c4728c6785c46f97cf390ffd7c772e33`. Verified CR-D01/D02/D03 each map to a repair: routing distinguishes INCIDENT_CAUSE / INDEPENDENT_DEFECT / UNCONFIRMED; fault-injection matrix includes source entrypoints, barriers, invariants and negative controls; T13–T18 are described; source, host and merge gates are separate; no privileges broadened, no source patch or merge approved. In case of overlap, §12's explicit decisions supersede §11. This recorded self-review is **not** a role-isolated independent GSA Reviewer verification, not execution of tests, and not CR PASS. The exact resulting commit/blob must be read back; any further substantive edit reopens internal review.
