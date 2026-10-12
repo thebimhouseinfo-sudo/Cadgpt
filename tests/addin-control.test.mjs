@@ -32,6 +32,12 @@ function fakeServer() {
 }
 
 test.after(async () => {
+  // Pairing changes now emit queued, redacted continuity records. Flush them
+  // before deleting the fixture root to avoid a Windows filesystem race.
+  const { flushContinuityDiagnostics } = await import(
+    "../dist/cadgpt/lib/continuity-diagnostics.js"
+  );
+  await flushContinuityDiagnostics();
   await fs.rm(tempRoot, {
     recursive: true,
     force: true,
