@@ -315,7 +315,7 @@ test("E01-SOURCE: paired session carries the same DWG across Job A, Job B, Temp,
   });
 });
 
-test("R09-RED: incomplete DWG observation cannot permanently erase an active binding", async () => {
+test("R09-GREEN: incomplete DWG observation cannot permanently erase an active binding", async () => {
   const session = "a0-r09-transient-document-list-absence";
   checkAdmission(session, "@cg", "mention");
   const saved = cadUpstream.callTool;
