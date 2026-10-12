@@ -71,7 +71,7 @@ Read and record exact \`main\` SHA and input path from add-in to tool, including
 
 Use existing test harness, mock CAD upstream where needed and **real functions/async scheduling**, not regex-only tests. Test failures must include before/after context counts and order. A source-only simulation is evidence of a possible interleaving, not a live AutoCAD incident attribution.
 
-**A0 exit:** at least one repeatable failure matching the **lost binding in an active session**, or a documented \`UNCONFIRMED/REPRODUCTION_REQUIRED\` result with next evidence needed. Do not blindly implement a suspected race.
+**A0 evidence checkpoint:** a repeatable failure matching lost binding in an active session enables a reviewed causal fix; otherwise keep `P0_INCIDENT_OPEN / EVIDENCE_PENDING` and carry out the §13 evidence/diagnostic loop. Only unproven source fixes are stopped. Do not close the incident because reproduction is incomplete.
 
 ## 4. A1 — Transaction-safe Work handoff (conditional on A0 evidence)
 
@@ -342,7 +342,7 @@ Only for A0-supported binding/cleanup defects:
 - **A3.1 source build:** `npm run build`, `npm test` and applicable existing CI workflows at the exact tested SHA. Do not treat static checks as runtime behavior proof.
 - **A3.2 18-scenario matrix:** T01–T18, including Work chains, FILE-only negative controls, transport rotation, close/reopen, header versus backend binding mismatch, incomplete enumeration, prepare failure, overlapping cleanup and legitimate logical-session end.
 - **A3.3 performance:** compare extra CAD calls, upstream activations, Work allocations and transition latency against baseline. Handoff alone must make zero additional CAD queries; avoid polling-based rescans.
-- **A3.4 Windows AutoCAD host:** On disposable DWG, bind once, chat continuously, Job A→B/MTO and Temp transitions, switch tabs, verify correct drawing lifetime and backend work, do not sleep. Inspect first failing tool, redacted trace, header state; host remains `PASS_RETEST_REQUIRED` until evidence observed.
+- **A3.4 Windows AutoCAD host:** On disposable DWG, run mandatory `E01-HOST` uninterrupted bind/chat/CAD/Job A→B/MTO/Temp/chat/CAD sequence with realistic sustained active interaction, switching tabs but never sleep or restarting AutoCAD. Record verified DWG lifetime and backend authority at each boundary, first failing tool, redacted trace and header state; mark `HOST_RETEST_REQUIRED` until a real observed PASS. A short smoke check is not evidence that the specific intermittent incident is resolved.
 - **A3.5 ship gate:** report verified SHA and CI/host PASS separately; independent CR/source review before merge, human authorization for deployment, rollback path if post-merge binding/authority regress.
 
 ### 11.5 Owner / artifacts / blockers
@@ -474,6 +474,10 @@ No new tray daemon, poll loop, license system, broad job engine rewrite or sessi
 
 Planner: source/incident hypothesis matrix, P0/P1 routing and minimal fix decision; Tester: failing reproduction trace, E01 source/host execution evidence, exact SHA; Coder: only reviewed and user-authorized scoped test/instrumentation/fix; CR: independently validates causal reasoning, unchanged identity/authority invariants and release evidence. If host evidence is outstanding, write `INCIDENT_OPEN / HOST_RETEST_REQUIRED` with the exact next human action—not a fake closed status.
 
-### 13.6 Planner self-review protocol for this amendment
+### 13.6 Planner internal review loop — active-session P0
 
-Perform a full-plan consistency review (especially older STOP and conditional branches), check E01 never N/A, verify no source-only path to INCIDENT_RESOLVED, ensure independent P1 findings cannot hijack P0, and ensure diagnosis can continue without speculative repairs. Record findings and rerun internal review before CR handoff.
+**Round 1 / CHANGES_REQUIRED:** Compared §§3, 6, 11 and 12 against controlling §13. Identified (IR-G01) older A0 wording that still sounded like final termination without proof, and (IR-G02) host acceptance lacking explicit E01-HOST continuity boundary and sustained-activity distinction. Corrected both in their original sections rather than relying only on precedence. Preserved the source-vs-host release distinction and no speculative-fix rule.
+
+**Round 2 review criteria:** Check that P0 remains open on missing evidence, diagnostics acquisition has an owner and next trigger, mandatory E01-SOURCE/HOST cannot be waived, causal source fix is independent of noncausal P1 enhancements, host test requires the real bound DWG with no forced rebind, and every new wording is consistent with existing CR-approved technical safety gates. Final INTERNAL_PASS is recorded only after a subsequent full-document readback check, including this round's corrections.
+
+**Authority:** This is Planner internal assessment, not an independent GSA Reviewer verification or Critic review. The plan itself authorizes no code change, merge or deployment.
