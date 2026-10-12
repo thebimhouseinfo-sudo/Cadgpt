@@ -60,8 +60,8 @@ with tempfile.TemporaryDirectory(prefix="cadgpt-lisp-simulation-") as tmp:
                 token = re.search(r"CADGPT_OK:([0-9a-f]+)", queued[0]).group(1)
                 doc.SetVariable("USERS5", "CADGPT_OK:" + token)
         return original_getvar(name)
-    with patch.object(s, "_send", side_effect=lambda code, document=None: queued.append(code)), \\
-         patch.object(doc, "GetVariable", side_effect=delayed_ack), \\
+    with patch.object(s, "_send", side_effect=lambda code, document=None: queued.append(code)), \
+         patch.object(doc, "GetVariable", side_effect=delayed_ack), \
          patch.object(s.time, "sleep", side_effect=lambda _: None):
         result = s.load_lisp_file(str(helper), doc)
     assert result["loaded"] is True
