@@ -2,7 +2,7 @@
 title: CadGPT — Bound Drawing Continuity in an Active Add-in Session
 document_type: DETAILED_IMPLEMENTATION_PLAN
 status: CR_REVIEW_REQUIRED
-review_status: CHANGES_REQUIRED
+review_status: PLANNER_INTERNAL_REVIEW_IN_PROGRESS
 implementation_status: NOT_STARTED
 priority: P0
 source_repo: thebimhouseinfo-sudo/Cadgpt
@@ -146,9 +146,9 @@ Review outcomes:
 
 ---
 
-## 8. Planner revision 2 — CR-01…CR-06 remediation (2026-10-12)
+## 8. Planner revision 3 — integrated CR findings and internal review loop (2026-10-12)
 
-**Status: PLANNER_REVISED; independent CR re-review required.** This section supersedes A0–A3 wherever they are incomplete, without treating the reported incident root cause as proven. Do not change source, merge or mark CR PASS from this planning change. Preserve the original P0 active-session no-sleep/no-interruption scenario.
+**Status: PLANNER_INTERNAL_REVIEW; independent CR re-review pending.** This section supersedes A0–A3 wherever they are incomplete, without treating the reported incident root cause as proven. Do not change source, merge or mark CR PASS from this planning change. Preserve the original P0 active-session no-sleep/no-interruption scenario.
 
 ### 8.1 Evidence classification and ownership model
 
@@ -208,3 +208,23 @@ An explicitly requested FILE-only/CAD-only exception retains its original tool-f
 | R16 | Logging across Work race, identity anomaly and transport rotation | Unambiguous redacted reason; no tokens, private DWG data or fabricated incident cause |
 
 **CR gate:** Independent Critic Reviewer must re-read and review the **new blob SHA**, verify CR-01 through CR-06 are addressed, and provide PASS or CHANGES_REQUIRED. This planner revision is not itself CR approval. Continue planning loop before any Coder work.
+
+### 8.7 Internal review round 1 — findings and repairs
+
+The Planner inspected revision 2 against current source contracts and the six independent CR findings. **Round 1 result: CHANGES_REQUIRED**, with these plan defects repaired in this revision:
+
+| Self-review finding | Defect in revision 2 | Revision 3 repair |
+| --- | --- | --- |
+| IR-01 | A0–A3 main body and appended section 8 could be interpreted as competing instructions | Section 8 is the **controlling revision** for every overlapping requirement; sections 1–7 remain historical rationale/test inputs, not an alternate implementation route. |
+| IR-02 | A0 permits UNCONFIRMED while A1 text might encourage a speculative patch | **No reproduction means no source fix.** A0 may conclude UNCONFIRMED only with exact missing evidence, then stop for diagnostics/CR plan revision. |
+| IR-03 | Successor staging may be mistaken for a callable second authorization | Staged token is not callable or current, and B cannot run protected tools before atomic commit. |
+| IR-04 | Session-scoped identity option could look like implicit authority | Retained identity is only read-only continuity evidence. CAD execution still requires current authorized Work and live lifetime revalidation. |
+| IR-05 | Absence from a successful enumeration could be incorrectly treated as proven COM fault | Treat a successful-but-incomplete enumeration and an exception as **different negative controls**; neither alone proves user incident attribution. |
+| IR-06 | Runtime-level cleanup might be treated as execution-owned merely due to argument | Demand exact per-execution resource ownership proof, active lease check and safe global-backend shutdown ordering. |
+| IR-07 | Tests lack an explicit falsification case for the central race | Force the alleged A cleanup **before** handoff via the real `cadgpt_work_start` entrypoint; capture whether old context actually disappears, whether handoff is null, and whether the next CAD action fails. A passing race test falsifies that mechanism; investigate alternatives. |
+
+**Precedence:** Section 8.1–8.7 takes precedence over older F4 interpretation, A1 handoff ordering, and all earlier R01/R02 acceptance statements if inconsistent. No plan revision is CR-approved until independent CR verifies the exact blob.
+
+**Mandatory stop rules:** (1) Do not fix based only on hypothesis; (2) Do not mark host PASS from mock tests; (3) No automatic rebind to a same-name DWG or another chat; (4) No permissions broadened merely to retain identity; (5) No code/merge/deploy before CR approves the revised plan and the user authorizes implementation.
+
+**Completion of internal loop:** A self-review may be marked PASS only after another independent-in-process Planner pass verifies these repairs against code and the written acceptance matrix. The result and checked blob SHA must be recorded under section 8.8 before handoff to Critic Reviewer.
