@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { adoptSessionAdmission, assertSessionClaimed } from "./admission.js";
 import { isAddinManagedSession } from "./addin-control.js";
+import { continuityFingerprint, logContinuityDiagnostic } from "./continuity-diagnostics.js";
 
 export type WorkOwnerType = "skill" | "job" | "direct-cad" | "file";
 export type ExecutionPath = "file" | "cad" | "hybrid";
@@ -144,6 +145,12 @@ function cleanup(): void {
     if (isAddinManagedSession(work.sessionKey)) continue;
     if (now - Date.parse(work.lastActivityAt) <= WORK_IDLE_MS) continue;
     if (hasActiveLeaseForWork(executionId)) continue;
+    logContinuityDiagnostic("work_idle_expired", {
+      session: continuityFingerprint(work.sessionKey),
+      execution: continuityFingerprint(executionId),
+      idle_ms: now - Date.parse(work.lastActivityAt),
+      bound_to_addin_pair: false,
+    });
     registrations.delete(executionId);
     if (activeBySession.get(work.sessionKey) === executionId) {
       activeBySession.delete(work.sessionKey);
@@ -294,6 +301,11 @@ export function commitStagedWorkRegistration(input: {
     throw new Error("WORK_BUSY: cannot commit replacement during an active ToolLease.");
   }
   // No await between validating the owner and the atomic authority switch.
+  logContinuityDiagnostic("work_replacement_committed", {
+    session: continuityFingerprint(input.sessionKey),
+    previous_execution: continuityFingerprint(old.executionId),
+    successor_execution: continuityFingerprint(next.executionId),
+  });
   next.staged = false;
   registrations.delete(old.executionId);
   activeBySession.set(input.sessionKey, next.executionId);
