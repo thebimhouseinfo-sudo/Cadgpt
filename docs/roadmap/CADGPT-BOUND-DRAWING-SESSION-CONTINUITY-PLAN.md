@@ -2,7 +2,7 @@
 title: CadGPT — Bound Drawing Continuity in an Active Add-in Session
 document_type: DETAILED_IMPLEMENTATION_PLAN
 status: CR_REVIEW_REQUIRED
-review_status: PLANNER_INTERNAL_REVIEW_IN_PROGRESS
+review_status: PLANNER_INTERNAL_PASS_AWAITING_CR
 implementation_status: NOT_STARTED
 priority: P0
 source_repo: thebimhouseinfo-sudo/Cadgpt
@@ -243,7 +243,7 @@ For every future CadGPT Planner draft/revision, *before* presenting the plan to 
 
 ## 9. Planner Revision 4 — CR-R3 findings, authoritative amendment
 
-**Status:** PLANNER INTERNAL REVIEW IN PROGRESS; independent CR not yet passed. This section is controlling wherever prior revisions differ. No product code mutation or incident root-cause claim.
+**Status:** PLANNER INTERNAL PASS; independent CR not yet passed. This section is controlling wherever prior revisions differ. No product code mutation or incident root-cause claim.
 
 ### 9.1 CR-R3-01 / CRITICAL — Staged authorization must be uncallable
 
@@ -286,3 +286,9 @@ Regardless of option: immutable primary identity is **not authorization**, not p
 Review the current full plan, including the old F1–F7 hypotheses and this controlling section, for contradictions. **A0 may exit UNCONFIRMED for evidence collection, not permission to implement any speculative fix.** Do not use source-only simulations as incident proof. Existing CR-01–06 and CR-R3-01–03, R01–R19 and T01–T18 must all trace to an observable test and explicit authority boundary. Keep the original Windows AutoCAD active continuous-use host checkpoint as `PASS_RETEST_REQUIRED`.
 
 Planner must iterate internal findings and amendments until explicit INTERNAL_PASS, commit and read back the exact reviewed blob, then invite *independent* CR. The new revision does not inherit Revision 3 INTERNAL_PASS or any CR PASS.
+
+### 9.5 Planner internal review loop — Revision 4
+
+**Round 1: CHANGES_REQUIRED → corrected in §9.1–9.3.** Source review found that the staged-registration token can pass current `validateWorkHandle`, so the plan must gate both work validation and ToolLease, while exempting narrowly scoped internal commit/cancel APIs. Review also identified that `prepareFamilies` side effects may outlive a throw, and that the binding-ownership architecture could otherwise be selected without a decision gate. Repairs and real-entrypoint negative controls R17–R19 are now explicit.
+
+**Round 2: INTERNAL_PASS (plan-level only).** Checked draft blob `304d5adea11df50142cfa53e954231cd9be79485` against: CR-R3-01–03, earlier CR-01–06, Work authorization and lease guard, staged/commit/cancel lifecycle, preparation side-effect inventory, failure injection, binding ownership decision matrix, FILE/CAD family-denial, unrelated-session isolation, original no-sleep defect, evidence-first stop rules, host-only checkpoint and no source writes. No remaining planning contradiction was found in these specified requirements. **This is not test execution, confirmed incident cause, independent CR PASS or permission to implement.** The saved version including this record remains `CR_REVIEW_REQUIRED` pending independent review.
