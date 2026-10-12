@@ -377,8 +377,8 @@ test("R12: competing same-session Work starts cannot steal the committed drawing
     registerTool(name, _schema, callback) { callbacks.set(name, callback); },
   }, {
     sessionKey: session,
-    prepareFamilies() {
-      return new Promise(resolve => waiting.push(resolve));
+    prepareFamilies(_mode, ownerId) {
+      return new Promise(resolve => waiting.push({ ownerId, resolve }));
     },
     async upgradeToHybrid() { throw Error("Unexpected upgrade"); },
   });
@@ -402,7 +402,7 @@ test("R12: competing same-session Work starts cannot steal the committed drawing
         await new Promise(resolve => setImmediate(resolve));
       }
       assert.equal(waiting.length, 2, "both successors must be staged before commit");
-      waiting[1]({ execution_path: "hybrid" });
+      waiting.find(item => item.ownerId === "job-second").resolve({ execution_path: "hybrid" });
       const won = await second;
       assert.equal(won.structuredContent?.ok, true, JSON.stringify(won));
       assert.equal(won.structuredContent?.data?.drawing_handoff?.drawing_id, bound.drawing_id);
@@ -410,7 +410,7 @@ test("R12: competing same-session Work starts cannot steal the committed drawing
       ids.push(winner.executionId);
       assert.equal(winner.ownerId, "job-second");
 
-      waiting[0]({ execution_path: "hybrid" });
+      waiting.find(item => item.ownerId === "job-first").resolve({ execution_path: "hybrid" });
       const lost = await first;
       assert.equal(lost.structuredContent?.ok, false, JSON.stringify(lost));
       assert.match(JSON.stringify(lost), /WORK_STAGE_STALE/);
