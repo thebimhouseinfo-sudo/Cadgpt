@@ -304,3 +304,53 @@ Planner must iterate internal findings and amendments until explicit INTERNAL_PA
 **Approved execution boundary:** A0 investigation, instrumentation proposals and deterministic reproduction only, after explicit implementation instruction. **No speculative A1/A2 source patch** without evidence identifying the causal code path, followed by appropriate review. A3 Windows AutoCAD host checkpoint remains `PASS_RETEST_REQUIRED` and may not be simulated into PASS. No production DWG QA, no automatic rebind by name, no broader transport/tray rewrite, no merge/deploy implied.
 
 **Standing internal Planner loop:** every substantive plan revision must undergo self-review → findings → repair → re-review until documented internal PASS, with exact reviewed input blob and final readback tracked distinctly. Independent CR verdict remains distinct from self-review.
+
+---
+
+## 11. Detailed execution plan (Planner-only, 2026-10-12)
+
+**Planning scope:** This section translates the technically reviewed Revision 4 into executable A0–A3 tasks and acceptance gates; it authorizes **no product source mutation**. Latest independently reviewed technical blob is `99c0a48bf2193ddf6cb507701216e2139b8d0053`. This detailed section requires its own independent review before code implementation.
+
+### 11.1 Sequencing and dependencies
+
+- **A0.1 baseline:** Record immutable main SHA and working branch SHA; ensure any test scripts are isolated and use mock/disposable DWG. No production DWG mutations.
+- **A0.2 lifecycle inventory:** For `work-registration.ts`, `work-control.ts`, `drawing-binding.ts`, `execution-cleanup.ts`, `job-transition.ts`, `mcp-session-manager.ts`, `server-factory.ts`, and AutoCAD add-in status polling, map exact binding/authority changes, async boundaries, ownership and cleanup triggering.
+- **A0.3 failing tests:** Use real production entrypoints with deterministic injected scheduling. Start R01, R02, R07, R09, R10 and R17 to discover which concrete path can destroy binding while DWG and logical session remain alive. Ensure tests don't confuse intentional FILE-only denial, opened new DWG document lifetime or logical-session disposal with a bug.
+- **A0.4 evidence decision:** produce a root-cause/evidence table of reproducible trigger, before/after Work IDs, bound context count, exact error, source line and falsifying controls. If no relevant reproduction, mark `UNCONFIRMED / REPRODUCTION_REQUIRED`, propose minimal redacted diagnostics and stop speculative fixes. **A0 gate**: identified and tested defective path, or explicit stop.
+
+### 11.2 Conditional A1 — Work transaction
+
+Only if A0 demonstrates a Work lifecycle defect:
+- A1.1 Stage B without callable Work/ToolLease authority. Direct validation and lease wrappers both reject STAGED; distinct internal commit/cancel handshake required.
+- A1.2 Define one commit linearization point, validate same logical-session, owner transition and nonbusy leases; preserve exactly one verified bound drawing and scoped read-only metadata root; no by-name, active-tab or cross-session rebind.
+- A1.3 Inventory actual `prepareFamilies` side effects: dynamic tool registrations, loaded-family markers, CAD activation and observable server surface. Move irreversibles behind commit or prove idempotent/shared safe. Add fault injection before/after side effects.
+- A1.4 Publish B atomically, retire A once, and clean A without disrupting B's active CAD upstream, binding or metadata. Rollback B leaves A fully usable.
+- A1.5 Test different-owner HYBRID Job A→B, same-owner reuse, explicit FILE-only, delayed/double cleanup, concurrent transition, staged-token misuse and lease-in-flight denial.
+**A1 gate:** R01–R06, R10–R18 relevant cases PASS with zero privilege bypass and stable identity.
+
+### 11.3 Conditional A2 — Binding reliability
+
+Only for A0-supported binding/cleanup defects:
+- A2.1 Separate AVAILABLE, OBSERVATION_UNKNOWN, OBSERVED_ABSENT, CONFIRMED_CLOSED and CONFIRMED_RUNTIME_IDENTITY_MISMATCH with evidence thresholds. No destructive context deletion from COM/transport exception or uncorroborated negative list; maintain fail-closed CAD tool authorization until lifetime is verified.
+- A2.2 Ensure execution-scoped and idempotent cleanup. No global `cadUpstream.deactivate` while a valid successor or in-flight CAD ToolLease needs it; preserve explicit safe Human Power transitions.
+- A2.3 Apply primary binding architecture decision matrix from §9.3: retain minimal Work-scoped reference unless A0 demonstrates a legitimate source-empty same-session gap; session-scoped identity remains non-executable evidence only, released upon actual logical-session disposal.
+- A2.4 Implement minimal structured continuity diagnostics with redacted logical session fingerprint, execution ID, transition phase, context count and precise error. Never log authority tokens, chat or private drawing content.
+**A2 gate:** R07–R09, R11, R13, R15–R19 relevant controls PASS; genuine close/reopen still requires explicit rebind.
+
+### 11.4 A3 — Source and Windows host verification
+
+- **A3.1 source build:** `npm run build`, `npm test` and applicable existing CI workflows at the exact tested SHA. Do not treat static checks as runtime behavior proof.
+- **A3.2 18-scenario matrix:** T01–T18, including Work chains, FILE-only negative controls, transport rotation, close/reopen, header versus backend binding mismatch, incomplete enumeration, prepare failure, overlapping cleanup and legitimate logical-session end.
+- **A3.3 performance:** compare extra CAD calls, upstream activations, Work allocations and transition latency against baseline. Handoff alone must make zero additional CAD queries; avoid polling-based rescans.
+- **A3.4 Windows AutoCAD host:** On disposable DWG, bind once, chat continuously, Job A→B/MTO and Temp transitions, switch tabs, verify correct drawing lifetime and backend work, do not sleep. Inspect first failing tool, redacted trace, header state; host remains `PASS_RETEST_REQUIRED` until evidence observed.
+- **A3.5 ship gate:** report verified SHA and CI/host PASS separately; independent CR/source review before merge, human authorization for deployment, rollback path if post-merge binding/authority regress.
+
+### 11.5 Owner / artifacts / blockers
+
+Planner owns plan and A0 decision; Coder owns source/test changes only after explicit user authorization and required review; Tester owns deterministic and host verification evidence; Critic independently reviews revised plan/code. Human supplies a safe real AutoCAD session for A3 only when requested. Required artifacts: lifecycle matrix, root-cause evidence log, tests-to-findings matrix, implementation diff (when authorized), CI and host acceptance record. A0 without reproducible evidence is a legitimate diagnostic STOP, not an implied A1/A2 code-start gate.
+
+### 11.6 Internal review loop on detailed plan
+
+**Round 1 CHANGES_REQUIRED:** identified possible ambiguity that A1 and A2 seemed mandatory sequential development and that A0 without proof could unlock fixes. Repaired by explicit *conditional* A1/A2 and A0 STOP rules above. Also made staged authorization and live host tests distinct.
+
+**Round 2 INTERNAL_PASS (plan-level):** checked each task's source scope, owner, dependencies, authority gates, negative tests and release constraints against approved §§8–10. Tests R01–R19/T01–T18 mapped, no live root cause assumed, no code change authorized, and separate source/host exit criteria. This internal review is **not independent CR** and tests have not been executed. Subsequent content changes require fresh review.
