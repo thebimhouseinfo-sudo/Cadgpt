@@ -6,6 +6,8 @@ import {
   activeWorkForSession,
   adoptWorkSession,
   createWorkRegistration,
+  commitStagedWorkRegistration,
+  cancelStagedWorkRegistration,
   enableWorkCapability,
   markSessionWorkStopped,
   releaseSessionWork,
@@ -221,50 +223,77 @@ export function registerWorkControlTools(
         }
 
         const previousExecution = activeExecutionForSession(options.sessionKey);
+        // Stage replacement so A remains authoritative and bound until B is
+        // prepared and its exact verified drawing identity has been copied.
+        // In particular, no Work expiration handler runs before the handoff.
         const work = createWorkRegistration({
           sessionKey: options.sessionKey,
           ownerType: owner_type as WorkOwnerType,
           ownerId: owner_id,
           executionPath: requestedPath,
+          staged: Boolean(previousExecution),
         });
 
-        // Preserve only previously verified in-session drawing identity for a
-        // HYBRID successor. No CAD MCP call, implicit ActiveDocument guess, or
-        // cross-session bind; the first CAD operation rechecks document lifetime.
-        const drawingHandoff =
-          previousExecution && requestedPath === "hybrid"
-            ? (await import("../session/drawing-binding.js"))
-                .handoffSingleBoundDrawingForExecution(
-                  previousExecution,
-                  work.executionId
-                )
+        let drawingHandoff: Awaited<ReturnType<
+          typeof import("../session/drawing-binding.js")["handoffSingleBoundDrawingForExecution"]
+        >> = null;
+        let inheritedDrawingRoot: string | null = null;
+        let toolSurface: Record<string, unknown> | void;
+
+        try {
+          drawingHandoff =
+            previousExecution && requestedPath === "hybrid"
+              ? (await import("../session/drawing-binding.js"))
+                  .handoffSingleBoundDrawingForExecution(
+                    previousExecution,
+                    work.executionId
+                  )
+              : null;
+
+          // Metadata remains read-only until the successor prepares its own
+          // Job runtime; never copy writable authority from Job A.
+          inheritedDrawingRoot = previousExecution
+            ? handoffVerifiedDrawingMetadataRoot(
+                previousExecution,
+                work.executionId
+              )
             : null;
 
-        // Work A can be HYBRID while Job B may explicitly opt out to FILE.
-        // Preserve only the known drawing metadata root as read-only; never
-        // inherit another Job's writable result authority.
-        const inheritedDrawingRoot = previousExecution
-          ? handoffVerifiedDrawingMetadataRoot(
-              previousExecution,
-              work.executionId
-            )
-          : null;
-        const previousCleanup = previousExecution
-          ? await cleanupExecutionState(previousExecution)
-          : null;
-
-        let toolSurface: Record<string, unknown> | void;
-        try {
           toolSurface = await options.prepareFamilies(
             work.executionPath,
             work.ownerId,
             work.executionId
           );
+
+          if (previousExecution) {
+            // A single synchronous commit point prevents stale A cleanup from
+            // retiring or unbinding the successor before it becomes active.
+            commitStagedWorkRegistration({
+              sessionKey: options.sessionKey,
+              previousExecutionId: previousExecution,
+              stagedExecutionId: work.executionId,
+              stagedAuthorityToken: work.authorityToken,
+            });
+          }
         } catch (error) {
-          const cleanupId = releaseSessionWork(options.sessionKey);
-          if (cleanupId) await cleanupExecutionState(cleanupId);
+          if (previousExecution) {
+            const cancelled = cancelStagedWorkRegistration({
+              sessionKey: options.sessionKey,
+              stagedExecutionId: work.executionId,
+              stagedAuthorityToken: work.authorityToken,
+            });
+            if (cancelled) await cleanupExecutionState(work.executionId);
+          } else {
+            const cleanupId = releaseSessionWork(options.sessionKey);
+            if (cleanupId) await cleanupExecutionState(cleanupId);
+          }
           throw error;
         }
+
+        // A can now be cleaned, but B is already the sole active Work.
+        const previousCleanup = previousExecution
+          ? await cleanupExecutionState(previousExecution)
+          : null;
 
         return toolResult("cadgpt_work_start", {
           reused: false,
