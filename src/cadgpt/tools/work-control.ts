@@ -282,7 +282,14 @@ export function registerWorkControlTools(
               stagedExecutionId: work.executionId,
               stagedAuthorityToken: work.authorityToken,
             });
-            if (cancelled) await cleanupExecutionState(work.executionId);
+            if (cancelled) {
+              // A failed prepare may precede loadCadFamily(), so generic
+              // cleanup's runtime-family guard cannot be relied on to remove
+              // B's already-transferred drawing context.
+              (await import("../session/drawing-binding.js"))
+                .clearExecutionDrawingContexts(work.executionId);
+              await cleanupExecutionState(work.executionId);
+            }
           } else {
             const cleanupId = releaseSessionWork(options.sessionKey);
             if (cleanupId) await cleanupExecutionState(cleanupId);
