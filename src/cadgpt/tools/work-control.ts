@@ -18,7 +18,7 @@ import {
 import { assertSessionClaimed } from "../lib/admission.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { cleanupExecutionState } from "../runtime/execution-cleanup.js";
-import { handoffVerifiedDrawingMetadataRoot } from "../runtime/drawing-persistence.js";
+import { handoffVerifiedDrawingMetadataRoot, rollbackVerifiedDrawingMetadataRootHandoff } from "../runtime/drawing-persistence.js";
 import { toCadgptPath } from "../lib/path-security.js";
 
 /**
@@ -283,6 +283,14 @@ export function registerWorkControlTools(
               stagedAuthorityToken: work.authorityToken,
             });
             if (cancelled) {
+              // Restore cleanup ownership of any still-empty drawing root to
+              // A; generic cleanup of staged B must not delete A's folder.
+              if (inheritedDrawingRoot) {
+                rollbackVerifiedDrawingMetadataRootHandoff(
+                  previousExecution,
+                  work.executionId
+                );
+              }
               // A failed prepare may precede loadCadFamily(), so generic
               // cleanup's runtime-family guard cannot be relied on to remove
               // B's already-transferred drawing context.
