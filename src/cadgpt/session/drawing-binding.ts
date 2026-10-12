@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { cadUpstream } from "../runtime/cad-upstream.js";
 import { currentToolLease } from "../lib/work-registration.js";
+import { continuityFingerprint, logContinuityDiagnostic } from "../lib/continuity-diagnostics.js";
 
 export interface BoundDrawing {
   drawing_id: string;
@@ -274,6 +275,13 @@ export async function activateDrawingContext(
   const docs = await listOpenDrawings();
   const available = docs.some((item) => matchesBinding(item, binding));
   if (!available) {
+    logContinuityDiagnostic("bound_drawing_absent_on_activation", {
+      execution: continuityFingerprint(binding.execution_id),
+      drawing: continuityFingerprint(binding.drawing_id),
+      document_lifetime: continuityFingerprint(binding.runtime_document_identity),
+      listed_document_count: docs.length,
+      reason: "no_runtime_document_identity_match",
+    });
     const map = executionContexts(binding.execution_id);
     map.delete(binding.drawing_id);
     throw new Error(
@@ -319,7 +327,16 @@ export async function drawingBindingStatus(
   const docs = await listOpenDrawings();
   const drawings = selected.map((binding) => {
     const available = docs.some((item) => matchesBinding(item, binding));
-    if (!available) map.delete(binding.drawing_id);
+    if (!available) {
+      logContinuityDiagnostic("bound_drawing_absent_on_status", {
+        execution: continuityFingerprint(binding.execution_id),
+        drawing: continuityFingerprint(binding.drawing_id),
+        document_lifetime: continuityFingerprint(binding.runtime_document_identity),
+        listed_document_count: docs.length,
+        reason: "no_runtime_document_identity_match",
+      });
+      map.delete(binding.drawing_id);
+    }
     return { ...binding, available };
   });
 
