@@ -209,6 +209,17 @@ class CadUpstream {
       try {
         await client.connect(transport);
         const listed = await client.listTools();
+        // An actual stdio transport close is different from a tool failure.
+        // Drop only this closed client so the next permitted CAD call reconnects.
+        client.onclose = () => {
+          if (this.client !== client) return;
+          this.client = null;
+          this.transport = null;
+          this.tools = [];
+          this.connectedExecutionId = null;
+          this.connectedHumanPower = false;
+          this.lastError = "CAD MCP transport closed";
+        };
         this.client = client;
         this.transport = transport;
         this.tools = listed.tools ?? [];
