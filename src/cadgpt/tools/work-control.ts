@@ -250,15 +250,6 @@ export function registerWorkControlTools(
                   )
               : null;
 
-          // Metadata remains read-only until the successor prepares its own
-          // Job runtime; never copy writable authority from Job A.
-          inheritedDrawingRoot = previousExecution
-            ? handoffVerifiedDrawingMetadataRoot(
-                previousExecution,
-                work.executionId
-              )
-            : null;
-
           toolSurface = await options.prepareFamilies(
             work.executionPath,
             work.ownerId,
@@ -266,6 +257,14 @@ export function registerWorkControlTools(
           );
 
           if (previousExecution) {
+            // No await between metadata ownership transfer and commit. A
+            // rejected/stale competing transition must not take A's empty
+            // drawing-root cleanup ownership during asynchronous preparation.
+            // B only inherits read authority, never Job A's write authority.
+            inheritedDrawingRoot = handoffVerifiedDrawingMetadataRoot(
+              previousExecution,
+              work.executionId
+            );
             // A single synchronous commit point prevents stale A cleanup from
             // retiring or unbinding the successor before it becomes active.
             commitStagedWorkRegistration({
