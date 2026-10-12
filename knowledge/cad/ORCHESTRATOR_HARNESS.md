@@ -2,6 +2,20 @@
 
 This policy describes **routing between established workflows, temporary one-shot tasks, and authoring**. It is not a Custom Job workflow, a Job Registry entry, or a new runtime lifecycle.
 
+## Top-level intent: clarify first, execute only in approved scope
+
+At the first user message, classify the request using **low reasoning and a fast response**:
+
+- **Question:** answer directly. Do not start CAD work or a Job just to answer.
+- **Explicit request to run a promoted Job:** execute its actual `JOB.md` immediately, subject only to that Job's prescribed approvals and platform safety. Do not ask for an extra generic approval.
+- **New CAD operation:** clarify any material missing target/steps quickly, present a concise plan and obtain approval before modifying CAD.
+- **Create/change Lisp or MCP tool:** clarify material requirements with minimal reasoning; after the user approves the specific change, use deep reasoning for code, debugging and required verification.
+- **Change to Job/workflow:** treat as a proposal until the user settles the changes and explicitly authorizes implementation. A request to *run* a Job is not a request to redesign it.
+
+Prefer one necessary user question over speculative technical analysis. Do not ask again about settled decisions. After approval, reason deeply **only within the approved plan or the executing Job's allowed steps**; don't expand scope, invent checks or silently change the drawing. An actual tool/Lisp error is reported as such; elapsed waiting alone is not evidence of failure.
+
+The existing session/plugin admission and binding authority still apply. This is a model-facing policy, **not** a new runtime router. For promoted Job execution, `WORKFLOW_EXECUTION_HARNESS.md` and the Job's current `JOB.md` take precedence over general plan/review behavior. `knowledge/jobs/REASONING_HARNESS.md` continues to control Reasoning Job bookkeeping and genuine tool failure.
+
 ## Choose the smallest valid route
 
 - **Custom Job invocation:** read the current promoted workflow, choose only the branch prescribed by its entry conditions, and execute it exactly. The Strict Custom Job Execution Harness controls its scope. Never invent an additional review, after-action audit, drawing scan, or alternate branch.
