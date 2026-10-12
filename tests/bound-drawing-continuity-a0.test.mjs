@@ -314,3 +314,56 @@ test("E01-SOURCE: paired session carries the same DWG across Job A, Job B, Temp,
     }
   });
 });
+
+test("R09-RED: incomplete DWG observation cannot permanently erase an active binding", async () => {
+  const session = "a0-r09-transient-document-list-absence";
+  checkAdmission(session, "@cg", "mention");
+  const saved = cadUpstream.callTool;
+  let docs = [{ ...DWG }];
+  cadUpstream.callTool = async name => {
+    if (name === "acad_list_open_documents") return docs.map(d => ({ ...d }));
+    if (name === "acad_set_active_document") return { runtime_document_id: DWG.runtime_document_id };
+    throw Error("Unexpected CAD call: " + name);
+  };
+  let active;
+  try {
+    active = work.createWorkRegistration({
+      sessionKey: session, ownerType: "direct-cad",
+      ownerId: "drawing-workspace", executionPath: "hybrid",
+    });
+    const bound = await drawing.bindDrawingForExecution(active.executionId, DWG.full_name);
+    const lease = cadLease(session, active, "r09_status");
+    await work.runWithToolLease(lease, async () => {
+      assert.equal((await drawing.drawingBindingStatus()).bound, true);
+      docs = []; // successful but incomplete snapshot, not a confirmed close.
+      assert.equal((await drawing.drawingBindingStatus()).bound, false);
+      assert.equal(
+        drawing.getBoundDrawingsForExecution(active.executionId).length, 1,
+        "R09: one negative document listing must not erase verified binding identity"
+      );
+      await assert.rejects(
+        drawing.activateDrawingContext(bound), /BOUND_DRAWING_UNAVAILABLE/
+      );
+      assert.equal(drawing.getBoundDrawingsForExecution(active.executionId).length, 1);
+      docs = [{ ...DWG }];
+      assert.equal((await drawing.drawingBindingStatus()).bound, true);
+      assert.equal(drawing.resolveDrawingContext().drawing_id, bound.drawing_id);
+      await drawing.activateDrawingContext(bound);
+
+      // Positive evidence of the exact same selector with a different document
+      // lifetime must still fail closed and require an explicit rebind.
+      docs = [{ ...DWG, runtime_document_id: "reopened-different-lifetime" }];
+      await assert.rejects(
+        drawing.activateDrawingContext(bound), /BOUND_DRAWING_STALE/
+      );
+      assert.deepEqual(drawing.getBoundDrawingsForExecution(active.executionId), []);
+    });
+  } finally {
+    if (active) {
+      work.releaseWorkRegistration(active.executionId, active.authorityToken, session);
+      drawing.clearExecutionDrawingContexts(active.executionId);
+    }
+    cadUpstream.callTool = saved;
+    revokeSessionAdmissions(session);
+  }
+});
