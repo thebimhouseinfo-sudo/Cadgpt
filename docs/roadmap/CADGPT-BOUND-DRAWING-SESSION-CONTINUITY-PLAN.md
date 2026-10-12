@@ -2,7 +2,7 @@
 title: CadGPT — Bound Drawing Continuity in an Active Add-in Session
 document_type: DETAILED_IMPLEMENTATION_PLAN
 status: CR_REVIEW_REQUIRED
-review_status: NOT_REVIEWED
+review_status: CHANGES_REQUIRED
 implementation_status: NOT_STARTED
 priority: P0
 source_repo: thebimhouseinfo-sudo/Cadgpt
@@ -143,3 +143,68 @@ Review outcomes:
 - Do not merge implementation into \`main\` until source regression PASS and appropriate release decision; host result remains separately marked.
 
 **Delivery of this plan itself:** commit only this Markdown document to \`fix/bound-drawing-work-handoff-20261012\`; do not modify source, change runtime defaults, merge or claim the incident has been fixed.
+
+---
+
+## 8. Planner revision 2 — CR-01…CR-06 remediation (2026-10-12)
+
+**Status: PLANNER_REVISED; independent CR re-review required.** This section supersedes A0–A3 wherever they are incomplete, without treating the reported incident root cause as proven. Do not change source, merge or mark CR PASS from this planning change. Preserve the original P0 active-session no-sleep/no-interruption scenario.
+
+### 8.1 Evidence classification and ownership model
+
+Four independent states must be tracked: (1) stable primary drawing identity in the **same logical add-in session**, including the original verified `runtime_document_identity` and separately verified Drawing Anchor; (2) current Work and capability authority, including execution ID, owner and execution path; (3) MCP transport/upstream health; and (4) last-confirmed add-in header display. Header name does not establish live backend Work binding. A FILE-only Work cannot call CAD even if the primary identity is remembered. A new conversation cannot borrow another logical session's drawing.
+
+Document the exact path through `cadgpt_work_start`, `createWorkRegistration`, `createSuccessorWorkRegistration`, `commitSuccessorWorkRegistration`, `activateCadWorkspace`, `releasePriorJobAuthorityForStart`, `retireIdleJobWorkForExecution`, `releaseSessionWork`, `cleanupExecutionState`, MCP logical disposal, `drawingBindingStatus` and `activateDrawingContext`. For each: trigger, previous/next owner and execution, whether it revokes authority, whether it drops binding/metadata, whether it awaits or races cleanup, in-flight lease guards and whether scope is within or across sessions. Distinguish intentional old-Job cross-session terminalization from accidental primary drawing loss.
+
+Do not infer a user-incident cause from forced scheduling alone. Record an actual source-entrypoint test outcome or `UNCONFIRMED / REPRODUCTION_REQUIRED`. Python `document_service.list_open_documents()` propagates ordinary COM/enumeration exceptions; there is not yet evidence that those exceptions become a successful empty list.
+
+### 8.2 CRITICAL CR-01 — Transaction-safe successor and rollback
+
+Current `createWorkRegistration` deletes A and schedules asynchronous expiration cleanup before the Work B handoff attempted by `cadgpt_work_start`. The implementation must define a single authorization/active-Work commit point:
+
+1. Validate same logical session, current owner, nonbusy leases, desired execution path and source context; stage B with an inaccessible authority, without revoking A.
+2. Copy exactly one verified drawing binding and its *read-only* verified metadata root to staged B only where permitted. Prevent guessing on multiple bindings, cross-session transfers and path-only matching.
+3. Prepare required tool families; failure cancels B and its staged metadata/context, while A remains active, valid and callable.
+4. Commit B as the sole active Work in one serialized operation with stale-generation and competing-transition checks. Revoke A immediately at commit; only then queue idempotent cleanup of A.
+5. Ensure late/double cleanup A cannot clear B binding, revoke B or deactivate a backend B still uses. No unauthorized double ownership across any await.
+
+Existing `createSuccessorWorkRegistration` is **FILE→HYBRID with unchanged owner only**. It cannot directly implement HYBRID Job A→HYBRID Job B with changed owner. Design the *minimal* shared staged-registration extension (or precisely justify another approach), preserving token uniqueness, lease checks, owner constraints and permission boundaries. Do not silently repurpose the existing upgrade without adapting its preconditions and tests.
+
+### 8.3 CRITICAL CR-02 — Execution-owned cleanup and backend isolation
+
+`cleanupExecutionState(executionId)` derives loaded families from a runtime-wide snapshot; this is not itself proof of the retiring execution's ownership. Audit every cleanup action against exact execution-owned resources. In particular, Human Power cleanup can call `cadUpstream.deactivate()`; require ordered mode reset and explicit successor/in-flight CAD protection. CAD backend shutdown must depend on actual remaining CAD ownership/leases, not just an old work's cleanup path. A cleanup is idempotent and does not delete successor maps or metadata. Test delayed cleanup, repeated cleanup, transition error, session end, and Human Power reset.
+
+### 8.4 CRITICAL CR-03 — Negative DWG observation is not automatically confirmed closure
+
+`drawingBindingStatus` and `activateDrawingContext` presently delete drawing context on a single absence in an otherwise successful `acad_list_open_documents` result. Separate `AVAILABLE`, `OBSERVATION_UNKNOWN` (transport/COM), `OBSERVED_ABSENT` (successful but possibly incomplete list), `CONFIRMED_CLOSED`, and `CONFIRMED_IDENTITY_MISMATCH`. Define positive evidence for destructive invalidation. Do not turn COM failures into empty lists, do not mask a proven close/reopen identity mismatch, do not auto-bind to `ActiveDocument` or same filename. Verify any confirmation policy using bounded/event-driven evidence instead of constant expensive CAD rescans. Until provenance is established, do not claim that incomplete listing caused the live incident.
+
+### 8.5 IMPORTANT CR-04/05/06 — Paths, transitions and persistent identity
+
+Cover all Work creation/retirement/disposal entrypoints, including Job A→B, Builder→Custom Job, Direct Job, Temp, workspace activation and cross-session Job terminalization. Coordinate race guards across entrypoints, not only inside the `cadgpt_work_start` callback. A truly ended logical session revokes rights; a transport detach with retained logical identity does not.
+
+An explicitly requested FILE-only/CAD-only exception retains its original tool-family denial. Decide between (A) an immutable, non-executable **session-scoped primary drawing reference** or (B) a protected Work-scoped continuity reference, after A0 tests; choose one minimal design only. With FILE-only, preserve the user's selected identity for future authorized HYBRID work, but grant **zero CAD privilege** to the FILE Work. Future CAD action must revalidate original document lifetime before execution. No implicit rebinding across different logical sessions.
+
+### 8.6 Ordered revision milestones and test gates
+
+**A0 — Audit and reproduce, before modification.** Build entrypoint and ownership matrix above; add deterministic tests on real exported entrypoints (with controlled promises), report actual before/after registration/context counts, observed response, tool lease, metadata root and backend phase. First confirm a fail that matches active-session context loss or state `UNCONFIRMED` with diagnostic evidence required. Do not implement speculative fixes.
+
+**A1 — Atomic transition when justified by A0.** Implement the common stage/commit/rollback boundary; expand successor support only as demonstrated; test competing transitions, late cleanup and preparation failure.
+
+**A2 — Binding observation and cleanup isolation.** Implement only proven reliability changes; distinguish observation uncertainty and verified DWG lifetime change; structured minimal logs with safe fingerprints and cause codes. Header keeps AutoCAD open/active rules and reports Work mismatch independently, not an invented DWG close.
+
+**A3 — Source regressions and host acceptance.** Record exact tested SHA for build, tests, relevant CI. Windows AutoCAD live checkpoint stays `PASS_RETEST_REQUIRED` until observed on a disposable DWG with uninterrupted add-in use. Do not use the user's production drawing as a QA fixture; no merge/deploy based solely on mock PASS.
+
+**Mandatory new executable tests beyond R01–R08 / T01–T12:**
+
+| ID | Reproduction / negative control | Required behavior |
+| --- | --- | --- |
+| R09 | Successful but incomplete drawing enumeration; separately COM/transport error | Preserve non-executable identity pending evidence, no false close; distinct error reasons |
+| R10 | Delayed cleanup A runs after committed successor B | B binding, metadata and CAD access unaffected |
+| R11 | Double cleanup A | Idempotent, no B teardown or unauthorized upstream stop |
+| R12 | Changed-owner HYBRID Job A→Job B on actual entrypoint | Atomic active authority, exact binding, safe rollback |
+| R13 | Explicit FILE-only→authorized HYBRID | Original identity can be verified; FILE never receives CAD permission |
+| R14 | `prepareFamilies(B)` failure | Valid A retained, staged B has no authority/orphan |
+| R15 | Cleanup concurrently with in-flight successor CAD call / Human Power reset | Respect leases and backend ownership; no unrelated deactivate |
+| R16 | Logging across Work race, identity anomaly and transport rotation | Unambiguous redacted reason; no tokens, private DWG data or fabricated incident cause |
+
+**CR gate:** Independent Critic Reviewer must re-read and review the **new blob SHA**, verify CR-01 through CR-06 are addressed, and provide PASS or CHANGES_REQUIRED. This planner revision is not itself CR approval. Continue planning loop before any Coder work.
