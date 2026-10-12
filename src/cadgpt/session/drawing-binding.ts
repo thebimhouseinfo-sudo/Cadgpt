@@ -275,17 +275,28 @@ export async function activateDrawingContext(
   const docs = await listOpenDrawings();
   const available = docs.some((item) => matchesBinding(item, binding));
   if (!available) {
+    // A successful but incomplete list is not proof that the document closed.
+    // Keep its identity non-executable until a later positive verification.
+    const reopened = docs.some((item) =>
+      sameSelector(item, binding) &&
+      Boolean(itemRuntimeId(item)) &&
+      !matchesBinding(item, binding)
+    );
     logContinuityDiagnostic("bound_drawing_absent_on_activation", {
       execution: continuityFingerprint(binding.execution_id),
       drawing: continuityFingerprint(binding.drawing_id),
       document_lifetime: continuityFingerprint(binding.runtime_document_identity),
       listed_document_count: docs.length,
-      reason: "no_runtime_document_identity_match",
+      reason: reopened ? "confirmed_different_document_lifetime" : "observation_absent",
     });
-    const map = executionContexts(binding.execution_id);
-    map.delete(binding.drawing_id);
+    if (reopened) {
+      executionContexts(binding.execution_id).delete(binding.drawing_id);
+      throw new Error(
+        `BOUND_DRAWING_STALE: drawing ${binding.name} was reopened with a different AutoCAD document lifetime. Re-bind explicitly.`
+      );
+    }
     throw new Error(
-      `BOUND_DRAWING_STALE: drawing ${binding.name} is no longer the same open AutoCAD document lifetime. Re-bind the drawing explicitly.`
+      `BOUND_DRAWING_UNAVAILABLE: drawing ${binding.name} was not observed in this document listing; CAD execution is denied until its original lifetime is verified.`
     );
   }
 
@@ -328,14 +339,21 @@ export async function drawingBindingStatus(
   const drawings = selected.map((binding) => {
     const available = docs.some((item) => matchesBinding(item, binding));
     if (!available) {
+      const reopened = docs.some((item) =>
+        sameSelector(item, binding) &&
+        Boolean(itemRuntimeId(item)) &&
+        !matchesBinding(item, binding)
+      );
       logContinuityDiagnostic("bound_drawing_absent_on_status", {
         execution: continuityFingerprint(binding.execution_id),
         drawing: continuityFingerprint(binding.drawing_id),
         document_lifetime: continuityFingerprint(binding.runtime_document_identity),
         listed_document_count: docs.length,
-        reason: "no_runtime_document_identity_match",
+        reason: reopened ? "confirmed_different_document_lifetime" : "observation_absent",
       });
-      map.delete(binding.drawing_id);
+      // Do not erase a verified binding from a single missing observation.
+      // A positively identified close/reopen is different and fails closed.
+      if (reopened) map.delete(binding.drawing_id);
     }
     return { ...binding, available };
   });
