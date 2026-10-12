@@ -2,7 +2,7 @@
 title: CadGPT — Bound Drawing Continuity in an Active Add-in Session
 document_type: DETAILED_IMPLEMENTATION_PLAN
 status: CR_REVIEW_REQUIRED
-review_status: PLANNER_INTERNAL_PASS_AWAITING_CR
+review_status: CR_PASS_WITH_MINOR_FINDING
 implementation_status: NOT_STARTED
 priority: P0
 source_repo: thebimhouseinfo-sudo/Cadgpt
@@ -292,3 +292,15 @@ Planner must iterate internal findings and amendments until explicit INTERNAL_PA
 **Round 1: CHANGES_REQUIRED → corrected in §9.1–9.3.** Source review found that the staged-registration token can pass current `validateWorkHandle`, so the plan must gate both work validation and ToolLease, while exempting narrowly scoped internal commit/cancel APIs. Review also identified that `prepareFamilies` side effects may outlive a throw, and that the binding-ownership architecture could otherwise be selected without a decision gate. Repairs and real-entrypoint negative controls R17–R19 are now explicit.
 
 **Round 2: INTERNAL_PASS (plan-level only).** Checked draft blob `304d5adea11df50142cfa53e954231cd9be79485` against: CR-R3-01–03, earlier CR-01–06, Work authorization and lease guard, staged/commit/cancel lifecycle, preparation side-effect inventory, failure injection, binding ownership decision matrix, FILE/CAD family-denial, unrelated-session isolation, original no-sleep defect, evidence-first stop rules, host-only checkpoint and no source writes. No remaining planning contradiction was found in these specified requirements. **This is not test execution, confirmed incident cause, independent CR PASS or permission to implement.** The saved version including this record remains `CR_REVIEW_REQUIRED` pending independent review.
+
+---
+
+## 10. Planner finalization — Revision 4 CR disposition (2026-10-12)
+
+**Independent CR conclusion communicated by reviewer:** `PASS WITH FINDINGS` for the technical plan at **commit `70958b37f60a79f473f8e2f7c7d4355e9d0fc0ad`, blob `99c0a48bf2193ddf6cb507701216e2139b8d0053`**. No unresolved CRITICAL or IMPORTANT planning finding. Remaining MINOR: the internal self-review input SHA belonged to the pre-final draft, not the final reviewed blob. This note records that distinction rather than misrepresenting the earlier self-review as having checked the final file.
+
+**Planner decision:** retain the approved Revision 4 technical design (§9) **unchanged**. Resolve MINOR through source-of-truth identification: independently reviewed target blob = `99c0a48bf2193ddf6cb507701216e2139b8d0053`; prior internal draft blob = `304d5adea11df50142cfa53e954231cd9be79485`. The finalized documentation commit will have its own SHA and is *not* automatically independently CR-reviewed. Status `CR_PASS_WITH_MINOR_FINDING` describes the reviewed technical plan; subsequent content modifications require fresh review as appropriate.
+
+**Approved execution boundary:** A0 investigation, instrumentation proposals and deterministic reproduction only, after explicit implementation instruction. **No speculative A1/A2 source patch** without evidence identifying the causal code path, followed by appropriate review. A3 Windows AutoCAD host checkpoint remains `PASS_RETEST_REQUIRED` and may not be simulated into PASS. No production DWG QA, no automatic rebind by name, no broader transport/tray rewrite, no merge/deploy implied.
+
+**Standing internal Planner loop:** every substantive plan revision must undergo self-review → findings → repair → re-review until documented internal PASS, with exact reviewed input blob and final readback tracked distinctly. Independent CR verdict remains distinct from self-review.
