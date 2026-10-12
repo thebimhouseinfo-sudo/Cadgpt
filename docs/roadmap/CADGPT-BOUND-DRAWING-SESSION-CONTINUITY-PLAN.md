@@ -2,7 +2,7 @@
 title: CadGPT — Bound Drawing Continuity in an Active Add-in Session
 document_type: DETAILED_IMPLEMENTATION_PLAN
 status: CR_REVIEW_REQUIRED
-review_status: PLANNER_INTERNAL_PASS_AWAITING_CR
+review_status: PLANNER_INTERNAL_REVIEW_IN_PROGRESS
 implementation_status: NOT_STARTED
 priority: P0
 source_repo: thebimhouseinfo-sudo/Cadgpt
@@ -238,3 +238,51 @@ The Planner inspected revision 2 against current source contracts and the six in
 ### 8.9 Standing Planner internal-review protocol (CadGPT)
 
 For every future CadGPT Planner draft/revision, *before* presenting the plan to the user or to CR: review the full latest draft against source evidence, constraints, security, testability and prior findings; record self-review findings; revise the same plan; repeat until a documented INTERNAL_PASS or explicitly describe a genuine blocker. Persist the reviewed plan, verify its readback and reference its exact blob SHA. Internal PASS must **never** be represented as independent CR PASS or live/CI test PASS. Do not stop merely after the first revision or commit.
+
+---
+
+## 9. Planner Revision 4 — CR-R3 findings, authoritative amendment
+
+**Status:** PLANNER INTERNAL REVIEW IN PROGRESS; independent CR not yet passed. This section is controlling wherever prior revisions differ. No product code mutation or incident root-cause claim.
+
+### 9.1 CR-R3-01 / CRITICAL — Staged authorization must be uncallable
+
+**Source evidence:** `createSuccessorWorkRegistration` inserts a staged successor in `registrations` before commit, while `validateWorkHandle` currently checks registration/token/session/epoch and `closing`, but does **not** require `activeBySession.get(sessionKey) === executionId`. Therefore a merely staged record may pass validation if its token is known. Treat this as an independently demonstrated *source authorization gate gap*, not proof that the observed user incident exploited it.
+
+**Mandatory design:**
+1. Define explicit `STAGED` vs `ACTIVE` vs `RETIRED` registration states (or an equivalent single-authoritative predicate). Only the current committed `ACTIVE` registration may acquire/use a Work ToolLease; both `validateWorkHandle` and the actual lease acquisition boundary must reject STAGED. Exception: narrowly identified internal commit/cancel operations explicitly validating a staged token using a distinct non-tool-capability API.
+2. Do not rely on token secrecy or UI omission. A valid stolen/copied staged token must fail protected CAD, FILE and hybrid tool calls, including direct and gateway invocation and potential preexisting lease continuations.
+3. Commit must be linearizable with current-generation/session ownership checks, nonbusy in-flight lease conditions and stale commit rejection. A cannot remain independently callable after B becomes active; B must be unusable before commit.
+4. Review all existing callers of `validateWorkHandle`, including stage/commit APIs, to avoid breaking an authorized internal staging handshake. A staged cancellation must not revoke A.
+
+**Negative controls (R17):** fabricate a correct B staged handle including authority token; attempt CAD/FILE/registry and tool lease acquisition; all denied with `WORK_NOT_ACTIVE` or compatibility-preserving explicit status. After commit, A denied and B accepted; on prepare rollback, A accepted and B rejected. Test both Work and lease wrappers through production entrypoints, no regex-only assertions.
+
+### 9.2 CR-R3-02 / IMPORTANT — Prepare failure and reversible runtime state
+
+**Source evidence:** `prepareFamilies` is invoked after Work replacement in current `cadgpt_work_start`; preparation can mutate the server's dynamic tool registrations, loaded-family markers and runtime/cad activation. The plan must not claim those changes are always transactionally undoable.
+
+**Preparation side-effect inventory must precede modification:** classify `prepareFamilies` effects as (a) ephemeral/no shared mutation, (b) append-only and safe under failure/retry (e.g. idempotent tool registrations with the exact same authority wrapper), (c) reversible execution-owned resources with a deterministic compensating action, or (d) unsafe/irreversible shared mutation. For (d), refactor into safe preflight or defer until after commit only if it preserves rollback semantics; never claim complete rollback without evidence.
+
+**Transaction contract:** while B is staged, side effects must not change the active Work A's tool surface, capabilities, CAD upstream or session observer; B's registrations are inert. On failure, revoke B and clean B-owned metadata/context exactly once. If a shared append-only tool registration remains, it must be safe, scoped by runtime authority and reusable; report it as retained idempotent state rather than falsely claiming rollback. If an effect cannot be proven safe, stop with `PREPARE_SIDE_EFFECT_UNSAFE` without retiring A. Ensure the source's existing `registeredSurfaceByServer` / `loadedByServer` and global CAD Upstream behaviors are included in this inventory.
+
+**Negative controls (R18):** throw before prepare, after first family registration, after second family registration, after CAD activation, and during cleanup/cancellation; in every scenario test that A remains valid, B cannot call any protected tool, retries do not duplicate registrations/privileges, no wrong CAD deactivate and no orphan permissions. Test real `prepareFamilies` interaction behind injected failure points, not a mock that only throws before side effects.
+
+### 9.3 CR-R3-03 / IMPORTANT — Primary drawing persistence decision gate
+
+Before implementation, A0 must collect evidence for each scenario and choose the **narrowest architecture** that passes it:
+
+| Decision condition | Outcome |
+| --- | --- |
+| Every valid same-session Work/Job transition, including explicit FILE-only→HYBRID, is covered by an existing protected read-only reference without a gap during cleanup | Prefer **Work-scoped preserved continuity reference**; do not introduce a session registry. |
+| A0 demonstrates real same-session transition legitimately retires the only Work or passes through FILE-only with no safe Work-scoped source, despite DWG remaining open | Consider **session-scoped non-executable primary drawing identity**, strictly tied to verified add-in logical-session identity and cleared on explicit unbind/session disposal. |
+| Neither approach proves lifetime/ownership safety or tests show ambiguous multiple drawings/cross-session risk | Stop with `ARCHITECTURE_DECISION_BLOCKED` and request a revised plan; do not silently choose a broad shared registry. |
+
+Regardless of option: immutable primary identity is **not authorization**, not proof of current host liveness and not a license to infer by name/active tab. CAD tool use requires committed CAD-capable Work, ToolLease and live `runtime_document_identity` revalidation. Drawing Anchor metadata read remains subject to established read-only scope and current session ownership.
+
+**Negative controls (R19):** Work A→B, Builder→Job, Temp→Job, explicit FILE-only→HYBRID, drawing close/reopen under same filename, two bound drawings, app session disposed, MCP transport rotation with same logical identity, different conversation identity, CAD-only/FILE-only tool-denial, stale/forged anchor and source-empty gap. Prove exactly one primary reference per logical add-in session without user-selected rebind unless an authorized identity change actually occurred.
+
+### 9.4 Internal review/CR gate
+
+Review the current full plan, including the old F1–F7 hypotheses and this controlling section, for contradictions. **A0 may exit UNCONFIRMED for evidence collection, not permission to implement any speculative fix.** Do not use source-only simulations as incident proof. Existing CR-01–06 and CR-R3-01–03, R01–R19 and T01–T18 must all trace to an observable test and explicit authority boundary. Keep the original Windows AutoCAD active continuous-use host checkpoint as `PASS_RETEST_REQUIRED`.
+
+Planner must iterate internal findings and amendments until explicit INTERNAL_PASS, commit and read back the exact reviewed blob, then invite *independent* CR. The new revision does not inherit Revision 3 INTERNAL_PASS or any CR PASS.
