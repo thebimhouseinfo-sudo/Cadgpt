@@ -239,3 +239,78 @@ test("R17: staged successor credentials cannot acquire a ToolLease", async () =>
     revokeSessionAdmissions(session);
   }
 });
+
+test("E01-SOURCE: paired session carries the same DWG across Job A, Job B, Temp, and Work reuse", async () => {
+  const session = "a0-e01-same-addin-drawing-across-jobs";
+  checkAdmission(session, "@cg", "mention");
+  const pair = addin.startAddinPairing();
+  addin.completePendingAddinPair(session);
+  const callbacks = createCallbacks(session);
+  const created = [];
+  let observer;
+  await withFakeCad(async () => {
+    try {
+      const original = work.createWorkRegistration({
+        sessionKey: session, ownerType: "direct-cad",
+        ownerId: "drawing-workspace", executionPath: "hybrid",
+      });
+      created.push(original.executionId);
+      const bound = await drawing.bindDrawingForExecution(original.executionId, DWG.full_name);
+      observer = addin.registerAddinSessionObserver(session, async () => {
+        const current = work.activeWorkForSession(session);
+        const contexts = current ? drawing.getBoundDrawingsForExecution(current.executionId) : [];
+        return {
+          drawing: contexts.length === 1
+            ? { name: contexts[0].name, full_name: contexts[0].full_name }
+            : null,
+          bound_count: contexts.length, human_power: false,
+        };
+      });
+
+      async function verify(stage) {
+        const current = work.activeWorkForSession(session);
+        assert.ok(current, stage + " lost Work");
+        assert.equal(addin.isAddinManagedSession(session), true);
+        assert.equal((await addin.addinBindingStatus(pair.pair_id)).bound_count, 1);
+        const inherited = drawing.getBoundDrawingsForExecution(current.executionId);
+        assert.equal(inherited.length, 1, stage + " lost backend binding");
+        assert.equal(inherited[0].drawing_id, bound.drawing_id);
+        assert.equal(inherited[0].runtime_document_identity, DWG.runtime_document_id);
+        const lease = cadLease(session, current, "e01_read");
+        await work.runWithToolLease(lease, async () => {
+          const b = drawing.resolveDrawingContext();
+          await drawing.activateDrawingContext(b);
+          assert.equal((await drawing.drawingBindingStatus()).bound, true);
+        });
+      }
+
+      await verify("initial bind");
+      for (const [owner_type, owner_id] of [
+        ["job", "grille-tag"],
+        ["job", "create-system"],
+        ["skill", "temp-lisp"],
+      ]) {
+        const started = await callbacks.get("cadgpt_work_start")({ owner_type, owner_id });
+        assert.equal(started.structuredContent?.ok, true, JSON.stringify(started));
+        assert.equal(started.structuredContent?.data?.drawing_handoff?.drawing_id, bound.drawing_id);
+        const current = work.activeWorkForSession(session);
+        created.push(current.executionId);
+        await verify(owner_id);
+      }
+      const beforeReuse = work.activeWorkForSession(session);
+      const reused = await callbacks.get("cadgpt_work_start")({
+        owner_type: "skill", owner_id: "temp-lisp",
+      });
+      assert.equal(reused.structuredContent?.data?.reused, true);
+      assert.equal(work.activeExecutionForSession(session), beforeReuse.executionId);
+      await verify("chat reuse after Temp");
+    } finally {
+      const current = work.activeWorkForSession(session);
+      if (current) work.releaseWorkRegistration(current.executionId, current.authorityToken, session);
+      for (const id of created) drawing.clearExecutionDrawingContexts(id);
+      if (observer) addin.unregisterAddinSessionObserver(session, observer);
+      addin.clearAddinPairingsForSession(session);
+      revokeSessionAdmissions(session);
+    }
+  });
+});
