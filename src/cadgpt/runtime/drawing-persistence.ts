@@ -244,6 +244,25 @@ export function handoffVerifiedDrawingMetadataRoot(
   return root;
 }
 
+/**
+ * Roll back a staged Work handoff without deleting the original execution's
+ * newly-created (still empty) drawing folder. The prior Work remains active.
+ * Normal successor cleanup can then safely revoke its own read-only scope.
+ */
+export function rollbackVerifiedDrawingMetadataRootHandoff(
+  previousExecutionId: string,
+  stagedExecutionId: string
+): void {
+  if (previousExecutionId === stagedExecutionId) return;
+  const stagedCandidate = lastCreatedMetadataFolderByExecution.get(stagedExecutionId);
+  if (!stagedCandidate) return;
+  if (!metadataRootsByExecution.get(previousExecutionId)?.has(stagedCandidate)) return;
+  if (!inheritedReadOnlyRootsByExecution.get(stagedExecutionId)?.has(stagedCandidate)) return;
+
+  lastCreatedMetadataFolderByExecution.delete(stagedExecutionId);
+  lastCreatedMetadataFolderByExecution.set(previousExecutionId, stagedCandidate);
+}
+
 export async function prepareDrawingMetadataLocation(
   executionId: string,
   binding: BoundDrawing
