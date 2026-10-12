@@ -41,8 +41,6 @@ class LispServiceError(RuntimeError):
 
 _COMMAND_NAME = re.compile(r"^[A-Za-z0-9_+\-.$:]+$")
 _LOAD_POLL_INTERVAL = 0.10
-_LOAD_TIMEOUT_SECONDS = 8.0
-_CALL_TIMEOUT_SECONDS = 8.0
 
 
 def _repo_root() -> str:
@@ -236,7 +234,6 @@ def _serialize_lisp_value(value) -> str:
 def run_lisp_function_sync(
     name: str,
     args: list | None = None,
-    timeout_seconds: float = _CALL_TIMEOUT_SECONDS,
     document=None,
 ) -> str:
     """Call one already-loaded Lisp function and synchronously return its string result.
@@ -277,16 +274,11 @@ def run_lisp_function_sync(
         "(princ))"
     )
 
-    _safe_setvar(doc, "USERS5", pending)
+    if not _safe_setvar(doc, "USERS5", pending):
+        raise LispServiceError("CADGPT_LISP_SENTINEL_UNAVAILABLE: AutoCAD rejected USERS5")
     try:
         _send(expression, document=doc)
-        deadline = time.monotonic() + max(0.25, float(timeout_seconds))
-        result = pending
-        while time.monotonic() < deadline:
-            time.sleep(_LOAD_POLL_INTERVAL)
-            result = str(_safe_getvar(doc, "USERS5", pending) or "")
-            if result.startswith(ok_prefix) or result.startswith(err_prefix):
-                break
+        result = _await_lisp_result(doc, pending, ok_prefix, err_prefix)
 
         if result.startswith(ok_prefix):
             return result[len(ok_prefix) :]
@@ -295,9 +287,6 @@ def run_lisp_function_sync(
                 result[len(err_prefix) :].strip()
                 or "AutoLISP function returned an unspecified error"
             )
-        raise LispServiceError(
-            "AutoCAD did not return the Lisp function result before timeout."
-        )
     finally:
         _safe_setvar(
             doc,
@@ -321,6 +310,24 @@ def _safe_setvar(doc, name: str, value) -> bool:
         return True
     except Exception:
         return False
+
+
+def _await_lisp_result(doc, pending: str, ok_prefix: str, err_prefix: str) -> str:
+    """Wait for a real AutoCAD result, without a wall-clock failure deadline."""
+    while True:
+        time.sleep(_LOAD_POLL_INTERVAL)
+        try:
+            result = str(doc.GetVariable("USERS5") or "")
+        except Exception as exc:
+            raise LispServiceError(
+                f"CADGPT_LISP_RESULT_READ_FAILED: {exc}"
+            ) from exc
+        if result.startswith(ok_prefix) or result.startswith(err_prefix):
+            return result
+        if result != pending:
+            raise LispServiceError(
+                "CADGPT_LISP_SENTINEL_CHANGED: AutoCAD replaced the pending result"
+            )
 
 
 def _log_position(path: str | None) -> int:
@@ -355,9 +362,8 @@ def _verified_load_expression(lisp_path: str, token: str) -> str:
     load_dir = os.path.dirname(lisp_path).replace("\\", "/")
     pending = f"CADGPT_PENDING:{token}"
     return (
-        # An async SendCommand can remain queued after a timeout. When the
-        # pending sentinel has already been restored, suppress the late load
-        # rather than silently changing CAD after CadGPT reported failure.
+        # Respect explicit cancellation: if the pending sentinel was cleared,
+        # a queued SendCommand must not load unexpectedly afterward.
         f'(if (= (getvar "USERS5") "{pending}") '
         "(progn "
         "(vl-load-com) "
@@ -399,14 +405,7 @@ def load_lisp_file(path: str, document=None) -> dict:
             _verified_load_expression(lisp_path, token),
             document=doc,
         )
-        deadline = time.monotonic() + _LOAD_TIMEOUT_SECONDS
-        result = pending
-        while time.monotonic() < deadline:
-            time.sleep(_LOAD_POLL_INTERVAL)
-            value = _safe_getvar(doc, "USERS5", pending)
-            result = str(value or "")
-            if result.startswith(ok_prefix) or result.startswith(err_prefix):
-                break
+        result = _await_lisp_result(doc, pending, ok_prefix, err_prefix)
 
         time.sleep(0.15)
         log_tail = _read_log_tail(log_path, log_start)
@@ -430,13 +429,6 @@ def load_lisp_file(path: str, document=None) -> dict:
                 "note": "Fix the source and run static validation + verified load again before handoff.",
             }
 
-        return {
-            "loaded": False,
-            "path": relative,
-            "error": "AutoCAD did not reach the Lisp load-success sentinel before timeout.",
-            "log_tail": log_tail[-8000:] if log_tail else "",
-            "note": "Inspect command-history evidence; do not run the Lisp command until load is verified.",
-        }
     finally:
         _safe_setvar(doc, "USERS5", previous_users5 if isinstance(previous_users5, str) else str(previous_users5 or ""))
         if previous_log_mode is not None:
