@@ -58,7 +58,7 @@ class LispResultTests(unittest.TestCase):
         self.assertEqual(result["error"], "bad source")
 
     def test_unreadable_result_is_real_tool_error(self):
-        doc = FakeDocument()
+        doc = FakeDocument(fail_read=True)
         with patch.object(bridge.time, "sleep"):
             with self.assertRaisesRegex(bridge.LispServiceError, "RESULT_READ_FAILED"):
                 bridge._await_lisp_result(doc, "pending", "ok", "err")
