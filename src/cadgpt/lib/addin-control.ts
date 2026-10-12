@@ -8,6 +8,7 @@ import {
 
 import { getAppDataPath } from "./appdata.js";
 import { activeJobSystemLeasesForSession } from "../runtime/system-lease.js";
+import { continuityFingerprint, logContinuityDiagnostic } from "./continuity-diagnostics.js";
 
 const CONTROL_SECRET = randomBytes(32).toString("base64url");
 const PAIR_WINDOW_MS = 180_000;
@@ -131,6 +132,10 @@ export function completePendingAddinPair(
     lastAccessedAt: Date.now(),
   });
   pendingPair = null;
+  logContinuityDiagnostic("addin_pairing_established", {
+    session: continuityFingerprint(sessionKey),
+    pair: continuityFingerprint(pending.pairId),
+  });
   return pending.pairId;
 }
 
@@ -241,15 +246,31 @@ export function releaseAddinPairing(
     pendingPair = null;
     return true;
   }
-  return pairedPanels.delete(pairId);
+  const paired = pairedPanels.get(pairId);
+  const removed = pairedPanels.delete(pairId);
+  if (removed && paired) {
+    logContinuityDiagnostic("addin_pairing_released", {
+      session: continuityFingerprint(paired.sessionKey),
+      pair: continuityFingerprint(pairId),
+    });
+  }
+  return removed;
 }
 
 export function clearAddinPairingsForSession(
   sessionKey: string
 ): void {
+  let removed = 0;
   for (const [pairId, pair] of pairedPanels) {
     if (pair.sessionKey === sessionKey) {
       pairedPanels.delete(pairId);
+      removed++;
     }
+  }
+  if (removed) {
+    logContinuityDiagnostic("addin_pairings_cleared_for_session", {
+      session: continuityFingerprint(sessionKey),
+      removed_count: removed,
+    });
   }
 }
