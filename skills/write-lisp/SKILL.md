@@ -185,6 +185,8 @@ appdata/libraries/jobs/**/dynamic-lisp/**
 
 A result with `loaded: true` is required. Queued `SendCommand` is not proof of load success. Do not open a second AutoCAD instance just to test the file.
 
+**One-off Temp Lisp:** use `file_temp_lisp_create` (requires a public `c:` command) under the existing HYBRID work_handle. Feed its returned **absolute_path** directly to `cad__cad_load_lisp_file` on the same explicitly bound drawing; `loaded:false` returned by the Temp file creator is normal because creation does not load. On a confirmed source/load error preserve the original authored source and real diagnostics, correct the text and call `file_temp_lisp_create` again for a **new UUID** under the SAME Work. `runtime/dynamic-lisp` is not editable with the general `file_edit` tool. Cleanup obsolete file by returned `file_name` + `sha256` only once its result is known and it is no longer needed. Never retry or cleanup a pending/unknown load while Work is active, or hand the user a manual APPLOAD workaround for a failed CadGPT loader. Source-only requests do not require a functional CAD run. For interactive commands wait for user completion; `cad_run_lisp_command` with `queued:true` is only submission, not completion. An explicit Work stop may clean the scratch source but does **not** prove a queued CAD command was cancelled.
+
 If load returns `loaded: false`, preserve the AutoCAD error evidence, patch the draft narrowly, rerun static validation, and load again in the same bound drawing until PASS or a real environment/dependency blocker is identified.
 
 ### 8. Functional execution — only when required
