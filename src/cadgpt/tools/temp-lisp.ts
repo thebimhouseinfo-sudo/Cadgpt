@@ -21,14 +21,23 @@ export function registerTempLispTools(server: McpServer): void {
     {
       title: "Create Disposable AutoLISP",
       description:
-        "Create one syntax-validated disposable AutoLISP source in the shared approved runtime. User approval for the planned action must precede use. Returns a path for the ordinary CAD Lisp loader; does not execute code or create a Custom Job.",
+        "Create one approved, syntax-validated disposable AutoLISP source with a public c: command in appdata/runtime/dynamic-lisp/**. Returns absolute_path, file_name and sha256 with loaded:false. Under the SAME HYBRID work_handle and bound drawing, pass absolute_path to cad__cad_load_lisp_file and require loaded:true. On a real load failure, correct the authored source text and create a NEW work-owned Temp UUID to retry after the prior result is known; no file_edit, manual APPLOAD or Custom Job promotion. A queued command is not completion.",
       inputSchema: { source: z.string().min(1).max(500_000) },
     },
     async ({ source }) => {
       try {
         const valid = validateLispSource(source, [], { profile: "syntax" });
-        if (!valid.valid || !valid.commands.length)
-          throw new Error("TEMP_LISP_VALID_COMMAND_REQUIRED");
+        if (!valid.valid) {
+          const errors = valid.diagnostics
+            .filter((item) => item.severity === "error")
+            .slice(0, 5)
+            .map((item) =>
+              `${item.code}${item.line ? ` (line ${item.line})` : ""}: ${item.message}`
+            );
+          throw new Error(`TEMP_LISP_VALIDATION_FAILED: ${errors.join("; ")}`);
+        }
+        if (!valid.commands.length)
+          throw new Error("TEMP_LISP_VALID_COMMAND_REQUIRED: disposable Lisp must define at least one public c: command.");
         const fileName = "cg-temp-" + workTag() +
           "-" + randomUUID().replaceAll("-", "") + ".lsp";
         const root = getDynamicLispRoot();
@@ -51,7 +60,7 @@ export function registerTempLispTools(server: McpServer): void {
     {
       title: "Delete Owned Disposable AutoLISP",
       description:
-        "Delete an owned temporary source file after use. Requires the exact source hash. Does not delete Job libraries or non-temp Lisp files.",
+        "Delete only a work-owned disposable Lisp file after a known terminal load/run result, or as part of an explicit Work stop. Requires its exact file name and sha256. Do not cleanup/retry an in-flight unknown load while Work is active; removing a source is not proof an already queued AutoCAD command was cancelled.",
       inputSchema: {
         file_name: z.string().min(1),
         expected_sha256: z.string().regex(/^[a-f0-9]{64}$/),
