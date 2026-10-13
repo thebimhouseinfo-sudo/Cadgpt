@@ -69,6 +69,15 @@ class LispResultTests(unittest.TestCase):
             with self.assertRaisesRegex(bridge.LispServiceError, "SENTINEL_CHANGED"):
                 bridge._await_lisp_result(doc, "pending", "ok", "err")
 
+    def test_run_command_reports_queued_not_verified_complete(self):
+        with patch.object(bridge, "_send") as send:
+            result = bridge.run_lisp_command("CGTEMP", ["1"])
+        self.assertTrue(result["queued"])
+        self.assertFalse(result["completion_verified"])
+        self.assertEqual(result["execution_status"], "QUEUED")
+        self.assertEqual(result["name"], "CGTEMP")
+        send.assert_called_once()
+
     def test_missing_lisp_source_is_reported_without_queueing(self):
         with self.assertRaisesRegex(bridge.LispServiceError, "file was not found"):
             bridge._resolve_lisp_path("resources/cad/not-an-existing-cadgpt-test-file.lsp")
