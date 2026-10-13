@@ -15,7 +15,7 @@ import {
 import { registerTempLispTools, cleanupTempLispForWork } from "../dist/cadgpt/tools/temp-lisp.js";
 import {
   bindDrawingForExecution,
-  clearDrawingContextsForExecution,
+  clearExecutionDrawingContexts,
 } from "../dist/cadgpt/session/drawing-binding.js";
 
 test("one-off Temp Lisp: real named proxy, same Work, error → new UUID → verified load → queued → explicit cleanup", async () => {
@@ -26,6 +26,7 @@ test("one-off Temp Lisp: real named proxy, same Work, error → new UUID → ver
   const document = { name: "Fixture.dwg", full_name: "C:/Tests/Fixture.dwg", runtime_document_id: "runtime-fixture-001", host: "autocad" };
   const oldStatus = cadUpstream.status, oldCallTool = cadUpstream.callTool;
   const calls = [];
+  let mockExecutionCompleted = false;
   const callbacks = new Map();
   const server = {
     registerTool(name, config, callback) {
@@ -50,6 +51,9 @@ test("one-off Temp Lisp: real named proxy, same Work, error → new UUID → ver
     }
     if (name === "cad_run_lisp_command") {
       return { structuredContent: { queued: true, completion_verified: false, execution_status: "QUEUED" } };
+    }
+    if (name === "cad_list_layers") {
+      return { structuredContent: { layers: mockExecutionCompleted ? [{ name: "CGTEMP_RESULT" }] : [] } };
     }
     throw new Error("unexpected mock backend call: " + name);
   };
@@ -135,10 +139,13 @@ test("one-off Temp Lisp: real named proxy, same Work, error → new UUID → ver
     assert.match(JSON.stringify(rejected), /LISP_COMMAND_SCOPE/);
     assert.equal(calls.filter(x => x.name === "cad_load_lisp_file").length, 2);
 
-    // The fixture explicitly establishes its (simulated) required outcome.
-    // This is not an AutoCAD-host completion claim.
-    const simulatedPostconditionVerified = true;
-    assert.equal(simulatedPostconditionVerified, true);
+    const beforeCompletion = await invoke("cad__cad_list_layers", "cad", { drawing_id: bind.drawing_id });
+    assert.deepEqual(beforeCompletion.structuredContent.layers, [], "queued response alone does not establish the required CAD postcondition");
+    // Simulate AutoCAD independently completing a noninteractive command, then
+    // verify via a *real named read proxy* instead of trusting queued:true.
+    mockExecutionCompleted = true;
+    const afterCompletion = await invoke("cad__cad_list_layers", "cad", { drawing_id: bind.drawing_id });
+    assert.deepEqual(afterCompletion.structuredContent.layers, [{ name: "CGTEMP_RESULT" }]);
     for (const entry of [a, b]) {
       const done = await invoke("file_temp_lisp_cleanup", "filesystem", {
         file_name: entry.file_name, expected_sha256: entry.sha256,
@@ -151,7 +158,7 @@ test("one-off Temp Lisp: real named proxy, same Work, error → new UUID → ver
     cadUpstream.callTool = oldCallTool;
     cadUpstream.status = oldStatus;
     if (current) {
-      clearDrawingContextsForExecution(current.executionId);
+      clearExecutionDrawingContexts(current.executionId);
       clearExecutionCadProxyState(current.executionId);
       work.releaseSessionWork(session);
       await cleanupTempLispForWork(current.executionId);
