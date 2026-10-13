@@ -365,7 +365,7 @@ export function verifiedLispLoadFailureResult(
       log_tail: logTail,
       failure_scope: "CADGPT_LISP_SOURCE_OR_RUNTIME",
       next_action:
-        "Report this actual Lisp load failure and its error/log. If authoring an approved disposable Temp Lisp, correct the source and call file_temp_lisp_create for a NEW UUID in the SAME Work/drawing, then load that path; do not blindly retry an unknown result. For a promoted Job follow its JOB.md failure rules. Never mark loaded:false as PASS, run an unloaded command or ask the user to APPLOAD manually.",
+        "Report the exact source/path/binding/AutoCAD error and log first. ONLY when evidence identifies an AutoLISP source defect in an approved disposable Temp task, correct the source and call file_temp_lisp_create for a NEW UUID under the SAME Work/drawing, then load that path. For missing proxy, denied path, stale drawing or unknown load acknowledgment, report the platform blocker; do not blindly retry or rewrite the Lisp. For a promoted Job follow JOB.md failure rules. Never mark unverified load as PASS, run an unloaded command or ask the user to APPLOAD manually.",
     },
   };
   return {
