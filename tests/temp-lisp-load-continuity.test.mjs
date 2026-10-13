@@ -47,6 +47,9 @@ test("one-off Temp Lisp: real named proxy, same Work, error → new UUID → ver
       if (data.includes("BAD_SOURCE")) {
         return { structuredContent: { loaded: false, error: "AutoLISP execution failed: BAD_SOURCE", log_tail: "BAD_SOURCE" } };
       }
+      if (data.includes("UNKNOWN_RESULT")) {
+        return { structuredContent: { note: "AutoCAD has not confirmed a load result" } };
+      }
       return { structuredContent: { loaded: true, error: null, path: args.path } };
     }
     if (name === "cad_run_lisp_command") {
@@ -154,6 +157,23 @@ test("one-off Temp Lisp: real named proxy, same Work, error → new UUID → ver
       await assert.rejects(fs.stat(entry.absolute_path), { code: "ENOENT" });
     }
     assert.equal(work.activeWorkForSession(session).executionId, current.executionId);
+
+    // Unknown acknowledgment is neither a successful load nor permission to run.
+    const pending = await invoke("file_temp_lisp_create", "filesystem", { source: '(defun c:CGUNKNOWN () (princ "UNKNOWN_RESULT"))' });
+    const pendingData = pending.structuredContent.data;
+    const pendingLoad = await invoke("cad__cad_load_lisp_file", "cad", { path: pendingData.absolute_path, drawing_id: bind.drawing_id });
+    assert.equal(pendingLoad.isError, true);
+    assert.equal(pendingLoad.structuredContent.data.error_code, "CADGPT_LISP_LOAD_UNVERIFIED");
+    assert.equal(calls.filter(x => x.name === "cad_load_lisp_file").length, 3, "no blind retry");
+    const pendingRun = await invoke("cad__cad_run_lisp_command", "cad", { name: "CGUNKNOWN", drawing_id: bind.drawing_id });
+    assert.equal(pendingRun.isError, true);
+    assert.match(JSON.stringify(pendingRun), /LISP_COMMAND_NOT_OWNED/);
+    await fs.stat(pendingData.absolute_path);
+    // Explicit stop releases the Work's scratch ownership. This does not
+    // claim the pending AutoCAD command has been canceled.
+    work.releaseSessionWork(session);
+    assert.equal(await cleanupTempLispForWork(current.executionId), 1);
+    await assert.rejects(fs.stat(pendingData.absolute_path), { code: "ENOENT" });
   } finally {
     cadUpstream.callTool = oldCallTool;
     cadUpstream.status = oldStatus;
