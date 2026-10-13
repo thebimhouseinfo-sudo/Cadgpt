@@ -86,8 +86,8 @@ Builder must compare the final JOB.md against that baseline, including **hidden 
 
 ## 6. Implementation plan
 
-### Phase 0 — Evidence-based baseline and integration decision
-#### GOAL
+## Phase 0 — Evidence-based baseline and integration decision
+### GOAL
 Find only real missing behavior, preserve stable systems and prevent duplicate implementation of Orchestrator V2.
 
 **Tasks**
@@ -97,8 +97,8 @@ Find only real missing behavior, preserve stable systems and prevent duplicate i
 
 **Exit/PASS:** bounded gap-and-dependency matrix; no unreviewed duplication or changed Saved Job; source/test evidence (not claims of runtime PASS).
 
-### Phase 1 — Builder contract and approved-baseline fidelity
-#### GOAL
+## Phase 1 — Builder contract and approved-baseline fidelity
+### GOAL
 Make Builder author a precise executor-first workflow that cannot silently drift from user-approved business steps.
 
 **Tasks**
@@ -109,8 +109,8 @@ Make Builder author a precise executor-first workflow that cannot silently drift
 
 **Exit/PASS:** positive/negative authoring tests incl. hidden substep, unsolicited user confirmation, fallback tool; legitimate old Job remains loadable; no surprise promotion/migration.
 
-### Phase 2 — Operator checklist execution behavior
-#### GOAL
+## Phase 2 — Operator checklist execution behavior
+### GOAL
 Have the GPT Web Operator behave as a skilled worker: run exactly the registered Job steps, continue on evidence-backed PASS, stop accurately on FAIL.
 
 **Tasks**
@@ -121,8 +121,8 @@ Have the GPT Web Operator behave as a skilled worker: run exactly the registered
 
 **Exit/PASS:** on real or simulated failures, no incorrect PASS or out-of-contract fallback; legal NEXT continues without redundant user prompt; do not claim pure prompt tests prove absolute enforcement.
 
-### Phase 3 — Selective Lisp-first and Engine+Data template
-#### GOAL
+## Phase 3 — Selective Lisp-first and Engine+Data template
+### GOAL
 Reduce CAD MCP calls and model involvement without rewriting proven LISP or breaking existing jobs.
 
 **Tasks**
@@ -133,8 +133,8 @@ Reduce CAD MCP calls and model involvement without rewriting proven LISP or brea
 
 **Exit/PASS:** reproducible before/after batch example; Engine unchanged where possible; measured fewer redundant calls without false claims about latency.
 
-### Phase 4 — Regression, real-host acceptance and handoff
-#### GOAL
+## Phase 4 — Regression, real-host acceptance and handoff
+### GOAL
 Prove reliability and compatibility, not just presence of contract fields or passing string assertions.
 
 **Tasks**
