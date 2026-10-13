@@ -450,6 +450,8 @@ def run_lisp_command(name: str, args: list | None = None) -> dict:
     _send(command)
     return {
         "queued": True,
+        "completion_verified": False,
+        "execution_status": "QUEUED",
         "name": command_name,
         "arg_count": len(serialized),
         "note": "Command execution is asynchronous; verify its post-condition with structured CAD read tools.",
