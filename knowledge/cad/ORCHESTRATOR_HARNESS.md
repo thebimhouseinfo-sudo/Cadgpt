@@ -37,6 +37,18 @@ The existing session/plugin admission and binding authority still apply. This is
 - Report actual partial completion accurately when stored result changes succeeded but CAD synchronization did not. Do not automatically start a wider recovery or re-scan unless the approved workflow requires it.
 - Existing callable batch tools and data-driven Lisp are preferred over rewriting a Custom Job or issuing numerous single-object CAD calls. Temporary Lisp may be produced only within the approved scope and via the approved shared runtime, then cleaned up after use.
 
+## Disposable AutoLISP: author → verified load → repair → test
+
+For an approved one-off Temp task needing AutoLISP, **do not** turn it into a Custom Job or hand the user a local .lsp path for manual APPLOAD because a CadGPT tool failed. Keep the existing active HYBRID `work_handle` and its explicitly bound drawing through every step.
+
+1. Call `file_temp_lisp_create(source=...)` under the current Work. It requires at least one public `c:` command, and returns `absolute_path`, `sha256`, `file_name`, `commands`, `loaded:false`. Syntax failure or missing public command is a real authoring error: correct source, not permissions.
+2. Call **`cad__cad_load_lisp_file(path=absolute_path, drawing_id=bound_drawing_id)`** with the *same* `execution_id` + `authority_token`. Only `loaded:true` verifies the source reached AutoCAD. If the named proxy is missing, the drawing is unbound, or the loader reports a root/scope/tool error, report that exact blocker and fix only the proven in-scope fault; never bypass the protected proxy or silently ask for manual APPLOAD.
+3. For a real source/load error, use the original authored source and reported diagnostics to produce a corrected **new immutable Temp UUID** via `file_temp_lisp_create` under that same Work, then load the new path. The runtime scratch root is not generic `file_read`/`file_edit` storage. Delete an obsolete UUID with `file_temp_lisp_cleanup(file_name,expected_sha256)` only after its load outcome is known and it is no longer needed. Do not retry or cleanup an uncertain/pending load while Work is active.
+4. Only if the approved task requires *functional execution*, call `cad__cad_run_lisp_command` for a command actually loaded on this drawing. Its `queued:true` means **submitted, not completed**. Check only the task's required structured CAD postcondition, or wait for the user to finish an interactive command. Do not add a generic CAD rescan for a source-load test.
+5. Finish the owned Temp cleanup once no step needs the source; explicit user stop remains valid, but source cleanup does not prove any previously queued AutoCAD command was cancelled. Preserve this distinction in the report. A source-only load request ends after verified `loaded:true`.
+
+If original source text or verified drawing/work identity is unavailable, surface the precise blocker; do not invent a repair or start a replacement Work merely to use the CAD tool.
+
 ## Stop and return
 
 - Perform only the explicit acceptance checks in the established workflow or Temp plan and the mandatory checks enforced by the platform/tool. Do not add a comprehensive readback or consequence audit merely because a mutation occurred.
