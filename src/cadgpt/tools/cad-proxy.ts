@@ -365,7 +365,7 @@ export function verifiedLispLoadFailureResult(
       log_tail: logTail,
       failure_scope: "CADGPT_LISP_SOURCE_OR_RUNTIME",
       next_action:
-        "Report this failed Job step to the user with the original error. Do not mark it PASS, run the unloaded command, or silently bypass the Job's loader.",
+        "Report this actual Lisp load failure and its error/log. If authoring an approved disposable Temp Lisp, correct the source and call file_temp_lisp_create for a NEW UUID in the SAME Work/drawing, then load that path; do not blindly retry an unknown result. For a promoted Job follow its JOB.md failure rules. Never mark loaded:false as PASS, run an unloaded command or ask the user to APPLOAD manually.",
     },
   };
   return {
@@ -702,7 +702,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
       {
         title: "Load Verified Lisp File",
         description:
-          "[CAD MCP / execution-owned Lisp state] Load and verify one sandboxed Lisp file on a bound drawing. Internal repo-bundled Lisp uses resources/cad/internal-lisp/**; user-managed Lisp uses appdata/libraries/lisp/**. Commands discovered from the successfully loaded source become runnable only by this work execution on this drawing.",
+          "[CAD MCP / execution-owned Lisp state] Verified load into the EXACT bound drawing using the SAME HYBRID work_handle. Accepted Lisp roots include resources/cad/**, appdata/libraries/lisp/**, appdata/workspace/lisp-draft/**, appdata/runtime/dynamic-lisp/** (from file_temp_lisp_create.absolute_path), and Job-owned appdata/workspace/job-draft/** or appdata/libraries/jobs/** inside lisp/** or dynamic-lisp/** folders. Use a canonical absolute path or allowed virtual path. Only loaded:true confirms load; report real errors. For approved Temp source correction create a NEW UUID; do not use manual APPLOAD. Successfully loaded commands are owned by this Work and drawing only.",
         inputSchema: {
           path: z.string().min(1),
           drawing_id: z.string().optional(),
@@ -758,7 +758,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
       {
         title: "Run Owned Lisp Command",
         description:
-          "[CAD MCP / execution-owned Lisp state] Run only a command that this exact work execution successfully loaded from Lisp source on this exact bound drawing.",
+          "[CAD MCP / execution-owned Lisp state] Queue only a command successfully loaded by this Work on this EXACT bound drawing. A successful tool call with queued:true means SendCommand was submitted, NOT that AutoCAD completed the command. If functional execution is required, check only its defined CAD postcondition with authorized tools or await user interaction completion; do not claim PASS or cleanup solely from queued:true.",
         inputSchema: {
           name: z.string().min(1),
           args: z
