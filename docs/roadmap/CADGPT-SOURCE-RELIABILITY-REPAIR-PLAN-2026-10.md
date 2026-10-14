@@ -14,7 +14,7 @@ Sửa **những lỗi có bằng chứng** trong CadGPT hiện tại có thể t
 
 | ID | Hiện tượng / bằng chứng | Verdict ở baseline | Ưu tiên kiểm tra/sửa | Owner |
 | --- | --- | --- | --- | --- |
-| R01 | `job_dynamic_lisp_patch` dùng `updated.replace(old_text, new_text)`: replacement string có `$$`, `$&`, `$\``, `$'` có ngữ nghĩa đặc biệt của JavaScript; nhánh split/join không có ngữ nghĩa đó. | **CONFIRMED CODE-LEVEL**; nguy cơ ghi Lisp sai nội dung, không cần AutoCAD để chứng minh | A / fix nhỏ sau test đỏ | Dynamic Lisp authoring |
+| R01 | `job_dynamic_lisp_patch` dùng `updated.replace(old_text, new_text)`: replacement string có `$$`, `$&`, `token dollar-backtick`, `$'` có ngữ nghĩa đặc biệt của JavaScript; nhánh split/join không có ngữ nghĩa đó. | **CONFIRMED CODE-LEVEL**; nguy cơ ghi Lisp sai nội dung, không cần AutoCAD để chứng minh | A / fix nhỏ sau test đỏ | Dynamic Lisp authoring |
 | R02 | `replace_all=false` cho phép `old_text` xuất hiện nhiều lần, nhưng thay lần đầu và ghi `occurrences: 1`. | **CONFIRMED CODE-LEVEL**; xem như defect nếu contract “exact section” đòi duy nhất, cần chốt quy tắc rõ trong test | A / fail-closed với ambiguous match | Dynamic Lisp authoring |
 | R03 | `entity_service.py::_entities` nuốt lỗi COM từ Count/Item; `_spaces` cũng skip lỗi layout. | **CONFIRMED CODE-LEVEL**; mock COM để chứng minh partial/empty sai, chưa có incident AutoCAD trong ERROR_LOG | A / test+fix | Existing J03 CAD MCP foundation |
 | R04 | `utils/filters.py` default `limit=200`, tối đa 5000; `list_entities` trả `list[dict]` ngay khi đạt limit, **không metadata incomplete/truncated**. | **CONFIRMED CODE-LEVEL**; chưa chứng minh ca sử dụng thực tế | A / test+contract fix tương thích | Existing J03 |
@@ -60,7 +60,7 @@ Establish exact reproduction and non-overlap before a source change; classify fa
 Prevent wrong Lisp patch content, ambiguous patch placement and unauthorized filesystem writes with minimal local code changes.
 
 **Tasks**
-1. R01: replace JS string replacement with a **literal-safe** operation for single occurrence (callback or indexed splice); test `$$`, `$&`, `$\``, `$'` and Vietnamese/multibyte content. Assert unchanged bytes outside approved patch span and correct source SHA/result.
+1. R01: replace JS string replacement with a **literal-safe** operation for single occurrence (callback or indexed splice); test `$$`, `$&`, `token dollar-backtick`, `$'` and Vietnamese/multibyte content. Assert unchanged bytes outside approved patch span and correct source SHA/result.
 2. R02: for `replace_all=false`, fail explicitly when `old_text` matches more than once (unless already explicitly approved unique-anchor semantics exist); for `replace_all=true`, retain intended all-occurrences behavior. Both paths reject missing target, report correct occurrence count, preserve existing syntax/hash checks.
 3. R12: on `forCreate`, distinguish target-absent ENOENT from **existing but dangling symlink**; fail closed if `lstat` succeeded but `realpath` failed. Test link-to-outside missing target, link-to-inside target, root junction, ordinary new path and permissions on Windows and supported test OS.
 4. R08: inject `rename` EPERM/EBUSY, unexpected process interruption between Lisp and provenance writes, and source SHA conflict. Implement only a bounded, measured Windows-safe policy that does not delete original or claim two filesystem writes are a single transaction. Reconcile source/provenance mismatch before any reuse/load; avoid blind retry of mutations with uncertain outcome.
