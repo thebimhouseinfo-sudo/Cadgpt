@@ -1,13 +1,15 @@
-# CadGPT — Reliable Worker Harness Upgrade
+# CadGPT — Reliable CAD Assistant / Harness Refinement Draft
 ## GOAL
 
-Turn CadGPT into a **reliable, high-quality technical worker, not a consulting agent**: it understands the assigned task, executes the approved workflow in order, reasons only where the workflow asks it to, uses the right executor, continues automatically on PASS, and stops with the real error on FAIL.
+Make the **existing CadGPT a reliable, fast, user-directed CAD Technical Assistant**. **User assigns the work and chooses when; CadGPT uses existing capabilities to do it accurately and quickly, then reports the real result.** CadGPT is **not an Automator** that directs project timing/dependencies, and **not an Advisor** that replaces execution with unsolicited consulting. Reason only as much as the assigned task or approved Job step actually requires.
 
-**Observable success:** fewer unnecessary reasoning turns and CAD MCP calls; no unsolicited workflow additions, duplicate confirmations, arbitrary workarounds, or false success; stable Saved Jobs and correct drawing binding. Accuracy and correct scope take priority over superficial speed.
+**Observable success:** correct and quick requested execution; fewer redundant tool calls, reasoning turns, confirmations and workarounds; truthful tool errors; existing Saved Jobs and binding remain stable. **One bound drawing per AutoCAD/CadGPT host is shared by multiple concurrent ChatGPT chats**, each running an independent Work/Job when its own resources allow. Chat A running FILE/Python MTO must not block Chat B's CAD Create System or Chat C's Builder work.
 
-**Hard constraints:** one GPT Web model; two execution harnesses (Operator and Builder) sharing the **existing** CadGPT runtime; **no second Workflow Engine or local agents**; maintain the existing Job Runtime, WorkRegistration, Drawing Binding, permissions and SYSTEM leases. This is a development plan, not authorization to alter current Saved Jobs or application code.
+**Implementation decision rule: KEEP → REFINE → FIX (evidence-backed) → BUILD ONLY IF NECESSARY.** Avoid over-reasoning, over-engineering, over-checking and unapproved workflow changes. A plan review must explicitly reject complexity added solely because CadGPT *could* automate something.
 
-**Status:** NEW DRAFT PLAN — Revision R2, separate from the previous plan file. CR findings from the original revision are incorporated; no new independent CR verdict or GSA planning verification is claimed. No feature implementation, merge or deployment is authorized by this document.
+**Hard constraints:** one GPT Web model with existing Operator/Builder harnesses; no second Workflow Engine, Job Scheduler, Job Clash Manager, Capability Registry, local agent or new per-step runtime. Preserve existing Job Runtime, WorkRegistration, effective Registry (CAD MCP, SYSTEM MCP, LISP), permissions, ToolLeases and SYSTEM leases. This is a **planning-only** revision; no source, promoted Job, DWG, merge or deployment authorization.
+
+**Status:** DRAFT R3 — full-plan self-review pending after source-aligned edits; prior R2 independent CR verdict is **not** inherited. Existing production behavior must be proved, not inferred from plan language.
 
 **Draft lineage:** Prepared from `docs/roadmap/CADGPT-RELIABLE-WORKER-HARNESS-PLAN-2026-10.md` at source commit `72e45519678dd5724e969eab8c882dc783633790`. Independent CR source for original revision: GSA Verification `01a13601-03d6-766d-828e-a257c4d85532` (FAIL with three findings). The new draft closes those findings at the planning-text level; external execution behavior is still unverified.
 
@@ -15,17 +17,22 @@ Turn CadGPT into a **reliable, high-quality technical worker, not a consulting a
 
 ## 1. Product contract and authority
 
-- **Operator = execute:** automatically selected for *registered/promoted Saved Jobs*. Read the current promoted JOB.md, use its selected branch and per-job JOB_STEPS.md checklist. Do not redesign, add checks, replan, modify packages, improvise recovery, or substitute lower-level tools after a failure.
-- **Builder = develop:** automatically selected for new/refined Saved Jobs, Lisp/dynamic Lisp, CAD MCP/add-in/runtime/knowledge development, and one-off Temp/Disposable Jobs. May debug and review implementations, but **must not add business steps or change an approved workflow**.
-- **Direct command = direct execution:** an already registered simple tool/command needs neither a new Job nor the full Builder lifecycle.
-- **User = workflow authority:** discusses requirements first and explicitly approves workflow-changing implementation. Running a registered Saved Job is itself execution intent; do not request another general approval.
-- **Runtime = infrastructure safety:** enforce drawing/Work identity, tool-family/work authorization, file boundaries, source hashes, lease/lifecycle and real tool-result errors. **Do not build a duplicate business-step scheduler**.
-- **Current JOB.md is authoritative for Operator; approved workflow baseline is authoritative during Builder authoring.** An unpromoted discussion cannot silently replace an installed JOB.md.
+**Assistant operating loop:** User asks → CadGPT executes with the smallest applicable existing capability → returns result or actual error. If a genuinely essential detail is missing, ask only for that detail. Do not decide design is “ready”, independently schedule MTO after Create System, delay work for project-level data freshness, audit the entire DWG or give a lecture on what user should do next.
+
+- **User directs WHAT and WHEN.** User understands their semi-automated engineering workflow. MTO before design completion can produce incomplete quantities; CadGPT does not become a design-completion gatekeeper. A promoted Job's *explicit* preconditions remain binding.
+- **Operator = execute registered/promoted Saved Jobs**: read current JOB.md, follow selected approved branch and Job Steps. No redesign, invented checks, repetitive approvals, alternate route after failure or unrelated CAD scans.
+- **Builder = build on explicit user approval**: create/refine Jobs, Lisp (including Dynamic Lisp), tools and Temp/Disposable tasks. Proposals are NOMINATIONS until approved; Builder does not insert extra business steps. Writing source, promoting and merging are separate approvals.
+- **Direct registered command = direct execution**: no artificial Job creation or Builder planning when a usable registered capability exists.
+- **Runtime = technical safety only**: enforce Work/session identity, single bound drawing, permission/file ownership, genuine tool results and dispatch order. Existing Job step checklist is not a second business workflow engine.
+- **Operator/Builder harness = behavioral emphasis, not two model processes.** For execution, current promoted JOB.md is authoritative; for authoring, the user-approved baseline is authoritative.
+- **Multiple chats are expected, not a clash to be managed.** Each chat has its own session/Work; all share the *same verified host drawing*. Each Job owns its files/results; a different Job may read but not modify them. Different Job IDs operate independently. The **same Job** can retain its existing exclusive runtime root: do not quietly redesign persistent Job files to permit duplicate same-Job runs.
+- **Only shared CAD ingress is serialized**, using the existing host queue if it already serves that purpose. FILE/Python/GPT work must not be placed in a host-wide waiting line. Technical action ordering is distinct from model-invented project task dependency.
+
+**Three non-negotiable real-product scenarios from `diagnostics/cad/ERROR_LOG.md`:** bound-CAD “vẽ lại” means work on the DWG rather than image generation; repeated CAD-state questions read live CAD rather than reuse chat context; Internal Direct Job error is reported rather than bypassed with invented lower-level tools.
 
 ## 2. Executor-first, reasoning-on-demand contract
 
-Each new/refined Reasoning JOB.md step must specify:
-`step_id`, `goal`, `input`, `action`, `executor`, `allowed_tools`, `reasoning_level`, `reasoning_scope`, `output`, `pass_condition`, `on_pass`, `on_fail`; add `on_wait` **only** if the workflow genuinely needs user/CAD interaction. Include forbidden actions when ambiguity could cause drift. Use existing Markdown Job structure rather than introducing a mandatory YAML parser.
+For a new/refined Reasoning JOB.md, **make only the meaningful approved steps executable and unambiguous**: their goal/action, required inputs/outputs, chosen executor, reasoning boundary and PASS/FAIL/NEXT; WAIT and recovery only when actually needed. Existing Markdown structure and mandatory Final Validation stay authoritative. Do **not** impose a long field inventory, new YAML parser or boilerplate on every step merely to satisfy planning formality.
 
 - **NONE — No reasoning, just execute.** Prefer deterministic Lisp for AutoCAD work or Python for file/algorithmic work **only when the exact per-step executor is proven callable within the active Job authority**. Builder specifies the registered tool, asset SHA, input/output locations, drawing identity and lease requirements, if any. Operator dispatches only that executor and reads its actual success/failure output; it must not plan or calculate the step with GPT. An unavailable executor is a STOP/PLAN GAP, never permission to fall back to ad hoc model execution.
 - **LOW — Minimal bounded reasoning.** Make only a named choice from declared inputs/options within this step, then execute the specified tool. No independent data hunt or alternative workflow.
@@ -52,15 +59,18 @@ Each new/refined Reasoning JOB.md step must specify:
 
 Do not silently retrofit this illustrative example onto the currently promoted Grille Tag JOB.md.
 
-## 3. Lisp-first, Hybrid Engine + Data
+## 3. Reuse-first executors, Engine + Data as a technique
 
-**Default design preference for operations affecting AutoCAD: AutoLISP first.** Use CAD MCP as the authenticated, drawing-bound control plane for necessary Lisp load/run and explicit reads; avoid hundreds of per-entity MCP calls when one supported Lisp batch suffices.
+**Default preference for sizable AutoCAD changes: reuse proven batch AutoLISP rather than hundreds of entity MCP calls.** CAD MCP remains the approved bound-drawing tool ingress; Python/FILE tools handle deterministic data/files; GPT reasons only for the particular technical decision requested.
 
-- **Lisp engine:** stable, tested implementation for collect/select/hide/unhide, geometry, blocks, ATT, layer and batch updates.
-- **Dynamic data:** JSON/CSV/Lisp data prepared from deterministic Python or a narrowly scoped GPT reasoning result. Engine reads the data; model changes data rather than mutating engine code on every run.
-- **Python:** deterministic file, mapping and calculation work that does not require CAD transaction context; prefer direct/fixed execution when the **complete job** is deterministic. For a Python step inside a Reasoning JOB.md, **do not call `job_run_direct` as a per-step helper**: it dispatches an entire Direct Job and may release prior Job authority. The existing `job_system_run_helper` requires an active Job-owned SYSTEM lease, hash-pinned `tools/**` script and JSON input under the owning Job runtime; inspect its availability/lifecycle compatibility at Phase 0. If no approved, usable per-step path exists, record a bounded implementation gap and fail closed rather than inventing a route.
-- **Existing source reuse:** keep a proven Lisp unchanged where it already accepts external data. If truly necessary, Builder may create a Job-owned dynamic derivative by copying the working source and patching only approved dynamic sections using existing hash/syntax checks. Avoid speculative wrappers and wholesale rewrite.
-- **Compatibility:** never auto-rewrite installed Lisp or change existing job bundles as part of this architectural rollout; conversion to Engine+Data is selective and evidence-based.
+**Dynamic Lisp is a *preferred technique*, NOT a distinct tool/runtime**: when appropriate, split a stable `engine.lsp` (reusable algorithm) from a varying `data.lsp` (task inputs). The existing FILE/SYSTEM tools create/read data and existing CAD MCP load/run executes Lisp; no `job_dynamic_lisp_run`, new registry, second Engine or mandatory migration is justified by this pattern. Data can be JSON/CSV or another accepted format if an existing engine already supports it. **Do not split Lisp that already works well without benefit.**
+
+- **Reuse source:** when Job B needs a Lisp capability from Job A, prefer direct load/use of Job A's registered file **read-only**, if the current loader and invocation contract permit it. Copy to Job B only if necessary to modify/independently version it; Job B never writes Job A's source.
+- **Registry categories:** effective Registry already catalogs **CAD MCP, SYSTEM MCP and LISP** capabilities (along with Job metadata). Borrow a *capability*, not another chat's Work, ToolLease or Job execution. For registered Job-exposed MCP capabilities, use a unique **Job ID + capability ID** namespace; actual source currently implements `custom:<job-id>:<command>` for a restricted zero-arg standalone-Lisp export, **not** a general Job-owned MCP export. Inspect actual export requirements and only extend the existing registry/index minimally if a real approved Job needs it.
+- **Job-owned files:** own runtime/result writable; other Jobs' metadata/results read-only. Keep explicit, user-approved exceptional patch/human power routes separate rather than interpreting generic sharing as write permission.
+- **Python inside Reasoning Job:** an executor must truly be callable with valid SYSTEM lease, Job-owned helper/data and lifecycle; `job_run_direct` runs a whole Direct Job, not a per-step helper. Reuse `job_system_run_helper` only when authority and lifecycle are valid, else record a narrow gap, not an ad hoc Python runner.
+- **Builder may patch an existing Job-owned Lisp derivative only when necessary**, respecting current source hash/syntax checks and user-approved change. Stable Engine + Data is a preference, not permission for code rewrite.
+- **Tool contract truth:** `loaded=true` proves load, `queued=true` proves dispatch, not completed CAD execution. Use only declared Job/tool evidence; do not invent after-action inspections.
 
 ## 4. Builder workflow baseline and review discipline
 
@@ -85,10 +95,22 @@ Builder must compare the final JOB.md against that baseline, including **hidden 
 - `src/cadgpt/runtime/job-runtime.ts` explicitly says JOB_STEPS.md is *a checklist, not a workflow engine*.
 - `src/cadgpt/tools/jobs.ts` validates Markdown Job structure, retrieves promoted workflow source + SHA and supports Direct Python Jobs; structural validation does not show approved-baseline semantic fidelity.
 - `src/cadgpt/lib/work-registration.ts` enforces work/tool-family boundaries, not a proved strict whitelist for each individual reasoning step.
-- `src/cadgpt/lib/job-capability-index.ts` already implements lazy Job capability indexing; reuse it, do not rebuild it.
+- `src/cadgpt/lib/job-capability-index.ts` already implements lazy Job capability indexing for **reviewed standalone zero-arg Lisp exports** with `custom:<job-id>:<command>` IDs; do not claim it exposes arbitrary Job MCP tools.
 - `docs/roadmap/CADGPT-ORCHESTRATOR-V2-IMPLEMENTATION-DETAIL.md` and GSA Job J-6B01 cover adjacent orchestration/capability changes. Reconcile against current main and the ongoing owning work before creating implementation tasks; **do not supersede/restart J-6B01 without a separately authorized plan change**.
 
-**Still to verify** (not claimed implemented): explicit NONE/LOW/SCOPED step contracts in Builder, reliable baseline fidelity review, routed Operator/Builder behavior under real GPT Web, tool-call trace behavior (vs text-only tests), compatibility for installed legacy Jobs, and realistic end-to-end Lisp Engine+Data examples. The existence of prompt instructions is not proof that the model follows them.
+**Source review (main `b174ca41800bf017e3c11c296c2113d09cd6da8d`, 2026-10-14; no live host run):**
+- `src/cadgpt/runtime/cad-scheduler.ts`: **existing per-host Promise FIFO** (`withCadHostLock`) wraps CAD MCP proxy calls. **KEEP**, test two chats at the actual CAD ingress before altering it. `mcp-session-manager.ts::enqueue` instead queues per transport/session; do not mistake that for a host-wide CAD queue.
+- `src/cadgpt/lib/work-registration.ts`: `activeBySession`, `registrations` and ToolLeases are session/Work scoped. `mcp-session-manager.ts` supports distinct logical conversation identities. Keep per-chat control and stop; do not merge their auth/session identities.
+- `src/cadgpt/session/drawing-binding.ts`: binding `contexts` is currently keyed by **execution**, with only same-session handoff support. `server-factory.ts::activateCadWorkspace` creates an execution-bound drawing. **Gap to verify/REFINE:** share a *single authoritative verified host-bound drawing* across independently admitted chats; keep each chat's Work/drawing access checks. No per-chat change of the host binding, no auto rebind to active tab, no stale-document retarget.
+- `src/cadgpt/runtime/job-runtime.ts`: `executionByJobRoot` enforces **same Job root** exclusion (`JOB_RUNTIME_BUSY`), not global Job exclusion. `src/cadgpt/runtime/system-lease.ts` keys per SYSTEM `tool_id`/Job ID. **KEEP** separate Job A/B execution and same-Job file ownership; do not build per-run directories by default.
+- `src/cadgpt/tools/filesystem.ts` enforces Job-owned writable runtime/result roots and read access to approved managed roots; preserve; `file_job_result_patch` has an exceptional, approval-scoped flow, not normal cross-Job write.
+- `src/cadgpt/tools/registry.ts` composes internal MCP/system entries, bundled/user Lisp/Jobs and exported capabilities; `job-capability-index.ts` currently implements standalone Lisp export only. Reuse; an unrestricted Job MCP exporter is **not** proven present.
+- `src/cadgpt/runtime/cad-upstream.ts` nominally reuses one Python MCP process across ordinary execution IDs, but has context/Human-Power reset paths. `lisp_service.py::run_lisp_command` returns `queued`. Verify concurrent chat dispatch/cleanup and queued command overlap before any limited code change; do not claim the FIFO waits for actual Lisp completion.
+- `src/cadgpt/lib/addin-control.ts` panel pairing/status is session-specific; preserve one Add-in chat UI if desired, while allowing other independently admitted browser chats to attach to the same host drawing.
+
+**Still to verify:** real two-chat admission/binding/stop behavior; possible global CAD deactivation when one chat ends; concurrent same/different-Job traces; cross-chat Lisp command ownership/source state; Builder/Operator real GPT behavior; compatibility for current Saved Jobs. No claim of live PASS.
+
+**Other owner:** `docs/roadmap/CADGPT-SOURCE-RELIABILITY-REPAIR-PLAN-2026-10.md` on `plan/cadgpt-source-reliability-repair-20261014` covers source defects (JS replacement, COM incomplete reads, filesystem etc.). **Do not copy its bugfix implementation into this harness draft**. Coordinate only shared behavioral acceptance and verified failures.
 
 ## 6. Draft implementation plan (requires separate execution approval)
 
@@ -102,15 +124,17 @@ Find only real missing behavior, preserve stable systems and prevent duplicate i
 3. Determine exactly which backward-compatible rules are sufficient vs which installed Job contracts would require explicit migration.
 4. **Executor feasibility matrix (CR1):** for each proposed NONE/Python/Lisp step type, identify its actually callable registered tool, necessary work authorization/SYSTEM lease, asset hash, drawing identity, inputs/outputs, lifecycle impact and FAIL behavior. Verify `job_system_run_helper`'s lease restrictions and `job_run_direct`'s whole-Job transition semantics; forbid using `job_run_direct` as a per-step helper. Where no valid per-step call path exists, mark BLOCKED/ADD and design the smallest later approved fix — never assert capability by naming Python alone.
 5. **Canonical contract reconciliation (CR2):** map each required JOB.md `## Validation`, allowed `viable alternative tools`, and `on_fail` branch to the Strict Execution rules. Preserve approved final validation and preauthorized alternatives; prohibit inferred retry/fallback after a tool failure.
+6. **Multi-chat source trace:** establish exact shared host-bound drawing owner/status and session attach behavior, verify separate Job A/B roots, existing CAD FIFO scope, CAD upstream shutdown/stop behavior, direct Lisp command state and Registry export limits. Prefer a no-new-component change list. Distinguish already working behavior from actual missing paths.
+7. **Product-scope audit:** every proposed action must satisfy ASSISTANT (user directs, tool executes). Mark automator/advisor mechanisms DEFER or REMOVE (Job dependency scheduler, design-readiness checks, data-freshness gates, background project workflow planner, separate job-clash manager).
 
-**Exit/PASS:** bounded gap-and-dependency matrix including per-step executor/lease/lifecycle feasibility and Final Validation/alternative-route compatibility; no unreviewed duplication or changed Saved Job; source/test evidence (not claims of runtime PASS).
+**Exit/PASS:** source-backed KEEP/REFINE/FIX/ADD/DEFER matrix, including real multi-chat limitations, per-step executor/lease feasibility and Final Validation/alternative-route compatibility; no unreviewed duplication or changed Saved Job. Mark host-only claims PENDING.
 
 ## Phase 1 — Builder contract and approved-baseline fidelity
 ### GOAL
 Make Builder author a precise executor-first workflow that cannot silently drift from user-approved business steps.
 
 **Tasks**
-1. Amend existing `jobcreate`/JOB authoring guidance with per-step executor, NONE/LOW/SCOPED, input/output, constraints and PASS/FAIL/WAIT/NEXT in human-readable Markdown.
+1. Refine existing `jobcreate`/JOB authoring guidance with only necessary executor, reasoning scope and PASS/FAIL/NEXT details in human-readable Markdown; no new required parser/schema or gratuitous fields.
 2. Add a small approval-baseline representation and an observable compare/review step before promotion; do not claim automatic semantic completeness.
 3. Keep Nomination separate from actionable defects in Planner/Builder review; detect extra nested checks/retries and unapproved workflow change.
 4. Provide compatibility for old JOB.md and guard existing promotion/Job local-compatibility machinery.
@@ -135,32 +159,47 @@ Have the GPT Web Operator behave as a skilled worker: run exactly the registered
 Reduce CAD MCP calls and model involvement without rewriting proven LISP or breaking existing jobs.
 
 **Tasks**
-1. Document Builder's AutoLISP-first and deterministic Python selection policy; use an existing fixed/batch capability where appropriate.
-2. Define a minimal Engine+Data input/output contract, including validated drawing identity, data schema/version, load/run result and failure reporting. Reuse only the Phase 0-verified per-step executor with correct authority and no unexpected Job transition.
-3. Demonstrate on a safe representative Job/workload without changing permanent packages until approved. Preserve currently registered Lisp semantics.
+1. Document Builder's AutoLISP-first reuse and deterministic Python selection preference; use an existing registered batch capability where appropriate, but never force Engine+Data restructuring.
+2. Demonstrate optional `engine.lsp` + `data.lsp` from existing file/write and Lisp load/run capabilities; no new Tool, Registry or Runtime. For any engine already consuming JSON/CSV, keep that interface instead. Reuse verified Job authority and correct real tool-result status.
+3. Demonstrate on a safe representative Job/workload without changing permanent packages until approved. Check reuse of directly borrowed read-only Lisp versus copied Job-owned derivative only when necessary; preserve registered Lisp semantics.
 4. Compare equivalent workflows on tool-call counts and verified outputs; reject rewrites that add complexity or lose correctness.
 
 **Exit/PASS:** reproducible before/after batch example; Engine unchanged where possible; measured fewer redundant calls without false claims about latency.
 
-## Phase 4 — Regression, real-host acceptance and handoff
+## Phase 4 — One bound drawing / many concurrent chats (minimal refinement)
 ### GOAL
-Prove reliability and compatibility, not just presence of contract fields or passing string assertions.
+Allow independently admitted ChatGPT chats to use the **same single host-bound DWG** and run different Jobs simultaneously, without sharing Work identity, writing each other's files or inventing a concurrency manager.
 
 **Tasks**
-1. Run existing build/unit suites from `package.json`, preserve source-diagnostic errors and current workflow paths; never invent CI PASS.
-2. Add behavioral tests for PASS→NEXT, FAIL→STOP, WAIT, no workaround, approved pre-action tool alternatives, explicit on_fail recovery, mandatory Final Validation without phantom scans, per-step Python helper lease/identity, no `job_run_direct` misuse, low/scoped reasoning boundaries, wrong drawing, Lisp load result and relevant output validation.
-3. Validate current Saved Job compatibility, Temp/Direct commands, Job A→B handoff, SYSTEM lease and AutoCAD binding invariants.
-4. Use real GPT Web and user-operated AutoCAD acceptance for scenarios that mocks cannot prove. Compare latency/tool calls on equivalent workload and report unverified host-only outcomes explicitly.
+1. Map actual Add-in host binding and execution-scoped `contexts`. **KEEP** one authoritative host DWG identity (Drawing Anchor + runtime document lifetime), explicit user-controlled bind/rebind, existing header semantics (normal / closed-yellow / inactive-tab-orange). On another chat's @cg admission, attach to the **already bound** host drawing after validation. Never choose a second DWG, infer from active tab, or revoke Chat A merely because Chat B starts.
+2. Preserve independent per-chat admission, WorkRegistration, ToolLease, Job Runtime and `cg/stop`. Stop/close Chat A must not invalidate Chat B nor deactivate shared CAD MCP while another authorized chat uses it; closing the *bound DWG* invalidates all users of that DWG with accurate status. Preserve same-chat Work handoff and session continuity.
+3. **KEEP current per-host FIFO `withCadHostLock`**. Confirm every relevant CAD command/read/load, including special/direct paths, passes through the existing host ingress in one comparable host ID. Queue only CAD dispatch; never lock entire Jobs or FILE/GPT/Python. If a source bypass is reproduced, fix the narrow ingress routing; don't duplicate scheduler. An async `queued` response is dispatch acknowledgement, not completed command.
+4. **KEEP Job-owned files**: Job A writes its own runtime/results, Job B may read them but never mutate them through ordinary Job execution. Job A MTO (FILE/Excel) + Job B Create System (CAD/JSON) + Chat C Builder writing its own files run independently. Existing `JOB_RUNTIME_BUSY` for **two simultaneous runs of the same Job ID/root** may remain; do not add per-run Job directory or global Job-clash detection.
+5. Capability borrowing uses existing **CAD MCP, SYSTEM MCP and LISP Registry categories**: Job-scoped exported MCP capability IDs must be unique by Job ID/name when such exports actually exist; reuse verified index/registry if necessary, no separate Registry. Reuse Lisp directly read-only when valid, copy only when a separate editable version is required; invoke within calling Chat's own Work authority, without “borrowing” another chat's ToolLease.
+6. Recheck CAD upstream ordinary-context reuse vs Human Power/reset paths, Add-in pairing/session observer status, and stale binding recovery with two browser chats and Add-in chat. Fix only demonstrated breaks. No project/design dependency or freshness logic.
 
-**Exit/PASS:** evidence-backed regressions green; real-host cases marked PASS, FAIL or PENDING truthfully; no change to promoted Job business rules.
+**Exit/PASS:** user can run MTO in Chat A while Create System accesses CAD in Chat B and Builder works in Chat C; one bound DWG throughout, independently scoped results/stops, no global `JOB_RUNTIME_BUSY` for different Jobs, no duplicated or interleaved CAD command submissions, and no extra manager. **Real-host behavior remains PENDING until tested.**
+
+## Phase 5 — Regression, real-host acceptance and handoff
+### GOAL
+Prove reliable Assistant behavior, multi-chat compatibility and minimal changes on the real host, not just passing prompt or contract assertions.
+
+**Tasks**
+1. Run existing build/unit suites from actual `package.json`, preserve actual error evidence and current workflow paths; never invent CI PASS.
+2. Exercise Operator PASS→NEXT, FAIL→STOP, WAIT, no workaround, pre-approved alternative, explicit `on_fail`, mandatory Final Validation without invented scans, legitimate Python helper authority, wrong drawing, Lisp load vs queued/run outcome and unchanged legacy Saved Job behavior.
+3. **Real ERROR_LOG behavior:** (a) bound-CAD “vẽ lại” uses AutoCAD instead of image generation; (b) repeated CAD count/status question reads current CAD rather than previous conversation; (c) Internal Direct Job failure reports actual failure without model-created low-level Lisp workaround. No standalone Advisor answer substituted for requested action.
+4. **Concurrent chat matrix:** A=MTO FILE+Excel, B=Create System CAD+JSON, C=Builder FILE/Lisp authoring; both A and B operate at the same time. Validate independent stop/close, same-Job conflict remains scoped, deliberate bound drawing close/reopen, second chat join, source provenance and read-only cross-Job access. Two CAD requests queue in order using existing FIFO with truthfully reported dispatch/completion.
+5. Compare same-task tool-call count/reasoning/latency, source changes and effect on current Add-in header, sleep/wake, anchor, Job A→B. Use user-authorized disposable AutoCAD fixture; distinguish offline test from actual host PASS. Reviewer checks proposed fix necessity and tests (including a negative control). No workflow redesign hidden in a reliability fix.
+
+**Exit/PASS:** needed fixes supported by evidence, no regressions, truthful PENDING for host-only cases, and no change to promoted Job business rules without explicit approval.
 
 ## 7. Release boundaries / non-goals
 
-- Do **not** add an independent Workflow Engine, step scheduler, second model or local Operator process.
+- Do **not** add an independent Workflow Engine, step scheduler, second model, local Operator process, Job Clash Manager, design-completion controller or project-level Automator.
 - Do **not** automatically edit, migrate, re-promote or reinterpret existing Saved Jobs and Lisp.
-- Do **not** replace Job Registry, Job Runtime, WorkRegistration, existing lease and authorization.
+- Do **not** replace Job Registry, Job Runtime, WorkRegistration, existing lease and authorization; **reuse** current CAD Host FIFO rather than constructing a new queue.
 - Do **not** enlarge workflow with generic confirmations, readbacks, audits, retries or speculative recovery.
-- Do **not** silently change ongoing V2 scope, J-6B01 lifecycle, current drawing binding rules, or Human Power rules.
+- Do **not** silently change ongoing V2 scope, J-6B01 lifecycle or Human Power rules. Proposed multi-chat **changes the binding access model only after an approved, tested source diff**: one host drawing remains authoritative and the user still explicitly controls rebind.
 - Do **not** equate syntax, structural Markdown checks, text-only policy tests or model self-report with actual behavioral correctness.
 - Do **not** merge/deploy this proposal until independently reviewed and the user explicitly authorizes implementation.
 
@@ -171,5 +210,11 @@ Prove reliability and compatibility, not just presence of contract fields or pas
 3. **Builder:** user approves four business steps; generated JOB.md contains those four steps with explicit executor/reasoning/outcomes and no hidden fifth step; reviewer may separately nominate improvements without inserting them.
 4. **Hybrid:** a deterministic file transform uses Python while one source-backed Lisp performs bulk CAD operations; model does not individually mutate hundreds of objects.
 5. **Compatibility:** old Job and Direct Job remain executable under their existing source contracts; new policy does not require unapproved mutation.
+6. **Real incidents:** user asks “vẽ lại” while bound → CAD action, not image; asks current CAD count twice → fresh CAD read; Direct Job fails → report actual error, not improvised workaround.
+7. **Multi-chat:** A=MTO processing Excel, B=Create System reading CAD/writing its own JSON, C=Builder writing Lisp simultaneously, all attached to ONE bound DWG; independent stop; only actual CAD requests go through the existing host FIFO; same Job root remains exclusive.
 
-**Success principle:** *Worker first. Reason only where needed. Execute the prescribed tools. No unsolicited consulting.*
+**Success principle:** *User assigns the work. CadGPT helps execute it fast and accurately. Report the real outcome; do not act as an Automator or unsolicited Advisor.*
+
+## 9. Self-review scope and gates (Planner RL)
+
+The full draft must be checked against: (A) **Assistant product GOAL**; (B) source-backed KEEP/REFINE versus speculative BUILD; (C) drawing single-host / multi-chat isolation, CAD FIFO scope and same-Job ownership; (D) all prior R2 CR1/CR2 repairs on executor authority and Validation/fallbacks; (E) no duplicate scope with J-6B01 or the independent source reliability repair plan; (F) each Phase has its own GOAL and a measurable, non-invented exit; (G) scenarios from actual ERROR_LOG; (H) no source edits/merge/CR PASS claim. Planner may fix **plan text only** to satisfy this loop; a new independent CR must be explicitly requested rather than self-certified.
