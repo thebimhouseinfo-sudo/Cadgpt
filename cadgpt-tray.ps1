@@ -8,11 +8,35 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$script:StartupTracing = -not ($InstallStartup -or $RemoveStartup -or $StopInstalled -or $StatusOnly)
+$script:StartupStage = "powershell_entry"
+$StartupTracePath = Join-Path (Join-Path $env:LOCALAPPDATA "CadGPT\logs") "startup-launch.log"
+# Share only stage codes, PID and timestamp with the silent VBS launcher.
+function Write-StartupTrace([string]$Stage) {
+    if ($Stage -notmatch '^[a-z][a-z0-9_]*$') { return }
+    try {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $StartupTracePath) -ErrorAction Stop | Out-Null
+        Add-Content -LiteralPath $StartupTracePath -Value ("{0} | {1} | pid={2}" -f (Get-Date).ToString('s'), $Stage, $PID) -Encoding UTF8 -ErrorAction Stop
+    } catch { } # Diagnostics cannot prevent startup.
+}
+function Set-StartupStage([string]$Stage) {
+    $script:StartupStage = $Stage
+    if ($script:StartupTracing) { Write-StartupTrace $Stage }
+}
+trap {
+    if ($script:StartupTracing) { Write-StartupTrace ('fatal_at_' + $script:StartupStage) }
+    break
+}
+if ($script:StartupTracing) { Set-StartupStage 'powershell_entry' }
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
 
 $StartupKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $StartupName = "CadGPT"
+# The tray and startup registry share a narrowly scoped helper; other Run
+# values and other apps' Scheduled Tasks are never changed.
+. (Join-Path $ScriptDir "scripts\cadgpt-startup-registry.ps1")
 $script:IsTrayHost = $false
 $IndexPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "dist\index.js"))
 $TrayScriptPath = [System.IO.Path]::GetFullPath($PSCommandPath)
@@ -58,7 +82,9 @@ foreach ($relative in @(
 }
 
 function Write-TrayLog([string]$Message) {
-    Add-Content -Path $TrayLog -Value "[$((Get-Date).ToString('s'))] $Message" -Encoding UTF8
+    try {
+        Add-Content -Path $TrayLog -Value "[$((Get-Date).ToString('s'))] $Message" -Encoding UTF8 -ErrorAction Stop
+    } catch { } # A locked log must not abort logon startup.
 }
 
 function Get-StartupCommand {
@@ -69,24 +95,12 @@ function Get-StartupCommand {
 }
 
 function Install-StartupRegistration {
-    # Never force-recreate an existing shared Windows Run key: it contains
-    # startup registrations belonging to other applications.
-    if (-not (Test-Path -LiteralPath $StartupKey)) {
-        New-Item -Path $StartupKey -ItemType RegistryKey | Out-Null
-    }
-
-    $command = Get-StartupCommand
-    New-ItemProperty -LiteralPath $StartupKey -Name $StartupName -Value $command -PropertyType String -Force | Out-Null
-
-    $registered = (Get-ItemProperty -LiteralPath $StartupKey -Name $StartupName -ErrorAction Stop).$StartupName
-    if ($registered -cne $command) {
-        throw "CadGPT Windows startup registration verification failed."
-    }
+    Install-CadGptStartupValue -RegistryKey $StartupKey -ValueName $StartupName -Command (Get-StartupCommand)
     Write-Host "[OK] CadGPT will start automatically when this Windows user signs in." -ForegroundColor Green
 }
 
 function Remove-StartupRegistration {
-    Remove-ItemProperty -Path $StartupKey -Name $StartupName -ErrorAction SilentlyContinue
+    Remove-CadGptStartupValue -RegistryKey $StartupKey -ValueName $StartupName
     Write-Host "[OK] CadGPT Windows auto-start removed." -ForegroundColor Green
 }
 
@@ -380,6 +394,23 @@ if ($StopInstalled) {
     exit 0
 }
 if ($StatusOnly) {
+    $startupValue = (Get-ItemProperty -Path $StartupKey -Name $StartupName -ErrorAction SilentlyContinue).$StartupName
+    $expectedStartup = Get-StartupCommand
+    $startupState = if (-not $startupValue) { 'MISSING' } elseif ($startupValue -cne $expectedStartup) { 'STALE' } else { 'REGISTERED' }
+    $approval = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -Name $StartupName -ErrorAction SilentlyContinue).$StartupName
+    $approvalState = if ($null -eq $approval -or @($approval).Count -eq 0) { 'UNKNOWN' } elseif ($approval[0] -eq 3) { 'DISABLED' } elseif ($approval[0] -eq 2) { 'ENABLED' } else { 'UNKNOWN' }
+    Write-Host "Startup registry : $startupState"
+    Write-Host "Startup approval : $approvalState"
+    Write-Host "Startup trace    : $StartupTracePath"
+    # CadGPT's single authoritative autostart is its own HKCU Run value.
+    # Diagnose a stale CadGPT Scheduled Task without creating/deleting it.
+    try {
+        $taskMatches = @(Get-ScheduledTask -ErrorAction Stop | Where-Object {
+            $_.TaskName -match '(?i)cadgpt'
+        })
+        $taskState = if ($taskMatches.Count -eq 0) { 'NONE' } else { 'CONFLICT (' + $taskMatches.Count + ' CadGPT task(s))' }
+    } catch { $taskState = 'UNKNOWN' }
+    Write-Host "Startup tasks    : $taskState"
     $health = Get-CadGptHealth
     $state = Read-TrayState
     $trayPid = if ($state -and $state.pid) { [int]$state.pid } else { 0 }
@@ -406,20 +437,31 @@ if ($StatusOnly) {
     exit 0
 }
 
+Set-StartupStage 'preflight_start'
 if ($env:OS -ne "Windows_NT") { throw "CadGPT tray host is Windows-only." }
-if (-not (Test-Path ".env")) { throw ".env is missing. Run setup.bat first." }
-if (-not (Test-Path $IndexPath)) { throw "dist\index.js is missing. Run setup.bat/npm run build first." }
-
+if (-not (Test-Path ".env")) {
+    Set-StartupStage 'env_missing'
+    throw ".env is missing. Run setup.bat first."
+}
+Set-StartupStage 'env_verified'
+if (-not (Test-Path $IndexPath)) {
+    Set-StartupStage 'node_entry_missing'
+    throw "dist\index.js is missing. Run setup.bat/npm run build first."
+}
+Set-StartupStage 'node_entry_verified'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
+Set-StartupStage 'ui_assemblies_ready'
 
 $createdNew = $false
 $mutex = [System.Threading.Mutex]::new($true, "Local\CadGPTTray", [ref]$createdNew)
 if (-not $createdNew) {
+    Set-StartupStage 'duplicate_tray_detected'
     Write-TrayLog "Another CadGPT tray instance owns the mutex; exiting duplicate."
     exit 0
 }
+Set-StartupStage 'mutex_acquired'
 
 $script:IsTrayHost = $true
 $script:CadGptLauncher = $null
@@ -429,6 +471,8 @@ $script:TunnelPid = $null
 $script:RuntimeState = "Starting"
 $script:Exiting = $false
 $script:RuntimeHealthFailures = 0
+$script:LastKnownActiveWork = 0
+$script:LastKnownActiveRequests = 0
 $script:SelfHealInProgress = $false
 $script:TrayStartedAt = (Get-Date).ToString("o")
 $script:CadProbe = [pscustomobject]@{
@@ -509,6 +553,7 @@ function AdoptExistingTunnel {
 
 function Start-CadGptRuntime {
     $script:RuntimeState = "Starting"
+    Set-StartupStage 'slim_starting'
     Update-TrayStatus
 
     if (-not (AdoptExistingCadGpt)) {
@@ -517,6 +562,7 @@ function Start-CadGptRuntime {
             $script:RuntimeState = "Degraded"
             Update-TrayStatus
             Write-TrayLog "CadGPT port occupied by unowned/unhealthy PID $existingPid; refusing to kill or replace it."
+            Set-StartupStage 'slim_port_conflict'
             return
         }
 
@@ -538,22 +584,27 @@ function Start-CadGptRuntime {
         if (-not (Wait-ForCondition { $null -ne (Get-CadGptHealth) } 25)) {
             $script:RuntimeState = "Degraded"
             Update-TrayStatus
+            Set-StartupStage 'slim_health_failed'
             return
         }
         if (-not (Test-OwnedCadGptProcess -ProcessId $script:CadGptPid)) {
             $script:RuntimeState = "Degraded"
             Update-TrayStatus
             Write-TrayLog "Started node process failed CadGPT ownership verification."
+            Set-StartupStage 'slim_ownership_failed'
             return
         }
     }
 
+    Set-StartupStage 'slim_ready'
+    Set-StartupStage 'tunnel_starting'
     if (-not (AdoptExistingTunnel)) {
         $existingPid = Get-PortOwnerPid -TargetPort $TunnelHealthPort
         if ($existingPid) {
             $script:RuntimeState = "Degraded"
             Update-TrayStatus
             Write-TrayLog "Tunnel health port occupied by unowned/unhealthy PID $existingPid; refusing to kill or replace it."
+            Set-StartupStage 'tunnel_port_conflict'
             return
         }
 
@@ -605,6 +656,7 @@ function Start-CadGptRuntime {
             $script:RuntimeState = "Degraded"
             Update-TrayStatus
             Write-TrayLog "Secure tunnel did not become ready on health port $TunnelHealthPort."
+            Set-StartupStage 'tunnel_health_failed'
             return
         }
 
@@ -613,12 +665,15 @@ function Start-CadGptRuntime {
             $script:RuntimeState = "Degraded"
             Update-TrayStatus
             Write-TrayLog "Started tunnel failed ownership verification."
+            Set-StartupStage 'tunnel_ownership_failed'
             return
         }
         Write-TrayState
     }
 
     $script:RuntimeState = "Ready"
+    Set-StartupStage 'tunnel_ready'
+    Set-StartupStage 'runtime_ready'
     Update-TrayStatus
 }
 
@@ -636,6 +691,10 @@ function Invoke-RuntimeSelfHeal {
 
     $health = Get-CadGptHealth
     $tunnelHealthy = Test-TunnelHealthy
+    if ($health) {
+        $script:LastKnownActiveWork = [int]$health.active_work_registrations
+        $script:LastKnownActiveRequests = [int]$health.active_mcp_requests
+    }
     if ($health -and $tunnelHealthy) {
         $script:RuntimeHealthFailures = 0
         if ($script:RuntimeState -eq "Degraded") {
@@ -648,6 +707,28 @@ function Invoke-RuntimeSelfHeal {
     $script:RuntimeHealthFailures += 1
     if ($script:RuntimeHealthFailures -lt 3) {
         Write-TrayLog "Runtime health miss $($script:RuntimeHealthFailures)/3; waiting before self-heal."
+        return
+    }
+
+    # Never force-stop a live Node/tunnel solely because their 2-second
+    # health HTTP probe timed out while jobs are running. That process
+    # teardown destroys every ChatGPT MCP transport at once.
+    $activeWork = [int]$script:LastKnownActiveWork -gt 0 -or
+        [int]$script:LastKnownActiveRequests -gt 0
+    $ownedCoreAlive = $false
+    $ownedTunnelAlive = $false
+    $corePid = Resolve-OwnedCadGptPid
+    $tunnelPid = Resolve-OwnedTunnelPid
+    if ($corePid) { $ownedCoreAlive = Test-OwnedCadGptProcess -ProcessId $corePid }
+    if ($tunnelPid) { $ownedTunnelAlive = Test-OwnedTunnelProcess -ProcessId $tunnelPid }
+    if ($activeWork -and (
+        ((-not $health) -and $ownedCoreAlive) -or
+        ((-not $tunnelHealthy) -and $ownedTunnelAlive))) {
+        $script:RuntimeState = "Degraded"
+        Update-TrayStatus
+        Write-TrayLog ("Deferred destructive self-heal: active_work={0}, active_requests={1}, core_alive={2}, tunnel_alive={3}. Preserving in-flight Jobs and all chat sessions." -f
+            $script:LastKnownActiveWork, $script:LastKnownActiveRequests,
+            $ownedCoreAlive, $ownedTunnelAlive)
         return
     }
 
@@ -760,7 +841,9 @@ $exitItem.Text = "Exit CadGPT"
 
 $notify.ContextMenuStrip = $menu
 $notify.Visible = $true
+Set-StartupStage 'tray_icon_visible'
 Write-TrayState
+Set-StartupStage 'tray_state_written'
 
 $logsItem.Add_Click({
     if (Test-Path $LogDir) { Start-Process explorer.exe $LogDir }
@@ -809,6 +892,7 @@ $bootstrapTimer.Add_Tick({
         Update-CadProbeStatus
         Start-CadGptRuntime
     } catch {
+        Set-StartupStage 'runtime_bootstrap_failed'
         Write-TrayLog "Runtime bootstrap failed: $($_.Exception.Message)"
         $script:RuntimeState = "Degraded"
         Update-TrayStatus
@@ -816,9 +900,14 @@ $bootstrapTimer.Add_Tick({
 })
 $bootstrapTimer.Start()
 
+Set-StartupStage 'message_loop_enter'
 try {
     [System.Windows.Forms.Application]::Run()
+} catch {
+    Set-StartupStage 'message_loop_failed'
+    throw
 } finally {
+    Write-StartupTrace 'message_loop_exit'
     $statusTimer.Stop()
     $selfHealTimer.Stop()
     $cadProbeTimer.Stop()
