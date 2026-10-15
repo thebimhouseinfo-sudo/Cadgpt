@@ -522,7 +522,7 @@ export function createMcpServer(sessionKey: string): McpServer {
             return attached;
           }
           // Only the user's explicit workspace selection changes Host primary.
-          const binding = await bindDrawingForExecution(work.executionId, selector);
+          const binding = await bindDrawingForExecution(work.executionId, selector, { allowExplicitRebind: true });
           const { ensureDrawingAnchorForBinding } = await import(
             "./runtime/drawing-persistence.js"
           );
