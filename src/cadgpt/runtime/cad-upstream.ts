@@ -23,6 +23,12 @@ export interface CadUpstreamStatus {
 }
 
 const STDERR_TAIL_MAX = 16 * 1024;
+// The SDK defaults to 60 seconds for EVERY tools/call, and on timeout
+// transmits notifications/cancelled. Long CAD/Lisp commands legitimately
+// outlive a minute; do not let the SDK cancel their work by default.
+// Use the largest positive Node timer duration (almost 25 days) as a
+// practical no-timeout setting without triggering timer overflow.
+export const CAD_MCP_TOOL_REQUEST_TIMEOUT_MS = 2_147_483_647;
 
 function appendStderrTail(current: string, chunk: unknown): string {
   const text =
@@ -265,7 +271,11 @@ class CadUpstream {
 
     const callStartedAt = Date.now();
     try {
-      return await this.client.callTool({ name, arguments: args });
+      return await this.client.callTool(
+        { name, arguments: args },
+        undefined,
+        { timeout: CAD_MCP_TOOL_REQUEST_TIMEOUT_MS }
+      );
     } catch (error) {
       const message = this.rememberError(error);
       await this.shutdown();

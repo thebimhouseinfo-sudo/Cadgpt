@@ -476,7 +476,10 @@ export function createMcpServer(sessionKey: string): McpServer {
   configureToolRegistration(server, sessionKey);
   registerStableProductionSurface(server);
 
-  const activateCadWorkspace = async (drawing: CadPrepareDrawing) => {
+  const activateCadWorkspace = async (
+    drawing: CadPrepareDrawing,
+    joinExistingHost = false
+  ) => {
       const previousExecution = activeExecutionForSession(sessionKey);
       if (previousExecution) {
         const cleanupId = releaseSessionWork(sessionKey);
@@ -499,17 +502,32 @@ export function createMcpServer(sessionKey: string): McpServer {
           work.executionId
         );
         const { cadUpstream } = await import("./runtime/cad-upstream.js");
-        const { bindDrawingForExecution } = await import(
-          "./session/drawing-binding.js"
-        );
+        const {
+          bindDrawingForExecution,
+          attachPrimaryDrawingForExecution,
+          validatePrimaryBoundDrawing,
+          selectPrimaryBoundDrawing,
+        } = await import("./session/drawing-binding.js");
         const selector = drawing.full_name || drawing.name;
         const bound = await withCadHostLock("autocad", async () => {
           await cadUpstream.activate();
-          const binding = await bindDrawingForExecution(work.executionId, selector);
+          if (joinExistingHost) {
+            // Revalidate Native document lifetime, never infer a second binding.
+            await validatePrimaryBoundDrawing();
+            const attached = attachPrimaryDrawingForExecution(work.executionId);
+            if (!attached) throw new Error("PRIMARY_DRAWING_NOT_BOUND");
+            const { attachVerifiedDrawingMetadataReadOnly } =
+              await import("./runtime/drawing-persistence.js");
+            attachVerifiedDrawingMetadataReadOnly(work.executionId, attached);
+            return attached;
+          }
+          // Only the user's explicit workspace selection changes Host primary.
+          const binding = await bindDrawingForExecution(work.executionId, selector, { allowExplicitRebind: true });
           const { ensureDrawingAnchorForBinding } = await import(
             "./runtime/drawing-persistence.js"
           );
-          await ensureDrawingAnchorForBinding(binding);
+          await ensureDrawingAnchorForBinding(binding, { allowExplicitRebind: true });
+          selectPrimaryBoundDrawing(binding);
           return binding;
         });
 
@@ -829,6 +847,46 @@ export function createMcpServer(sessionKey: string): McpServer {
       const launch = await prepareCadLaunch(sessionKey, {
         autoBindSingle: true,
       });
+      // A second ChatGPT session joins the existing Host-selected DWG even
+      // when several document tabs are open. No new drawing selection gate.
+      const { primaryBoundDrawing, validatePrimaryBoundDrawing } =
+        await import("./session/drawing-binding.js");
+      let primary = primaryBoundDrawing();
+      if (primary && launch.mode !== "offline" && launch.autocad_detected) {
+        try {
+          // A new @cg admission must not reuse an AutoCAD HWND from a crashed
+          // host. The existing binding validator clears only stale authority.
+          const { cadUpstream } = await import("./runtime/cad-upstream.js");
+          await withCadHostLock("autocad", async () => {
+            await cadUpstream.activate();
+            await validatePrimaryBoundDrawing();
+          });
+          primary = primaryBoundDrawing();
+        } catch (error) {
+          if (!(error instanceof Error) || !error.message.startsWith("BOUND_DRAWING_STALE:")) {
+            throw error;
+          }
+          primary = null;
+        }
+      }
+      if (primary && launch.mode !== "offline" && launch.autocad_detected) {
+        const activated = await activateCadWorkspace({
+          key: "host-bound",
+          name: primary.name,
+          full_name: primary.full_name,
+        }, true);
+        return {
+          launch_mode: "auto_bind",
+          welcome_text: activated.text + compatNotice,
+          autocad_detected: true,
+          auto_bound: true,
+          drawing: activated.drawing,
+          work_handle: activated.work_handle,
+          cad_tools_ready: activated.cad_tools_ready,
+          cad_proxy_tool_count: activated.cad_proxy_tool_count,
+          cad_proxy_tools: activated.cad_proxy_tools,
+        };
+      }
       if (launch.mode === "auto_bind" && launch.auto_bind_drawing) {
         const activated = await activateCadWorkspace(
           launch.auto_bind_drawing

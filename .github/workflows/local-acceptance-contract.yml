@@ -48,7 +48,15 @@ jobs:
           if ($run -notmatch 'wscript.+cadgpt-tray\.vbs') { throw "run.bat no longer uses the hidden VBS launcher" }
           if ($run -notmatch 'cadgpt-tray\.ps1" -InstallStartup') { throw "run.bat install does not register startup" }
           if ($tray -notmatch '\$StartupKey\s*=\s*"HKCU:') { throw "tray startup is no longer user-scoped" }
-          if ($tray -notmatch 'New-ItemProperty\s+-Path\s+\$StartupKey') { throw "tray startup registry writer is missing" }
+          $registryHelperPath = "scripts/cadgpt-startup-registry.ps1"
+          if (-not (Test-Path $registryHelperPath)) { throw "CadGPT startup registry helper is missing" }
+          $registryHelper = Get-Content $registryHelperPath -Raw
+          if ($tray -notmatch 'Install-CadGptStartupValue' -or $registryHelper -notmatch 'New-ItemProperty') {
+            throw "tray startup is not connected to CadGPT-only Registry writer"
+          }
+          if ($registryHelper -match 'New-Item\s+-Path\s+\$RegistryKey\s+-Force') {
+            throw "unsafe destructive Registry Run key creation reintroduced"
+          }
           if ($launcher -notmatch 'WshShell\.Run cmd, 0, False') { throw "VBS launcher no longer starts hidden" }
           Write-Host "Tray BAT -> setup core -> per-user hidden launcher contract OK"
       - name: Verify safe internal AutoLISP smoke fixture

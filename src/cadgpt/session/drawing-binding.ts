@@ -20,6 +20,53 @@ export interface BoundDrawing {
 
 const contexts = new Map<string, Map<string, BoundDrawing>>();
 
+// One selected AutoCAD document per host; executions only borrow verified
+// references. Never clear the host selection when a chat stops.
+let primaryDrawing: BoundDrawing | null = null;
+
+export function primaryBoundDrawing(): BoundDrawing | null {
+  return primaryDrawing ? { ...primaryDrawing } : null;
+}
+
+export function selectPrimaryBoundDrawing(binding: BoundDrawing): void {
+  if (!binding.drawing_anchor || binding.anchor_verified_readback !== true) {
+    throw new Error("PRIMARY_DRAWING_UNVERIFIED: Drawing Anchor readback is required.");
+  }
+  primaryDrawing = { ...binding };
+}
+
+export function attachPrimaryDrawingForExecution(executionId: string): BoundDrawing | null {
+  const primary = primaryDrawing;
+  if (!primary) return null;
+  const existing = contexts.get(executionId);
+  if (existing?.size) {
+    const item = [...existing.values()][0];
+    if (existing.size === 1 && item.runtime_document_identity === primary.runtime_document_identity) {
+      return { ...item };
+    }
+    throw new Error("PRIMARY_DRAWING_CONFLICT: another drawing is already bound to this Work.");
+  }
+  const attached: BoundDrawing = {
+    ...primary,
+    execution_id: executionId,
+  };
+  executionContexts(executionId).set(attached.drawing_id, attached);
+  return { ...attached };
+}
+
+export async function validatePrimaryBoundDrawing(): Promise<BoundDrawing | null> {
+  if (!primaryDrawing) return null;
+  const documents = await listOpenDrawings();
+  if (!documents.some((item) =>
+    matchesBinding(item, primaryDrawing!) &&
+    String(item.host ?? "autocad").toLowerCase() === primaryDrawing!.host.toLowerCase()
+  )) {
+    primaryDrawing = null;
+    throw new Error("BOUND_DRAWING_STALE: the selected drawing is no longer open.");
+  }
+  return primaryBoundDrawing();
+}
+
 function extractPayload(raw: unknown): unknown {
   if (!raw || typeof raw !== "object") return raw;
   const obj = raw as {
@@ -144,7 +191,8 @@ export async function listOpenDrawings(): Promise<Array<Record<string, unknown>>
 
 export async function bindDrawingForExecution(
   executionId: string,
-  document: string
+  document: string,
+  options: { allowExplicitRebind?: boolean } = {}
 ): Promise<BoundDrawing> {
   const needle = document.trim().toLowerCase();
   if (!needle) throw new Error("document is required");
@@ -159,6 +207,36 @@ export async function bindDrawingForExecution(
   if (matches.length > 1) throw new Error(`Drawing identity is ambiguous: ${document}`);
 
   const selected = matches[0];
+  if (primaryDrawing) {
+    if (matchesBinding(selected, primaryDrawing)) {
+      // A chat may still hold a drawing context from before AutoCAD crashed.
+      // Explicitly binding the current Host primary replaces that stale
+      // lifetime reference, never redirects an in-flight CAD operation.
+      const existingContexts = contexts.get(executionId);
+      if (existingContexts) {
+        for (const [id, prior] of existingContexts) {
+          if (prior.runtime_document_identity !== primaryDrawing.runtime_document_identity) {
+            existingContexts.delete(id);
+          }
+        }
+      }
+      const attached = attachPrimaryDrawingForExecution(executionId);
+      if (!attached) throw new Error("PRIMARY_DRAWING_ATTACH_FAILED");
+      return attached;
+    }
+    // An AutoCAD crash/reopen changes the document lifetime identity.
+    // Retire the stale Host authority only after querying the open documents;
+    // never silently switch to another still-open drawing.
+    const primaryStillOpen = docs.some((item) =>
+      matchesBinding(item, primaryDrawing!) &&
+      String(item.host ?? "autocad").toLowerCase() === primaryDrawing!.host.toLowerCase()
+    );
+    if (!primaryStillOpen) {
+      primaryDrawing = null;
+    } else if (!options.allowExplicitRebind) {
+      throw new Error("PRIMARY_DRAWING_ALREADY_BOUND: change the Host drawing only through an explicit workspace bind.");
+    }
+  }
   const name = String(selected.name ?? "");
   const fullName = String(selected.full_name ?? "");
   const selector = fullName || name;
@@ -254,6 +332,19 @@ export function resolveDrawingContext(drawingId?: string): BoundDrawing {
     return selected;
   }
 
+  // Manual Host binding is user-authoritative. An existing chat keeps its
+  // Work/ToolLease identity, but its single drawing context follows the new
+  // verified Host primary at the next CAD invocation. Never infer from a
+  // mere active-tab switch.
+  if (primaryDrawing?.anchor_verified_readback === true && map.size === 1) {
+    const prior = [...map.values()][0];
+    if (prior.runtime_document_identity !== primaryDrawing.runtime_document_identity ||
+        prior.host.toLowerCase() !== primaryDrawing.host.toLowerCase()) {
+      map.clear();
+      const attached = { ...primaryDrawing, execution_id: lease.workId };
+      map.set(attached.drawing_id, attached);
+    }
+  }
   const values = [...map.values()];
   if (values.length === 0) {
     throw new Error(
@@ -269,8 +360,14 @@ export function resolveDrawingContext(drawingId?: string): BoundDrawing {
 }
 
 export async function activateDrawingContext(
-  binding: BoundDrawing
+  binding: BoundDrawing,
+  options: { allowExplicitRebind?: boolean } = {}
 ): Promise<BoundDrawing> {
+  if (primaryDrawing && !options.allowExplicitRebind &&
+      (primaryDrawing.runtime_document_identity !== binding.runtime_document_identity ||
+        primaryDrawing.host.toLowerCase() !== binding.host.toLowerCase())) {
+    throw new Error("BOUND_DRAWING_REPLACED: the Host primary drawing was changed.");
+  }
   const docs = await listOpenDrawings();
   const available = docs.some((item) => matchesBinding(item, binding));
   if (!available) {

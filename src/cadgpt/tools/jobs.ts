@@ -79,6 +79,7 @@ interface JobEntry {
   summary?: string;
   status?: string;
   risk?: string;
+  tags?: string[];
 }
 
 interface UserRegistry {
@@ -592,10 +593,11 @@ async function assertDirectJobPythonReady(python: string): Promise<void> {
   }
 }
 
-async function executeDirectJobScript(
+export async function executeDirectJobScript(
   script: string,
   args: string[],
-  jobId: string
+  jobId: string,
+  options: { fileOnly?: boolean } = {}
 ): Promise<Record<string, unknown>> {
   const python = directJobPython();
   await assertDirectJobPythonReady(python);
@@ -639,46 +641,55 @@ async function executeDirectJobScript(
       : {}),
   };
 
-  const execute = async () => {
-    if (drawing) {
-      const drawingLocation =
-        await prepareDrawingMetadataLocation(
-          lease.workId,
-          drawing
-        );
-      const resultLocation =
-        await prepareJobResultLocationForExecution(
-          lease.workId,
-          String(
-            drawingLocation.absolute_path
-          )
-        );
-      jobResultRoot = String(
-        resultLocation.absolute_path
-      );
-      env.CADGPT_JOB_RESULT_ROOT =
-        jobResultRoot;
+  const prepare = async () => {
+    // A FILE-only Work can access the verified Host drawing's metadata
+    // without having any CAD authority or taking the CAD Host queue.
+    const fileRoots = !drawing
+      ? drawingMetadataRootsForExecution(lease.workId)
+      : [];
+    if (fileRoots.length > 1) {
+      throw new Error("DIRECT_JOB_DRAWING_AMBIGUOUS: multiple metadata roots.");
     }
-    return execFileAsync(
-      python,
-      [script, ...args],
-      {
-        cwd: runtime.runtime_root,
-        env,
-        windowsHide: true,
-        timeout: 5 * 60 * 1000,
-        maxBuffer: 4 * 1024 * 1024,
-      }
-    );
+    const root = drawing
+      ? String((await prepareDrawingMetadataLocation(lease.workId, drawing)).absolute_path)
+      : fileRoots[0];
+    if (root) {
+      const resultLocation = await prepareJobResultLocationForExecution(lease.workId, root);
+      jobResultRoot = String(resultLocation.absolute_path);
+      env.CADGPT_JOB_RESULT_ROOT = jobResultRoot;
+    }
   };
+  const runScript = () => execFileAsync(
+    python,
+    [script, ...args],
+    {
+      cwd: runtime.runtime_root,
+      env,
+      windowsHide: true,
+      timeout: 5 * 60 * 1000,
+      maxBuffer: 4 * 1024 * 1024,
+    }
+  );
 
   try {
-    const result = drawing
-      ? await withCadHostLock(
-          drawing.host,
-          execute
-        )
-      : await execute();
+    // Legacy Direct Python Jobs may perform CAD COM operations themselves.
+    // Preserve their existing serialization until explicitly classified by
+    // the pre-existing Registry tag "file-only"; do not guess from script text.
+    // Proven file-only scripts release the host queue before Python/Excel work.
+    let result: { stdout: string; stderr: string };
+    if (drawing && !options.fileOnly) {
+      result = await withCadHostLock(drawing.host, async () => {
+        await prepare();
+        return runScript();
+      });
+    } else {
+      if (drawing) {
+        await withCadHostLock(drawing.host, prepare);
+      } else {
+        await prepare();
+      }
+      result = await runScript();
+    }
 
     return {
       script,
@@ -1032,20 +1043,51 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Finish Job Runtime",
       description:
-        "Finish the current reasoning Job runtime context, remove empty Job result folders, and release execution-scoped Job file-write restrictions. Runtime bytes are preserved; successful Jobs should delete processed raw/intermediate files explicitly, while remaining files are recovery evidence for a later relaunch.",
-      inputSchema: {},
+        "Finish the current Custom Job. Set outcome=done ONLY after all workflow and validation steps succeeded; this automatically saves the bound DWG using Python CAD MCP. On failure, stop, or interruption use outcome=failed (default), with no save. This is runtime behavior, not a JOB.md step.",
+      inputSchema: {
+        outcome: z.enum(["done", "failed"]).optional().default("failed"),
+      },
     },
-    async () => {
+    async ({ outcome }) => {
       try {
         const lease = currentToolLease();
-        const cleanup =
-          await cleanupJobRuntimeForExecution(
-            lease.workId
-          );
-        return toolResult(
-          "job_runtime_finish",
-          cleanup
-        );
+        const runtime = activeJobRuntimeForExecution(lease.workId);
+        if (!runtime) throw new Error("JOB_RUNTIME_NOT_ACTIVE: no Custom Job to finish.");
+        let autoSave: Record<string, unknown> = { attempted: false };
+        if (outcome === "done") {
+          // Save before releasing the Work's drawing authority. Cad host FIFO
+          // prevents overlap with other chats' CAD calls; no new manager.
+          try {
+            const drawing = resolveDrawingContext();
+            await withCadHostLock(drawing.host, async () => {
+              await activateDrawingContext(drawing);
+              const response = await cadUpstream.callTool("acad_save_bound_document", {
+                runtime_document_id: drawing.runtime_document_identity,
+              }) as { isError?: boolean; structuredContent?: Record<string, unknown>; content?: unknown };
+              if (response.isError) throw new Error("CAD MCP returned tool error during autosave.");
+              let saved: unknown = response.structuredContent;
+              if (saved === undefined) {
+                const rawText = (response.content as Array<{ type?: string; text?: string }> | undefined)
+                  ?.find((item) => item.type === "text")?.text;
+                if (rawText) {
+                  try { saved = JSON.parse(rawText); } catch { saved = undefined; }
+                }
+              }
+              const evidence = saved as { saved?: unknown; runtime_document_id?: unknown } | undefined;
+              if (!evidence || evidence.saved !== true ||
+                  evidence.runtime_document_id !== drawing.runtime_document_identity) {
+                throw new Error("AUTOSAVE_UNVERIFIED: Python CAD MCP did not confirm save.");
+              }
+              autoSave = { attempted: true, saved: true, drawing: drawing.full_name };
+            });
+          } catch (error) {
+            autoSave = { attempted: true, saved: false,
+              error: error instanceof Error ? error.message : String(error) };
+          }
+        }
+        const cleanup = await cleanupJobRuntimeForExecution(lease.workId);
+        return toolResult("job_runtime_finish", { outcome, cleanup, autosave: autoSave,
+          status: outcome === "done" ? (autoSave.saved === true ? "JOB_DONE_SAVED" : "JOB_DONE_AUTOSAVE_FAILED") : "JOB_FAILED" });
       } catch (error) {
         return toolError(
           "job_runtime_finish",
@@ -1264,7 +1306,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
           sessionKey:
             callLease.sessionKey,
         });
-        const executed = await executeDirectJobScript(script, args, entry.id);
+        const executed = await executeDirectJobScript(script, args, entry.id, {
+          fileOnly: entry.tags?.some((tag) => tag.toLowerCase() === "file-only") === true,
+        });
 
         return toolResult("job_run_direct", {
           id: entry.id,
@@ -1687,17 +1731,19 @@ export function registerJobAuthoringTools(server: McpServer): void {
         "Promote one validated Job draft package into an explicit managed Job target and synchronize User Registry rollback-safely. JOB.md/.py, lisp/**, dynamic-lisp/** and tools/** are promoted as one bundle. runtime/** is never promoted.",
       inputSchema: {
         draft_path: z.string().min(1),
+        registry_id: z.string().min(1).optional(),
+        expected_draft_bundle_sha256: z.string().length(64).optional(),
         target_path: z
           .string()
-          .min(1)
+          .min(1).optional()
           .describe(
             "Absolute target path that must exactly match library_id + relative_path"
           ),
         library_id: z
           .string()
-          .regex(/^[a-z0-9][a-z0-9._-]{0,79}$/i),
-        relative_path: z.string().min(1),
-        metadata: jobMetadataSchema,
+          .regex(/^[a-z0-9][a-z0-9._-]{0,79}$/i).optional(),
+        relative_path: z.string().min(1).optional(),
+        metadata: jobMetadataSchema.optional(),
         overwrite: z
           .boolean()
           .optional()
@@ -1726,6 +1772,8 @@ export function registerJobAuthoringTools(server: McpServer): void {
     },
     async ({
       draft_path,
+      registry_id,
+      expected_draft_bundle_sha256,
       target_path,
       library_id,
       relative_path,
@@ -1738,6 +1786,60 @@ export function registerJobAuthoringTools(server: McpServer): void {
       user_accepted,
     }) => {
       try {
+        // Existing managed Jobs can be promoted with compact arguments.
+        // Resolve target/metadata only from the registered Job entry, never
+        // from a guessed draft basename or free-form target path.
+        if (registry_id) {
+          const registered = (await loadJobs()).find(
+            (entry) => entry.id.toLowerCase() === registry_id.trim().toLowerCase()
+          );
+          if (!registered) throw new Error("JOB_PROMOTION_REGISTERED_JOB_REQUIRED");
+          if ((library_id && library_id !== registered.library_id) ||
+              (relative_path && relative_path !== registered.relative_path)) {
+            throw new Error("JOB_PROMOTION_REGISTERED_TARGET_MISMATCH");
+          }
+          library_id = registered.library_id;
+          relative_path = registered.relative_path;
+          const managed = managedJobPath(library_id, safeRelativeJob(relative_path));
+          if (target_path && path.resolve(target_path) !== path.resolve(managed)) {
+            throw new Error("JOB_PROMOTION_REGISTERED_TARGET_MISMATCH");
+          }
+          target_path = managed;
+          if (metadata && metadata.id !== registered.id) {
+            throw new Error("JOB_PROMOTION_REGISTERED_ID_MISMATCH");
+          }
+          metadata ??= jobMetadataSchema.parse({
+            id: registered.id,
+            title: registered.title,
+            class_name: (registered as unknown as Record<string, unknown>).class ?? "workflow.user",
+            subclass: (registered as unknown as Record<string, unknown>).subclass ?? "custom",
+            summary: registered.summary ?? registered.title,
+            tags: registered.tags ?? [],
+            status: registered.status ?? "active",
+            risk: registered.risk ?? "medium",
+          });
+          // Validate actual managed bundle against the prior Registry
+          // fingerprint before using it as optimistic overwrite evidence.
+          const oldBundle = await inspectJobBundle(target_path);
+          const priorRegistry = (await loadRegistry()).entries.find(
+            (entry) => entry.kind === "job" && entry.id === registered.id
+          );
+          if (!oldBundle.exists || !priorRegistry ||
+              oldBundle.sha256 !== priorRegistry.bundle_sha256) {
+            throw new Error("JOB_PROMOTION_MANAGED_BUNDLE_DRIFT: checkout again or reconcile Registry.");
+          }
+          if (oldBundle.has_assets) {
+            expected_target_bundle_sha256 ??= oldBundle.sha256 ?? undefined;
+          } else {
+            expected_target_sha256 ??= sha256(await fs.readFile(target_path, "utf8"));
+          }
+          overwrite = true;
+        }
+        if (!target_path || !library_id || !relative_path || !metadata) {
+          throw new Error("JOB_PROMOTION_TARGET_REQUIRED: supply full promotion fields or registry_id for an existing Job.");
+        }
+        // Keep narrowed values stable inside the asynchronous mutation callback.
+        const promotionMetadata = metadata;
         if (!path.isAbsolute(draft_path)) {
           throw new Error(
             "ABSOLUTE_PATH_REQUIRED: job_promote_draft draft_path must be absolute"
@@ -1745,9 +1847,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
         }
         const draftMode =
           assertDraftVirtualPath(draft_path);
-        if (isInternalJobId(metadata.id)) {
+        if (isInternalJobId(promotionMetadata.id)) {
           throw new Error(
-            `INTERNAL_JOB_ID_RESERVED: '${metadata.id}' is owned by CadGPT Internal Registry and cannot be promoted as a User Job.`
+            `INTERNAL_JOB_ID_RESERVED: '${promotionMetadata.id}' is owned by CadGPT Internal Registry and cannot be promoted as a User Job.`
           );
         }
         await assertManagedLibraryExists(
@@ -1778,6 +1880,10 @@ export function registerJobAuthoringTools(server: McpServer): void {
           throw new Error(
             "Job draft package is missing."
           );
+        }
+        if (expected_draft_bundle_sha256 &&
+            draftBundle.sha256 !== expected_draft_bundle_sha256) {
+          throw new Error("RESOURCE_CONFLICT: validated draft bundle SHA-256 no longer matches.");
         }
 
         const normalizedRelative =
@@ -1922,15 +2028,15 @@ export function registerJobAuthoringTools(server: McpServer): void {
                 ).toLowerCase() ===
                   normalizedRelative.toLowerCase();
               if (
-                id === metadata.id &&
+                id === promotionMetadata.id &&
                 entry.kind !== "job"
               ) {
                 throw new Error(
-                  `Registry id belongs to a non-Job capability: ${metadata.id}`
+                  `Registry id belongs to a non-Job capability: ${promotionMetadata.id}`
                 );
               }
               if (
-                id !== metadata.id &&
+                id !== promotionMetadata.id &&
                 sameTarget
               ) {
                 throw new Error(
@@ -1943,19 +2049,19 @@ export function registerJobAuthoringTools(server: McpServer): void {
               string,
               unknown
             > = {
-              id: metadata.id,
+              id: promotionMetadata.id,
               kind: "job",
               registry: "user",
               library_id,
               relative_path:
                 normalizedRelative,
-              title: metadata.title,
-              class: metadata.class_name,
-              subclass: metadata.subclass,
-              tags: metadata.tags,
-              summary: metadata.summary,
-              status: metadata.status,
-              risk: metadata.risk,
+              title: promotionMetadata.title,
+              class: promotionMetadata.class_name,
+              subclass: promotionMetadata.subclass,
+              tags: promotionMetadata.tags,
+              summary: promotionMetadata.summary,
+              status: promotionMetadata.status,
+              risk: promotionMetadata.risk,
               execution_mode:
                 validation.execution_mode,
               semantic_status: "curated",
@@ -1972,7 +2078,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
               registry.entries.filter(
                 (entry) =>
                   String(entry.id || "") !==
-                  metadata.id
+                  promotionMetadata.id
               );
             nextEntries.push(newEntry);
             nextEntries.sort((a, b) =>
@@ -2066,7 +2172,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
                     mutation.asset_directories,
                   library_id,
                   registry_id:
-                    metadata.id,
+                    promotionMetadata.id,
                   execution_mode:
                     validation.execution_mode,
                   steps:

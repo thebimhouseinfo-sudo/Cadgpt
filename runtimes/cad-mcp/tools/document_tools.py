@@ -7,6 +7,7 @@ from services.document_service import (
     get_active_document_info,
     list_open_documents,
     set_active_document,
+    save_bound_document,
 )
 from utils.logger import get_logger
 
@@ -54,3 +55,8 @@ def register(mcp):
         and is not intended to be exposed directly to ChatGPT.
         """
         return _safe(create_blank_test_document)
+
+    @mcp.tool()
+    def acad_save_bound_document(runtime_document_id: str) -> dict:
+        """Save an existing named DWG by exact open-document lifetime identity."""
+        return _safe(save_bound_document, runtime_document_id)

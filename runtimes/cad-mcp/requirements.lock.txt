@@ -7,8 +7,10 @@ h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
 httpx-sse==0.4.3
+jsonschema==4.25.1
+python-multipart==0.0.20
 idna==3.19
-mcp==1.2.1
+mcp==1.16.0
 openpyxl==3.1.5
 pydantic==2.13.5
 pydantic-settings==2.15.0

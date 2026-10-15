@@ -8,6 +8,7 @@ import { cadUpstream } from "./cad-upstream.js";
 import {
   activateDrawingContext,
   removeDrawingContextForExecution,
+  primaryBoundDrawing,
   type BoundDrawing,
 } from "../session/drawing-binding.js";
 
@@ -80,7 +81,8 @@ function assertSafeDrawingAnchor(value: unknown): string {
 }
 
 export async function ensureDrawingAnchorForBinding(
-  binding: BoundDrawing
+  binding: BoundDrawing,
+  options: { allowExplicitRebind?: boolean } = {}
 ): Promise<{
   drawing_anchor: string;
   schema_version: number;
@@ -89,7 +91,7 @@ export async function ensureDrawingAnchorForBinding(
   verified_readback: boolean;
 }> {
   try {
-    await activateDrawingContext(binding);
+    await activateDrawingContext(binding, options);
     const raw = await cadUpstream.callTool("cad_ensure_drawing_anchor", {
       document_name: binding.document_selector,
       runtime_document_id: binding.runtime_document_identity,
@@ -191,6 +193,42 @@ export function authorizeDrawingMetadataRootForExecution(
   }
   roots.add(root);
   inheritedReadOnlyRootsByExecution.get(executionId)?.delete(root);
+}
+
+/**
+ * Cross-chat read permission for the one Host-verified Drawing Anchor.
+ * Unlike handoffVerifiedDrawingMetadataRoot, this neither transfers cleanup
+ * ownership nor grants generic writes under the drawing root.
+ * FILE-only Jobs may consume persisted JSON without waking CAD.
+ */
+export function attachVerifiedDrawingMetadataReadOnly(
+  executionId: string,
+  binding: BoundDrawing
+): string {
+  if (!binding.drawing_anchor || binding.anchor_verified_readback !== true) {
+    throw new Error("DRAWING_METADATA_BINDING_UNVERIFIED: verified Drawing Anchor required.");
+  }
+  const primary = primaryBoundDrawing();
+  if (!primary ||
+      primary.runtime_document_identity !== binding.runtime_document_identity ||
+      primary.host.toLowerCase() !== binding.host.toLowerCase() ||
+      primary.drawing_anchor !== binding.drawing_anchor) {
+    throw new Error("DRAWING_METADATA_HOST_MISMATCH: read scope requires the verified Host-bound DWG.");
+  }
+  const root = directDrawingRoot(assertSafeDrawingAnchor(binding.drawing_anchor));
+  let roots = metadataRootsByExecution.get(executionId);
+  if (!roots) {
+    roots = new Set<string>();
+    metadataRootsByExecution.set(executionId, roots);
+  }
+  roots.add(root);
+  let inherited = inheritedReadOnlyRootsByExecution.get(executionId);
+  if (!inherited) {
+    inherited = new Set<string>();
+    inheritedReadOnlyRootsByExecution.set(executionId, inherited);
+  }
+  inherited.add(root);
+  return root;
 }
 
 export function registerCreatedDrawingMetadataFolderForExecution(
@@ -316,6 +354,17 @@ export async function cleanupDrawingMetadataForExecution(
       candidate: null,
       deleted_empty: false,
       kept_nonempty: false,
+    };
+  }
+
+  // A second chat may be reading this same Host-verified root. Its
+  // read-only Work must not lose the directory when creator A stops.
+  if ([...metadataRootsByExecution.values()].some((roots) => roots.has(candidate))) {
+    return {
+      candidate,
+      deleted_empty: false,
+      kept_nonempty: false,
+      shared_in_use: true,
     };
   }
 

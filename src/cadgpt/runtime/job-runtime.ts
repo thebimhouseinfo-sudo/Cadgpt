@@ -205,9 +205,10 @@ export function jobRuntimeWritableRootsForExecution(
 async function cleanupJobRuntimeContext(
   context: JobRuntimeContext,
   ownerId: string,
-  options: { resetJobSteps?: boolean } = {}
+  options: { resetJobSteps?: boolean; clearRuntimeScratch?: boolean } = {}
 ): Promise<Record<string, unknown>> {
   let removedEmptyResultRoots = 0;
+  let removedRuntimeEntries = 0;
   const jobsParents = new Set<string>();
   try {
     // FINISH, STOP, failed Job, or new Job: restore the Job Steps marks.
@@ -215,6 +216,22 @@ async function cleanupJobRuntimeContext(
     const stepsReset = options.resetJobSteps === false
       ? false
       : await resetJobStepsForRuntime(context.runtime_root);
+    if (options.clearRuntimeScratch) {
+      // Job runtime/ is scratch, not persisted Job definition or result.
+      // Remove only direct children of the canonical Job-owned runtime
+      // directory, preserving the checklist and all sibling Job assets.
+      const expectedRuntime = path.join(context.job_root, "runtime");
+      if (path.resolve(context.runtime_root) !== path.resolve(expectedRuntime)) {
+        throw new Error("JOB_RUNTIME_CLEANUP_SCOPE: unexpected runtime root.");
+      }
+      await withFileMutationLocks([context.runtime_root], async () => {
+        for (const entry of await fs.readdir(context.runtime_root)) {
+          if (entry === JOB_STEPS_FILENAME) continue;
+          await fs.rm(path.join(context.runtime_root, entry), { recursive: true, force: true });
+          removedRuntimeEntries += 1;
+        }
+      });
+    }
     for (const resultRoot of context.result_roots) {
       jobsParents.add(path.dirname(resultRoot));
       if (await removeIfEmpty(resultRoot)) {
@@ -234,6 +251,7 @@ async function cleanupJobRuntimeContext(
       runtime_root: context.runtime_root,
       job_steps_path: jobStepsPath(context),
       job_steps_reset: stepsReset,
+      removed_runtime_entries: removedRuntimeEntries,
       removed_empty_result_roots:
         removedEmptyResultRoots,
     };
@@ -304,7 +322,7 @@ export async function cleanupJobRuntimeForSystemLease(
 
 export async function cleanupJobRuntimeForExecution(
   executionId: string,
-  options: { resetJobSteps?: boolean } = {}
+  options: { resetJobSteps?: boolean; clearRuntimeScratch?: boolean } = {}
 ): Promise<Record<string, unknown>> {
   const context =
     contextsByExecution.get(executionId);

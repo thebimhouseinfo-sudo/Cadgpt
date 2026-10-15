@@ -145,19 +145,21 @@ export function registerWorkControlTools(
           }
 
           let continued = resumed;
-          const enablingCadMcpDev =
+          const requestedSkillCapability =
             owner_type === "skill" &&
-            owner_id.trim() === "cad-mcp-dev";
-          if (enablingCadMcpDev) {
+            (owner_id.trim() === "cad-mcp-dev" || owner_id.trim() === "jobcreate")
+              ? (owner_id.trim() === "jobcreate" ? "job-authoring" : "cad-mcp-dev")
+              : null;
+          if (requestedSkillCapability) {
             continued = enableWorkCapability(
               resumed.executionId,
               resumed.authorityToken,
               options.sessionKey,
-              "cad-mcp-dev"
+              requestedSkillCapability
             );
             toolSurface = await options.prepareFamilies(
               continued.executionPath,
-              "cad-mcp-dev",
+              owner_id.trim(),
               continued.executionId
             );
           }
@@ -165,9 +167,11 @@ export function registerWorkControlTools(
           return toolResult("cadgpt_work_start", {
             reused: true,
             resumed: true,
-            reason: enablingCadMcpDev
+            reason: requestedSkillCapability === "cad-mcp-dev"
               ? "conversation_work_dev_capability_enabled"
-              : "conversation_work_continuation",
+              : requestedSkillCapability === "job-authoring"
+                ? "conversation_work_skill_capability_enabled"
+                : "conversation_work_continuation",
             work_handle: {
               execution_id: continued.executionId,
               authority_token: continued.authorityToken,
@@ -249,6 +253,35 @@ export function registerWorkControlTools(
               work.executionId
             )
           : null;
+        // A fresh logical chat has no predecessor Work to hand off from.
+        // The Host-selected DWG is common, but its FILE metadata grant is
+        // independently read-only and scoped to this new Work.
+        let sharedDrawingRoot: string | null = null;
+        if (!inheritedDrawingRoot) {
+          const { primaryBoundDrawing, attachPrimaryDrawingForExecution } =
+            await import("../session/drawing-binding.js");
+          const primary = primaryBoundDrawing();
+          if (primary?.anchor_verified_readback === true) {
+            const { attachVerifiedDrawingMetadataReadOnly } =
+              await import("../runtime/drawing-persistence.js");
+            sharedDrawingRoot = attachVerifiedDrawingMetadataReadOnly(
+              work.executionId,
+              primary
+            );
+            if (requestedPath === "hybrid") {
+              attachPrimaryDrawingForExecution(work.executionId);
+            }
+          }
+        }
+        // FILE-only Work can later switch to HYBRID in the same chat.
+        // Its read-only metadata handoff is not itself a CAD binding.
+        if (requestedPath === "hybrid" && !drawingHandoff) {
+          const { primaryBoundDrawing, attachPrimaryDrawingForExecution } =
+            await import("../session/drawing-binding.js");
+          if (primaryBoundDrawing()?.anchor_verified_readback === true) {
+            attachPrimaryDrawingForExecution(work.executionId);
+          }
+        }
         const previousCleanup = previousExecution
           ? await cleanupExecutionState(previousExecution)
           : null;
@@ -294,6 +327,14 @@ export function registerWorkControlTools(
                 },
               }
             : {}),
+          ...(sharedDrawingRoot ? {
+            shared_drawing_metadata: {
+              drawing_root: sharedDrawingRoot,
+              file_access_authorized: true,
+              read_only: true,
+              note: "Verified Host-bound drawing metadata only; current Job output requires its own runtime result authorization.",
+            },
+          } : {}),
           ...(inheritedDrawingRoot ? {
             drawing_metadata_handoff: {
               inherited: true,

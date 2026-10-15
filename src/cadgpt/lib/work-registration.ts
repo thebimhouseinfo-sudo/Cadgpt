@@ -525,11 +525,16 @@ export function enableWorkCapability(
   executionId: string | undefined,
   authorityToken: string | undefined,
   sessionKey: string,
-  capability: "cad-mcp-dev"
+  capability: "cad-mcp-dev" | "job-authoring"
 ): WorkRegistration {
   const work = validateWorkHandle(executionId, authorityToken, sessionKey);
-  if (capability !== "cad-mcp-dev") {
-    throw new Error(`UNSUPPORTED_WORK_CAPABILITY: ${capability}`);
+  if (capability === "job-authoring") {
+    if (work.executionPath !== "file" && work.executionPath !== "hybrid") {
+      throw new Error("JOB_AUTHORING_PATH: requires FILE or HYBRID work.");
+    }
+    if (!work.capabilities.includes(capability)) work.capabilities.push(capability);
+    work.lastActivityAt = new Date().toISOString();
+    return { ...work, capabilities: [...work.capabilities] };
   }
   if (!isDevelopmentBuild()) {
     throw new Error("DEVELOPMENT_ONLY: cad-mcp-dev is unavailable in production builds.");

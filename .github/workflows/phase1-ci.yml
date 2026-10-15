@@ -89,6 +89,16 @@ jobs:
               throw "PowerShell parse failed: $script"
             }
           }
+      - name: CadGPT startup trace smoke on PowerShell 5.1 and 7
+        shell: pwsh
+        run: ./scripts/test-cadgpt-startup-trace.ps1
+      - name: CadGPT Registry Run sandbox on PowerShell 5.1 and 7
+        shell: pwsh
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-cadgpt-startup-registry.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell registry sandbox test failed" }
+          & pwsh.exe -NoProfile -File ./scripts/test-cadgpt-startup-registry.ps1
+          if ($LASTEXITCODE -ne 0) { throw "PowerShell 7 registry sandbox test failed" }
       - name: Stage 0 probe default binding smoke on Windows PowerShell
         shell: powershell
         run: |
@@ -431,6 +441,8 @@ jobs:
         run: python -m pip install -r runtimes/cad-mcp/requirements.lock.txt
       - name: Validate Python dependency graph
         run: python -m pip check
+      - name: Verify MCP cancellation notification compatibility
+        run: python scripts/check-cad-mcp-cancellation.py
       - name: Compile CAD MCP slice
         run: python scripts/check-cad-mcp-python.py
       - name: Generate CAD tool manifest without starting runtime

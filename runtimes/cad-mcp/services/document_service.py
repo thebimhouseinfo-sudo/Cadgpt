@@ -1,7 +1,7 @@
 """Document discovery, explicit activation, and safe test-drawing creation for CadGPT."""
 
 from connection.acad import AutoCADNotRunningError, get_acad_app, get_active_document
-from connection.session import activate_document, document_identity, iter_documents
+from connection.session import activate_document, document_identity, iter_documents, get_document, runtime_document_id
 
 
 class DocumentServiceError(RuntimeError):
@@ -89,3 +89,26 @@ def create_blank_test_document() -> dict:
         raise
     except Exception as exc:
         raise DocumentServiceError(f"Could not create blank AutoCAD test drawing: {exc}") from exc
+
+
+def save_bound_document(runtime_id: str) -> dict:
+    """Save an existing named document; never guess a SaveAs path for unsaved drawings."""
+    if not runtime_id:
+        raise DocumentServiceError("AUTOSAVE_BINDING_REQUIRED: runtime_document_id is required")
+    try:
+        doc = get_document(runtime_id=runtime_id)
+        before = document_identity(doc)
+        if before["runtime_document_id"] != runtime_id:
+            raise DocumentServiceError("AUTOSAVE_DOCUMENT_MISMATCH")
+        if not before["full_name"]:
+            raise DocumentServiceError("AUTOSAVE_UNSAVED_DRAWING: save manually once to establish a DWG path")
+        doc.Save()
+        after = document_identity(doc)
+        if after["runtime_document_id"] != runtime_id:
+            raise DocumentServiceError("AUTOSAVE_DOCUMENT_CHANGED: save result cannot be verified")
+        return {"saved": True, "runtime_document_id": runtime_id,
+                "name": after["name"], "full_name": after["full_name"]}
+    except DocumentServiceError:
+        raise
+    except Exception as exc:
+        raise DocumentServiceError(f"AUTOSAVE_FAILED: {exc}") from exc

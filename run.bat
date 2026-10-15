@@ -34,6 +34,10 @@ if not exist "scripts\cadgpt-startup-registry.ps1" (
   echo [ERROR] CadGPT startup registry helper is missing.
   exit /b 1
 )
+if not exist "scripts\cadgpt-scheduled-startup.ps1" (
+  echo [ERROR] CadGPT scheduled startup helper is missing.
+  exit /b 1
+)
 if not exist "dist\index.js" (
   echo [ERROR] dist\index.js is missing. Run setup.bat or npm run build first.
   exit /b 1

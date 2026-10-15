@@ -10,6 +10,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'cadgpt-tray.ps1') -Destination $fixture
     New-Item -ItemType Directory -Force -Path (Join-Path $fixture 'scripts') | Out-Null
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'scripts\cadgpt-startup-registry.ps1') -Destination (Join-Path $fixture 'scripts')
+    Copy-Item -LiteralPath (Join-Path $sourceRoot 'scripts\cadgpt-scheduled-startup.ps1') -Destination (Join-Path $fixture 'scripts')
     $env:LOCALAPPDATA = Join-Path $fixture 'local'
     New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
     $trace = Join-Path $env:LOCALAPPDATA 'CadGPT\logs\startup-launch.log'
@@ -33,17 +34,11 @@ try {
     # Preflight must log its boundary on Windows PowerShell 5.1 and PS 7.
     # No .env or dist exists in this fixture, so no runtime/tunnel is started.
     foreach ($engine in @('powershell.exe', 'pwsh.exe')) {
-        $executable = Get-Command $engine -ErrorAction SilentlyContinue
-        if (-not $executable) {
-            Write-Host "$engine unavailable; skipping optional engine."
-            continue
-        }
-        # A nonzero exit is EXPECTED here. Invoke the child as a process so
-        # Windows PowerShell 5.1 does not promote redirected stderr into a
-        # terminating NativeCommandError under ErrorActionPreference=Stop.
+        $exe = Get-Command $engine -ErrorAction SilentlyContinue
+        if (-not $exe) { Write-Host "$engine unavailable; skipping."; continue }
         $stdout = Join-Path $fixture ($engine + '.stdout.log')
         $stderr = Join-Path $fixture ($engine + '.stderr.log')
-        $child = Start-Process -FilePath $executable.Source -ArgumentList @(
+        $child = Start-Process -FilePath $exe.Source -ArgumentList @(
             '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $ps1 + '"')
         ) -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         if ($child.ExitCode -eq 0) { throw "$engine unexpectedly started without .env" }
@@ -80,9 +75,18 @@ try {
     if (-not $source.Contains('"Local\CadGPTTray"')) {
         throw 'CadGPT single-instance mutex missing'
     }
-    if ($source -match '(?i)Register-ScheduledTask|New-ScheduledTask|schtasks\.exe\s+/create') {
-        throw 'A second CadGPT autostart authority was introduced'
+    # Single startup authority is implemented in the dedicated module.
+    $taskSource = Get-Content -LiteralPath (Join-Path $sourceRoot 'scripts\cadgpt-scheduled-startup.ps1') -Raw
+    foreach ($required in @('Test-CadGptTaskOwnership', 'Test-CadGptTaskContract',
+         'Register-ScheduledTask', 'Remove-CadGptScheduledTask',
+         'New-ScheduledTaskTrigger -AtLogOn', "trigger.Delay = 'PT10S'")) {
+        if (-not ($taskSource.Contains($required))) { throw "Missing Scheduled Task contract: $required" }
     }
+    if (-not $source.Contains('Install-CadGptScheduledTask') -or
+        -not $source.Contains('Install-CadGptStartupValue')) {
+        throw 'Task-first startup with Registry fallback contract missing'
+    }
+    if ($taskSource -match '(?i)schtasks\.exe\s+/create') { throw 'Unexpected task creation path' }
     Write-Host 'CadGPT isolated startup trace smoke PASS'
 } finally {
     $env:LOCALAPPDATA = $originalLocalAppData

@@ -7,7 +7,11 @@ import {
 } from "node:crypto";
 
 import { getAppDataPath } from "./appdata.js";
-import { activeJobSystemLeasesForSession } from "../runtime/system-lease.js";
+import { activeJobSystemLeasesForSession, allActiveJobSystemLeases } from "../runtime/system-lease.js";
+import { activeForegroundJobRuntimeExecutionIds, activeJobRuntimeForExecution } from "../runtime/job-runtime.js";
+import { drawingMetadataRootsForExecution } from "../runtime/drawing-persistence.js";
+import { primaryBoundDrawing, getBoundDrawingsForExecution } from "../session/drawing-binding.js";
+import { getDrawingStorageRoot } from "./appdata.js";
 
 const CONTROL_SECRET = randomBytes(32).toString("base64url");
 const PAIR_WINDOW_MS = 180_000;
@@ -201,20 +205,72 @@ export async function addinBindingStatus(
   }
 
   pair.lastAccessedAt = Date.now();
-  const backgroundJobs =
-    activeJobSystemLeasesForSession(
-      pair.sessionKey
-    ).map((lease) => ({
-      job_id: lease.job_id,
-      job_name: lease.job_name,
-    }));
+  // The ticker belongs to the Host-selected DWG, not the paired chat.
+  // Only inspect existing Work/lease metadata; never poll CAD for job status.
+  const primary = primaryBoundDrawing();
+  const root = primary?.anchor_verified_readback && primary.drawing_anchor
+    ? path.resolve(getDrawingStorageRoot(), primary.drawing_anchor)
+    : null;
+  const belongsToDrawing = (roots: string[]) => Boolean(
+    root && roots.some((entry) =>
+      process.platform === "win32"
+        ? path.resolve(entry).toLowerCase() === root.toLowerCase()
+        : path.resolve(entry) === root
+    )
+  );
+  const active = new Map<string, AddinBackgroundJob>();
+  if (root) {
+    for (const executionId of activeForegroundJobRuntimeExecutionIds()) {
+      const context = activeJobRuntimeForExecution(executionId);
+      const currentBinding = primary && getBoundDrawingsForExecution(executionId).some(
+        (drawing) =>
+          drawing.runtime_document_identity === primary.runtime_document_identity &&
+          drawing.host.toLowerCase() === primary.host.toLowerCase()
+      );
+      if (context && (belongsToDrawing(drawingMetadataRootsForExecution(executionId)) || currentBinding)) {
+        active.set(context.job_id.toLowerCase(), {
+          job_id: context.job_id,
+          job_name: context.job_name,
+        });
+      }
+    }
+    for (const lease of allActiveJobSystemLeases()) {
+      if (belongsToDrawing(lease.readable_roots)) {
+        active.set(lease.job_id.toLowerCase(), {
+          job_id: lease.job_id,
+          job_name: lease.job_name,
+        });
+      }
+    }
+  } else {
+    // Compatibility for a paired panel before any verified Host binding.
+    for (const lease of activeJobSystemLeasesForSession(pair.sessionKey)) {
+      active.set(lease.job_id.toLowerCase(), {
+        job_id: lease.job_id,
+        job_name: lease.job_name,
+      });
+    }
+  }
+  const backgroundJobs = [...active.values()]
+    .sort((a, b) => a.job_id.localeCompare(b.job_id));
   const observer = observers.get(pair.sessionKey);
+  // Header always reflects the user's Host-level selected drawing, including
+  // a manual Connect click from the native Add-in. Chat Work binding remains
+  // separately authorized and must validate its document lifetime.
+  const hostDrawing: AddinBoundDrawing | null =
+    primary?.anchor_verified_readback === true
+      ? {
+          name: primary.name,
+          full_name: primary.full_name,
+          runtime_document_id: primary.runtime_document_identity,
+        }
+      : null;
   if (!observer) {
     return {
       paired: true,
       session_ready: false,
-      drawing: null,
-      bound_count: 0,
+      drawing: hostDrawing,
+      bound_count: hostDrawing ? 1 : 0,
       human_power: false,
       background_jobs: backgroundJobs,
     };
@@ -224,8 +280,8 @@ export async function addinBindingStatus(
   return {
     paired: true,
     session_ready: true,
-    drawing: binding.drawing,
-    bound_count: binding.bound_count,
+    drawing: hostDrawing ?? binding.drawing,
+    bound_count: hostDrawing ? 1 : binding.bound_count,
     human_power: binding.human_power,
     background_jobs: backgroundJobs,
   };

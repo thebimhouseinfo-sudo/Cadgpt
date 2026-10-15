@@ -48,12 +48,10 @@ async function serializeJobTransition<T>(action: () => Promise<T>): Promise<T> {
 }
 
 /**
- * The installed CadGPT driver is a single-user Job runtime. Starting a new
- * user-requested Job replaces idle Job authority even if the old Job belongs
- * to another ChatGPT conversation. Preserve all raw/result files.
- *
- * Never terminate an actual in-flight tool or SYSTEM file call. Authority
- * revocation precedes cleanup so an old session cannot claim another task.
+ * Host-close cleanup is separate from normal new-Job admission. Only an
+ * explicit terminal host-close may retire idle authorities across chats.
+ * A new Job in Chat B must never call this cross-chat cleanup path.
+ * Never terminate an in-flight tool or SYSTEM file call.
  */
 async function terminalizeIdleJobAuthoritiesUnlocked(input: {
   excludeSessionKey?: string;
@@ -130,7 +128,7 @@ export async function terminalizeIdleJobAuthorities(input: {
   return serializeJobTransition(() => terminalizeIdleJobAuthoritiesUnlocked(input));
 }
 
-/** New Job B terminals old Job A, even if A lived in a different chat. */
+/** Replace prior Job authority only inside this chat. Other chats keep running. */
 export async function releasePriorJobAuthorityForStart(input: {
   executionId: string;
   sessionKey: string;
@@ -144,11 +142,15 @@ export async function releasePriorJobAuthorityForStart(input: {
       );
     }
   }
-  const retired = await terminalizeIdleJobAuthoritiesUnlocked({
-    excludeSessionKey: input.sessionKey,
-    excludeExecutionId: input.executionId,
-    reason: "new_job",
-  });
+  // A user-requested Job transition is scoped to the *calling chat*.
+  // Other logical chats (including detached SYSTEM tails) retain their
+  // leases, runtime bytes and Work authority. Same-Job-root exclusivity is
+  // independently enforced by prepareJobRuntimeForExecution().
+  const retired: JobTransitionCleanup["retired_other_sessions"] = {
+    system_jobs: [],
+    foreground_executions: [],
+    job_work_executions: [],
+  };
   const foreground = await cleanupJobRuntimeForExecution(input.executionId)
     .catch((error) => ({
       active: false,

@@ -183,6 +183,42 @@ app.post("/addin-control/host/closed/:pairId", async (req, res) => {
   }
 });
 
+// Explicit physical Add-in header action, authenticated with the existing
+// local Add-in secret. This does not invoke or rotate a ChatGPT session.
+app.post("/addin-control/drawing/connect", async (req, res) => {
+  if (!authorizeAddinControl(req, res)) return;
+  const document = String(req.query.document ?? "").trim();
+  if (!document || document.length > 1024) {
+    res.status(400).json({ ok: false, error: "DRAWING_SELECTOR_REQUIRED" });
+    return;
+  }
+  try {
+    const { withCadHostLock } = await import("./cadgpt/runtime/cad-scheduler.js");
+    const { cadUpstream } = await import("./cadgpt/runtime/cad-upstream.js");
+    const { bindDrawingForExecution, selectPrimaryBoundDrawing } =
+      await import("./cadgpt/session/drawing-binding.js");
+    const { ensureDrawingAnchorForBinding } =
+      await import("./cadgpt/runtime/drawing-persistence.js");
+    const binding = await withCadHostLock("autocad", async () => {
+      await cadUpstream.activate();
+      const candidate = await bindDrawingForExecution(
+        "addin-header-manual-bind", document, { allowExplicitRebind: true }
+      );
+      await ensureDrawingAnchorForBinding(candidate, { allowExplicitRebind: true });
+      selectPrimaryBoundDrawing(candidate);
+      return candidate;
+    });
+    res.json({ ok: true, drawing: {
+      name: binding.name,
+      full_name: binding.full_name,
+      runtime_document_id: binding.runtime_document_identity,
+    } });
+  } catch (error) {
+    res.status(409).json({ ok: false,
+      error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 app.get("/addin-control/binding/:pairId", async (req, res) => {
   if (!authorizeAddinControl(req, res)) return;
   try {

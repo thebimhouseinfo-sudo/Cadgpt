@@ -984,11 +984,6 @@ export function registerCadProxyTools(server: McpServer): void {
     async ({ document }) => {
       try {
         const lease = currentToolLease();
-        if (lease.ownerId === "drawing-workspace") {
-          throw new Error(
-            "DRAWING_REBIND_REQUIRES_SELECTION: this drawing workspace cannot bind a different drawing implicitly. Use cg/list and let the user explicitly select the target drawing."
-          );
-        }
         await ensureCadRuntimeActive();
         return await withCadHostLock("autocad", async () => {
           const drawing = await bindDrawing(document);
@@ -996,6 +991,11 @@ export function registerCadProxyTools(server: McpServer): void {
             "../runtime/drawing-persistence.js"
           );
           await ensureDrawingAnchorForBinding(drawing);
+          // The explicit drawing_bind operation may restore a stale Host
+          // binding after AutoCAD relaunch; bindDrawing already refuses
+          // retargeting while another Host-selected document is still live.
+          const { selectPrimaryBoundDrawing } = await import("../session/drawing-binding.js");
+          selectPrimaryBoundDrawing(drawing);
           recordCadCandidateSuccess(currentToolLease().workId, "drawing_bind");
           return toolResult("drawing_bind", { bound: true, drawing });
         });

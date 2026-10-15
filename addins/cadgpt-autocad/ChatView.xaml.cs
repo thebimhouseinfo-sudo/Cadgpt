@@ -412,22 +412,10 @@ namespace CadGpt.AutoCad
                             : group.First().JobName,
                     StringComparer.OrdinalIgnoreCase);
 
-            foreach (var active in
-                _activeBackgroundJobs.ToArray())
-            {
-                if (incoming.ContainsKey(active.Key))
-                {
-                    continue;
-                }
-
-                _doneBackgroundJobs[active.Key] =
-                    new BackgroundDoneState
-                    {
-                        Name = active.Value,
-                        ExpiresUtc =
-                            now.AddSeconds(3),
-                    };
-            }
+            // A missing lease proves only that this Job is no longer active.
+            // It does not prove successful completion. Never synthesize Done
+            // from a dropped session or an incomplete status poll.
+            _doneBackgroundJobs.Clear();
 
             _activeBackgroundJobs.Clear();
             foreach (var job in incoming)
@@ -924,6 +912,58 @@ namespace CadGpt.AutoCad
         internal void PreservePairForRecreate()
         {
             _preservePairOnDispose = true;
+        }
+
+        private async void ConnectDrawingButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (_disposed || !TryDrawingSnapshot(out var drawings, out var active) ||
+                active == null)
+            {
+                MessageBox.Show("No active AutoCAD drawing is available.",
+                    "CadGPT", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var selector = !string.IsNullOrWhiteSpace(active.FullName)
+                ? active.FullName!
+                : active.Name;
+            if (string.IsNullOrWhiteSpace(selector))
+            {
+                MessageBox.Show("Active drawing identity is unavailable.",
+                    "CadGPT", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            ConnectDrawingButton.IsEnabled = false;
+            try
+            {
+                var response = await _control.ConnectDrawingAsync(
+                    selector, _actionCts.Token);
+                if (!response.Ok || response.Drawing == null)
+                {
+                    throw new AddinControlException(
+                        string.IsNullOrWhiteSpace(response.Error)
+                            ? "DRAWING_CONNECT_UNVERIFIED" : response.Error);
+                }
+                SetConfirmedBoundDrawing(response.Drawing);
+                RefreshHeaderFromLocalContext(_observedHumanPower);
+                // The Host binding is shared; chat authority is not silently
+                // replaced. Old Work contexts must still validate their DWG.
+            }
+            catch (Exception error)
+            {
+                if (!_disposed)
+                {
+                    MessageBox.Show(error.Message, "CadGPT drawing connect failed",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+            finally
+            {
+                if (!_disposed) ConnectDrawingButton.IsEnabled = true;
+            }
         }
 
         private async void ThemeButton_Click(

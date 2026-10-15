@@ -26,6 +26,21 @@
       }
     },
     {
+      "name": "acad_save_bound_document",
+      "description": "Save an existing named DWG by exact open-document lifetime identity.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "runtime_document_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtime_document_id"
+        ]
+      }
+    },
+    {
       "name": "acad_set_active_document",
       "description": "Activate an open drawing and optionally require its lifetime runtime ID.",
       "inputSchema": {

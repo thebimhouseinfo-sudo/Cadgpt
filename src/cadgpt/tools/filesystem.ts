@@ -4,11 +4,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { getAppDataRoot, getDrawingStorageRoot } from "../lib/appdata.js";
+import { getAppDataRoot, getDrawingStorageRoot, getJobDraftRoot } from "../lib/appdata.js";
 import { isHvacKnowledgePath } from "../lib/knowledge-storage.js";
 import { getAllowedRoots, getRepoRoot, getWritableRoots, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
-import { currentHumanPower, currentToolLease } from "../lib/work-registration.js";
+import { activeWorkForSession, currentHumanPower, currentToolLease } from "../lib/work-registration.js";
 import { currentJobSystemLease } from "../runtime/system-lease.js";
 import {
   auditHumanPowerSourceMutation,
@@ -86,8 +86,19 @@ function currentWritableRoots(): string[] {
   const reasoningScope = reasoningJobStorageScopeWasEntered(
     currentToolLease().workId
   );
-  if (reasoningScope) return [...new Set(jobRoots)];
-  if (jobRoots.length) return [...new Set(jobRoots)];
+  // Explicit jobcreate authoring may edit only managed job drafts even when
+  // the prior reasoning Job has left its narrower runtime scope in this Work.
+  const lease = currentToolLease();
+  const currentWork = activeWorkForSession(lease.sessionKey);
+  const jobAuthoring = currentWork?.executionId === lease.workId &&
+    (currentWork.ownerType === "skill" && currentWork.ownerId === "jobcreate" ||
+     currentWork.capabilities.includes("job-authoring"));
+  // Draft authoring is a bundle-wide authority: JOB.md plus tools/**,
+  // lisp/** and other Job-owned helpers. It is independent of a previous
+  // reasoning Job scratch scope; managed libraries remain excluded.
+  const draftRoots = jobAuthoring ? [getJobDraftRoot()] : [];
+  if (reasoningScope) return [...new Set([...jobRoots, ...draftRoots])];
+  if (jobRoots.length) return [...new Set([...jobRoots, ...draftRoots])];
   return [
     ...new Set([
       ...getWritableRoots(),
