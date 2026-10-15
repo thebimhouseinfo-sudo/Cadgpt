@@ -89,10 +89,16 @@ function currentWritableRoots(): string[] {
   // Explicit jobcreate authoring may edit only managed job drafts even when
   // the prior reasoning Job has left its narrower runtime scope in this Work.
   const lease = currentToolLease();
-  const jobAuthoring = activeWorkForSession(lease.sessionKey)?.executionId === lease.workId &&
-    activeWorkForSession(lease.sessionKey)?.capabilities.includes("job-authoring");
-  if (reasoningScope) return [...new Set([...jobRoots, ...(jobAuthoring ? [getJobDraftRoot()] : [])])];
-  if (jobRoots.length) return [...new Set(jobRoots)];
+  const currentWork = activeWorkForSession(lease.sessionKey);
+  const jobAuthoring = currentWork?.executionId === lease.workId &&
+    (currentWork.ownerType === "skill" && currentWork.ownerId === "jobcreate" ||
+     currentWork.capabilities.includes("job-authoring"));
+  // Draft authoring is a bundle-wide authority: JOB.md plus tools/**,
+  // lisp/** and other Job-owned helpers. It is independent of a previous
+  // reasoning Job scratch scope; managed libraries remain excluded.
+  const draftRoots = jobAuthoring ? [getJobDraftRoot()] : [];
+  if (reasoningScope) return [...new Set([...jobRoots, ...draftRoots])];
+  if (jobRoots.length) return [...new Set([...jobRoots, ...draftRoots])];
   return [
     ...new Set([
       ...getWritableRoots(),
