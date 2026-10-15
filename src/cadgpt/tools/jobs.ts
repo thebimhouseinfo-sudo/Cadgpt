@@ -1043,20 +1043,43 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Finish Job Runtime",
       description:
-        "Finish the current reasoning Job runtime context, remove empty Job result folders, and release execution-scoped Job file-write restrictions. Runtime bytes are preserved; successful Jobs should delete processed raw/intermediate files explicitly, while remaining files are recovery evidence for a later relaunch.",
-      inputSchema: {},
+        "Finish the current Custom Job. Set outcome=done ONLY after all workflow and validation steps succeeded; this automatically saves the bound DWG using Python CAD MCP. On failure, stop, or interruption use outcome=failed (default), with no save. This is runtime behavior, not a JOB.md step.",
+      inputSchema: {
+        outcome: z.enum(["done", "failed"]).optional().default("failed"),
+      },
     },
-    async () => {
+    async ({ outcome }) => {
       try {
         const lease = currentToolLease();
-        const cleanup =
-          await cleanupJobRuntimeForExecution(
-            lease.workId
-          );
-        return toolResult(
-          "job_runtime_finish",
-          cleanup
-        );
+        const runtime = activeJobRuntimeForExecution(lease.workId);
+        if (!runtime) throw new Error("JOB_RUNTIME_NOT_ACTIVE: no Custom Job to finish.");
+        let autoSave: Record<string, unknown> = { attempted: false };
+        if (outcome === "done") {
+          // Save before releasing the Work's drawing authority. Cad host FIFO
+          // prevents overlap with other chats' CAD calls; no new manager.
+          const drawing = resolveDrawingContext();
+          try {
+            await withCadHostLock(drawing.host, async () => {
+              await activateDrawingContext(drawing);
+              const response = await cadUpstream.callTool("acad_save_bound_document", {
+                runtime_document_id: drawing.runtime_document_identity,
+              }) as { isError?: boolean; structuredContent?: Record<string, unknown>; content?: unknown };
+              if (response.isError) throw new Error("CAD MCP returned tool error during autosave.");
+              const saved = response.structuredContent;
+              if (!saved || saved.saved !== true ||
+                  saved.runtime_document_id !== drawing.runtime_document_identity) {
+                throw new Error("AUTOSAVE_UNVERIFIED: Python CAD MCP did not confirm save.");
+              }
+              autoSave = { attempted: true, saved: true, drawing: drawing.full_name };
+            });
+          } catch (error) {
+            autoSave = { attempted: true, saved: false,
+              error: error instanceof Error ? error.message : String(error) };
+          }
+        }
+        const cleanup = await cleanupJobRuntimeForExecution(lease.workId);
+        return toolResult("job_runtime_finish", { outcome, cleanup, autosave: autoSave,
+          status: outcome === "done" ? (autoSave.saved === true ? "JOB_DONE_SAVED" : "JOB_DONE_AUTOSAVE_FAILED") : "JOB_FAILED" });
       } catch (error) {
         return toolError(
           "job_runtime_finish",
