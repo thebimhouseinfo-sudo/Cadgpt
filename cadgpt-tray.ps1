@@ -34,6 +34,9 @@ Set-Location $ScriptDir
 
 $StartupKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $StartupName = "CadGPT"
+# The tray and startup registry share a narrowly scoped helper; other Run
+# values and other apps' Scheduled Tasks are never changed.
+. (Join-Path $ScriptDir "scripts\cadgpt-startup-registry.ps1")
 $script:IsTrayHost = $false
 $IndexPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "dist\index.js"))
 $TrayScriptPath = [System.IO.Path]::GetFullPath($PSCommandPath)
@@ -92,16 +95,12 @@ function Get-StartupCommand {
 }
 
 function Install-StartupRegistration {
-    New-Item -Path $StartupKey -Force | Out-Null
-    $expected = Get-StartupCommand
-    New-ItemProperty -Path $StartupKey -Name $StartupName -Value $expected -PropertyType String -Force | Out-Null
-    $actual = (Get-ItemProperty -Path $StartupKey -Name $StartupName -ErrorAction Stop).$StartupName
-    if ($actual -cne $expected) { throw "CadGPT startup registration readback mismatch." }
+    Install-CadGptStartupValue -RegistryKey $StartupKey -ValueName $StartupName -Command (Get-StartupCommand)
     Write-Host "[OK] CadGPT will start automatically when this Windows user signs in." -ForegroundColor Green
 }
 
 function Remove-StartupRegistration {
-    Remove-ItemProperty -Path $StartupKey -Name $StartupName -ErrorAction SilentlyContinue
+    Remove-CadGptStartupValue -RegistryKey $StartupKey -ValueName $StartupName
     Write-Host "[OK] CadGPT Windows auto-start removed." -ForegroundColor Green
 }
 
@@ -403,6 +402,15 @@ if ($StatusOnly) {
     Write-Host "Startup registry : $startupState"
     Write-Host "Startup approval : $approvalState"
     Write-Host "Startup trace    : $StartupTracePath"
+    # CadGPT's single authoritative autostart is its own HKCU Run value.
+    # Diagnose a stale CadGPT Scheduled Task without creating/deleting it.
+    try {
+        $taskMatches = @(Get-ScheduledTask -ErrorAction Stop | Where-Object {
+            $_.TaskName -match '(?i)cadgpt'
+        })
+        $taskState = if ($taskMatches.Count -eq 0) { 'NONE' } else { 'CONFLICT (' + $taskMatches.Count + ' CadGPT task(s))' }
+    } catch { $taskState = 'UNKNOWN' }
+    Write-Host "Startup tasks    : $taskState"
     $health = Get-CadGptHealth
     $state = Read-TrayState
     $trayPid = if ($state -and $state.pid) { [int]$state.pid } else { 0 }
