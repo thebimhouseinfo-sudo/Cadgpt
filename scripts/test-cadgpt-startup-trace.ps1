@@ -33,8 +33,14 @@ try {
     # Preflight must log its boundary on Windows PowerShell 5.1 and PS 7.
     # No .env or dist exists in this fixture, so no runtime/tunnel is started.
     foreach ($engine in @('powershell.exe', 'pwsh.exe')) {
-        & $engine -NoProfile -ExecutionPolicy Bypass -File $ps1 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) { throw "$engine unexpectedly started without .env" }
+        $exe = Get-Command $engine -ErrorAction SilentlyContinue
+        if (-not $exe) { Write-Host "$engine unavailable; skipping."; continue }
+        $stdout = Join-Path $fixture ($engine + '.stdout.log')
+        $stderr = Join-Path $fixture ($engine + '.stderr.log')
+        $child = Start-Process -FilePath $exe.Source -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $ps1 + '"')
+        ) -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        if ($child.ExitCode -eq 0) { throw "$engine unexpectedly started without .env" }
         $stages = @(Get-Content -LiteralPath $trace -ErrorAction Stop)
         foreach ($required in @('powershell_entry', 'preflight_start', 'env_missing', 'fatal_at_env_missing')) {
             if (-not ($stages -match [regex]::Escape($required))) {
@@ -68,8 +74,19 @@ try {
     if (-not $source.Contains('"Local\CadGPTTray"')) {
         throw 'CadGPT single-instance mutex missing'
     }
-    if ($source -match '(?i)Register-ScheduledTask|New-ScheduledTask|schtasks\.exe\s+/create') {
-        throw 'A second CadGPT autostart authority was introduced'
+    # GPTWorker-compatible precedence: Task Scheduler first, HKCU Run only
+    # as verified fallback. No unrelated scheduled task may be manipulated.
+    foreach ($required in @('New-ScheduledTaskTrigger -AtLogOn',
+        'Register-ScheduledTask -TaskName $StartupTaskName',
+        'Remove-CadGptStartupValue -RegistryKey $StartupKey',
+        'Install-CadGptStartupValue -RegistryKey $StartupKey',
+        'Get-CadGptStartupTask')) {
+        if (-not $source.Contains($required)) {
+            throw "Missing single-authority startup contract: $required"
+        }
+    }
+    if ($source -match '(?i)schtasks\.exe\s+/create') {
+        throw 'Unexpected secondary task creation path'
     }
     Write-Host 'CadGPT isolated startup trace smoke PASS'
 } finally {
