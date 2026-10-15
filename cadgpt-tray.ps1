@@ -104,9 +104,18 @@ function Install-StartupRegistration {
     $taskError = $null
     try {
         $outcome = Install-CadGptScheduledTask
-        Remove-CadGptStartupValue -RegistryKey $StartupKey -ValueName $StartupName
-        if ((Get-ItemProperty -LiteralPath $StartupKey -Name $StartupName -ErrorAction SilentlyContinue).$StartupName) {
-            throw 'CadGPT Registry fallback still present; refusing duplicate startup authority.'
+        try {
+            Remove-CadGptStartupValue -RegistryKey $StartupKey -ValueName $StartupName
+            if ((Get-ItemProperty -LiteralPath $StartupKey -Name $StartupName -ErrorAction SilentlyContinue).$StartupName) {
+                throw 'CadGPT Registry fallback still present.'
+            }
+        } catch {
+            # Roll back the owned task to avoid leaving two launch authorities.
+            # If rollback itself fails, return an explicit repair-required error.
+            $reason = $_.Exception.Message
+            try { Remove-CadGptScheduledTask }
+            catch { throw "Duplicate startup authority: Registry cleanup failed ($reason) and Task rollback failed: $($_.Exception.Message)" }
+            throw "Registry migration failed; Task rolled back: $reason"
         }
         Write-Host "[OK] CadGPT startup registered (Task Scheduler: $outcome)." -ForegroundColor Green
         return
