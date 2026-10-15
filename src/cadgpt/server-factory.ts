@@ -526,7 +526,7 @@ export function createMcpServer(sessionKey: string): McpServer {
           const { ensureDrawingAnchorForBinding } = await import(
             "./runtime/drawing-persistence.js"
           );
-          await ensureDrawingAnchorForBinding(binding);
+          await ensureDrawingAnchorForBinding(binding, { allowExplicitRebind: true });
           selectPrimaryBoundDrawing(binding);
           return binding;
         });
