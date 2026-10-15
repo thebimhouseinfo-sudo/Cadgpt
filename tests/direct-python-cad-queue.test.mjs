@@ -30,7 +30,7 @@ test("declared file-only Direct Python runs outside CAD Host lock; unknown legac
       "Path(os.environ['CADGPT_JOB_RUNTIME_ROOT'], 'started').write_text('yes')",
       "time.sleep(0.8)",
       "print('file processing complete')",
-    ].join("\\n"));
+    ].join("\n"));
     cadUpstream.callTool = async (name) => {
       if (name === "acad_list_open_documents") {
         return [{
@@ -49,12 +49,14 @@ test("declared file-only Direct Python runs outside CAD Host lock; unknown legac
     auth.checkAdmission(session,"@cg","mention");
     handle=work.createWorkRegistration({sessionKey:session,ownerType:"job",ownerId:"mto",executionPath:"hybrid"});
     await bindDrawingForExecution(handle.executionId,"MAGS.dwg");
-    const lease=work.acquireToolLease({
-      tool:"job_run_direct",family:"job-authoring",targetId:draft,
-      sessionKey:session,executionId:handle.executionId,authorityToken:handle.authorityToken,
-    });
-    const run = (fileOnly) => work.runWithToolLease(lease, () =>
-      executeDirectJobScript(draft,[],"mto",{fileOnly}));
+    const run = (fileOnly) => {
+      const lease=work.acquireToolLease({
+        tool:"job_run_direct",family:"job-authoring",targetId:draft,
+        sessionKey:session,executionId:handle.executionId,authorityToken:handle.authorityToken,
+      });
+      return work.runWithToolLease(lease, () =>
+        executeDirectJobScript(draft,[],"mto",{fileOnly}));
+    };
 
     // The file-only child has started, and is still sleeping when a second
     // chat's queued CAD command must be able to enter the Host lock.
