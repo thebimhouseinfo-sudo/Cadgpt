@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-test("new Job in a different chat terminals idle MTO SYSTEM owner and preserves raw files", async () => {
+test("new Job in a different chat preserves MTO SYSTEM owner and its raw files", async () => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-job-switch-"));
   const original = process.env.CADGPT_APPDATA_ROOT;
   process.env.CADGPT_APPDATA_ROOT = temp;
@@ -44,17 +44,29 @@ test("new Job in a different chat terminals idle MTO SYSTEM owner and preserves 
     const switched = await transition.releasePriorJobAuthorityForStart({
       executionId: grille.executionId, sessionKey: newChat
     });
-    assert.deepEqual(switched.retired_other_sessions.system_jobs, ["mto-refno-hardgate"]);
-    assert.deepEqual(system.allActiveJobSystemLeases(), []);
-    assert.deepEqual(runtime.activeDetachedJobRuntimeToolIds(), []);
-    assert.equal(registration.activeExecutionForSession(oldChat), null);
+    assert.deepEqual(switched.retired_other_sessions.system_jobs, []);
+    assert.deepEqual(system.allActiveJobSystemLeases().map(x=>x.job_id), ["mto-refno-hardgate"]);
+    assert.deepEqual(runtime.activeDetachedJobRuntimeToolIds(), ["mto-refno-hardgate"]);
+    assert.equal(registration.activeExecutionForSession(oldChat), mto.executionId);
     assert.equal(await fs.readFile(raw, "utf8"), '{"pending":true}\n');
-    await assert.rejects(system.runWithJobSystemLease(lease, async () => null), /SYSTEM_LEASE_TERMINATED/);
-    const recovered = await runtime.prepareJobRuntimeForExecution(
-      grille.executionId, "mto-refno-hardgate", job
+    await system.runWithJobSystemLease(lease, async () => null);
+    await assert.rejects(
+      runtime.prepareJobRuntimeForExecution(grille.executionId, "mto-refno-hardgate", job),
+      /JOB_RUNTIME_BUSY/,
+      "the same Job root is exclusive even across independent chats"
     );
-    assert.equal(recovered.recovery_pending, true, "raw data remains available for intentional resume");
+    const after = await runtime.prepareJobRuntimeForExecution(
+      grille.executionId, "grille-tag", path.join(temp, "libraries", "jobs", "fixture", "grille", "JOB.md")
+    ).catch(async err => {
+      const file = path.join(temp, "libraries", "jobs", "fixture", "grille", "JOB.md");
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, "# Grille\n");
+      return runtime.prepareJobRuntimeForExecution(grille.executionId, "grille-tag", file);
+    });
+    assert.equal(after.job_id, "grille-tag", "different Job roots may run at the same time");
     await runtime.cleanupJobRuntimeForExecution(grille.executionId);
+    system.releaseJobSystemLease(lease.tool_id, oldChat);
+    await runtime.cleanupJobRuntimeForSystemLease(lease.tool_id);
   } finally {
     for (const [chat, work] of [[oldChat, mto], [newChat, grille]]) {
       if (registration.activeExecutionForSession(chat)) {
@@ -68,7 +80,7 @@ test("new Job in a different chat terminals idle MTO SYSTEM owner and preserves 
   }
 });
 
-test("new Job cannot silently kill an in-flight MTO SYSTEM tool; host-close cleanup is safe afterward", async () => {
+test("new Job does not block an in-flight SYSTEM tool in another chat; host-close remains guarded", async () => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-job-inflight-"));
   const original = process.env.CADGPT_APPDATA_ROOT;
   process.env.CADGPT_APPDATA_ROOT = temp;
@@ -103,12 +115,17 @@ test("new Job cannot silently kill an in-flight MTO SYSTEM tool; host-close clea
       await pending;
     });
     assert.equal(running, true);
+    const other = await transition.releasePriorJobAuthorityForStart({
+      executionId:b.executionId,sessionKey:newChat
+    });
+    assert.deepEqual(other.retired_other_sessions.system_jobs, []);
+    assert.equal(system.allActiveJobSystemLeases().length, 1, "other chat's active SYSTEM lease must survive");
+    assert.equal(registration.activeExecutionForSession(oldChat), a.executionId);
     await assert.rejects(
-      transition.releasePriorJobAuthorityForStart({
-        executionId:b.executionId,sessionKey:newChat
-      }), /JOB_TRANSITION_BUSY/
+      transition.terminalizeIdleJobAuthorities({reason:"cad_host_closed"}),
+      /JOB_TRANSITION_BUSY/,
+      "host-close is guarded while a SYSTEM tool is still in flight"
     );
-    assert.equal(system.allActiveJobSystemLeases().length, 1, "busy work not preempted");
     releaseTask();
     await active;
     const ended = await transition.terminalizeIdleJobAuthorities({
