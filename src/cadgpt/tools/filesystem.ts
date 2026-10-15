@@ -4,11 +4,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { getAppDataRoot, getDrawingStorageRoot } from "../lib/appdata.js";
+import { getAppDataRoot, getDrawingStorageRoot, getJobDraftRoot } from "../lib/appdata.js";
 import { isHvacKnowledgePath } from "../lib/knowledge-storage.js";
 import { getAllowedRoots, getRepoRoot, getWritableRoots, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
-import { currentHumanPower, currentToolLease } from "../lib/work-registration.js";
+import { activeWorkForSession, currentHumanPower, currentToolLease } from "../lib/work-registration.js";
 import { currentJobSystemLease } from "../runtime/system-lease.js";
 import {
   auditHumanPowerSourceMutation,
@@ -86,7 +86,12 @@ function currentWritableRoots(): string[] {
   const reasoningScope = reasoningJobStorageScopeWasEntered(
     currentToolLease().workId
   );
-  if (reasoningScope) return [...new Set(jobRoots)];
+  // Explicit jobcreate authoring may edit only managed job drafts even when
+  // the prior reasoning Job has left its narrower runtime scope in this Work.
+  const lease = currentToolLease();
+  const jobAuthoring = activeWorkForSession(lease.sessionKey)?.executionId === lease.workId &&
+    activeWorkForSession(lease.sessionKey)?.capabilities.includes("job-authoring");
+  if (reasoningScope) return [...new Set([...jobRoots, ...(jobAuthoring ? [getJobDraftRoot()] : [])])];
   if (jobRoots.length) return [...new Set(jobRoots)];
   return [
     ...new Set([
