@@ -593,7 +593,7 @@ async function assertDirectJobPythonReady(python: string): Promise<void> {
   }
 }
 
-async function executeDirectJobScript(
+export async function executeDirectJobScript(
   script: string,
   args: string[],
   jobId: string,
