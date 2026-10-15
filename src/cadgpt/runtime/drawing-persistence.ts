@@ -8,6 +8,7 @@ import { cadUpstream } from "./cad-upstream.js";
 import {
   activateDrawingContext,
   removeDrawingContextForExecution,
+  primaryBoundDrawing,
   type BoundDrawing,
 } from "../session/drawing-binding.js";
 
@@ -205,6 +206,13 @@ export function attachVerifiedDrawingMetadataReadOnly(
 ): string {
   if (!binding.drawing_anchor || binding.anchor_verified_readback !== true) {
     throw new Error("DRAWING_METADATA_BINDING_UNVERIFIED: verified Drawing Anchor required.");
+  }
+  const primary = primaryBoundDrawing();
+  if (!primary ||
+      primary.runtime_document_identity !== binding.runtime_document_identity ||
+      primary.host.toLowerCase() !== binding.host.toLowerCase() ||
+      primary.drawing_anchor !== binding.drawing_anchor) {
+    throw new Error("DRAWING_METADATA_HOST_MISMATCH: read scope requires the verified Host-bound DWG.");
   }
   const root = directDrawingRoot(assertSafeDrawingAnchor(binding.drawing_anchor));
   let roots = metadataRootsByExecution.get(executionId);
