@@ -39,6 +39,14 @@ try {
     foreach ($i in 1..3) {
         if (-not (Test-CadGptTaskContract $task $launcher $user)) { throw 'Repeated validation failed' }
     }
+    # Windows Scheduler may return an SID instead of DOMAIN\\username.
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $task.Principal.UserId = $sid
+    $trigger.UserId = $sid
+    if (-not (Test-CadGptTaskOwnership $task $user)) { throw 'SID ownership not recognized' }
+    if (-not (Test-CadGptTaskContract $task $launcher $user)) { throw 'SID readback failed' }
+    $task.Principal.UserId = $user
+    $trigger.UserId = $user
     $action.Arguments = '"C:\Foreign\other-tray.vbs"'
     if (Test-CadGptTaskOwnership $task $user) { throw 'Foreign task accepted' }
     $action.Arguments = $launcher.Arguments
