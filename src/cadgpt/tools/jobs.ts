@@ -1838,6 +1838,8 @@ export function registerJobAuthoringTools(server: McpServer): void {
         if (!target_path || !library_id || !relative_path || !metadata) {
           throw new Error("JOB_PROMOTION_TARGET_REQUIRED: supply full promotion fields or registry_id for an existing Job.");
         }
+        // Keep narrowed values stable inside the asynchronous mutation callback.
+        const promotionMetadata = metadata;
         if (!path.isAbsolute(draft_path)) {
           throw new Error(
             "ABSOLUTE_PATH_REQUIRED: job_promote_draft draft_path must be absolute"
@@ -1845,9 +1847,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
         }
         const draftMode =
           assertDraftVirtualPath(draft_path);
-        if (isInternalJobId(metadata.id)) {
+        if (isInternalJobId(promotionMetadata.id)) {
           throw new Error(
-            `INTERNAL_JOB_ID_RESERVED: '${metadata.id}' is owned by CadGPT Internal Registry and cannot be promoted as a User Job.`
+            `INTERNAL_JOB_ID_RESERVED: '${promotionMetadata.id}' is owned by CadGPT Internal Registry and cannot be promoted as a User Job.`
           );
         }
         await assertManagedLibraryExists(
@@ -2026,15 +2028,15 @@ export function registerJobAuthoringTools(server: McpServer): void {
                 ).toLowerCase() ===
                   normalizedRelative.toLowerCase();
               if (
-                id === metadata.id &&
+                id === promotionMetadata.id &&
                 entry.kind !== "job"
               ) {
                 throw new Error(
-                  `Registry id belongs to a non-Job capability: ${metadata.id}`
+                  `Registry id belongs to a non-Job capability: ${promotionMetadata.id}`
                 );
               }
               if (
-                id !== metadata.id &&
+                id !== promotionMetadata.id &&
                 sameTarget
               ) {
                 throw new Error(
@@ -2047,19 +2049,19 @@ export function registerJobAuthoringTools(server: McpServer): void {
               string,
               unknown
             > = {
-              id: metadata.id,
+              id: promotionMetadata.id,
               kind: "job",
               registry: "user",
               library_id,
               relative_path:
                 normalizedRelative,
-              title: metadata.title,
-              class: metadata.class_name,
-              subclass: metadata.subclass,
-              tags: metadata.tags,
-              summary: metadata.summary,
-              status: metadata.status,
-              risk: metadata.risk,
+              title: promotionMetadata.title,
+              class: promotionMetadata.class_name,
+              subclass: promotionMetadata.subclass,
+              tags: promotionMetadata.tags,
+              summary: promotionMetadata.summary,
+              status: promotionMetadata.status,
+              risk: promotionMetadata.risk,
               execution_mode:
                 validation.execution_mode,
               semantic_status: "curated",
@@ -2076,7 +2078,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
               registry.entries.filter(
                 (entry) =>
                   String(entry.id || "") !==
-                  metadata.id
+                  promotionMetadata.id
               );
             nextEntries.push(newEntry);
             nextEntries.sort((a, b) =>
@@ -2170,7 +2172,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
                     mutation.asset_directories,
                   library_id,
                   registry_id:
-                    metadata.id,
+                    promotionMetadata.id,
                   execution_mode:
                     validation.execution_mode,
                   steps:
