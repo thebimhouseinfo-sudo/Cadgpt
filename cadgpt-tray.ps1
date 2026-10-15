@@ -69,8 +69,19 @@ function Get-StartupCommand {
 }
 
 function Install-StartupRegistration {
-    New-Item -Path $StartupKey -Force | Out-Null
-    New-ItemProperty -Path $StartupKey -Name $StartupName -Value (Get-StartupCommand) -PropertyType String -Force | Out-Null
+    # Never force-recreate an existing shared Windows Run key: it contains
+    # startup registrations belonging to other applications.
+    if (-not (Test-Path -LiteralPath $StartupKey)) {
+        New-Item -Path $StartupKey -ItemType RegistryKey | Out-Null
+    }
+
+    $command = Get-StartupCommand
+    New-ItemProperty -LiteralPath $StartupKey -Name $StartupName -Value $command -PropertyType String -Force | Out-Null
+
+    $registered = (Get-ItemProperty -LiteralPath $StartupKey -Name $StartupName -ErrorAction Stop).$StartupName
+    if ($registered -cne $command) {
+        throw "CadGPT Windows startup registration verification failed."
+    }
     Write-Host "[OK] CadGPT will start automatically when this Windows user signs in." -ForegroundColor Green
 }
 
