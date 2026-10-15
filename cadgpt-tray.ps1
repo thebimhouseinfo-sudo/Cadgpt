@@ -545,6 +545,7 @@ function AdoptExistingTunnel {
 
 function Start-CadGptRuntime {
     $script:RuntimeState = "Starting"
+    Set-StartupStage 'slim_starting'
     Update-TrayStatus
 
     if (-not (AdoptExistingCadGpt)) {
@@ -553,6 +554,7 @@ function Start-CadGptRuntime {
             $script:RuntimeState = "Degraded"
             Update-TrayStatus
             Write-TrayLog "CadGPT port occupied by unowned/unhealthy PID $existingPid; refusing to kill or replace it."
+            Set-StartupStage 'slim_port_conflict'
             return
         }
 
@@ -574,22 +576,27 @@ function Start-CadGptRuntime {
         if (-not (Wait-ForCondition { $null -ne (Get-CadGptHealth) } 25)) {
             $script:RuntimeState = "Degraded"
             Update-TrayStatus
+            Set-StartupStage 'slim_health_failed'
             return
         }
         if (-not (Test-OwnedCadGptProcess -ProcessId $script:CadGptPid)) {
             $script:RuntimeState = "Degraded"
             Update-TrayStatus
             Write-TrayLog "Started node process failed CadGPT ownership verification."
+            Set-StartupStage 'slim_ownership_failed'
             return
         }
     }
 
+    Set-StartupStage 'slim_ready'
+    Set-StartupStage 'tunnel_starting'
     if (-not (AdoptExistingTunnel)) {
         $existingPid = Get-PortOwnerPid -TargetPort $TunnelHealthPort
         if ($existingPid) {
             $script:RuntimeState = "Degraded"
             Update-TrayStatus
             Write-TrayLog "Tunnel health port occupied by unowned/unhealthy PID $existingPid; refusing to kill or replace it."
+            Set-StartupStage 'tunnel_port_conflict'
             return
         }
 
@@ -641,6 +648,7 @@ function Start-CadGptRuntime {
             $script:RuntimeState = "Degraded"
             Update-TrayStatus
             Write-TrayLog "Secure tunnel did not become ready on health port $TunnelHealthPort."
+            Set-StartupStage 'tunnel_health_failed'
             return
         }
 
@@ -649,12 +657,15 @@ function Start-CadGptRuntime {
             $script:RuntimeState = "Degraded"
             Update-TrayStatus
             Write-TrayLog "Started tunnel failed ownership verification."
+            Set-StartupStage 'tunnel_ownership_failed'
             return
         }
         Write-TrayState
     }
 
     $script:RuntimeState = "Ready"
+    Set-StartupStage 'tunnel_ready'
+    Set-StartupStage 'runtime_ready'
     Update-TrayStatus
 }
 
