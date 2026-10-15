@@ -10,7 +10,7 @@ import { getAppDataPath } from "./appdata.js";
 import { activeJobSystemLeasesForSession, allActiveJobSystemLeases } from "../runtime/system-lease.js";
 import { activeForegroundJobRuntimeExecutionIds, activeJobRuntimeForExecution } from "../runtime/job-runtime.js";
 import { drawingMetadataRootsForExecution } from "../runtime/drawing-persistence.js";
-import { primaryBoundDrawing } from "../session/drawing-binding.js";
+import { primaryBoundDrawing, getBoundDrawingsForExecution } from "../session/drawing-binding.js";
 import { getDrawingStorageRoot } from "./appdata.js";
 
 const CONTROL_SECRET = randomBytes(32).toString("base64url");
@@ -222,7 +222,12 @@ export async function addinBindingStatus(
   if (root) {
     for (const executionId of activeForegroundJobRuntimeExecutionIds()) {
       const context = activeJobRuntimeForExecution(executionId);
-      if (context && belongsToDrawing(drawingMetadataRootsForExecution(executionId))) {
+      const currentBinding = primary && getBoundDrawingsForExecution(executionId).some(
+        (drawing) =>
+          drawing.runtime_document_identity === primary.runtime_document_identity &&
+          drawing.host.toLowerCase() === primary.host.toLowerCase()
+      );
+      if (context && (belongsToDrawing(drawingMetadataRootsForExecution(executionId)) || currentBinding)) {
         active.set(context.job_id.toLowerCase(), {
           job_id: context.job_id,
           job_name: context.job_name,
