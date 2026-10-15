@@ -357,6 +357,17 @@ export async function cleanupDrawingMetadataForExecution(
     };
   }
 
+  // A second chat may be reading this same Host-verified root. Its
+  // read-only Work must not lose the directory when creator A stops.
+  if ([...metadataRootsByExecution.values()].some((roots) => roots.has(candidate))) {
+    return {
+      candidate,
+      deleted_empty: false,
+      kept_nonempty: false,
+      shared_in_use: true,
+    };
+  }
+
   try {
     const entries = await fs.readdir(candidate);
     if (entries.length > 0) {
