@@ -30,6 +30,10 @@ if not exist "cadgpt-tray.vbs" (
   echo [ERROR] cadgpt-tray.vbs is missing.
   exit /b 1
 )
+if not exist "scripts\cadgpt-startup-registry.ps1" (
+  echo [ERROR] CadGPT startup registry helper is missing.
+  exit /b 1
+)
 if not exist "dist\index.js" (
   echo [ERROR] dist\index.js is missing. Run setup.bat or npm run build first.
   exit /b 1
