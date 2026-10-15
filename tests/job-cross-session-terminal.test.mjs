@@ -55,14 +55,12 @@ test("new Job in a different chat preserves MTO SYSTEM owner and its raw files",
       /JOB_RUNTIME_BUSY/,
       "the same Job root is exclusive even across independent chats"
     );
+    const grilleJob = path.join(temp, "libraries", "jobs", "fixture", "grille", "JOB.md");
+    await fs.mkdir(path.dirname(grilleJob), { recursive: true });
+    await fs.writeFile(grilleJob, "# Grille\n");
     const after = await runtime.prepareJobRuntimeForExecution(
-      grille.executionId, "grille-tag", path.join(temp, "libraries", "jobs", "fixture", "grille", "JOB.md")
-    ).catch(async err => {
-      const file = path.join(temp, "libraries", "jobs", "fixture", "grille", "JOB.md");
-      await fs.mkdir(path.dirname(file), { recursive: true });
-      await fs.writeFile(file, "# Grille\n");
-      return runtime.prepareJobRuntimeForExecution(grille.executionId, "grille-tag", file);
-    });
+      grille.executionId, "grille-tag", grilleJob
+    );
     assert.equal(after.job_id, "grille-tag", "different Job roots may run at the same time");
     await runtime.cleanupJobRuntimeForExecution(grille.executionId);
     system.releaseJobSystemLease(lease.tool_id, oldChat);
