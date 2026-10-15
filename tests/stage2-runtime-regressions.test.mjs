@@ -101,7 +101,9 @@ test("drawing-workspace cannot implicitly bind a replacement drawing", async () 
       drawingBind({ document: "Drawing3.dwg" })
     );
     assert.equal(result.isError, true);
-    assert.match(JSON.stringify(result), /DRAWING_REBIND_REQUIRES_SELECTION/);
+    // Explicit document selection is allowed to recover a stale Host
+    // binding after AutoCAD relaunch. Offline CAD may still fail normally.
+    assert.doesNotMatch(JSON.stringify(result), /DRAWING_REBIND_REQUIRES_SELECTION/);
     releaseSessionWork(sessionKey);
   } finally {
     revokeSessionAdmissions(sessionKey);
