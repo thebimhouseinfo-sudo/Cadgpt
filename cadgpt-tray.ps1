@@ -418,6 +418,8 @@ $script:TunnelPid = $null
 $script:RuntimeState = "Starting"
 $script:Exiting = $false
 $script:RuntimeHealthFailures = 0
+$script:LastKnownActiveWork = 0
+$script:LastKnownActiveRequests = 0
 $script:SelfHealInProgress = $false
 $script:TrayStartedAt = (Get-Date).ToString("o")
 $script:CadProbe = [pscustomobject]@{
@@ -625,6 +627,10 @@ function Invoke-RuntimeSelfHeal {
 
     $health = Get-CadGptHealth
     $tunnelHealthy = Test-TunnelHealthy
+    if ($health) {
+        $script:LastKnownActiveWork = [int]$health.active_work_registrations
+        $script:LastKnownActiveRequests = [int]$health.active_mcp_requests
+    }
     if ($health -and $tunnelHealthy) {
         $script:RuntimeHealthFailures = 0
         if ($script:RuntimeState -eq "Degraded") {
@@ -637,6 +643,28 @@ function Invoke-RuntimeSelfHeal {
     $script:RuntimeHealthFailures += 1
     if ($script:RuntimeHealthFailures -lt 3) {
         Write-TrayLog "Runtime health miss $($script:RuntimeHealthFailures)/3; waiting before self-heal."
+        return
+    }
+
+    # Never force-stop a live Node/tunnel solely because their 2-second
+    # health HTTP probe timed out while jobs are running. That process
+    # teardown destroys every ChatGPT MCP transport at once.
+    $activeWork = [int]$script:LastKnownActiveWork -gt 0 -or
+        [int]$script:LastKnownActiveRequests -gt 0
+    $ownedCoreAlive = $false
+    $ownedTunnelAlive = $false
+    $corePid = Resolve-OwnedCadGptPid
+    $tunnelPid = Resolve-OwnedTunnelPid
+    if ($corePid) { $ownedCoreAlive = Test-OwnedCadGptProcess -ProcessId $corePid }
+    if ($tunnelPid) { $ownedTunnelAlive = Test-OwnedTunnelProcess -ProcessId $tunnelPid }
+    if ($activeWork -and (
+        ((-not $health) -and $ownedCoreAlive) -or
+        ((-not $tunnelHealthy) -and $ownedTunnelAlive))) {
+        $script:RuntimeState = "Degraded"
+        Update-TrayStatus
+        Write-TrayLog ("Deferred destructive self-heal: active_work={0}, active_requests={1}, core_alive={2}, tunnel_alive={3}. Preserving in-flight Jobs and all chat sessions." -f
+            $script:LastKnownActiveWork, $script:LastKnownActiveRequests,
+            $ownedCoreAlive, $ownedTunnelAlive)
         return
     }
 
