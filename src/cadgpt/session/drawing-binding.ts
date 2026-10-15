@@ -191,7 +191,8 @@ export async function listOpenDrawings(): Promise<Array<Record<string, unknown>>
 
 export async function bindDrawingForExecution(
   executionId: string,
-  document: string
+  document: string,
+  options: { allowExplicitRebind?: boolean } = {}
 ): Promise<BoundDrawing> {
   const needle = document.trim().toLowerCase();
   if (!needle) throw new Error("document is required");
@@ -206,6 +207,16 @@ export async function bindDrawingForExecution(
   if (matches.length > 1) throw new Error(`Drawing identity is ambiguous: ${document}`);
 
   const selected = matches[0];
+  if (primaryDrawing) {
+    if (matchesBinding(selected, primaryDrawing)) {
+      const attached = attachPrimaryDrawingForExecution(executionId);
+      if (!attached) throw new Error("PRIMARY_DRAWING_ATTACH_FAILED");
+      return attached;
+    }
+    if (!options.allowExplicitRebind) {
+      throw new Error("PRIMARY_DRAWING_ALREADY_BOUND: change the Host drawing only through an explicit workspace bind.");
+    }
+  }
   const name = String(selected.name ?? "");
   const fullName = String(selected.full_name ?? "");
   const selector = fullName || name;
