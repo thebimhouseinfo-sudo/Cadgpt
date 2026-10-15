@@ -19,6 +19,8 @@ function Assert-Sentinels {
 }
 
 try {
+    # Only the sandbox parent is created; the test Run key starts absent.
+    New-Item -Path $root -ErrorAction Stop | Out-Null
     # Missing-key case: create a nested test Run key without touching real Run.
     Install-CadGptStartupValue -RegistryKey $key -ValueName 'CadGPT' -Command $command
     if (-not (Test-Path -LiteralPath $key)) { throw 'Missing-key install failed' }
