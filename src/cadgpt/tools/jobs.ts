@@ -79,6 +79,7 @@ interface JobEntry {
   summary?: string;
   status?: string;
   risk?: string;
+  tags?: string[];
 }
 
 interface UserRegistry {
@@ -595,7 +596,8 @@ async function assertDirectJobPythonReady(python: string): Promise<void> {
 async function executeDirectJobScript(
   script: string,
   args: string[],
-  jobId: string
+  jobId: string,
+  options: { fileOnly?: boolean } = {}
 ): Promise<Record<string, unknown>> {
   const python = directJobPython();
   await assertDirectJobPythonReady(python);
@@ -639,46 +641,55 @@ async function executeDirectJobScript(
       : {}),
   };
 
-  const execute = async () => {
-    if (drawing) {
-      const drawingLocation =
-        await prepareDrawingMetadataLocation(
-          lease.workId,
-          drawing
-        );
-      const resultLocation =
-        await prepareJobResultLocationForExecution(
-          lease.workId,
-          String(
-            drawingLocation.absolute_path
-          )
-        );
-      jobResultRoot = String(
-        resultLocation.absolute_path
-      );
-      env.CADGPT_JOB_RESULT_ROOT =
-        jobResultRoot;
+  const prepare = async () => {
+    // A FILE-only Work can access the verified Host drawing's metadata
+    // without having any CAD authority or taking the CAD Host queue.
+    const fileRoots = !drawing
+      ? drawingMetadataRootsForExecution(lease.workId)
+      : [];
+    if (fileRoots.length > 1) {
+      throw new Error("DIRECT_JOB_DRAWING_AMBIGUOUS: multiple metadata roots.");
     }
-    return execFileAsync(
-      python,
-      [script, ...args],
-      {
-        cwd: runtime.runtime_root,
-        env,
-        windowsHide: true,
-        timeout: 5 * 60 * 1000,
-        maxBuffer: 4 * 1024 * 1024,
-      }
-    );
+    const root = drawing
+      ? String((await prepareDrawingMetadataLocation(lease.workId, drawing)).absolute_path)
+      : fileRoots[0];
+    if (root) {
+      const resultLocation = await prepareJobResultLocationForExecution(lease.workId, root);
+      jobResultRoot = String(resultLocation.absolute_path);
+      env.CADGPT_JOB_RESULT_ROOT = jobResultRoot;
+    }
   };
+  const runScript = () => execFileAsync(
+    python,
+    [script, ...args],
+    {
+      cwd: runtime.runtime_root,
+      env,
+      windowsHide: true,
+      timeout: 5 * 60 * 1000,
+      maxBuffer: 4 * 1024 * 1024,
+    }
+  );
 
   try {
-    const result = drawing
-      ? await withCadHostLock(
-          drawing.host,
-          execute
-        )
-      : await execute();
+    // Legacy Direct Python Jobs may perform CAD COM operations themselves.
+    // Preserve their existing serialization until explicitly classified by
+    // the pre-existing Registry tag "file-only"; do not guess from script text.
+    // Proven file-only scripts release the host queue before Python/Excel work.
+    let result: { stdout: string; stderr: string };
+    if (drawing && !options.fileOnly) {
+      result = await withCadHostLock(drawing.host, async () => {
+        await prepare();
+        return runScript();
+      });
+    } else {
+      if (drawing) {
+        await withCadHostLock(drawing.host, prepare);
+      } else {
+        await prepare();
+      }
+      result = await runScript();
+    }
 
     return {
       script,
@@ -1264,7 +1275,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
           sessionKey:
             callLease.sessionKey,
         });
-        const executed = await executeDirectJobScript(script, args, entry.id);
+        const executed = await executeDirectJobScript(script, args, entry.id, {
+          fileOnly: entry.tags?.some((tag) => tag.toLowerCase() === "file-only") === true,
+        });
 
         return toolResult("job_run_direct", {
           id: entry.id,
