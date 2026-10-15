@@ -56,3 +56,6 @@ try {
     $env:LOCALAPPDATA = $originalLocalAppData
     Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# Child preflight processes intentionally exit nonzero; the test itself passed.
+exit 0
