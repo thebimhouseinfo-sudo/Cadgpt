@@ -76,6 +76,24 @@ test("different chats share one verified Host drawing but not file-write authori
     await jobs.cleanupJobRuntimeForExecution(run.execution_id);
     assert.equal(await fs.readFile(path.join(result.absolute_path, "takeoff.json"), "utf8"), '{"rows":1}');
     await metadata.cleanupDrawingMetadataForExecution("exec-chat-B");
+
+    // Closing and reopening a same-name DWG creates a different document
+    // lifetime: no chat may silently inherit the stale Host binding.
+    const { cadUpstream } = await import("../dist/cadgpt/runtime/cad-upstream.js");
+    const original = cadUpstream.callTool;
+    try {
+      cadUpstream.callTool = async (tool) => {
+        assert.equal(tool, "acad_list_open_documents");
+        return [{
+          name:"MAGS.dwg",full_name:"C:/Project/MAGS.dwg",
+          runtime_document_id:"runtime-life-2",host:"autocad",
+        }];
+      };
+      await assert.rejects(() => binding.validatePrimaryBoundDrawing(), /BOUND_DRAWING_STALE/);
+      assert.equal(binding.primaryBoundDrawing(), null);
+    } finally {
+      cadUpstream.callTool = original;
+    }
   } finally {
     binding.clearExecutionDrawingContexts("exec-chat-B");
     if (saved === undefined) delete process.env.CADGPT_APPDATA_ROOT;
