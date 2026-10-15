@@ -7,7 +7,11 @@ import {
 } from "node:crypto";
 
 import { getAppDataPath } from "./appdata.js";
-import { activeJobSystemLeasesForSession } from "../runtime/system-lease.js";
+import { activeJobSystemLeasesForSession, allActiveJobSystemLeases } from "../runtime/system-lease.js";
+import { activeForegroundJobRuntimeExecutionIds, activeJobRuntimeForExecution } from "../runtime/job-runtime.js";
+import { drawingMetadataRootsForExecution } from "../runtime/drawing-persistence.js";
+import { primaryBoundDrawing } from "../session/drawing-binding.js";
+import { getDrawingStorageRoot } from "./appdata.js";
 
 const CONTROL_SECRET = randomBytes(32).toString("base64url");
 const PAIR_WINDOW_MS = 180_000;
@@ -201,13 +205,49 @@ export async function addinBindingStatus(
   }
 
   pair.lastAccessedAt = Date.now();
-  const backgroundJobs =
-    activeJobSystemLeasesForSession(
-      pair.sessionKey
-    ).map((lease) => ({
-      job_id: lease.job_id,
-      job_name: lease.job_name,
-    }));
+  // The ticker belongs to the Host-selected DWG, not the paired chat.
+  // Only inspect existing Work/lease metadata; never poll CAD for job status.
+  const primary = primaryBoundDrawing();
+  const root = primary?.anchor_verified_readback && primary.drawing_anchor
+    ? path.resolve(getDrawingStorageRoot(), primary.drawing_anchor)
+    : null;
+  const belongsToDrawing = (roots: string[]) => Boolean(
+    root && roots.some((entry) =>
+      process.platform === "win32"
+        ? path.resolve(entry).toLowerCase() === root.toLowerCase()
+        : path.resolve(entry) === root
+    )
+  );
+  const active = new Map<string, AddinBackgroundJob>();
+  if (root) {
+    for (const executionId of activeForegroundJobRuntimeExecutionIds()) {
+      const context = activeJobRuntimeForExecution(executionId);
+      if (context && belongsToDrawing(drawingMetadataRootsForExecution(executionId))) {
+        active.set(context.job_id.toLowerCase(), {
+          job_id: context.job_id,
+          job_name: context.job_name,
+        });
+      }
+    }
+    for (const lease of allActiveJobSystemLeases()) {
+      if (belongsToDrawing(lease.readable_roots)) {
+        active.set(lease.job_id.toLowerCase(), {
+          job_id: lease.job_id,
+          job_name: lease.job_name,
+        });
+      }
+    }
+  } else {
+    // Compatibility for a paired panel before any verified Host binding.
+    for (const lease of activeJobSystemLeasesForSession(pair.sessionKey)) {
+      active.set(lease.job_id.toLowerCase(), {
+        job_id: lease.job_id,
+        job_name: lease.job_name,
+      });
+    }
+  }
+  const backgroundJobs = [...active.values()]
+    .sort((a, b) => a.job_id.localeCompare(b.job_id));
   const observer = observers.get(pair.sessionKey);
   if (!observer) {
     return {
