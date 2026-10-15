@@ -193,6 +193,21 @@ namespace CadGpt.AutoCad.Stage0
                 token);
         }
 
+        public Task<AddinBindingResponse> ConnectDrawingAsync(
+            string document,
+            CancellationToken token)
+        {
+            if (string.IsNullOrWhiteSpace(document))
+            {
+                throw new ArgumentException("Drawing name/path is required", nameof(document));
+            }
+            return SendAsync<AddinBindingResponse>(
+                "POST",
+                "/addin-control/drawing/connect?document=" +
+                    Uri.EscapeDataString(document),
+                token);
+        }
+
         public Task<AddinBindingResponse> GetBindingStatusAsync(
             string pairId,
             CancellationToken token)
