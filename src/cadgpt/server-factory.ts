@@ -857,8 +857,10 @@ export function createMcpServer(sessionKey: string): McpServer {
           // A new @cg admission must not reuse an AutoCAD HWND from a crashed
           // host. The existing binding validator clears only stale authority.
           const { cadUpstream } = await import("./runtime/cad-upstream.js");
-          await cadUpstream.activate();
-          await validatePrimaryBoundDrawing();
+          await withCadHostLock("autocad", async () => {
+            await cadUpstream.activate();
+            await validatePrimaryBoundDrawing();
+          });
           primary = primaryBoundDrawing();
         } catch (error) {
           if (!(error instanceof Error) || !error.message.startsWith("BOUND_DRAWING_STALE:")) {
