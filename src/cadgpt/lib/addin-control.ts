@@ -254,12 +254,23 @@ export async function addinBindingStatus(
   const backgroundJobs = [...active.values()]
     .sort((a, b) => a.job_id.localeCompare(b.job_id));
   const observer = observers.get(pair.sessionKey);
+  // Header always reflects the user's Host-level selected drawing, including
+  // a manual Connect click from the native Add-in. Chat Work binding remains
+  // separately authorized and must validate its document lifetime.
+  const hostDrawing: AddinBoundDrawing | null =
+    primary?.anchor_verified_readback === true
+      ? {
+          name: primary.name,
+          full_name: primary.full_name,
+          runtime_document_id: primary.runtime_document_identity,
+        }
+      : null;
   if (!observer) {
     return {
       paired: true,
       session_ready: false,
-      drawing: null,
-      bound_count: 0,
+      drawing: hostDrawing,
+      bound_count: hostDrawing ? 1 : 0,
       human_power: false,
       background_jobs: backgroundJobs,
     };
@@ -269,8 +280,8 @@ export async function addinBindingStatus(
   return {
     paired: true,
     session_ready: true,
-    drawing: binding.drawing,
-    bound_count: binding.bound_count,
+    drawing: hostDrawing ?? binding.drawing,
+    bound_count: hostDrawing ? 1 : binding.bound_count,
     human_power: binding.human_power,
     background_jobs: backgroundJobs,
   };
