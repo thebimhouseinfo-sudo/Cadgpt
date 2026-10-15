@@ -316,9 +316,10 @@ export function resolveDrawingContext(drawingId?: string): BoundDrawing {
 }
 
 export async function activateDrawingContext(
-  binding: BoundDrawing
+  binding: BoundDrawing,
+  options: { allowExplicitRebind?: boolean } = {}
 ): Promise<BoundDrawing> {
-  if (primaryDrawing && binding.anchor_verified_readback === true &&
+  if (primaryDrawing && !options.allowExplicitRebind &&
       (primaryDrawing.runtime_document_identity !== binding.runtime_document_identity ||
         primaryDrawing.host.toLowerCase() !== binding.host.toLowerCase())) {
     throw new Error("BOUND_DRAWING_REPLACED: the Host primary drawing was changed.");
