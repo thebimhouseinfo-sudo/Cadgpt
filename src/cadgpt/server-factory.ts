@@ -849,8 +849,24 @@ export function createMcpServer(sessionKey: string): McpServer {
       });
       // A second ChatGPT session joins the existing Host-selected DWG even
       // when several document tabs are open. No new drawing selection gate.
-      const { primaryBoundDrawing } = await import("./session/drawing-binding.js");
-      const primary = primaryBoundDrawing();
+      const { primaryBoundDrawing, validatePrimaryBoundDrawing } =
+        await import("./session/drawing-binding.js");
+      let primary = primaryBoundDrawing();
+      if (primary && launch.mode !== "offline" && launch.autocad_detected) {
+        try {
+          // A new @cg admission must not reuse an AutoCAD HWND from a crashed
+          // host. The existing binding validator clears only stale authority.
+          const { cadUpstream } = await import("./runtime/cad-upstream.js");
+          await cadUpstream.activate();
+          await validatePrimaryBoundDrawing();
+          primary = primaryBoundDrawing();
+        } catch (error) {
+          if (!(error instanceof Error) || !error.message.startsWith("BOUND_DRAWING_STALE:")) {
+            throw error;
+          }
+          primary = null;
+        }
+      }
       if (primary && launch.mode !== "offline" && launch.autocad_detected) {
         const activated = await activateCadWorkspace({
           key: "host-bound",
