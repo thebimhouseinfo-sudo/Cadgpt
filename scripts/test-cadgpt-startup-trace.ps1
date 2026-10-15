@@ -53,6 +53,24 @@ try {
         }
     }
     if ($source -match '(?i)RevitGPT|GPTWorker') { throw 'Startup implementation contains other app names' }
+
+    # Static launcher guarantees: real terminal visibility still needs a
+    # sign-in Human Test; these checks forbid obvious visible spawn paths.
+    $vbsSource = Get-Content -LiteralPath $vbs -Raw
+    if (-not $vbsSource.Contains('WshShell.Run cmd, 0, False') -or
+        -not $vbsSource.Contains('-WindowStyle Hidden')) {
+        throw 'Autostart VBS must dispatch PowerShell with a hidden window'
+    }
+    $hiddenChildCount = [regex]::Matches($source, 'WindowStyle\s*=\s*"Hidden"').Count
+    if ($hiddenChildCount -lt 2) {
+        throw 'Both owned Node and Tunnel children must be started hidden'
+    }
+    if (-not $source.Contains('"Local\CadGPTTray"')) {
+        throw 'CadGPT single-instance mutex missing'
+    }
+    if ($source -match '(?i)Register-ScheduledTask|New-ScheduledTask|schtasks\.exe\s+/create') {
+        throw 'A second CadGPT autostart authority was introduced'
+    }
     Write-Host 'CadGPT isolated startup trace smoke PASS'
 } finally {
     $env:LOCALAPPDATA = $originalLocalAppData
