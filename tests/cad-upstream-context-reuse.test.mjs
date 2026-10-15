@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { shouldResetCadUpstreamForContext as reset } from "../dist/cadgpt/runtime/cad-upstream.js";
+import { shouldResetCadUpstreamForContext as reset, cadUpstream } from "../dist/cadgpt/runtime/cad-upstream.js";
 
 const baseline = {
   connected: true,
@@ -43,4 +43,38 @@ test("normal session reuse does not skip the required Human Power reset", () => 
     connectedHumanPower: false
   });
   assert.equal(changedToHuman, true);
+});
+
+test("a real CAD tool exception does not discard the healthy upstream or binding", async () => {
+  const old = {
+    connect: cadUpstream.connect,
+    client: cadUpstream.client,
+    transport: cadUpstream.transport,
+    phase: cadUpstream.phase,
+    tools: cadUpstream.tools,
+  };
+  let transportClosed = false;
+  const client = {
+    async callTool() { throw new Error("real Lisp syntax failure"); },
+  };
+  try {
+    cadUpstream.phase = "active";
+    cadUpstream.connect = async () => {};
+    cadUpstream.client = client;
+    cadUpstream.transport = { async close() { transportClosed = true; } };
+    cadUpstream.tools = [{ name: "cad_load_lisp_file" }];
+    await assert.rejects(
+      cadUpstream.callTool("cad_load_lisp_file", { path: "bad.lsp" }),
+      /real Lisp syntax failure/
+    );
+    assert.equal(cadUpstream.client, client);
+    assert.equal(cadUpstream.status().connected, true);
+    assert.equal(transportClosed, false);
+  } finally {
+    cadUpstream.connect = old.connect;
+    cadUpstream.client = old.client;
+    cadUpstream.transport = old.transport;
+    cadUpstream.phase = old.phase;
+    cadUpstream.tools = old.tools;
+  }
 });

@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-test("Python CAD MCP: simulate managed Job Lisp load, sentinel timeout, late queue, and rejection", () => {
+test("Python CAD MCP: simulate managed Job Lisp load, delayed acknowledgement, and rejection", () => {
   const simulation = String.raw`
 import os, sys, re, types, tempfile
 from pathlib import Path
@@ -47,18 +47,27 @@ with tempfile.TemporaryDirectory(prefix="cadgpt-lisp-simulation-") as tmp:
     assert expr.startswith('(if (= (getvar "USERS5") "CADGPT_PENDING:abc123") (progn ')
     assert expr.endswith("(princ)))")
 
-    # Simulate SendCommand enqueued but AutoCAD has not consumed it in time.
+    # The command may stay queued while AutoCAD is busy. A late real ACK is
+    # success, not an artificial elapsed-time failure or a second queued load.
     doc = FakeDocument()
     queued = []
+    reads = [0]
+    original_getvar = doc.GetVariable
+    def delayed_ack(name):
+        if name == "USERS5" and str(doc.values["USERS5"]).startswith("CADGPT_PENDING:"):
+            reads[0] += 1
+            if reads[0] >= 4:
+                token = re.search(r"CADGPT_OK:([0-9a-f]+)", queued[0]).group(1)
+                doc.SetVariable("USERS5", "CADGPT_OK:" + token)
+        return original_getvar(name)
     with patch.object(s, "_send", side_effect=lambda code, document=None: queued.append(code)), \
-         patch.object(s, "_LOAD_TIMEOUT_SECONDS", 0), \
+         patch.object(doc, "GetVariable", side_effect=delayed_ack), \
          patch.object(s.time, "sleep", side_effect=lambda _: None):
         result = s.load_lisp_file(str(helper), doc)
-    assert result["loaded"] is False and "timeout" in result["error"].lower()
+    assert result["loaded"] is True
     assert doc.values["USERS5"] == "previous"
     assert len(queued) == 1
-    # A deferred AutoCAD evaluation now sees restored USERS5, so the guard skips load.
-    assert '(if (= (getvar "USERS5") "CADGPT_PENDING:' in queued[0]
+    assert reads[0] >= 4
 
     # Simulate successful sentinel acknowledgement without real CAD.
     doc2 = FakeDocument()

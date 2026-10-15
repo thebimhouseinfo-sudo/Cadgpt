@@ -246,7 +246,7 @@ test("normal user-invoked CadGPT admission consumes a pending panel pair", async
 });
 
 
-test("paired add-in work survives idle timeout while ordinary browser work still expires", async () => {
+test("active Add-in and browser CAD work both survive idle timeout", async () => {
   const {
     checkAdmission,
     revokeSessionAdmissions: revokeAdmissions,
@@ -319,8 +319,8 @@ test("paired add-in work survives idle timeout while ordinary browser work still
   );
   assert.equal(
     activeExecutionForSession(browserSession),
-    null,
-    "ordinary browser work must retain the normal idle-timeout policy"
+    browserWork.executionId,
+    "active browser CAD work must not be lost just because the user was idle"
   );
 
   const cleanupId =
@@ -329,6 +329,7 @@ test("paired add-in work survives idle timeout while ordinary browser work still
     cleanupId,
     addinWork.executionId
   );
+  assert.equal(releaseSessionWork(browserSession), browserWork.executionId);
   assert.notEqual(
     browserWork.executionId,
     addinWork.executionId
