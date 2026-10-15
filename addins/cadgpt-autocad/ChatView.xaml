@@ -21,6 +21,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
                 <TextBlock x:Name="BoundDrawingText"
@@ -31,8 +32,17 @@
                            TextTrimming="CharacterEllipsis"
                            Text="Not bound" />
 
-                <Button x:Name="ThemeButton"
+                <Button x:Name="ConnectDrawingButton"
                         Grid.Column="1"
+                        Margin="0,0,6,0"
+                        Padding="8,4"
+                        Click="ConnectDrawingButton_Click"
+                        ToolTip="Bind or rebind the active AutoCAD drawing to CadGPT.">
+                    Connect this drawing
+                </Button>
+
+                <Button x:Name="ThemeButton"
+                        Grid.Column="2"
                         Padding="8,4"
                         Click="ThemeButton_Click"
                         ToolTip="Toggle add-in chrome between light and dark.">
