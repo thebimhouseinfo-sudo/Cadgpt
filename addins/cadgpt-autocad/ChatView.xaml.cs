@@ -412,22 +412,10 @@ namespace CadGpt.AutoCad
                             : group.First().JobName,
                     StringComparer.OrdinalIgnoreCase);
 
-            foreach (var active in
-                _activeBackgroundJobs.ToArray())
-            {
-                if (incoming.ContainsKey(active.Key))
-                {
-                    continue;
-                }
-
-                _doneBackgroundJobs[active.Key] =
-                    new BackgroundDoneState
-                    {
-                        Name = active.Value,
-                        ExpiresUtc =
-                            now.AddSeconds(3),
-                    };
-            }
+            // A missing lease proves only that this Job is no longer active.
+            // It does not prove successful completion. Never synthesize Done
+            // from a dropped session or an incomplete status poll.
+            _doneBackgroundJobs.Clear();
 
             _activeBackgroundJobs.Clear();
             foreach (var job in incoming)
