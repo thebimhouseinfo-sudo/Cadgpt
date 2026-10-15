@@ -167,9 +167,11 @@ export function registerWorkControlTools(
           return toolResult("cadgpt_work_start", {
             reused: true,
             resumed: true,
-            reason: requestedSkillCapability
-              ? "conversation_work_skill_capability_enabled"
-              : "conversation_work_continuation",
+            reason: requestedSkillCapability === "cad-mcp-dev"
+              ? "conversation_work_dev_capability_enabled"
+              : requestedSkillCapability === "job-authoring"
+                ? "conversation_work_skill_capability_enabled"
+                : "conversation_work_continuation",
             work_handle: {
               execution_id: continued.executionId,
               authority_token: continued.authorityToken,
