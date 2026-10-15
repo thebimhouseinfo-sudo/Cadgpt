@@ -145,19 +145,21 @@ export function registerWorkControlTools(
           }
 
           let continued = resumed;
-          const enablingCadMcpDev =
+          const requestedSkillCapability =
             owner_type === "skill" &&
-            owner_id.trim() === "cad-mcp-dev";
-          if (enablingCadMcpDev) {
+            (owner_id.trim() === "cad-mcp-dev" || owner_id.trim() === "jobcreate")
+              ? (owner_id.trim() === "jobcreate" ? "job-authoring" : "cad-mcp-dev")
+              : null;
+          if (requestedSkillCapability) {
             continued = enableWorkCapability(
               resumed.executionId,
               resumed.authorityToken,
               options.sessionKey,
-              "cad-mcp-dev"
+              requestedSkillCapability
             );
             toolSurface = await options.prepareFamilies(
               continued.executionPath,
-              "cad-mcp-dev",
+              owner_id.trim(),
               continued.executionId
             );
           }
@@ -165,8 +167,8 @@ export function registerWorkControlTools(
           return toolResult("cadgpt_work_start", {
             reused: true,
             resumed: true,
-            reason: enablingCadMcpDev
-              ? "conversation_work_dev_capability_enabled"
+            reason: requestedSkillCapability
+              ? "conversation_work_skill_capability_enabled"
               : "conversation_work_continuation",
             work_handle: {
               execution_id: continued.executionId,
