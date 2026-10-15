@@ -95,87 +95,46 @@ function Get-StartupCommand {
     return 'wscript.exe "' + $TrayLauncherPath + '"'
 }
 
-function Get-StartupLauncher {
-    if (-not (Test-Path -LiteralPath $TrayLauncherPath)) { throw "CadGPT silent VBS launcher missing." }
-    $wscript = Join-Path $env:WINDIR "System32\wscript.exe"
-    if (-not (Test-Path -LiteralPath $wscript)) { throw "Windows Script Host missing." }
-    return @{ Execute = $wscript; Arguments = '"' + $TrayLauncherPath + '"'; WorkingDirectory = $ScriptDir }
-}
-
-function Get-CadGptStartupTask {
-    if (-not (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue)) {
-        throw "Cannot inspect CadGPT scheduled startup task."
-    }
-    return Get-ScheduledTask -TaskName $StartupTaskName -ErrorAction SilentlyContinue
-}
+# Scheduled Task module owns task identity, install, readback and removal.
+. (Join-Path $ScriptDir 'scripts\cadgpt-scheduled-startup.ps1')
 
 function Install-StartupRegistration {
-    $launcher = Get-StartupLauncher
-    $taskInstalled = $false
+    # Ownership conflicts fail closed. Infrastructure failures may fall back only
+    # after independently confirming that no CadGPT task remains active.
+    $taskError = $null
     try {
-        foreach ($name in @('Register-ScheduledTask','Get-ScheduledTask','New-ScheduledTaskAction',
-                           'New-ScheduledTaskTrigger','New-ScheduledTaskPrincipal','New-ScheduledTaskSettingsSet')) {
-            if (-not (Get-Command $name -ErrorAction SilentlyContinue)) { throw "Unavailable: $name" }
+        $outcome = Install-CadGptScheduledTask
+        Remove-CadGptStartupValue -RegistryKey $StartupKey -ValueName $StartupName
+        if ((Get-ItemProperty -LiteralPath $StartupKey -Name $StartupName -ErrorAction SilentlyContinue).$StartupName) {
+            throw 'CadGPT Registry fallback still present; refusing duplicate startup authority.'
         }
-        $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-        $action = New-ScheduledTaskAction -Execute $launcher.Execute -Argument $launcher.Arguments -WorkingDirectory $launcher.WorkingDirectory
-        $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-        try { $trigger.Delay = 'PT10S' } catch {}
-        $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
-        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
-        Register-ScheduledTask -TaskName $StartupTaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
-        $registered = Get-CadGptStartupTask
-        $actualAction = @($registered.Actions) | Select-Object -First 1
-        if (-not $actualAction -or $actualAction.Execute -ne $launcher.Execute -or
-            $actualAction.Arguments -ne $launcher.Arguments -or
-            $actualAction.WorkingDirectory -ne $launcher.WorkingDirectory) {
-            throw "CadGPT scheduled startup action verification failed."
-        }
-        $taskInstalled = $true
-    } catch {
-        Write-TrayLog "Task Scheduler registration unavailable: $($_.Exception.Message)"
-    }
-
-    if ($taskInstalled) {
-        # Remove only our own fallback; other Run values remain untouched.
-        try {
-            Remove-CadGptStartupValue -RegistryKey $StartupKey -ValueName $StartupName
-            if ((Get-ItemProperty -LiteralPath $StartupKey -Name $StartupName -ErrorAction SilentlyContinue).$StartupName) {
-                throw "CadGPT HKCU Run fallback still registered."
-            }
-        } catch {
-            if (Get-Command Unregister-ScheduledTask -ErrorAction SilentlyContinue) {
-                Unregister-ScheduledTask -TaskName $StartupTaskName -Confirm:$false -ErrorAction Stop
-            }
-            throw "Failed to deactivate CadGPT Registry fallback; scheduled task removed to avoid duplicate startup."
-        }
-        Write-Host "[OK] CadGPT startup registered (Task Scheduler)." -ForegroundColor Green
+        Write-Host "[OK] CadGPT startup registered (Task Scheduler: $outcome)." -ForegroundColor Green
         return
-    }
-
-    # Do not enable a second authority if Task Scheduler may still own CadGPT.
-    $oldTask = Get-CadGptStartupTask
-    if ($oldTask) {
-        if (-not (Get-Command Unregister-ScheduledTask -ErrorAction SilentlyContinue)) {
-            throw "Cannot remove old CadGPT scheduled task."
+    } catch {
+        $taskError = $_.Exception.Message
+        if ($taskError -match '(?i)foreign|unverifiable|refusing|readback contract mismatch|duplicate startup authority') {
+            throw "CadGPT task registration blocked: $taskError"
         }
-        Unregister-ScheduledTask -TaskName $StartupTaskName -Confirm:$false -ErrorAction Stop
-        if (Get-CadGptStartupTask) { throw "CadGPT scheduled task still exists; Registry fallback blocked." }
+        Write-TrayLog "Task unavailable; attempting verified Registry fallback: $taskError"
     }
+    # Never activate HKCU Run while any matching Task is present or inspection fails.
+    $present = Get-CadGptScheduledTask
+    if ($present) {
+        if (-not (Test-CadGptTaskOwnership $present ([Security.Principal.WindowsIdentity]::GetCurrent().Name))) {
+            throw 'Foreign task detected, Registry fallback refused.'
+        }
+        Remove-CadGptScheduledTask
+    }
+    if (Get-CadGptScheduledTask) { throw 'Cannot verify absence of CadGPT task.' }
     Install-CadGptStartupValue -RegistryKey $StartupKey -ValueName $StartupName -Command (Get-StartupCommand)
-    Write-Host "[OK] CadGPT startup registered (HKCU Run fallback)." -ForegroundColor Green
+    Write-Host '[OK] CadGPT startup registered (HKCU Run fallback).' -ForegroundColor Green
 }
 
 function Remove-StartupRegistration {
-    # Fail closed if task status cannot be inspected.
-    $oldTask = Get-CadGptStartupTask
-    if ($oldTask) {
-        if (-not (Get-Command Unregister-ScheduledTask -ErrorAction SilentlyContinue)) { throw "Cannot remove CadGPT scheduled task." }
-        Unregister-ScheduledTask -TaskName $StartupTaskName -Confirm:$false -ErrorAction Stop
-        if (Get-CadGptStartupTask) { throw "CadGPT scheduled task removal not verified." }
-    }
+    # Never touch a foreign task or another application's Registry value.
+    Remove-CadGptScheduledTask
     Remove-CadGptStartupValue -RegistryKey $StartupKey -ValueName $StartupName
-    Write-Host "[OK] CadGPT startup registration removed." -ForegroundColor Green
+    Write-Host '[OK] CadGPT Windows startup removed.' -ForegroundColor Green
 }
 
 function Get-PortOwnerPid([int]$TargetPort) {
@@ -477,7 +436,7 @@ if ($StatusOnly) {
     Write-Host "Startup approval : $approvalState"
     Write-Host "Startup trace    : $StartupTracePath"
     try {
-        $task = Get-CadGptStartupTask
+        $task = Get-CadGptScheduledTask
         $taskState = if ($task) { 'REGISTERED' } else { 'NONE' }
     } catch { $taskState = 'UNKNOWN' }
     Write-Host "Startup tasks    : $taskState"
