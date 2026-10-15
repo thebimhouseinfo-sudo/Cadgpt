@@ -332,6 +332,19 @@ export function resolveDrawingContext(drawingId?: string): BoundDrawing {
     return selected;
   }
 
+  // Manual Host binding is user-authoritative. An existing chat keeps its
+  // Work/ToolLease identity, but its single drawing context follows the new
+  // verified Host primary at the next CAD invocation. Never infer from a
+  // mere active-tab switch.
+  if (primaryDrawing?.anchor_verified_readback === true && map.size === 1) {
+    const prior = [...map.values()][0];
+    if (prior.runtime_document_identity !== primaryDrawing.runtime_document_identity ||
+        prior.host.toLowerCase() !== primaryDrawing.host.toLowerCase()) {
+      map.clear();
+      const attached = { ...primaryDrawing, execution_id: lease.workId };
+      map.set(attached.drawing_id, attached);
+    }
+  }
   const values = [...map.values()];
   if (values.length === 0) {
     throw new Error(
