@@ -81,7 +81,8 @@ function assertSafeDrawingAnchor(value: unknown): string {
 }
 
 export async function ensureDrawingAnchorForBinding(
-  binding: BoundDrawing
+  binding: BoundDrawing,
+  options: { allowExplicitRebind?: boolean } = {}
 ): Promise<{
   drawing_anchor: string;
   schema_version: number;
@@ -90,7 +91,7 @@ export async function ensureDrawingAnchorForBinding(
   verified_readback: boolean;
 }> {
   try {
-    await activateDrawingContext(binding);
+    await activateDrawingContext(binding, options);
     const raw = await cadUpstream.callTool("cad_ensure_drawing_anchor", {
       document_name: binding.document_selector,
       runtime_document_id: binding.runtime_document_identity,
