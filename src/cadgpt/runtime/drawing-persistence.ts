@@ -193,6 +193,35 @@ export function authorizeDrawingMetadataRootForExecution(
   inheritedReadOnlyRootsByExecution.get(executionId)?.delete(root);
 }
 
+/**
+ * Cross-chat read permission for the one Host-verified Drawing Anchor.
+ * Unlike handoffVerifiedDrawingMetadataRoot, this neither transfers cleanup
+ * ownership nor grants generic writes under the drawing root.
+ * FILE-only Jobs may consume persisted JSON without waking CAD.
+ */
+export function attachVerifiedDrawingMetadataReadOnly(
+  executionId: string,
+  binding: BoundDrawing
+): string {
+  if (!binding.drawing_anchor || binding.anchor_verified_readback !== true) {
+    throw new Error("DRAWING_METADATA_BINDING_UNVERIFIED: verified Drawing Anchor required.");
+  }
+  const root = directDrawingRoot(assertSafeDrawingAnchor(binding.drawing_anchor));
+  let roots = metadataRootsByExecution.get(executionId);
+  if (!roots) {
+    roots = new Set<string>();
+    metadataRootsByExecution.set(executionId, roots);
+  }
+  roots.add(root);
+  let inherited = inheritedReadOnlyRootsByExecution.get(executionId);
+  if (!inherited) {
+    inherited = new Set<string>();
+    inheritedReadOnlyRootsByExecution.set(executionId, inherited);
+  }
+  inherited.add(root);
+  return root;
+}
+
 export function registerCreatedDrawingMetadataFolderForExecution(
   executionId: string,
   absoluteRoot: string
