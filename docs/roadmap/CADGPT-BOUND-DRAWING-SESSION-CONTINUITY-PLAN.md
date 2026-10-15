@@ -1,0 +1,503 @@
+---
+title: CadGPT — Bound Drawing Continuity in an Active Add-in Session
+document_type: DETAILED_IMPLEMENTATION_PLAN
+status: CR_REVIEW_REQUIRED
+review_status: PLANNER_INTERNAL_PASS_AWAITING_CR
+implementation_status: NOT_STARTED
+priority: P0
+source_repo: thebimhouseinfo-sudo/Cadgpt
+source_baseline: adaf5b4b08f327c21354852e5e4a8dc1b013e8d7
+working_branch: fix/bound-drawing-work-handoff-20261012
+review_owner: Critic Reviewer
+merge_allowed: false
+---
+
+# CadGPT — Fix Bound Drawing Context Loss in an Active Session
+
+> **STATUS: CR_REVIEW_REQUIRED / CR REVIEW REQUIRE.** This document is a **planning draft**, not a CR-approved implementation or a confirmed root-cause analysis. **Do not implement, merge, deploy or mark PASS** until an independent Critic Reviewer reviews this plan, source-derived failure hypotheses and intended regression tests. Source and real AutoCAD host verification are separate checkpoints.
+>
+> **User-reported defect:** while continuously interacting with CadGPT in the AutoCAD add-in, the chat/Work loses access to the **already bound drawing**. The drawing may still be open and named in the panel. The defect must be investigated and fixed without attributing it to sleep, inactivity or an unconfirmed Node restart.
+>
+> Plan-only branch from \`main@adaf5b4b08f327c21354852e5e4a8dc1b013e8d7\`. This plan is deliberately limited to **drawing binding and Work-context continuity within an active session**. The unrelated tray self-heal/transport investigation is not permission to broaden the patch.
+
+## 1. Scope, invariants and evidence rules
+
+**Functional invariant:** once a user has bound one drawing in a live add-in session, normal requests, Job A→Job B, Job Builder→Custom Job, and Temp work in the **same logical session** must preserve the exact verified binding unless there is an actual explicit unbind, drawing close/reopen (different document lifetime), a new user-selected drawing, or a genuine end of the owning session.
+
+- The **primary bound drawing is stable** across tab switches and across routine work transitions. Never auto-bind to the active tab or infer a DWG by display name.
+- \`HYBRID\` is the default for every Work. An **explicit** \`FILE\`/\`CAD\` exception still obeys its tool-family boundary; the implementation must not silently permit FILE calls under CAD-only or CAD calls under FILE-only.
+- Drawing identity means verified \`drawing_id\`, full path, **runtime_document_identity**, actual session/Work ownership and, separately where verified, Drawing Anchor. Do not fabricate identity from a retained add-in header label.
+- A Job-only metadata read that uses an existing verified Drawing Anchor does not need a gratuitous live CAD scan. A request about **current live CAD state** must still verify live binding/document lifetime.
+- Tool leases in flight must remain protected. A failed transition must not silently destroy a previously usable Work or leak its authority token to another session. Avoid new Job Runtime/Temp scheduler/auto-recovery mechanisms.
+- Any missing proof stays \`UNCONFIRMED\`. Never label a suspected race or a test's forced schedule as the demonstrated cause of the user's incident.
+
+**Explicit non-goals:** rewriting tray health thresholds; global acceptance of headerless MCP requests; changing timeout, app sleep/wake policy or license; blanket bypass of drawing validation; broadening metadata file write permissions; redesigning Job MTO rules; merging before CR.
+
+## 2. Current source-grounded findings (not yet a definitive incident attribution)
+
+| Ref | Exact source seam | Verified behavior / open question |
+| --- | --- | --- |
+| F1 | \`src/cadgpt/lib/work-registration.ts\`: \`createWorkRegistration\` around lines 225–263 | When the owner changes and prior work is not busy, the old registration is **deleted** and \`expirationHandler(priorId)\` is scheduled **without waiting** before the successor is created. There is no atomic staged handoff here. |
+| F2 | \`src/cadgpt/tools/work-control.ts\`: \`cadgpt_work_start\` around lines 187–266 | Normal reuse happens only for the same \`ownerType\`, \`ownerId\`, \`executionPath\`. Otherwise creation precedes \`handoffSingleBoundDrawingForExecution\`, \`handoffVerifiedDrawingMetadataRoot\`, then explicit old cleanup. A cleanup scheduled earlier is not coordinated with handoff. |
+| F3 | \`src/cadgpt/server-factory.ts\` and \`src/cadgpt/runtime/execution-cleanup.ts\` | \`setWorkExpirationHandler\` points to \`cleanupExecutionState\`; that function eventually clears execution-bound CAD contexts and metadata. **Hypothesis:** under an unfavorable async schedule, old cleanup can erase the only handoff source before it is copied. This is **not yet reproduced** by a controlled test. |
+| F4 | \`src/cadgpt/session/drawing-binding.ts\` | Binding is keyed by execution ID. Single-drawing handoff copies only if the old map has exactly one entry. \`activateDrawingContext\` can invalidate a stale runtime document lifetime, correctly refusing to re-bind by name. These are intentional safety gates, not defects by themselves. |
+| F5 | \`tests/job-hybrid-default.test.mjs\` | Happy-path HYBRID Job handoff succeeds; explicit \`job_nonhybrid_path: file\` intentionally gets **no CAD drawing handoff**. Need trace the user's actual path and whether an exception was explicitly requested, instead of declaring this behavior a bug. |
+| F6 | Add-in header / \`BindingHeaderEvidence.cs\` and \`ChatView.xaml.cs\` | The panel can preserve a last confirmed drawing label over incomplete status. **Displayed name ≠ verified current Work drawing ownership.** Establish whether header is merely stale or Work really lost a previously valid binding. |
+| F7 | \`src/cadgpt/lib/mcp-session-manager.ts\` | Transport detach may preserve logical Work state; an explicit logical-session disposal may clean it. Test context continuity across legitimate transport rotation separately. Do not assume every repeated MCP initialize means loss. |
+
+**Incident root cause: UNCONFIRMED.** F1–F3 are credible race candidates; F5–F7 are alternative paths that require evidence. A detailed plan must not make one explanation certain until a failing test/runtime trace supports it.
+
+## 3. A0 — Evidence and deterministic reproduction BEFORE any fix
+
+Read and record exact \`main\` SHA and input path from add-in to tool, including:
+
+- Add-in observed bound drawing name/path and local runtime document ID vs MCP \`drawing_binding_status\`/bound contexts; original and successor execution ID, generation, owner, requested execution path.
+- Requested action and sequence (for example Job Builder → MTO, Create System → MTO, Temp → CAD); the precise tool that first returns \`BOUND_DRAWING_CONTEXT_UNAVAILABLE\` or \`NO_ACTIVE_WORK\`.
+- \`cadgpt_work_start\` inputs, whether it reused/created Work and whether \`drawing_handoff\` / \`drawing_metadata_handoff\` was returned. Do not log authority tokens.
+- \`createWorkRegistration\`, expiration-handler schedule/start/finish, \`handoffSingleBoundDrawingForExecution\`, \`cleanupExecutionState\` start/finish, \`resolveDrawingContext\` and \`activateDrawingContext\`, in order by monotonic operation sequence and execution IDs.
+- Check whether the Work switched to explicitly requested FILE-only, had more than one drawing, the bound document actually closed/reopened, or the logical session was intentionally disposed.
+- Correlate timestamps/session with available local logs without assuming sleep, Node restart, or a user interruption.
+
+**Tests to write FIRST (failing when defect is reproduced):**
+
+1. **R01 — Forced cleanup race:** bind exactly one verified drawing to Work A. Start Work B through the actual \`cadgpt_work_start\` callback and deterministically allow expiration cleanup of A to reach \`clearExecutionDrawingContexts(A)\` before handoff. Assert B must retain exactly that drawing. Current source is a credible candidate to fail; record observed result rather than claiming it upfront.
+2. **R02 — Prepare failure:** force \`prepareFamilies(B)\` to throw after transition started. Assert intended rollback/diagnostic contract: original user-visible active work is not silently lost; no stale authority, orphan context, leaked lease or unintended CAD deactivate.
+3. **R03 — Reuse:** same HYBRID Work owner/path; no new execution ID, no binding transfer, no extra cleanup, no additional CAD calls.
+4. **R04 — Job chain:** drawing bind → Job A → Job B/MTO → read stored metadata under the correct verified Drawing Anchor → optional live CAD read. Keep the same document-lifetime identity, no guessed \`ActiveDocument\` and no forced full-drawing scan.
+5. **R05 — Explicit FILE-only:** retain current family-deny policy and expected absence of CAD handoff; trace whether actual MTO workflow truly requested it and test a valid HYBRID selection separately.
+6. **R06 — Multiple/closed/reopened drawings:** two possible bindings must not be guessed; document lifetime mismatch must fail closed with explicit reason.
+7. **R07 — Active chat plus MCP transport rotation:** with original logical identity preserved, ensure Work and drawing remain accessible and distinct from transport ID. A changed logical identity must not inherit another session's drawing.
+8. **R08 — Header continuity:** header may retain last confirmed DWG label while runtime reports unbound; distinguish display state from an actual binding proof. A real binding loss must be observable independently of header color.
+
+Use existing test harness, mock CAD upstream where needed and **real functions/async scheduling**, not regex-only tests. Test failures must include before/after context counts and order. A source-only simulation is evidence of a possible interleaving, not a live AutoCAD incident attribution.
+
+**A0 evidence checkpoint:** a repeatable failure matching lost binding in an active session enables a reviewed causal fix; otherwise keep `P0_INCIDENT_OPEN / EVIDENCE_PENDING` and carry out the §13 evidence/diagnostic loop. Only unproven source fixes are stopped. Do not close the incident because reproduction is incomplete.
+
+## 4. A1 — Transaction-safe Work handoff (conditional on A0 evidence)
+
+If R01/R02 confirms destructive interleaving, change the Work lifecycle so the old binding cannot be deleted before a successor is ready:
+
+1. **Prepare successor** without retiring A or starting A's asynchronous expiration cleanup. Keep old Work active until the handoff and required preparation are safe to commit. Reuse the existing \`createSuccessorWorkRegistration\` / commit-or-cancel pattern **where compatible**; do not fork a second registration model.
+2. Require same logical session and single verified context for automatic handoff; copy drawing context to B only through existing validated handoff, preserve exact runtime document identity and metadata read-only boundary.
+3. **Commit** active Work B only after preparation succeeds; **then** retire and clean up A exactly once. Ensure cleanup of A cannot delete B's transferred context or deactivate CAD while B retains an active CAD Work.
+4. On failure, remove staged B and its staged context/authorization; keep A's current handle, binding and in-flight safety intact. Report the failure instead of silently rebinding to a different DWG.
+5. If existing successor primitives cannot handle HYBRID→HYBRID Job A→B correctly, document the minimal adjustment to them and add direct tests. Do **not** weaken session boundaries or issue duplicate authority tokens.
+6. Explicit FILE-only transitions remain allowed only by deliberate override and must not be treated as HYBRID; avoid accidental loss of the user's primary bound drawing in the add-in. Whether a separate session-level persistent drawing reference is needed must be decided by the reviewer from reproduced cases, not assumed.
+
+**A1 exit:** R01–R06 PASS under forced interleavings, including rollback, and no new permission bypass.
+
+## 5. A2 — Binding evidence and user-visible diagnostics (only what the bug needs)
+
+- Add **structured continuity diagnostics** at boundary transitions, not heavyweight generic telemetry:
+  \`transition_id\`, timestamp, safe logical-session fingerprint, previous/new execution ID and generation, owner/path, CAD context count, \`drawing_id\`, safe document-lifetime fingerprint, handoff result, cleanup phase, exact failure reason.
+- Never log authority tokens, pairing secrets, raw drawing file contents or private chat text. Use the existing \`continuity-diagnostics.ts\` sanitization/fingerprinting conventions.
+- Distinguish \`NO_WORK\`, \`DRAWING_NOT_BOUND_FOR_WORK\`, \`MULTIPLE_DRAWINGS_BOUND\`, \`BOUND_DRAWING_STALE\`, \`WORK_HANDOFF_FAILED\`, \`WORK_PREPARE_FAILED\`, \`SESSION_IDENTITY_MISMATCH\` at the correct layer. Preserve existing error codes for callers where compatibility requires; expose more precise structured cause instead of blanket red header.
+- Add-in header remains driven by AutoCAD's real open/active tab state; a live Work error should show an actionable **Work binding mismatch** without claiming the bound DWG was closed. Avoid temporary health polling gaps changing its color.
+- If instrumentation disproves F1–F3 and shows another path, update CR and implementation plan **before** changing unrelated code.
+
+**A2 exit:** reproduction gives an unambiguous phase/cause code and can be distinguished from transport-only detach, stale DWG lifetime and intentional unbind.
+
+## 6. A3 — Regression, performance and real AutoCAD verification
+
+**Source verification** on the implementation branch: \`npm run build\`, \`npm test\`, applicable Lisp syntax checks if Lisp changed, and GitHub Actions Core CI/Registry Contract/Authoring Integrity/Runtime Roadmap Gate/Local Acceptance Contract as applicable. Always report exact tested commit SHA and actual pass/fail.
+
+**Executable regression matrix:**
+
+| ID | Work/case | Acceptance |
+| --- | --- | --- |
+| T01 | Add-in bound → Temp HYBRID → Job HYBRID → CAD action | One exact DWG identity available after each transition |
+| T02 | Job A → Job B/MTO, rapid calls, forced cleanup timing | No transient zero-context and no wrong-document fallback |
+| T03 | Job B preparation fails | Consistent original Work and binding; no old-authority use by B |
+| T04 | Same Work reused 100 times | No new Work, no cleanup, no extra CAD activation |
+| T05 | Another tab active, same bound DWG open | Header orange as designed; commands still target bound DWG |
+| T06 | Bound DWG closed and reopened under same name | \`BOUND_DRAWING_STALE\`, explicit rebind required |
+| T07 | Two bindings or ambiguous identity | No automatic handoff guessed |
+| T08 | Explicit FILE-only and CAD-only work | Existing family gates still deny unauthorized tools |
+| T09 | MCP transport rotation with same logical chat | Work/binding persist when logical session retained |
+| T10 | Lost logical identity/new conversation | No borrowing another session's binding |
+| T11 | Existing verified metadata after handoff | Correct Drawing Anchor root; no unnecessary CAD wakeup |
+| T12 | Header says bound but Work binding missing | Diagnostic reports Work/binding mismatch, not fake DWG closed |
+
+**Performance:** record number of \`drawing_list\` / \`drawing_bind\` / \`acad_list_open_documents\`, new Work allocations and CAD backend activations per scenario. Handoff alone should make **zero extra CAD calls**; do not add frequent polling or rescan as a workaround.
+
+**Windows AutoCAD HOST checkpoint — PASS_RETEST_REQUIRED until observed:** keep one DWG bound while chatting continuously in the add-in; execute real Job/Temp transitions, MTO metadata read and CAD operation; switch tabs without changing primary binding; validate header state, exact DWG lifetime, no surprise rebind/restart. Provide actual trace/log and screenshots where helpful. Source tests can PASS independently of this checkpoint.
+
+## 7. Critic Review gate and delivery rules
+
+**CURRENT STATUS: \`CR_REVIEW_REQUIRED\` — no CR PASS has occurred for this plan.**
+
+Critic Reviewer must **independently** check all of the following **before Coder begins**:
+
+- Is each claimed source behavior accurate? Distinguish async race **possibility** vs demonstrated failure; do not mark a contrived invalid-workflow test as product defect.
+- Does staged transition preserve single-binding semantics, Job/System ownership, current leases, explicit FILE-only exception and bounded Drawing Anchor permissions?
+- Can the mock actually force the alleged race in **production entrypoints**, rather than reproducing a different synthetic code path?
+- Does failure rollback prevent both context loss and unauthorized double ownership? Does cleanup run exactly once?
+- Does any change increase latency, wake CAD without need, introduce a redundant Job Runtime/Temp engine, or weaken safety?
+- Are live transport/Node restarts being blamed without case-specific proof? Do not use those as a substitute for diagnosing the bound drawing.
+- Are tests executable and are host-only tasks explicitly \`PASS_RETEST_REQUIRED\`?
+
+Review outcomes:
+- **FAIL / CHANGES_REQUIRED:** Planner revises **this file on the same branch**, Reviewer/CR repeats until planning PASS. Do not patch product source during planning.
+- **PASS:** update the status explicitly to \`CR_REVIEW_PASS\` with review reference, then hand off **A0 → A1 (only if reproduction supports it) → A2 → A3** to Coder.
+- **BLOCKED:** mark exact missing evidence; retain \`CR_REVIEW_REQUIRED\` rather than imagining proof or rewriting unrelated lifecycle.
+- Do not merge implementation into \`main\` until source regression PASS and appropriate release decision; host result remains separately marked.
+
+**Delivery of this plan itself:** commit only this Markdown document to \`fix/bound-drawing-work-handoff-20261012\`; do not modify source, change runtime defaults, merge or claim the incident has been fixed.
+
+---
+
+## 8. Planner revision 3 — integrated CR findings and internal review loop (2026-10-12)
+
+**Status: PLANNER_INTERNAL_REVIEW; independent CR re-review pending.** This section supersedes A0–A3 wherever they are incomplete, without treating the reported incident root cause as proven. Do not change source, merge or mark CR PASS from this planning change. Preserve the original P0 active-session no-sleep/no-interruption scenario.
+
+### 8.1 Evidence classification and ownership model
+
+Four independent states must be tracked: (1) stable primary drawing identity in the **same logical add-in session**, including the original verified `runtime_document_identity` and separately verified Drawing Anchor; (2) current Work and capability authority, including execution ID, owner and execution path; (3) MCP transport/upstream health; and (4) last-confirmed add-in header display. Header name does not establish live backend Work binding. A FILE-only Work cannot call CAD even if the primary identity is remembered. A new conversation cannot borrow another logical session's drawing.
+
+Document the exact path through `cadgpt_work_start`, `createWorkRegistration`, `createSuccessorWorkRegistration`, `commitSuccessorWorkRegistration`, `activateCadWorkspace`, `releasePriorJobAuthorityForStart`, `retireIdleJobWorkForExecution`, `releaseSessionWork`, `cleanupExecutionState`, MCP logical disposal, `drawingBindingStatus` and `activateDrawingContext`. For each: trigger, previous/next owner and execution, whether it revokes authority, whether it drops binding/metadata, whether it awaits or races cleanup, in-flight lease guards and whether scope is within or across sessions. Distinguish intentional old-Job cross-session terminalization from accidental primary drawing loss.
+
+Do not infer a user-incident cause from forced scheduling alone. Record an actual source-entrypoint test outcome or `UNCONFIRMED / REPRODUCTION_REQUIRED`. Python `document_service.list_open_documents()` propagates ordinary COM/enumeration exceptions; there is not yet evidence that those exceptions become a successful empty list.
+
+### 8.2 CRITICAL CR-01 — Transaction-safe successor and rollback
+
+Current `createWorkRegistration` deletes A and schedules asynchronous expiration cleanup before the Work B handoff attempted by `cadgpt_work_start`. The implementation must define a single authorization/active-Work commit point:
+
+1. Validate same logical session, current owner, nonbusy leases, desired execution path and source context; stage B with an inaccessible authority, without revoking A.
+2. Copy exactly one verified drawing binding and its *read-only* verified metadata root to staged B only where permitted. Prevent guessing on multiple bindings, cross-session transfers and path-only matching.
+3. Prepare required tool families; failure cancels B and its staged metadata/context, while A remains active, valid and callable.
+4. Commit B as the sole active Work in one serialized operation with stale-generation and competing-transition checks. Revoke A immediately at commit; only then queue idempotent cleanup of A.
+5. Ensure late/double cleanup A cannot clear B binding, revoke B or deactivate a backend B still uses. No unauthorized double ownership across any await.
+
+Existing `createSuccessorWorkRegistration` is **FILE→HYBRID with unchanged owner only**. It cannot directly implement HYBRID Job A→HYBRID Job B with changed owner. Design the *minimal* shared staged-registration extension (or precisely justify another approach), preserving token uniqueness, lease checks, owner constraints and permission boundaries. Do not silently repurpose the existing upgrade without adapting its preconditions and tests.
+
+### 8.3 CRITICAL CR-02 — Execution-owned cleanup and backend isolation
+
+`cleanupExecutionState(executionId)` derives loaded families from a runtime-wide snapshot; this is not itself proof of the retiring execution's ownership. Audit every cleanup action against exact execution-owned resources. In particular, Human Power cleanup can call `cadUpstream.deactivate()`; require ordered mode reset and explicit successor/in-flight CAD protection. CAD backend shutdown must depend on actual remaining CAD ownership/leases, not just an old work's cleanup path. A cleanup is idempotent and does not delete successor maps or metadata. Test delayed cleanup, repeated cleanup, transition error, session end, and Human Power reset.
+
+### 8.4 CRITICAL CR-03 — Negative DWG observation is not automatically confirmed closure
+
+`drawingBindingStatus` and `activateDrawingContext` presently delete drawing context on a single absence in an otherwise successful `acad_list_open_documents` result. Separate `AVAILABLE`, `OBSERVATION_UNKNOWN` (transport/COM), `OBSERVED_ABSENT` (successful but possibly incomplete list), `CONFIRMED_CLOSED`, and `CONFIRMED_IDENTITY_MISMATCH`. Define positive evidence for destructive invalidation. Do not turn COM failures into empty lists, do not mask a proven close/reopen identity mismatch, do not auto-bind to `ActiveDocument` or same filename. Verify any confirmation policy using bounded/event-driven evidence instead of constant expensive CAD rescans. Until provenance is established, do not claim that incomplete listing caused the live incident.
+
+### 8.5 IMPORTANT CR-04, CR-05, CR-06 — Paths, transitions and persistent identity
+
+Cover all Work creation/retirement/disposal entrypoints, including Job A→B, Builder→Custom Job, Direct Job, Temp, workspace activation and cross-session Job terminalization. Coordinate race guards across entrypoints, not only inside the `cadgpt_work_start` callback. A truly ended logical session revokes rights; a transport detach with retained logical identity does not.
+
+An explicitly requested FILE-only/CAD-only exception retains its original tool-family denial. Decide between (A) an immutable, non-executable **session-scoped primary drawing reference** or (B) a protected Work-scoped continuity reference, after A0 tests; choose one minimal design only. With FILE-only, preserve the user's selected identity for future authorized HYBRID work, but grant **zero CAD privilege** to the FILE Work. Future CAD action must revalidate original document lifetime before execution. No implicit rebinding across different logical sessions.
+
+### 8.6 Ordered revision milestones and test gates
+
+**A0 — Audit and reproduce, before modification.** Build entrypoint and ownership matrix above; add deterministic tests on real exported entrypoints (with controlled promises), report actual before/after registration/context counts, observed response, tool lease, metadata root and backend phase. First confirm a fail that matches active-session context loss or state `UNCONFIRMED` with diagnostic evidence required. Do not implement speculative fixes.
+
+**A1 — Atomic transition when justified by A0.** Implement the common stage/commit/rollback boundary; expand successor support only as demonstrated; test competing transitions, late cleanup and preparation failure.
+
+**A2 — Binding observation and cleanup isolation.** Implement only proven reliability changes; distinguish observation uncertainty and verified DWG lifetime change; structured minimal logs with safe fingerprints and cause codes. Header keeps AutoCAD open/active rules and reports Work mismatch independently, not an invented DWG close.
+
+**A3 — Source regressions and host acceptance.** Record exact tested SHA for build, tests, relevant CI. Windows AutoCAD live checkpoint stays `PASS_RETEST_REQUIRED` until observed on a disposable DWG with uninterrupted add-in use. Do not use the user's production drawing as a QA fixture; no merge/deploy based solely on mock PASS.
+
+**Mandatory new executable tests beyond R01–R08 / T01–T12:**
+
+| ID | Reproduction / negative control | Required behavior |
+| --- | --- | --- |
+| R09 | Successful but incomplete drawing enumeration; separately COM/transport error | Preserve non-executable identity pending evidence, no false close; distinct error reasons |
+| R10 | Delayed cleanup A runs after committed successor B | B binding, metadata and CAD access unaffected |
+| R11 | Double cleanup A | Idempotent, no B teardown or unauthorized upstream stop |
+| R12 | Changed-owner HYBRID Job A→Job B on actual entrypoint | Atomic active authority, exact binding, safe rollback |
+| R13 | Explicit FILE-only→authorized HYBRID | Original identity can be verified; FILE never receives CAD permission |
+| R14 | `prepareFamilies(B)` failure | Valid A retained, staged B has no authority/orphan |
+| R15 | Cleanup concurrently with in-flight successor CAD call / Human Power reset | Respect leases and backend ownership; no unrelated deactivate |
+| R16 | Logging across Work race, identity anomaly and transport rotation | Unambiguous redacted reason; no tokens, private DWG data or fabricated incident cause |
+
+**CR gate:** Independent Critic Reviewer must re-read and review the **new blob SHA**, verify CR-01 through CR-06 are addressed, and provide PASS or CHANGES_REQUIRED. This planner revision is not itself CR approval. Continue planning loop before any Coder work.
+
+### 8.7 Internal review round 1 — findings and repairs
+
+The Planner inspected revision 2 against current source contracts and the six independent CR findings. **Round 1 result: CHANGES_REQUIRED**, with these plan defects repaired in this revision:
+
+| Self-review finding | Defect in revision 2 | Revision 3 repair |
+| --- | --- | --- |
+| IR-01 | A0–A3 main body and appended section 8 could be interpreted as competing instructions | Section 8 is the **controlling revision** for every overlapping requirement; sections 1–7 remain historical rationale/test inputs, not an alternate implementation route. |
+| IR-02 | A0 permits UNCONFIRMED while A1 text might encourage a speculative patch | **No reproduction means no source fix.** A0 may conclude UNCONFIRMED only with exact missing evidence, then stop for diagnostics/CR plan revision. |
+| IR-03 | Successor staging may be mistaken for a callable second authorization | Staged token is not callable or current, and B cannot run protected tools before atomic commit. |
+| IR-04 | Session-scoped identity option could look like implicit authority | Retained identity is only read-only continuity evidence. CAD execution still requires current authorized Work and live lifetime revalidation. |
+| IR-05 | Absence from a successful enumeration could be incorrectly treated as proven COM fault | Treat a successful-but-incomplete enumeration and an exception as **different negative controls**; neither alone proves user incident attribution. |
+| IR-06 | Runtime-level cleanup might be treated as execution-owned merely due to argument | Demand exact per-execution resource ownership proof, active lease check and safe global-backend shutdown ordering. |
+| IR-07 | Tests lack an explicit falsification case for the central race | Force the alleged A cleanup **before** handoff via the real `cadgpt_work_start` entrypoint; capture whether old context actually disappears, whether handoff is null, and whether the next CAD action fails. A passing race test falsifies that mechanism; investigate alternatives. |
+
+**Precedence:** Section 8.1–8.7 takes precedence over older F4 interpretation, A1 handoff ordering, and all earlier R01/R02 acceptance statements if inconsistent. No plan revision is CR-approved until independent CR verifies the exact blob.
+
+**Mandatory stop rules:** (1) Do not fix based only on hypothesis; (2) Do not mark host PASS from mock tests; (3) No automatic rebind to a same-name DWG or another chat; (4) No permissions broadened merely to retain identity; (5) No code/merge/deploy before CR approves the revised plan and the user authorizes implementation.
+
+**Completion of internal loop:** A self-review may be marked PASS only after another independent-in-process Planner pass verifies these repairs against code and the written acceptance matrix. The result and checked blob SHA must be recorded under section 8.8 before handoff to Critic Reviewer.
+
+### 8.8 Internal review round 2 — PASS (planning only)
+
+**Checked input:** revision 3 after internal repair, base blob `ae3b9b600cc03a4e8ed83912fab51e13df95ef7e` (commit `69634274c2f6dc7dcaf7faa24203faf7c386f248`). In this round, Planner detected and repaired one remaining evidence-tracking defect: the CR-04, CR-05, CR-06 heading lacked individually traceable IDs. This is a plan labeling change, not a claim that production tests ran.
+
+**Plan checklist:** CR-01 through CR-06 explicitly tracked; R01–R16 + T01–T18 specified; staged/commit/rollback authority; execution-owned cleanup and lease protection; successful-but-incomplete listing vs service exception; FILE-only permission boundary and remembered non-executable identity; cross-session no-adoption; A0 no-reproduction stop; no sleep assumptions; source tests separate from Windows host checkpoint. **Internal plan review PASS**. Live root cause **UNCONFIRMED**. Independent CR still **PENDING**. No product source edits, merge, deploy, or implementation authorization.
+
+### 8.9 Standing Planner internal-review protocol (CadGPT)
+
+For every future CadGPT Planner draft/revision, *before* presenting the plan to the user or to CR: review the full latest draft against source evidence, constraints, security, testability and prior findings; record self-review findings; revise the same plan; repeat until a documented INTERNAL_PASS or explicitly describe a genuine blocker. Persist the reviewed plan, verify its readback and reference its exact blob SHA. Internal PASS must **never** be represented as independent CR PASS or live/CI test PASS. Do not stop merely after the first revision or commit.
+
+---
+
+## 9. Planner Revision 4 — CR-R3 findings, authoritative amendment
+
+**Status:** PLANNER INTERNAL PASS; independent CR not yet passed. This section is controlling wherever prior revisions differ. No product code mutation or incident root-cause claim.
+
+### 9.1 CR-R3-01 / CRITICAL — Staged authorization must be uncallable
+
+**Source evidence:** `createSuccessorWorkRegistration` inserts a staged successor in `registrations` before commit, while `validateWorkHandle` currently checks registration/token/session/epoch and `closing`, but does **not** require `activeBySession.get(sessionKey) === executionId`. Therefore a merely staged record may pass validation if its token is known. Treat this as an independently demonstrated *source authorization gate gap*, not proof that the observed user incident exploited it.
+
+**Mandatory design:**
+1. Define explicit `STAGED` vs `ACTIVE` vs `RETIRED` registration states (or an equivalent single-authoritative predicate). Only the current committed `ACTIVE` registration may acquire/use a Work ToolLease; both `validateWorkHandle` and the actual lease acquisition boundary must reject STAGED. Exception: narrowly identified internal commit/cancel operations explicitly validating a staged token using a distinct non-tool-capability API.
+2. Do not rely on token secrecy or UI omission. A valid stolen/copied staged token must fail protected CAD, FILE and hybrid tool calls, including direct and gateway invocation and potential preexisting lease continuations.
+3. Commit must be linearizable with current-generation/session ownership checks, nonbusy in-flight lease conditions and stale commit rejection. A cannot remain independently callable after B becomes active; B must be unusable before commit.
+4. Review all existing callers of `validateWorkHandle`, including stage/commit APIs, to avoid breaking an authorized internal staging handshake. A staged cancellation must not revoke A.
+
+**Negative controls (R17):** fabricate a correct B staged handle including authority token; attempt CAD/FILE/registry and tool lease acquisition; all denied with `WORK_NOT_ACTIVE` or compatibility-preserving explicit status. After commit, A denied and B accepted; on prepare rollback, A accepted and B rejected. Test both Work and lease wrappers through production entrypoints, no regex-only assertions.
+
+### 9.2 CR-R3-02 / IMPORTANT — Prepare failure and reversible runtime state
+
+**Source evidence:** `prepareFamilies` is invoked after Work replacement in current `cadgpt_work_start`; preparation can mutate the server's dynamic tool registrations, loaded-family markers and runtime/cad activation. The plan must not claim those changes are always transactionally undoable.
+
+**Preparation side-effect inventory must precede modification:** classify `prepareFamilies` effects as (a) ephemeral/no shared mutation, (b) append-only and safe under failure/retry (e.g. idempotent tool registrations with the exact same authority wrapper), (c) reversible execution-owned resources with a deterministic compensating action, or (d) unsafe/irreversible shared mutation. For (d), refactor into safe preflight or defer until after commit only if it preserves rollback semantics; never claim complete rollback without evidence.
+
+**Transaction contract:** while B is staged, side effects must not change the active Work A's tool surface, capabilities, CAD upstream or session observer; B's registrations are inert. On failure, revoke B and clean B-owned metadata/context exactly once. If a shared append-only tool registration remains, it must be safe, scoped by runtime authority and reusable; report it as retained idempotent state rather than falsely claiming rollback. If an effect cannot be proven safe, stop with `PREPARE_SIDE_EFFECT_UNSAFE` without retiring A. Ensure the source's existing `registeredSurfaceByServer` / `loadedByServer` and global CAD Upstream behaviors are included in this inventory.
+
+**Negative controls (R18):** throw before prepare, after first family registration, after second family registration, after CAD activation, and during cleanup/cancellation; in every scenario test that A remains valid, B cannot call any protected tool, retries do not duplicate registrations/privileges, no wrong CAD deactivate and no orphan permissions. Test real `prepareFamilies` interaction behind injected failure points, not a mock that only throws before side effects.
+
+### 9.3 CR-R3-03 / IMPORTANT — Primary drawing persistence decision gate
+
+Before implementation, A0 must collect evidence for each scenario and choose the **narrowest architecture** that passes it:
+
+| Decision condition | Outcome |
+| --- | --- |
+| Every valid same-session Work/Job transition, including explicit FILE-only→HYBRID, is covered by an existing protected read-only reference without a gap during cleanup | Prefer **Work-scoped preserved continuity reference**; do not introduce a session registry. |
+| A0 demonstrates real same-session transition legitimately retires the only Work or passes through FILE-only with no safe Work-scoped source, despite DWG remaining open | Consider **session-scoped non-executable primary drawing identity**, strictly tied to verified add-in logical-session identity and cleared on explicit unbind/session disposal. |
+| Neither approach proves lifetime/ownership safety or tests show ambiguous multiple drawings/cross-session risk | Stop with `ARCHITECTURE_DECISION_BLOCKED` and request a revised plan; do not silently choose a broad shared registry. |
+
+Regardless of option: immutable primary identity is **not authorization**, not proof of current host liveness and not a license to infer by name/active tab. CAD tool use requires committed CAD-capable Work, ToolLease and live `runtime_document_identity` revalidation. Drawing Anchor metadata read remains subject to established read-only scope and current session ownership.
+
+**Negative controls (R19):** Work A→B, Builder→Job, Temp→Job, explicit FILE-only→HYBRID, drawing close/reopen under same filename, two bound drawings, app session disposed, MCP transport rotation with same logical identity, different conversation identity, CAD-only/FILE-only tool-denial, stale/forged anchor and source-empty gap. Prove exactly one primary reference per logical add-in session without user-selected rebind unless an authorized identity change actually occurred.
+
+### 9.4 Internal review/CR gate
+
+Review the current full plan, including the old F1–F7 hypotheses and this controlling section, for contradictions. **A0 may exit UNCONFIRMED for evidence collection, not permission to implement any speculative fix.** Do not use source-only simulations as incident proof. Existing CR-01–06 and CR-R3-01–03, R01–R19 and T01–T18 must all trace to an observable test and explicit authority boundary. Keep the original Windows AutoCAD active continuous-use host checkpoint as `PASS_RETEST_REQUIRED`.
+
+Planner must iterate internal findings and amendments until explicit INTERNAL_PASS, commit and read back the exact reviewed blob, then invite *independent* CR. The new revision does not inherit Revision 3 INTERNAL_PASS or any CR PASS.
+
+### 9.5 Planner internal review loop — Revision 4
+
+**Round 1: CHANGES_REQUIRED → corrected in §9.1–9.3.** Source review found that the staged-registration token can pass current `validateWorkHandle`, so the plan must gate both work validation and ToolLease, while exempting narrowly scoped internal commit/cancel APIs. Review also identified that `prepareFamilies` side effects may outlive a throw, and that the binding-ownership architecture could otherwise be selected without a decision gate. Repairs and real-entrypoint negative controls R17–R19 are now explicit.
+
+**Round 2: INTERNAL_PASS (plan-level only).** Checked draft blob `304d5adea11df50142cfa53e954231cd9be79485` against: CR-R3-01–03, earlier CR-01–06, Work authorization and lease guard, staged/commit/cancel lifecycle, preparation side-effect inventory, failure injection, binding ownership decision matrix, FILE/CAD family-denial, unrelated-session isolation, original no-sleep defect, evidence-first stop rules, host-only checkpoint and no source writes. No remaining planning contradiction was found in these specified requirements. **This is not test execution, confirmed incident cause, independent CR PASS or permission to implement.** The saved version including this record remains `CR_REVIEW_REQUIRED` pending independent review.
+
+---
+
+## 10. Planner finalization — Revision 4 CR disposition (2026-10-12)
+
+**Independent CR conclusion communicated by reviewer:** `PASS WITH FINDINGS` for the technical plan at **commit `70958b37f60a79f473f8e2f7c7d4355e9d0fc0ad`, blob `99c0a48bf2193ddf6cb507701216e2139b8d0053`**. No unresolved CRITICAL or IMPORTANT planning finding. Remaining MINOR: the internal self-review input SHA belonged to the pre-final draft, not the final reviewed blob. This note records that distinction rather than misrepresenting the earlier self-review as having checked the final file.
+
+**Planner decision:** retain the approved Revision 4 technical design (§9) **unchanged**. Resolve MINOR through source-of-truth identification: independently reviewed target blob = `99c0a48bf2193ddf6cb507701216e2139b8d0053`; prior internal draft blob = `304d5adea11df50142cfa53e954231cd9be79485`. The finalized documentation commit will have its own SHA and is *not* automatically independently CR-reviewed. Status `CR_PASS_WITH_MINOR_FINDING` describes the reviewed technical plan; subsequent content modifications require fresh review as appropriate.
+
+**Approved execution boundary:** A0 investigation, instrumentation proposals and deterministic reproduction only, after explicit implementation instruction. **No speculative A1/A2 source patch** without evidence identifying the causal code path, followed by appropriate review. A3 Windows AutoCAD host checkpoint remains `PASS_RETEST_REQUIRED` and may not be simulated into PASS. No production DWG QA, no automatic rebind by name, no broader transport/tray rewrite, no merge/deploy implied.
+
+**Standing internal Planner loop:** every substantive plan revision must undergo self-review → findings → repair → re-review until documented internal PASS, with exact reviewed input blob and final readback tracked distinctly. Independent CR verdict remains distinct from self-review.
+
+---
+
+## 11. Detailed execution plan (Planner-only, 2026-10-12)
+
+**Planning scope:** This section translates the technically reviewed Revision 4 into executable A0–A3 tasks and acceptance gates; it authorizes **no product source mutation**. Latest independently reviewed technical blob is `99c0a48bf2193ddf6cb507701216e2139b8d0053`. This detailed section requires its own independent review before code implementation.
+
+### 11.1 Sequencing and dependencies
+
+- **A0.1 baseline:** Record immutable main SHA and working branch SHA; ensure any test scripts are isolated and use mock/disposable DWG. No production DWG mutations.
+- **A0.2 lifecycle inventory:** For `work-registration.ts`, `work-control.ts`, `drawing-binding.ts`, `execution-cleanup.ts`, `job-transition.ts`, `mcp-session-manager.ts`, `server-factory.ts`, and AutoCAD add-in status polling, map exact binding/authority changes, async boundaries, ownership and cleanup triggering.
+- **A0.3 failing tests:** Use real production entrypoints with deterministic injected scheduling. Start **E00-SOURCE first** to exercise ongoing chat/CAD activity under one Work and one logical session without handoff; then run R01, R02, R07, R09, R10, R17 and E01-SOURCE to explore Work transitions and specific failure paths. Ensure tests don't confuse intentional FILE-only denial, opened new DWG document lifetime or logical-session disposal with a bug.
+- **A0.4 evidence decision:** produce a root-cause/evidence table of reproducible trigger, before/after Work IDs, bound context count, exact error, source line and falsifying controls. If no relevant reproduction, mark `INCIDENT_OPEN / EVIDENCE_PENDING`; stop *speculative repairs*, but continue a bounded investigation loop under §13 with safe diagnostics, next evidence source, owner and next trigger. **A0 gate**: confirmed causal path unlocks a scoped fix; otherwise incident stays OPEN and only evidence work proceeds.
+
+### 11.2 Conditional A1 — Work transaction
+
+Only if A0 demonstrates a Work lifecycle defect:
+- A1.1 Stage B without callable Work/ToolLease authority. Direct validation and lease wrappers both reject STAGED; distinct internal commit/cancel handshake required.
+- A1.2 Define one commit linearization point, validate same logical-session, owner transition and nonbusy leases; preserve exactly one verified bound drawing and scoped read-only metadata root; no by-name, active-tab or cross-session rebind.
+- A1.3 Inventory actual `prepareFamilies` side effects: dynamic tool registrations, loaded-family markers, CAD activation and observable server surface. Move irreversibles behind commit or prove idempotent/shared safe. Add fault injection before/after side effects.
+- A1.4 Publish B atomically, retire A once, and clean A without disrupting B's active CAD upstream, binding or metadata. Rollback B leaves A fully usable.
+- A1.5 Test different-owner HYBRID Job A→B, same-owner reuse, explicit FILE-only, delayed/double cleanup, concurrent transition, staged-token misuse and lease-in-flight denial.
+**A1 gate:** R01–R06, R10–R18 relevant cases PASS with zero privilege bypass and stable identity.
+
+### 11.3 Conditional A2 — Binding reliability
+
+Only for A0-supported binding/cleanup defects:
+- A2.1 Separate AVAILABLE, OBSERVATION_UNKNOWN, OBSERVED_ABSENT, CONFIRMED_CLOSED and CONFIRMED_RUNTIME_IDENTITY_MISMATCH with evidence thresholds. No destructive context deletion from COM/transport exception or uncorroborated negative list; maintain fail-closed CAD tool authorization until lifetime is verified.
+- A2.2 Ensure execution-scoped and idempotent cleanup. No global `cadUpstream.deactivate` while a valid successor or in-flight CAD ToolLease needs it; preserve explicit safe Human Power transitions.
+- A2.3 Apply primary binding architecture decision matrix from §9.3: retain minimal Work-scoped reference unless A0 demonstrates a legitimate source-empty same-session gap; session-scoped identity remains non-executable evidence only, released upon actual logical-session disposal.
+- A2.4 Implement minimal structured continuity diagnostics with redacted logical session fingerprint, execution ID, transition phase, context count and precise error. Never log authority tokens, chat or private drawing content.
+**A2 gate:** R07–R09, R11, R13, R15–R19 relevant controls PASS; genuine close/reopen still requires explicit rebind.
+
+### 11.4 A3 — Source and Windows host verification
+
+- **A3.1 source build:** `npm run build`, `npm test` and applicable existing CI workflows at the exact tested SHA. Do not treat static checks as runtime behavior proof.
+- **A3.2 complete matrix:** mandatory E00-SOURCE/E00-HOST, E01-SOURCE/E01-HOST, plus applicable T01–T18, including Work chains, FILE-only negative controls, transport rotation, close/reopen, header versus backend binding mismatch, incomplete enumeration, prepare failure, overlapping cleanup and legitimate logical-session end.
+- **A3.3 performance:** compare extra CAD calls, upstream activations, Work allocations and transition latency against baseline. Handoff alone must make zero additional CAD queries; avoid polling-based rescans.
+- **A3.4 Windows AutoCAD host:** On disposable DWG, run mandatory `E00-HOST` uninterrupted single-Work chat/CAD sequence and `E01-HOST` bind/chat/CAD/Job A→B/MTO/Temp/chat/CAD sequence with realistic sustained active interaction, switching tabs but never sleep or restarting AutoCAD. Record verified DWG lifetime and backend authority at each boundary, first failing tool, redacted trace and header state; mark `HOST_RETEST_REQUIRED` until a real observed PASS. A short smoke check is not evidence that the specific intermittent incident is resolved.
+- **A3.5 ship gate:** report verified SHA and CI/host PASS separately; independent CR/source review before merge, human authorization for deployment, rollback path if post-merge binding/authority regress.
+
+### 11.5 Owner / artifacts / blockers
+
+Planner owns plan and A0 decision; Coder owns source/test changes only after explicit user authorization and required review; Tester owns deterministic and host verification evidence; Critic independently reviews revised plan/code. Human supplies a safe real AutoCAD session for A3 only when requested. Required artifacts: lifecycle matrix, root-cause evidence log, tests-to-findings matrix, implementation diff (when authorized), CI and host acceptance record. A0 without reproducible evidence pauses **unproven repairs**, not the P0 investigation: keep INCIDENT_OPEN / EVIDENCE_PENDING and follow the diagnostic loop in §13. No automatic authorization for A1/A2.
+
+### 11.6 Internal review loop on detailed plan
+
+**Round 1 CHANGES_REQUIRED:** identified possible ambiguity that A1 and A2 seemed mandatory sequential development and that A0 without proof could unlock fixes. Repaired by explicit *conditional* A1/A2 and A0 STOP rules above. Also made staged authorization and live host tests distinct.
+
+**Round 2 INTERNAL_PASS (plan-level):** checked each task's source scope, owner, dependencies, authority gates, negative tests and release constraints against approved §§8–10. Tests R01–R19/T01–T18 mapped, no live root cause assumed, no code change authorized, and separate source/host exit criteria. This internal review is **not independent CR** and tests have not been executed. Subsequent content changes require fresh review.
+
+---
+
+## 12. Detailed plan revision 2 — CR-D01/D02/D03 corrective amendment (2026-10-12)
+
+**Document status: PLANNER_INTERNAL_PASS_AWAITING_CR.** This section supersedes §11 wherever its execution gates or test selection are ambiguous. Original technical plan §§8–10 is unchanged. Independent CR of *this detailed amendment* is pending. No product implementation or CI run is implied.
+
+### 12.1 CR-D01: A0 evidence routing without unauthorized scope expansion
+
+The A0 root-cause report must classify each verified finding as exactly one of:
+
+| Route | Evidence | Action |
+| --- | --- | --- |
+| `INCIDENT_CAUSE` | Reproducible active-session bound-drawing loss through an actual production entrypoint, with matched Work/identity trace and a falsifying control | Open only the directly implicated conditional A1/A2 subphase after review; link red test and minimal patch scope |
+| `INDEPENDENT_DEFECT` | Reproducible separate defect such as STAGED token acceptance that does not itself prove active-session binding loss | Record severity, negative test and separate disposition; security-critical issues block release if unresolved, but implementation needs a distinct explicit scope decision; do not merge into incident patch by inference |
+| `UNCONFIRMED / EVIDENCE_PENDING` | Hypothesis, synthetic interleaving without matching production entrypoint or missing host evidence | Maintain INCIDENT_OPEN; choose minimally invasive diagnostic capture, run next controlled reproduction when evidence is available, and reclassify on evidence. Stop only speculative A1/A2 patching, **not** investigation |
+
+A single finding may be reclassified only with new evidence; don't label a source vulnerability as actual incident cause. Each record must state reproduction commit SHA, implicated function, tool error, old/new execution ID, drawing context count, logical session continuity, CAD document lifetime, and test artifacts. Avoid tokens/private data.
+
+### 12.2 CR-D02: deterministic fault-injection mapping, using existing test infrastructure
+
+Prefer existing `node --test tests/*.test.mjs` fixtures and real exported production callbacks; add dependency injection/fault hooks **only inside the test seam** where necessary. Use controlled deferred promises/barriers (not arbitrary sleeps) and record ordered events/context snapshots.
+
+| Test | Production entrypoint | Injected boundary | Observable invariant | Negative control |
+| --- | --- | --- | --- | --- |
+| R01 | `cadgpt_work_start` → `createWorkRegistration` → drawing handoff | Expiration handler A reaches `clearExecutionDrawingContexts(A)` before B handoff | B retains same verified binding after call + first authorized CAD operation; log whether handoff is absent and which error appears | Without early cleanup, normal HYBRID handoff succeeds |
+| R02/R18 | `cadgpt_work_start` → `prepareFamilies` | Fail before first family, after partial registration, after activation, and during rollback | A remains valid; B STAGED unusable; no duplicated authority/tool surface or wrongful backend deactivate | Full preparation commits B once |
+| R10/R11 | Work replacement → `cleanupExecutionState(A)` | Hold A cleanup until B commit; release twice | B context, metadata, ToolLease/upstream unaffected; old authority invalid | Cleanup of legitimately last CAD Work still shuts down appropriately |
+| R12/R17 | Job A→B / work validator and tool lease wrapper | Stage B, attempt protected tool using known staged token; race two commits | STAGED B rejected; only committed registration usable; A invalid after commit; single authority | Committed B works with correct CAD/FILE family gates |
+| R07 | MCP transport rotate → logical-session restore | Change transport ID while preserving logical ID; then change logical ID | Same-session binding persists, different session does not inherit | Explicit logical session disposal revokes binding |
+| R09 | `drawingBindingStatus` / `activateDrawingContext` → `listOpenDrawings` | Successful incomplete enumeration **separately** from thrown COM/transport error | Neither uncertain reading causes irreversible identity loss; CAD action fails closed until verification | Real close/reopen identity mismatch refuses CAD access |
+| R19 | Explicit FILE-only→HYBRID and Job/Temp transition | Retire only Work or omit Work-scoped reference in a controlled source-empty gap | Architecture decision backed by verified identity continuity and no privilege elevation | Different logical session, two drawings and forged anchor cannot acquire binding |
+
+Before implementation, A0 must verify whether each test hook can exercise the **real** entrypoint; if it cannot, mark test `BLOCKED_TEST_SEAM` with exact barrier and minimal seam proposal. Do not record a simulated failure as observed Windows AutoCAD root cause.
+
+### 12.3 CR-D03: applicability and release gate matrix
+
+Status values for **every** R01–R19 and T01–T18 row: `REQUIRED`, `NOT_APPLICABLE`, `BLOCKED_HOST`, or `FAILED`. `PASS` is a result only for a REQUIRED test after execution, not an applicability status. Reviewer must approve every NOT_APPLICABLE with source-derived explanation. `FAILED` blocks phase completion; `BLOCKED_HOST` cannot be called PASS.
+
+| Phase | REQUIRED default | Conditional / N/A rule | Exit |
+| --- | --- | --- | --- |
+| A0 | R01, R02, R07, R09, R10, R17 + mandatory E00-SOURCE/E01-SOURCE + baseline happy and falsifying controls | Other R tests REQUIRED when mechanism implicated; N/A only with Reviewer acceptance; E00/E01 may be BLOCKED_TEST_SEAM with exact follow-up but must never be NOT_APPLICABLE or counted PASS before execution | Causal evidence and scoped-fix decision **or** INCIDENT_OPEN/EVIDENCE_PENDING with owned diagnostic continuation; no incident closure |
+| A1 (if opened) | R01–R06, R10–R12, R14, R17–R18, T01–T04, T08 | R13/R19 mandatory if explicit FILE-only primary identity path changed; remaining tests with touched ownership path become REQUIRED | Source-tested atomic handoff + authorization/rollback |
+| A2 (if opened) | R07–R09, R11, R13, R15–R16, R19, T05–T12 | R17/R18 REQUIRED if touching registration/prepare; N/A with rationale when no related code touched | No false invalidation, proper cleanup, lifetime safety |
+| A3 | Mandatory E00-SOURCE/HOST, E01-SOURCE/HOST plus all relevant R01–R19 + T01–T18 enumerated with statuses; no E00/E01 N/A; mandatory security/cross-session/real-close controls may not silently be N/A | Host T scenarios may be BLOCKED_HOST until actual AutoCAD evidence | Separate SOURCE_READY, HOST_VERIFIED, MERGE_READY verdicts |
+
+**T13–T18 executable definitions:**
+
+| Test | Setup / action | PASS evidence |
+| --- | --- | --- |
+| T13 | Bound DWG remains open; successful `listOpenDrawings` snapshot omits it once | No irreversible deletion solely due to incomplete observation; subsequent positive lifetime check permits same verified binding |
+| T14 | Inject COM/transport exception on drawing status call | Report UNKNOWN/explicit error; preserve identity but deny unverified CAD action |
+| T15 | Force delayed and duplicate cleanup of A after B commits | B identity/tool lease survive; old cleanup idempotent; no unrelated CAD deactivate |
+| T16 | Different-owner Job A→B, staged B token calls, then failed preparation | No staged access, rollback preserves A, success commits B exactly once |
+| T17 | Explicit FILE-only then authorized HYBRID on same logical session | FILE never invokes CAD; stored identity only transferable with verified lifetime and correct authority |
+| T18 | In-flight B CAD call while A cleanup / Human Power reset occurs | B's operation not disrupted; safe reset sequencing; no cross-session privilege leak |
+
+**Gate definitions:** `SOURCE_READY` requires **E00-SOURCE and E01-SOURCE PASS**, complete applicable automated tests, build and CI at a named SHA, reviewed source diff and no unresolved security finding. `HOST_VERIFIED` requires the mandatory uninterrupted Windows AutoCAD E00-HOST **and** E01-HOST evidence, marked `PASS_RETEST_REQUIRED` until observed. `INCIDENT_RESOLVED` requires both SOURCE_READY and HOST_VERIFIED, the exact bound-DWG invariant, and no forced reconnect; it is unavailable while root cause remains UNCONFIRMED. `MERGE_READY` requires SOURCE_READY + explicit CR/source review + human release decision with host gate satisfied or separately acknowledged as outstanding, and rollback instructions; **MERGE_READY does not mean INCIDENT_RESOLVED** and cannot automatically authorize deployment. Do not infer either from CI PASS or mocks.
+
+### 12.4 Planner internal review criteria
+
+Planner must review and revise the **whole detailed plan**, not just new text: cross-check §11 with §12 precedence, confirm all tests map to an entrypoint and applicability, verify routes do not allow source edits without evidence, and check no added runtime mechanics or tool privilege bypass. Internal PASS is planning-only, and independent CR is still required.
+
+### 12.5 Recorded Planner internal review loop
+
+**Round 1 — CHANGES_REQUIRED:** Reviewed §11 versus §12 and found a presentation ambiguity: earlier §11 says “A1/A2 only if A0 demonstrates a defect” but does not distinguish a causally matching incident from an unrelated security finding. §12.1 now explicitly routes independent defects separately; §§12.2–12.3 supply measurable real-entrypoint fault tests and objective applicability statuses.
+
+**Round 2 — INTERNAL PASS (planning document):** Read back draft blob `ef7111c4c4728c6785c46f97cf390ffd7c772e33`. Verified CR-D01/D02/D03 each map to a repair: routing distinguishes INCIDENT_CAUSE / INDEPENDENT_DEFECT / UNCONFIRMED; fault-injection matrix includes source entrypoints, barriers, invariants and negative controls; T13–T18 are described; source, host and merge gates are separate; no privileges broadened, no source patch or merge approved. In case of overlap, §12's explicit decisions supersede §11. This recorded self-review is **not** a role-isolated independent GSA Reviewer verification, not execution of tests, and not CR PASS. The exact resulting commit/blob must be read back; any further substantive edit reopens internal review.
+
+---
+
+## 13. P0 active-session binding-loss execution correction — CR-G01…G04 (2026-10-12)
+
+**Controlling detail-plan rules:** This section takes precedence over any older §3/§6/§11/§12 A0 `UNCONFIRMED→STOP` wording, generic optional-test wording and any inference that a source build resolves this incident. The **primary deliverable** is to prevent actual bound-DWG context loss while the same add-in logical session, DWG lifetime and continuous user activity remain valid. This is an investigation-and-fix plan only; no product source code or deployment is authorized by its publication.
+
+### 13.1 CR-G01 / CRITICAL — Maintain an owned investigation loop until causal evidence
+
+`P0_INCIDENT_OPEN` is the default and remains so until host-verified resolution. A0 must execute this loop:
+
+1. **Baseline and invariant:** record tested Git SHA, verified binding identity (without leaking private path), Work execution ID/owner/generation, logical session fingerprint, transport identity, add-in local open DWG lifetime and first CAD tool result while user/chat continues; distinguish header display from backend authority.
+2. **Narrow reproduction:** **E00 no-transition continuity first**, then deterministic actual-entrypoint tests (cleanup-before-handoff, duplicate cleanup, partial enumeration, prepare-failure, transport rotation, same-session Job/Temp handoff), with the complementary E01 transition test in §13.2. Record counterexamples and the first point where authoritative binding disappeared.
+3. **If still `UNCONFIRMED`:** do not implement an assumed fix or end the incident. Record `P0_INCIDENT_OPEN / EVIDENCE_PENDING`, the specific unknown, last disproven hypothesis, evidence owner, the next controlled trigger and expected artifacts. Add a *minimal, safe, event-driven* diagnostic proposal targeting the specific boundary (work transition, binding invalidation or session disposal). Diagnostic changes are a separate reviewed/authorized source step; they **must not** silently rewrite lifecycle or grant authority.
+4. **When evidence is available:** correlate redacted add-in/Work/CAD traces by sequence and logical-session identity; rerun the matching production-path test and its falsifying control. Repeat the loop, update hypotheses, and choose the smallest causal patch. If user host participation is unavailable, status remains `EVIDENCE_PENDING / HOST_RETEST_REQUIRED`, not FIXED or RESOLVED.
+5. **When a causal path is proven:** record `INCIDENT_CAUSE_CONFIRMED` and target *only* implicated A1/A2 substeps with before/after failing test. The root-cause classification must be independent of unrelated security or Job lifecycle defects.
+
+A0's exit is therefore **(a)** scoped confirmed cause enabling reviewed repair, or **(b)** evidence-capture continuation with incident still OPEN. Neither route permits claiming resolution.
+
+### 13.2 CR-G02 and CR-G05 — Mandatory E00/E01 uninterrupted-session integration scenarios
+
+**E00-SOURCE (CR-G05 / no Work transitions)** tests the user's central complaint independently of Job handoff. Start with a **single verified bound DWG, one logical add-in session and one active CAD-capable Work**. Maintain the exact same Work execution ID/owner/generation throughout. Exercise a sustained sequence of control-plane pairing/status polling, chat/Work reuse, and repeated harmless read-only CAD calls. Do not create a new Job, call `cadgpt_work_start` to replace Work, sleep or deliberately unbind/rebind. At every sampled boundary check: logical session fingerprint, add-in pairing's association to that session, `isAddinManagedSession` protection, Work still active with the original execution ID, exactly the expected drawing context and runtime document identity, and actual CAD response from the bound DWG. The header label alone is not proof. If testing timeout boundaries with an injected clock, keep legitimate paired/active session state and ensure logical TTL cleanup and Work idle cleanup do not silently dispose it. Record the first failing boundary and the evidence sequence; do not assume these cleanup paths are the cause.
+
+**E00-HOST** repeats E00 on an actual Windows AutoCAD add-in session with a disposable DWG and ongoing chat and CAD read operations, no sleep, no CAD restart and no Work/Job transition. Sample pairing/status polling, Work ID, verified DWG lifetime and backend CAD target during continuous activity; record elapsed duration, request count, actual host build SHA and redacted trace. **E00-HOST is not a quick smoke check** and cannot be substituted by E00-SOURCE. A transport reattachment that correctly preserves the logical session is an additional separate negative-control scenario, not an excuse to silently renew to a different logical session.
+
+**E01-SOURCE (with Work/Job transitions)** is a required end-to-end *production-entrypoint* integration test, not optional/N/A due to conditional A1/A2 implementation. Use one logical add-in session and one previously verified DWG/document lifetime with this ordered path:
+
+`Bind drawing → chat/Work reuse → read-only CAD action → Job A → Job B (metadata/MTO where valid) → Temp HYBRID → chat/Work reuse → authorized CAD action`.
+
+At **every** boundary assert: same logical-session identity and primary bound drawing runtime identity, exactly the expected current Work and one callable authority, correct CAD target, no unapproved drawing_context deletion, no implicit `Connect this drawing`, and no inherited authority across sessions. Track before/after contexts and transitions. Include tab-switch while bound DWG remains open and a separate explicit FILE-only negative control: CAD calls are denied during FILE-only and must be authorized again before use. Use existing test scripts and mock upstream as necessary; if current real callback cannot be driven, record `BLOCKED_TEST_SEAM` with minimal hook proposal and do not declare E01 PASS.
+
+**E01-HOST** repeats the meaningful same sequence in **Windows AutoCAD** on a disposable DWG with actual add-in connection, continuous chat/work, no sleep or CAD restart; verify every intervening CAD action targets that original DWG, not merely a green header. Host evidence consists of redacted diagnostic trace, exact tested build SHA, scenario steps, failure/recovery observation and reviewer signoff. E00-HOST and E01-HOST are **both** mandatory for incident resolution, even if some separate R/T tests are N/A.
+
+### 13.3 CR-G03 — Distinct incident-resolution acceptance gate
+
+Set:
+- `SOURCE_READY` only after repeatable regression and **both E00-SOURCE and E01-SOURCE PASS**, all applicable R/T security/lifetime controls PASS, build and CI green at exact SHA, and source CR with no blocking findings.
+- `HOST_RETEST_REQUIRED` until **E00-HOST and E01-HOST** actually execute in uninterrupted Windows AutoCAD conditions. No virtual/mocked substitute.
+- `HOST_VERIFIED` only after **both E00-HOST and E01-HOST PASS**: the bound DWG stays open at the original runtime document identity, repeated single-Work CAD operations and Job/Temp chains continue correctly, no user rebind/AutoCAD restart, no unauthorized context deletion, and no header/backend mismatch masquerading as health. A deliberate close/reopen remains an expected fail-closed negative control.
+- `INCIDENT_RESOLVED` only after SOURCE_READY **and** HOST_VERIFIED with causal failure removed, **E00/E01 source and host regression evidence retained**, regression negative controls retained, and human verification accepted. Merely surviving a short smoke test is insufficient if the causal failure was never demonstrated; report the evidence limitation.
+- `MERGE_READY` is a separate release-management decision. A source-only merge exception, if explicitly authorized, must keep `INCIDENT_OPEN/HOST_RETEST_REQUIRED`; never convert it into `INCIDENT_RESOLVED`.
+
+### 13.4 CR-G04 — P0 scope protection versus independent defects
+
+| Queue | Entry | Treatment |
+| --- | --- | --- |
+| **P0: active-session bound-DWG loss** | Verified source path, observed live disconnect or essential diagnostic to capture it | Highest priority; investigation, smallest causal correction, E00-SOURCE/E00-HOST and E01-SOURCE/E01-HOST are not blocked by unrelated redesign |
+| **P1: independent defects** | Staged token acceptance, generic Work/Job enhancements and noncausal cleanup edge cases | Document distinct finding with test, severity and explicit scope decision; do not attach broad refactoring to P0 by default |
+| **Safety release blocker** | Independently verified security defect making a proposed release unsafe | Keep separate patch decision/verification, block unsafe release while allowing P0 diagnosis to proceed |
+
+No new tray daemon, poll loop, license system, broad job engine rewrite or session registry unless actual evidence and reviewed decision requires it.
+
+### 13.5 Delivery artifacts and gate ownership
+
+Planner: source/incident hypothesis matrix, P0/P1 routing and minimal fix decision; Tester: failing reproduction trace, **E00 and E01 source/host** execution evidence, exact SHA; Coder: only reviewed and user-authorized scoped test/instrumentation/fix; CR: independently validates causal reasoning, unchanged identity/authority invariants and release evidence. If host evidence is outstanding, write `INCIDENT_OPEN / HOST_RETEST_REQUIRED` with the exact next human action—not a fake closed status.
+
+### 13.6 Planner internal review loop — active-session P0
+
+**Round 1 / CHANGES_REQUIRED:** Compared §§3, 6, 11 and 12 against controlling §13. Identified (IR-G01) older A0 wording that still sounded like final termination without proof, and (IR-G02) host acceptance lacking explicit E01-HOST continuity boundary and sustained-activity distinction. Corrected both in their original sections rather than relying only on precedence. Preserved the source-vs-host release distinction and no speculative-fix rule.
+
+**Round 2 review criteria (historical, superseded by §13.8):** Check that P0 remains open on missing evidence, diagnostics acquisition has an owner and next trigger, mandatory E00-SOURCE/HOST and E01-SOURCE/HOST cannot be waived, causal source fix is independent of noncausal P1 enhancements, host test requires the real bound DWG with no forced rebind, and every new wording is consistent with existing CR-approved technical safety gates. Final INTERNAL_PASS is recorded only after a subsequent full-document readback check, including this round's corrections.
+
+**Authority:** This is Planner internal assessment, not an independent GSA Reviewer verification or Critic review. The plan itself authorizes no code change, merge or deployment.
+
+### 13.7 Planner internal review round 2 — PASS (planning only)
+
+**Reviewed input:** GitHub plan blob `0f8047bc6d402a03b47b0053868c99b7d3e494d1` after Round 1 repair. Cross-checked §§3/6/9/11/12/13 for issue closure, causal scope, tests and authority boundaries.
+
+**Results:** CR-G01: no-repro leaves `P0_INCIDENT_OPEN/EVIDENCE_PENDING` with an assigned diagnostic evidence loop and *does not* authorize speculative fixes; CR-G02: E01-SOURCE and E01-HOST continuously exercise the same drawing identity and Work chain and cannot be NOT_APPLICABLE; CR-G03: `INCIDENT_RESOLVED` requires source evidence and real uninterrupted AutoCAD host verification, not CI or smoke PASS; CR-G04: noncausal P1 findings are tracked separately and do not consume P0 scope absent a verified release safety blocker. Earlier atomic handoff, cleanup isolation, fail-closed lifetime validation, cross-session denial, FILE-only capability boundary and Drawing Anchor limits remain intact. **Planner internal plan-level verdict: PASS.**
+
+The committed review record is an addendum only; verify exact final blob via GitHub readback. The verdict is **not** an independent CR verdict, not implementation verification and not a claim the active-session incident has been fixed. No source edit/merge/deploy is authorized by this plan alone.
+
+### 13.8 Final Planner review — CR-G05 E00 coverage, round 1
+
+**Round 1 / CHANGES_REQUIRED:** the earlier plan required E01 but did not test a single uninterrupted Work while pairing polls and chat/CAD activity continue. This would allow a transition-focused fix to pass while the user's original no-transition incident remains untested. The correction adds E00-SOURCE/HOST to §§11, 12 and 13, makes it mandatory for source and host gates, and explicitly distinguishes true drawing/backend continuity from retained header display. It preserves E01 as the complementary Work/Job transition path.
+
+**Round 2 / INTERNAL PASS (planning only):** Read back the Round 1 commit blob `c952c380ef659ab6f5f6011f060945073d00fef5`, compared source/no-transition root-cause goals against §§11–13, and found omissions: A0 still gave R-series tests priority over E00, A3/source gates did not consistently name both suites, and Tester ownership listed only E01. Corrected these in their original sections. Both E00 and E01 must PASS at source and host levels before `INCIDENT_RESOLVED`; `SOURCE_READY` alone is not closure. E00 always retains the identical committed Work execution and original DWG lifetime; E01 covers intentional owner transitions. The P0 incident remains OPEN without host evidence; P1 defects are separate. No source/code changes or deployment are authorized.
+
+**Self-review evidence:** this round checked the exact Round 1 input blob above and identified the corrected gate omissions before committing this updated file. The new output blob is to be verified separately by GitHub readback. Previous Critic `PASS WITH FINDINGS` applied to the prior blob, **not** this revised file; final independent CR remains pending.

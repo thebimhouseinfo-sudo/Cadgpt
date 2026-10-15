@@ -160,6 +160,25 @@ test("handoff transfers empty-root cleanup ownership so Job A cannot delete Job 
   assert.equal(end.deleted_empty,true,"B cleanup can reclaim an unused folder");
 });
 
+test("failed staged Work returns newly-created drawing folder ownership to A", async () => {
+  const source = "staged-rollback-a-" + Date.now();
+  const target = "staged-rollback-b-" + Date.now();
+  const folder = path.join(appRoot, "drawings", "staged-rollback-anchor");
+  await fs.mkdir(folder, { recursive: true });
+  persistence.registerCreatedDrawingMetadataFolderForExecution(source, folder);
+  assert.equal(persistence.handoffVerifiedDrawingMetadataRoot(source, target), folder);
+  assert.deepEqual(persistence.drawingMetadataRootsForExecution(target), [folder]);
+
+  persistence.rollbackVerifiedDrawingMetadataRootHandoff(source, target);
+  await persistence.cleanupDrawingMetadataForExecution(target);
+  assert.equal((await fs.stat(folder)).isDirectory(), true,
+    "cancelled B cleanup must never delete the active A metadata root");
+  assert.deepEqual(persistence.drawingMetadataRootsForExecution(source), [folder]);
+  const cleanupA = await persistence.cleanupDrawingMetadataForExecution(source);
+  assert.equal(cleanupA.deleted_empty, true,
+    "A regains cleanup ownership after B preparation fails");
+});
+
 test.after(async () => {
   const current=registration.activeWorkForSession(session);
   if(current){

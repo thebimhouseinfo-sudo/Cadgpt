@@ -6,6 +6,8 @@ import {
   activeWorkForSession,
   adoptWorkSession,
   createWorkRegistration,
+  commitStagedWorkRegistration,
+  cancelStagedWorkRegistration,
   enableWorkCapability,
   markSessionWorkStopped,
   releaseSessionWork,
@@ -16,7 +18,7 @@ import {
 import { assertSessionClaimed } from "../lib/admission.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { cleanupExecutionState } from "../runtime/execution-cleanup.js";
-import { handoffVerifiedDrawingMetadataRoot } from "../runtime/drawing-persistence.js";
+import { handoffVerifiedDrawingMetadataRoot, rollbackVerifiedDrawingMetadataRootHandoff } from "../runtime/drawing-persistence.js";
 import { toCadgptPath } from "../lib/path-security.js";
 
 /**
@@ -221,50 +223,91 @@ export function registerWorkControlTools(
         }
 
         const previousExecution = activeExecutionForSession(options.sessionKey);
+        // Stage replacement so A remains authoritative and bound until B is
+        // prepared and its exact verified drawing identity has been copied.
+        // In particular, no Work expiration handler runs before the handoff.
         const work = createWorkRegistration({
           sessionKey: options.sessionKey,
           ownerType: owner_type as WorkOwnerType,
           ownerId: owner_id,
           executionPath: requestedPath,
+          staged: Boolean(previousExecution),
         });
 
-        // Preserve only previously verified in-session drawing identity for a
-        // HYBRID successor. No CAD MCP call, implicit ActiveDocument guess, or
-        // cross-session bind; the first CAD operation rechecks document lifetime.
-        const drawingHandoff =
-          previousExecution && requestedPath === "hybrid"
-            ? (await import("../session/drawing-binding.js"))
-                .handoffSingleBoundDrawingForExecution(
-                  previousExecution,
-                  work.executionId
-                )
-            : null;
-
-        // Work A can be HYBRID while Job B may explicitly opt out to FILE.
-        // Preserve only the known drawing metadata root as read-only; never
-        // inherit another Job's writable result authority.
-        const inheritedDrawingRoot = previousExecution
-          ? handoffVerifiedDrawingMetadataRoot(
-              previousExecution,
-              work.executionId
-            )
-          : null;
-        const previousCleanup = previousExecution
-          ? await cleanupExecutionState(previousExecution)
-          : null;
-
+        let drawingHandoff: Awaited<ReturnType<
+          typeof import("../session/drawing-binding.js")["handoffSingleBoundDrawingForExecution"]
+        >> = null;
+        let inheritedDrawingRoot: string | null = null;
         let toolSurface: Record<string, unknown> | void;
+
         try {
+          drawingHandoff =
+            previousExecution && requestedPath === "hybrid"
+              ? (await import("../session/drawing-binding.js"))
+                  .handoffSingleBoundDrawingForExecution(
+                    previousExecution,
+                    work.executionId
+                  )
+              : null;
+
           toolSurface = await options.prepareFamilies(
             work.executionPath,
             work.ownerId,
             work.executionId
           );
+
+          if (previousExecution) {
+            // No await between metadata ownership transfer and commit. A
+            // rejected/stale competing transition must not take A's empty
+            // drawing-root cleanup ownership during asynchronous preparation.
+            // B only inherits read authority, never Job A's write authority.
+            inheritedDrawingRoot = handoffVerifiedDrawingMetadataRoot(
+              previousExecution,
+              work.executionId
+            );
+            // A single synchronous commit point prevents stale A cleanup from
+            // retiring or unbinding the successor before it becomes active.
+            commitStagedWorkRegistration({
+              sessionKey: options.sessionKey,
+              previousExecutionId: previousExecution,
+              stagedExecutionId: work.executionId,
+              stagedAuthorityToken: work.authorityToken,
+            });
+          }
         } catch (error) {
-          const cleanupId = releaseSessionWork(options.sessionKey);
-          if (cleanupId) await cleanupExecutionState(cleanupId);
+          if (previousExecution) {
+            const cancelled = cancelStagedWorkRegistration({
+              sessionKey: options.sessionKey,
+              stagedExecutionId: work.executionId,
+              stagedAuthorityToken: work.authorityToken,
+            });
+            if (cancelled) {
+              // Restore cleanup ownership of any still-empty drawing root to
+              // A; generic cleanup of staged B must not delete A's folder.
+              if (inheritedDrawingRoot) {
+                rollbackVerifiedDrawingMetadataRootHandoff(
+                  previousExecution,
+                  work.executionId
+                );
+              }
+              // A failed prepare may precede loadCadFamily(), so generic
+              // cleanup's runtime-family guard cannot be relied on to remove
+              // B's already-transferred drawing context.
+              (await import("../session/drawing-binding.js"))
+                .clearExecutionDrawingContexts(work.executionId);
+              await cleanupExecutionState(work.executionId);
+            }
+          } else {
+            const cleanupId = releaseSessionWork(options.sessionKey);
+            if (cleanupId) await cleanupExecutionState(cleanupId);
+          }
           throw error;
         }
+
+        // A can now be cleaned, but B is already the sole active Work.
+        const previousCleanup = previousExecution
+          ? await cleanupExecutionState(previousExecution)
+          : null;
 
         return toolResult("cadgpt_work_start", {
           reused: false,
