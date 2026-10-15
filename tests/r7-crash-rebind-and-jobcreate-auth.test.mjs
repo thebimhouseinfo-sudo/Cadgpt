@@ -35,6 +35,7 @@ test('R7 issue 64: jobcreate continued Work explicitly grants a restricted draft
   assert.match(control, /owner_id\.trim\(\) === "jobcreate"/);
   assert.match(control, /"job-authoring"/);
   assert.match(registration, /capability === "job-authoring"/);
-  assert.match(fileTools, /reasoningScope\) return \[\.\.\.new Set\(\[\.\.\.jobRoots, \.\.\.\(jobAuthoring \? \[getJobDraftRoot\(\)\] : \[\]\)\]\)\]/);
+  assert.match(fileTools, /const draftRoots = jobAuthoring \? \[getJobDraftRoot\(\)\] : \[\]/);
+  assert.match(fileTools, /if \(reasoningScope\) return \[\.\.\.new Set\(\[\.\.\.jobRoots, \.\.\.draftRoots\]\)\]/);
   assert.doesNotMatch(fileTools, /reasoningScope\) return \[\.\.\.new Set\(getWritableRoots\(\)/);
 });
