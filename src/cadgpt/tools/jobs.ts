@@ -1731,17 +1731,19 @@ export function registerJobAuthoringTools(server: McpServer): void {
         "Promote one validated Job draft package into an explicit managed Job target and synchronize User Registry rollback-safely. JOB.md/.py, lisp/**, dynamic-lisp/** and tools/** are promoted as one bundle. runtime/** is never promoted.",
       inputSchema: {
         draft_path: z.string().min(1),
+        registry_id: z.string().min(1).optional(),
+        expected_draft_bundle_sha256: z.string().length(64).optional(),
         target_path: z
           .string()
-          .min(1)
+          .min(1).optional()
           .describe(
             "Absolute target path that must exactly match library_id + relative_path"
           ),
         library_id: z
           .string()
-          .regex(/^[a-z0-9][a-z0-9._-]{0,79}$/i),
-        relative_path: z.string().min(1),
-        metadata: jobMetadataSchema,
+          .regex(/^[a-z0-9][a-z0-9._-]{0,79}$/i).optional(),
+        relative_path: z.string().min(1).optional(),
+        metadata: jobMetadataSchema.optional(),
         overwrite: z
           .boolean()
           .optional()
@@ -1770,6 +1772,8 @@ export function registerJobAuthoringTools(server: McpServer): void {
     },
     async ({
       draft_path,
+      registry_id,
+      expected_draft_bundle_sha256,
       target_path,
       library_id,
       relative_path,
@@ -1782,6 +1786,58 @@ export function registerJobAuthoringTools(server: McpServer): void {
       user_accepted,
     }) => {
       try {
+        // Existing managed Jobs can be promoted with compact arguments.
+        // Resolve target/metadata only from the registered Job entry, never
+        // from a guessed draft basename or free-form target path.
+        if (registry_id) {
+          const registered = (await loadJobs()).find(
+            (entry) => entry.id.toLowerCase() === registry_id.trim().toLowerCase()
+          );
+          if (!registered) throw new Error("JOB_PROMOTION_REGISTERED_JOB_REQUIRED");
+          if ((library_id && library_id !== registered.library_id) ||
+              (relative_path && relative_path !== registered.relative_path)) {
+            throw new Error("JOB_PROMOTION_REGISTERED_TARGET_MISMATCH");
+          }
+          library_id = registered.library_id;
+          relative_path = registered.relative_path;
+          const managed = managedJobPath(library_id, safeRelativeJob(relative_path));
+          if (target_path && path.resolve(target_path) !== path.resolve(managed)) {
+            throw new Error("JOB_PROMOTION_REGISTERED_TARGET_MISMATCH");
+          }
+          target_path = managed;
+          if (metadata && metadata.id !== registered.id) {
+            throw new Error("JOB_PROMOTION_REGISTERED_ID_MISMATCH");
+          }
+          metadata ??= jobMetadataSchema.parse({
+            id: registered.id,
+            title: registered.title,
+            class_name: (registered as unknown as Record<string, unknown>).class ?? "workflow.user",
+            subclass: (registered as unknown as Record<string, unknown>).subclass ?? "custom",
+            summary: registered.summary ?? registered.title,
+            tags: registered.tags ?? [],
+            status: registered.status ?? "active",
+            risk: registered.risk ?? "medium",
+          });
+          // Validate actual managed bundle against the prior Registry
+          // fingerprint before using it as optimistic overwrite evidence.
+          const oldBundle = await inspectJobBundle(target_path);
+          const priorRegistry = (await loadRegistry()).entries.find(
+            (entry) => entry.kind === "job" && entry.id === registered.id
+          );
+          if (!oldBundle.exists || !priorRegistry ||
+              oldBundle.sha256 !== priorRegistry.bundle_sha256) {
+            throw new Error("JOB_PROMOTION_MANAGED_BUNDLE_DRIFT: checkout again or reconcile Registry.");
+          }
+          if (oldBundle.has_assets) {
+            expected_target_bundle_sha256 ??= oldBundle.sha256 ?? undefined;
+          } else {
+            expected_target_sha256 ??= sha256(await fs.readFile(target_path, "utf8"));
+          }
+          overwrite = true;
+        }
+        if (!target_path || !library_id || !relative_path || !metadata) {
+          throw new Error("JOB_PROMOTION_TARGET_REQUIRED: supply full promotion fields or registry_id for an existing Job.");
+        }
         if (!path.isAbsolute(draft_path)) {
           throw new Error(
             "ABSOLUTE_PATH_REQUIRED: job_promote_draft draft_path must be absolute"
@@ -1822,6 +1878,10 @@ export function registerJobAuthoringTools(server: McpServer): void {
           throw new Error(
             "Job draft package is missing."
           );
+        }
+        if (expected_draft_bundle_sha256 &&
+            draftBundle.sha256 !== expected_draft_bundle_sha256) {
+          throw new Error("RESOURCE_CONFLICT: validated draft bundle SHA-256 no longer matches.");
         }
 
         const normalizedRelative =
