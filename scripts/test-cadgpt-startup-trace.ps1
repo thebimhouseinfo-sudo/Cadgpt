@@ -8,6 +8,8 @@ try {
     New-Item -ItemType Directory -Force -Path $fixture | Out-Null
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'cadgpt-tray.vbs') -Destination $fixture
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'cadgpt-tray.ps1') -Destination $fixture
+    New-Item -ItemType Directory -Force -Path (Join-Path $fixture 'scripts') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $sourceRoot 'scripts\cadgpt-startup-registry.ps1') -Destination (Join-Path $fixture 'scripts')
     $env:LOCALAPPDATA = Join-Path $fixture 'local'
     New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
     $trace = Join-Path $env:LOCALAPPDATA 'CadGPT\logs\startup-launch.log'
