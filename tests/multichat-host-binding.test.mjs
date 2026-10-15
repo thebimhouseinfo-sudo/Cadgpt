@@ -68,7 +68,9 @@ test("different chats share one verified Host drawing but not file-write authori
     await fs.writeFile(path.join(result.absolute_path, "takeoff.json"), '{"rows":1}');
 
     // Finishing A must not transfer/revoke B's read permission or result files.
-    await metadata.cleanupDrawingMetadataForExecution("exec-chat-A");
+    metadata.registerCreatedDrawingMetadataFolderForExecution("exec-chat-A", drawingRoot);
+    const cleanupA = await metadata.cleanupDrawingMetadataForExecution("exec-chat-A");
+    assert.equal(cleanupA.shared_in_use, true, "creator cleanup must preserve a root still shared by B");
     assert.deepEqual(metadata.drawingMetadataRootsForExecution("exec-chat-B"), [drawingRoot]);
     assert.equal(await fs.readFile(sourceResult, "utf8"), '{"FCU-1":"S1"}');
     await jobs.cleanupJobRuntimeForExecution(run.execution_id);
