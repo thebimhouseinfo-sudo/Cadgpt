@@ -269,6 +269,15 @@ export function registerWorkControlTools(
             }
           }
         }
+        // FILE-only Work can later switch to HYBRID in the same chat.
+        // Its read-only metadata handoff is not itself a CAD binding.
+        if (requestedPath === "hybrid" && !drawingHandoff) {
+          const { primaryBoundDrawing, attachPrimaryDrawingForExecution } =
+            await import("../session/drawing-binding.js");
+          if (primaryBoundDrawing()?.anchor_verified_readback === true) {
+            attachPrimaryDrawingForExecution(work.executionId);
+          }
+        }
         const previousCleanup = previousExecution
           ? await cleanupExecutionState(previousExecution)
           : null;
