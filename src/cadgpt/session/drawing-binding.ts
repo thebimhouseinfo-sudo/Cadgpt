@@ -209,6 +209,17 @@ export async function bindDrawingForExecution(
   const selected = matches[0];
   if (primaryDrawing) {
     if (matchesBinding(selected, primaryDrawing)) {
+      // A chat may still hold a drawing context from before AutoCAD crashed.
+      // Explicitly binding the current Host primary replaces that stale
+      // lifetime reference, never redirects an in-flight CAD operation.
+      const existingContexts = contexts.get(executionId);
+      if (existingContexts) {
+        for (const [id, prior] of existingContexts) {
+          if (prior.runtime_document_identity !== primaryDrawing.runtime_document_identity) {
+            existingContexts.delete(id);
+          }
+        }
+      }
       const attached = attachPrimaryDrawingForExecution(executionId);
       if (!attached) throw new Error("PRIMARY_DRAWING_ATTACH_FAILED");
       return attached;
