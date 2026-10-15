@@ -115,7 +115,7 @@ test("workspace activation serializes CAD MCP activation and document binding", 
   );
   assert.match(
     source,
-    /withCadHostLock\("autocad",[\s\S]*?cadUpstream\.activate\(\)[\s\S]*?bindDrawingForExecution\(work\.executionId, selector\)/
+    /withCadHostLock\("autocad",[\s\S]*?cadUpstream\.activate\(\)[\s\S]*?bindDrawingForExecution\(work\.executionId, selector, \{ allowExplicitRebind: true \}\)/
   );
 });
 
