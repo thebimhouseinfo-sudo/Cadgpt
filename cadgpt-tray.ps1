@@ -8,6 +8,902 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$script:StartupTracing = -not ($InstallStartup -or $RemoveStartup -or $StopInstalled -or $StatusOnly)
+$script:StartupStage = "powershell_entry"
+$StartupTracePath = Join-Path (Join-Path $env:LOCALAPPDATA "CadGPT\logs") "startup-launch.log"
+
+# Append only stage identifiers, PID and timestamp. Never log secrets or args.
+function Write-StartupTrace([string]$Stage) {
+    if ($Stage -notmatch '^[a-z][a-z0-9_]*
+
+$StartupKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$StartupName = "CadGPT"
+$script:IsTrayHost = $false
+$IndexPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "dist\index.js"))
+$TrayScriptPath = [System.IO.Path]::GetFullPath($PSCommandPath)
+$TrayLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "cadgpt-tray.vbs"))
+$TunnelProfilePath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "profiles\cadgpt.yaml"))
+
+function Get-DotEnvValue([string]$Name) {
+    if (-not (Test-Path ".env")) { return $null }
+    $line = Get-Content ".env" | Where-Object {
+        $_ -match "^\s*$Name\s*=" -and -not $_.TrimStart().StartsWith("#")
+    } | Select-Object -First 1
+    if (-not $line) { return $null }
+    return (($line -split "=", 2)[1].Trim()).Trim("'").Trim('"')
+}
+
+$appDataConfigured = Get-DotEnvValue "CADGPT_APPDATA_ROOT"
+if ($appDataConfigured -eq "appdata") { $appDataConfigured = $null }
+$AppDataRoot = if (-not $appDataConfigured) {
+    [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA "CadGPT"))
+} elseif ([System.IO.Path]::IsPathRooted($appDataConfigured)) {
+    [System.IO.Path]::GetFullPath($appDataConfigured)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $ScriptDir $appDataConfigured))
+}
+$LogDir = Join-Path $AppDataRoot "logs"
+$StateDir = Join-Path $AppDataRoot "state"
+$TrayLog = Join-Path $LogDir "tray.log"
+$TrayReadyPath = Join-Path $StateDir "tray-ready.json"
+# Keep the managed per-user runtime tree self-healing under %LOCALAPPDATA%\CadGPT.
+foreach ($relative in @(
+    "libraries\lisp",
+    "libraries\jobs",
+    "registry\user",
+    "workspace\lisp-draft",
+    "workspace\job-draft",
+    "data\runs",
+    "runtime\dynamic-lisp",
+    "drawings",
+    "state",
+    "logs"
+)) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $AppDataRoot $relative) | Out-Null
+}
+
+function Write-TrayLog([string]$Message) {
+    try {
+        Add-Content -Path $TrayLog -Value "[$((Get-Date).ToString('s'))] $Message" -Encoding UTF8 -ErrorAction Stop
+    } catch { } # Diagnostics must never abort tray startup.
+}
+
+function Get-StartupCommand {
+    if (-not (Test-Path $TrayLauncherPath)) {
+        throw "cadgpt-tray.vbs is missing. Re-run setup from the current source tree."
+    }
+    return 'wscript.exe "' + $TrayLauncherPath + '"'
+}
+
+function Install-StartupRegistration {
+    New-Item -Path $StartupKey -Force | Out-Null
+    $expected = Get-StartupCommand
+    New-ItemProperty -Path $StartupKey -Name $StartupName -Value $expected -PropertyType String -Force | Out-Null
+    $actual = (Get-ItemProperty -Path $StartupKey -Name $StartupName -ErrorAction Stop).$StartupName
+    if ($actual -cne $expected) { throw "CadGPT startup registration readback mismatch." }
+    Write-Host "[OK] CadGPT will start automatically when this Windows user signs in." -ForegroundColor Green
+}
+
+function Remove-StartupRegistration {
+    Remove-ItemProperty -Path $StartupKey -Name $StartupName -ErrorAction SilentlyContinue
+    Write-Host "[OK] CadGPT Windows auto-start removed." -ForegroundColor Green
+}
+
+function Get-PortOwnerPid([int]$TargetPort) {
+    try {
+        $lines = netstat -ano | Select-String ":$TargetPort\s" | Select-String "LISTENING"
+        foreach ($line in $lines) {
+            $parts = ($line -replace '\s+', ' ').ToString().Trim().Split(' ')
+            $processId = [int]$parts[-1]
+            if ($processId -gt 0) { return $processId }
+        }
+    } catch {}
+    return $null
+}
+
+function Get-ProcessInfo([int]$ProcessId) {
+    try {
+        return Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop
+    } catch {
+        return $null
+    }
+}
+
+function Test-CommandLineContains([int]$ProcessId, [string]$Needle) {
+    $info = Get-ProcessInfo -ProcessId $ProcessId
+    if (-not $info -or -not $info.CommandLine) { return $false }
+    return $info.CommandLine.IndexOf($Needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+
+function Test-OwnedCadGptProcess([int]$ProcessId) {
+    if ($ProcessId -le 0) { return $false }
+    $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $proc -or $proc.ProcessName -notmatch '^node(?:\.exe)?$') { return $false }
+    return Test-CommandLineContains -ProcessId $ProcessId -Needle $IndexPath
+}
+
+function Test-OwnedTunnelProcess([int]$ProcessId) {
+    if ($ProcessId -le 0) { return $false }
+    $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $proc -or $proc.ProcessName -notmatch '^tunnel-client(?:\.exe)?$') { return $false }
+    return Test-CommandLineContains -ProcessId $ProcessId -Needle $TunnelProfilePath
+}
+
+function Test-OwnedTrayProcess([int]$ProcessId) {
+    if ($ProcessId -le 0) { return $false }
+    $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $proc -or $proc.ProcessName -notmatch '^(powershell|pwsh)(?:\.exe)?$') { return $false }
+    return Test-CommandLineContains -ProcessId $ProcessId -Needle $TrayScriptPath
+}
+
+$CadGptPortValue = Get-DotEnvValue "PORT"
+$CadGptPort = if ($CadGptPortValue) { [int]$CadGptPortValue } else { 3100 }
+$TunnelHealthValue = Get-DotEnvValue "OPENAI_TUNNEL_HEALTH_PORT"
+$TunnelHealthPort = if ($TunnelHealthValue) { [int]$TunnelHealthValue } else { 8180 }
+
+function Get-CadGptHealth {
+    try {
+        $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$CadGptPort/health" -TimeoutSec 2
+        if ($resp.status -eq "ok" -and $resp.name -eq "cadgpt") { return $resp }
+    } catch {}
+    return $null
+}
+
+function Test-TunnelHealthy {
+    try {
+        $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$TunnelHealthPort/readyz" -UseBasicParsing -TimeoutSec 2
+        return $resp.StatusCode -eq 200 -and $resp.Content -match "ready"
+    } catch {
+        return $false
+    }
+}
+
+function Get-AutoCadProbeStatus {
+    $processes = @(Get-Process -Name "acad" -ErrorAction SilentlyContinue)
+    if ($processes.Count -eq 0) {
+        return [pscustomobject]@{
+            running = $false
+            attached = $false
+            drawing_count = 0
+            active_document = $null
+            state = "OFF"
+        }
+    }
+
+    $progIds = @(
+        "AutoCAD.Application",
+        "AutoCAD.Application.24.3",
+        "AutoCAD.Application.24.2",
+        "AutoCAD.Application.24.1",
+        "AutoCAD.Application.24",
+        "AutoCAD.Application.23.1",
+        "AutoCAD.Application.23",
+        "AutoCAD.Application.22"
+    )
+
+    foreach ($attempt in 1..4) {
+        foreach ($progId in $progIds) {
+            try {
+                $app = [System.Runtime.InteropServices.Marshal]::GetActiveObject($progId)
+                if (-not $app) { continue }
+
+                $count = [int]$app.Documents.Count
+                $activeName = $null
+                $activeFullName = $null
+                if ($count -gt 0) {
+                    try {
+                        $activeName = [string]$app.ActiveDocument.Name
+                        $activeFullName = [string]$app.ActiveDocument.FullName
+                    } catch {}
+                }
+
+                $drawings = @()
+                for ($i = 0; $i -lt $count; $i++) {
+                    try {
+                        $doc = $app.Documents.Item($i)
+                        $name = [string]$doc.Name
+                        $fullName = [string]$doc.FullName
+                        $isActive = $false
+                        if ($activeFullName) {
+                            $isActive = $fullName -eq $activeFullName
+                        } elseif ($activeName) {
+                            $isActive = $name -eq $activeName
+                        }
+                        $drawings += [pscustomobject]@{
+                            name = $name
+                            full_name = $fullName
+                            active = $isActive
+                        }
+                    } catch {}
+                }
+
+                return [pscustomobject]@{
+                    running = $true
+                    attached = $true
+                    drawing_count = $count
+                    active_document = $activeName
+                    drawings = $drawings
+                    state = "ON"
+                }
+            } catch {}
+        }
+
+        if ($attempt -lt 4) { Start-Sleep -Milliseconds 200 }
+    }
+
+    return [pscustomobject]@{
+        running = $true
+        attached = $false
+        drawing_count = $null
+        active_document = $null
+        drawings = @()
+        state = "ON"
+    }
+}
+
+function Wait-ForCondition([scriptblock]$Condition, [int]$TimeoutSeconds) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        if (& $Condition) { return $true }
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
+    return $false
+}
+
+function Read-TrayState {
+    if (-not (Test-Path $TrayReadyPath)) { return $null }
+    try { return Get-Content $TrayReadyPath -Raw | ConvertFrom-Json }
+    catch { return $null }
+}
+
+function Write-TrayState {
+    $payload = @{
+        pid = $PID
+        ready = $true
+        runtime_state = $script:RuntimeState
+        started_at = $script:TrayStartedAt
+        script = $TrayScriptPath
+        cadgpt_pid = $script:CadGptPid
+        tunnel_pid = $script:TunnelPid
+        autocad_running = [bool]$script:CadProbe.running
+        autocad_attached = [bool]$script:CadProbe.attached
+        autocad_drawing_count = $script:CadProbe.drawing_count
+        autocad_active_document = $script:CadProbe.active_document
+        autocad_drawings = @($script:CadProbe.drawings)
+        autocad_probe_at = $script:CadProbeAt
+    } | ConvertTo-Json -Depth 5
+
+    $tempPath = "$TrayReadyPath.tmp"
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($tempPath, $payload, $utf8NoBom)
+    Move-Item -Path $tempPath -Destination $TrayReadyPath -Force
+}
+
+function Resolve-OwnedCadGptPid {
+    $state = Read-TrayState
+    if ($state -and $state.cadgpt_pid) {
+        $candidate = [int]$state.cadgpt_pid
+        if (Test-OwnedCadGptProcess -ProcessId $candidate) { return $candidate }
+    }
+
+    $portPid = Get-PortOwnerPid -TargetPort $CadGptPort
+    if ($portPid -and (Test-OwnedCadGptProcess -ProcessId $portPid)) { return $portPid }
+    return $null
+}
+
+function Resolve-OwnedTunnelPid {
+    $state = Read-TrayState
+    if ($state -and $state.tunnel_pid) {
+        $candidate = [int]$state.tunnel_pid
+        if (Test-OwnedTunnelProcess -ProcessId $candidate) { return $candidate }
+    }
+
+    $portPid = Get-PortOwnerPid -TargetPort $TunnelHealthPort
+    if ($portPid -and (Test-OwnedTunnelProcess -ProcessId $portPid)) { return $portPid }
+    return $null
+}
+
+function Stop-OwnedCadGptComponent {
+    $cadPid = Resolve-OwnedCadGptPid
+    if ($cadPid) {
+        Stop-Process -Id $cadPid -Force -ErrorAction SilentlyContinue
+        [void](Wait-ForCondition { -not (Get-Process -Id $cadPid -ErrorAction SilentlyContinue) } 5)
+        $script:CadGptPid = $null
+        return $true
+    }
+    if (Get-PortOwnerPid -TargetPort $CadGptPort) {
+        Write-TrayLog "CadGPT port $CadGptPort is occupied by an unowned process; refusing to kill it."
+        return $false
+    }
+    $script:CadGptPid = $null
+    return $true
+}
+
+function Stop-OwnedTunnelComponent {
+    $tunnelPid = Resolve-OwnedTunnelPid
+    if ($tunnelPid) {
+        Stop-Process -Id $tunnelPid -Force -ErrorAction SilentlyContinue
+        [void](Wait-ForCondition { -not (Get-Process -Id $tunnelPid -ErrorAction SilentlyContinue) } 5)
+        $script:TunnelPid = $null
+        return $true
+    }
+    if (Get-PortOwnerPid -TargetPort $TunnelHealthPort) {
+        Write-TrayLog "Tunnel health port $TunnelHealthPort is occupied by an unowned process; refusing to kill it."
+        return $false
+    }
+    $script:TunnelPid = $null
+    return $true
+}
+
+function Stop-VerifiedRuntime {
+    [void](Stop-OwnedCadGptComponent)
+    [void](Stop-OwnedTunnelComponent)
+    if ($script:IsTrayHost -and (Test-Path $TrayReadyPath)) { Write-TrayState }
+}
+
+function Stop-TrayHostAtMarker([string]$MarkerPath) {
+    if (-not $MarkerPath -or -not (Test-Path $MarkerPath)) { return }
+    $state = $null
+    try { $state = Get-Content $MarkerPath -Raw | ConvertFrom-Json } catch {}
+    if ($state -and $state.pid) {
+        $trayPid = [int]$state.pid
+        if ($trayPid -gt 0 -and $trayPid -ne $PID) {
+            if (Test-OwnedTrayProcess -ProcessId $trayPid) {
+                Stop-Process -Id $trayPid -Force -ErrorAction SilentlyContinue
+                Write-TrayLog "Stopped owned CadGPT tray PID $trayPid from marker $MarkerPath."
+            } else {
+                Write-TrayLog "Tray marker PID $trayPid is not an owned CadGPT tray process; refusing to kill it."
+            }
+        }
+    }
+    Remove-Item $MarkerPath -Force -ErrorAction SilentlyContinue
+}
+
+function Stop-TrayHostFromMarker {
+    Stop-TrayHostAtMarker $TrayReadyPath
+}
+
+if ($InstallStartup) {
+    Install-StartupRegistration
+    exit 0
+}
+if ($RemoveStartup) {
+    Remove-StartupRegistration
+    exit 0
+}
+if ($StopInstalled) {
+    # Runtime ownership is recorded in the tray marker, so stop runtime first.
+    Stop-VerifiedRuntime
+    Stop-TrayHostFromMarker
+    Write-Host "[OK] CadGPT tray/runtime stop requested for verified owned processes only." -ForegroundColor Green
+    exit 0
+}
+if ($StatusOnly) {
+    $startupValue = (Get-ItemProperty -Path $StartupKey -Name $StartupName -ErrorAction SilentlyContinue).$StartupName
+    $expectedStartup = Get-StartupCommand
+    $startupState = if (-not $startupValue) { 'MISSING' } elseif ($startupValue -cne $expectedStartup) { 'STALE' } else { 'REGISTERED' }
+    $approval = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -Name $StartupName -ErrorAction SilentlyContinue).$StartupName
+    $approvalState = if ($null -eq $approval -or @($approval).Count -eq 0) { 'UNKNOWN' } elseif ($approval[0] -eq 3) { 'DISABLED' } elseif ($approval[0] -eq 2) { 'ENABLED' } else { 'UNKNOWN' }
+    Write-Host "Startup registry : $startupState"
+    Write-Host "Startup approval : $approvalState"
+    Write-Host "Startup trace    : $StartupTracePath"
+    $health = Get-CadGptHealth
+    $state = Read-TrayState
+    $trayPid = if ($state -and $state.pid) { [int]$state.pid } else { 0 }
+    $trayReady = $trayPid -gt 0 -and (Test-OwnedTrayProcess -ProcessId $trayPid)
+    Write-Host "Tray             : $(if ($trayReady) { 'READY' } else { 'OFFLINE' })"
+    Write-Host "Slim MCP         : $(if ($health) { 'READY' } else { 'OFFLINE' })"
+    if ($health) {
+        Write-Host "Loaded families  : $(@($health.loaded_families) -join ', ')"
+        Write-Host "Active work      : $($health.active_work_registrations)"
+        Write-Host "Active leases    : $($health.active_tool_leases)"
+        Write-Host "CAD MCP          : $(if ($health.cad_mcp.connected) { 'CONNECTED' } else { 'SLEEPING' })"
+    }
+    Write-Host "Secure tunnel    : $(if (Test-TunnelHealthy) { 'READY' } else { 'OFFLINE' })"
+    # Status is an explicit diagnostic request, so probe AutoCAD live instead of
+    # trusting the tray's periodic snapshot, which can be up to one timer interval stale.
+    $probe = Get-AutoCadProbeStatus
+    if (-not $probe.running) {
+        Write-Host "AutoCAD          : OFF"
+    } elseif ($probe.attached) {
+        Write-Host "AutoCAD          : ON - $($probe.drawing_count) drawing(s)"
+    } else {
+        Write-Host "AutoCAD          : ON - COM unavailable"
+    }
+    exit 0
+}
+
+Set-StartupStage 'preflight_start'
+if ($env:OS -ne "Windows_NT") { throw "CadGPT tray host is Windows-only." }
+if (-not (Test-Path ".env")) {
+    Set-StartupStage 'env_missing'
+    throw ".env is missing. Run setup.bat first."
+}
+Set-StartupStage 'env_verified'
+if (-not (Test-Path $IndexPath)) {
+    Set-StartupStage 'node_entry_missing'
+    throw "dist\index.js is missing. Run setup.bat/npm run build first."
+}
+Set-StartupStage 'node_entry_verified'
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+[System.Windows.Forms.Application]::EnableVisualStyles()
+Set-StartupStage 'ui_assemblies_ready'
+
+$createdNew = $false
+$mutex = [System.Threading.Mutex]::new($true, "Local\CadGPTTray", [ref]$createdNew)
+if (-not $createdNew) {
+    Set-StartupStage 'duplicate_tray_detected'
+    Write-TrayLog "Another CadGPT tray instance owns the mutex; exiting duplicate."
+    exit 0
+}
+Set-StartupStage 'mutex_acquired'
+
+$script:IsTrayHost = $true
+$script:CadGptLauncher = $null
+$script:TunnelLauncher = $null
+$script:CadGptPid = $null
+$script:TunnelPid = $null
+$script:RuntimeState = "Starting"
+$script:Exiting = $false
+$script:RuntimeHealthFailures = 0
+$script:LastKnownActiveWork = 0
+$script:LastKnownActiveRequests = 0
+$script:SelfHealInProgress = $false
+$script:TrayStartedAt = (Get-Date).ToString("o")
+$script:CadProbe = [pscustomobject]@{
+    running = $false
+    attached = $false
+    drawing_count = 0
+    active_document = $null
+    drawings = @()
+    state = "OFF"
+}
+$script:CadProbeAt = $null
+
+function Set-TrayTooltip([string]$RuntimeStatus) {
+    if (-not $notify) { return }
+    $cadText = if (-not $script:CadProbe.running) {
+        "CAD OFF"
+    } elseif ($script:CadProbe.attached) {
+        "CAD $($script:CadProbe.drawing_count) dwg"
+    } else {
+        "CAD ON"
+    }
+    $text = "CadGPT $RuntimeStatus | $cadText"
+    if ($text.Length -gt 63) { $text = $text.Substring(0, 63) }
+    $notify.Text = $text
+}
+
+function Update-CadProbeStatus {
+    $script:CadProbe = Get-AutoCadProbeStatus
+    $script:CadProbeAt = (Get-Date).ToString("o")
+
+    if ($cadItem) {
+        if (-not $script:CadProbe.running) {
+            $cadItem.Text = "AutoCAD: OFF"
+            if ($drawingItem) { $drawingItem.Text = "Drawings: 0" }
+        } elseif ($script:CadProbe.attached) {
+            $cadItem.Text = "AutoCAD: ON"
+            if ($drawingItem) { $drawingItem.Text = "Drawings: $($script:CadProbe.drawing_count)" }
+        } else {
+            $cadItem.Text = "AutoCAD: ON"
+            if ($drawingItem) { $drawingItem.Text = "Drawings: unavailable" }
+        }
+    }
+
+    Set-TrayTooltip -RuntimeStatus (Get-RuntimeStatus)
+    Write-TrayState
+}
+
+function Update-TrayStatus {
+    if (-not $notify) { return }
+    $status = Get-RuntimeStatus
+    $statusItem.Text = "CadGPT: $status"
+    Set-TrayTooltip -RuntimeStatus $status
+    Write-TrayState
+}
+
+function AdoptExistingCadGpt {
+    $ownerPid = Get-PortOwnerPid -TargetPort $CadGptPort
+    if (-not $ownerPid) { return $false }
+    if (-not (Get-CadGptHealth)) { return $false }
+    if (-not (Test-OwnedCadGptProcess -ProcessId $ownerPid)) {
+        Write-TrayLog "Healthy-looking CadGPT service on port $CadGptPort is not owned by this source tree; refusing to adopt PID $ownerPid."
+        return $false
+    }
+    $script:CadGptPid = $ownerPid
+    return $true
+}
+
+function AdoptExistingTunnel {
+    $ownerPid = Get-PortOwnerPid -TargetPort $TunnelHealthPort
+    if (-not $ownerPid -or -not (Test-TunnelHealthy)) { return $false }
+    if (-not (Test-OwnedTunnelProcess -ProcessId $ownerPid)) {
+        Write-TrayLog "Healthy-looking tunnel on port $TunnelHealthPort is not owned by this CadGPT profile; refusing to adopt PID $ownerPid."
+        return $false
+    }
+    $script:TunnelPid = $ownerPid
+    return $true
+}
+
+function Start-CadGptRuntime {
+    $script:RuntimeState = "Starting"
+    Update-TrayStatus
+
+    if (-not (AdoptExistingCadGpt)) {
+        $existingPid = Get-PortOwnerPid -TargetPort $CadGptPort
+        if ($existingPid) {
+            $script:RuntimeState = "Degraded"
+            Update-TrayStatus
+            Write-TrayLog "CadGPT port occupied by unowned/unhealthy PID $existingPid; refusing to kill or replace it."
+            return
+        }
+
+        $node = (Get-Command node -ErrorAction Stop).Source
+        $quotedIndexPath = '"' + ($IndexPath -replace '"', '\"') + '"'
+        $startParams = @{
+            FilePath = $node
+            ArgumentList = $quotedIndexPath
+            WorkingDirectory = $ScriptDir
+            WindowStyle = "Hidden"
+            RedirectStandardOutput = (Join-Path $LogDir "cadgpt.out.log")
+            RedirectStandardError = (Join-Path $LogDir "cadgpt.err.log")
+            PassThru = $true
+        }
+        $script:CadGptLauncher = Start-Process @startParams
+        $script:CadGptPid = $script:CadGptLauncher.Id
+        Write-TrayState
+
+        if (-not (Wait-ForCondition { $null -ne (Get-CadGptHealth) } 25)) {
+            $script:RuntimeState = "Degraded"
+            Update-TrayStatus
+            return
+        }
+        if (-not (Test-OwnedCadGptProcess -ProcessId $script:CadGptPid)) {
+            $script:RuntimeState = "Degraded"
+            Update-TrayStatus
+            Write-TrayLog "Started node process failed CadGPT ownership verification."
+            return
+        }
+    }
+
+    if (-not (AdoptExistingTunnel)) {
+        $existingPid = Get-PortOwnerPid -TargetPort $TunnelHealthPort
+        if ($existingPid) {
+            $script:RuntimeState = "Degraded"
+            Update-TrayStatus
+            Write-TrayLog "Tunnel health port occupied by unowned/unhealthy PID $existingPid; refusing to kill or replace it."
+            return
+        }
+
+        $tunnelScript = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "openai-tunnel.ps1"))
+        $tunnelOut = Join-Path $LogDir "tunnel.out.log"
+        $tunnelErr = Join-Path $LogDir "tunnel.err.log"
+        Remove-Item $tunnelOut,$tunnelErr -Force -ErrorAction SilentlyContinue
+
+        $escapedTunnelScript = $tunnelScript.Replace("'", "''")
+        $command = "& '$escapedTunnelScript' -Port $CadGptPort -HealthPort $TunnelHealthPort"
+        $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+        $tunnelParams = @{
+            FilePath = "powershell.exe"
+            ArgumentList = "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand"
+            WorkingDirectory = $ScriptDir
+            WindowStyle = "Hidden"
+            RedirectStandardOutput = $tunnelOut
+            RedirectStandardError = $tunnelErr
+            PassThru = $true
+        }
+        $script:TunnelLauncher = Start-Process @tunnelParams
+        Write-TrayLog "Started tunnel PowerShell launcher PID $($script:TunnelLauncher.Id) for health port $TunnelHealthPort."
+
+        $deadline = (Get-Date).AddSeconds(65)
+        $tunnelReady = $false
+        do {
+            if (Test-TunnelHealthy) {
+                $tunnelReady = $true
+                break
+            }
+            $script:TunnelLauncher.Refresh()
+            if ($script:TunnelLauncher.HasExited) {
+                $exitCode = $script:TunnelLauncher.ExitCode
+                Write-TrayLog "Tunnel PowerShell launcher exited before readiness with code $exitCode."
+                if (Test-Path $tunnelErr) {
+                    $tail = (Get-Content $tunnelErr -Tail 20 -ErrorAction SilentlyContinue) -join " | "
+                    if ($tail) { Write-TrayLog "Tunnel stderr: $tail" }
+                }
+                if (Test-Path $tunnelOut) {
+                    $tail = (Get-Content $tunnelOut -Tail 20 -ErrorAction SilentlyContinue) -join " | "
+                    if ($tail) { Write-TrayLog "Tunnel stdout: $tail" }
+                }
+                break
+            }
+            Start-Sleep -Milliseconds 500
+        } while ((Get-Date) -lt $deadline)
+
+        if (-not $tunnelReady) {
+            $script:RuntimeState = "Degraded"
+            Update-TrayStatus
+            Write-TrayLog "Secure tunnel did not become ready on health port $TunnelHealthPort."
+            return
+        }
+
+        $script:TunnelPid = Get-PortOwnerPid -TargetPort $TunnelHealthPort
+        if (-not $script:TunnelPid -or -not (Test-OwnedTunnelProcess -ProcessId $script:TunnelPid)) {
+            $script:RuntimeState = "Degraded"
+            Update-TrayStatus
+            Write-TrayLog "Started tunnel failed ownership verification."
+            return
+        }
+        Write-TrayState
+    }
+
+    $script:RuntimeState = "Ready"
+    Update-TrayStatus
+}
+
+function Restart-CadGptRuntime {
+    $script:RuntimeState = "Starting"
+    Update-TrayStatus
+    Stop-VerifiedRuntime
+    Start-Sleep -Milliseconds 600
+    Start-CadGptRuntime
+}
+
+function Invoke-RuntimeSelfHeal {
+    if ($script:Exiting -or $script:SelfHealInProgress) { return }
+    if ($script:RuntimeState -eq "Starting") { return }
+
+    $health = Get-CadGptHealth
+    $tunnelHealthy = Test-TunnelHealthy
+    if ($health) {
+        $script:LastKnownActiveWork = [int]$health.active_work_registrations
+        $script:LastKnownActiveRequests = [int]$health.active_mcp_requests
+    }
+    if ($health -and $tunnelHealthy) {
+        $script:RuntimeHealthFailures = 0
+        if ($script:RuntimeState -eq "Degraded") {
+            $script:RuntimeState = "Ready"
+            Update-TrayStatus
+        }
+        return
+    }
+
+    $script:RuntimeHealthFailures += 1
+    if ($script:RuntimeHealthFailures -lt 3) {
+        Write-TrayLog "Runtime health miss $($script:RuntimeHealthFailures)/3; waiting before self-heal."
+        return
+    }
+
+    # Never force-stop a live Node/tunnel solely because their 2-second
+    # health HTTP probe timed out while jobs are running. That process
+    # teardown destroys every ChatGPT MCP transport at once.
+    $activeWork = [int]$script:LastKnownActiveWork -gt 0 -or
+        [int]$script:LastKnownActiveRequests -gt 0
+    $ownedCoreAlive = $false
+    $ownedTunnelAlive = $false
+    $corePid = Resolve-OwnedCadGptPid
+    $tunnelPid = Resolve-OwnedTunnelPid
+    if ($corePid) { $ownedCoreAlive = Test-OwnedCadGptProcess -ProcessId $corePid }
+    if ($tunnelPid) { $ownedTunnelAlive = Test-OwnedTunnelProcess -ProcessId $tunnelPid }
+    if ($activeWork -and (
+        ((-not $health) -and $ownedCoreAlive) -or
+        ((-not $tunnelHealthy) -and $ownedTunnelAlive))) {
+        $script:RuntimeState = "Degraded"
+        Update-TrayStatus
+        Write-TrayLog ("Deferred destructive self-heal: active_work={0}, active_requests={1}, core_alive={2}, tunnel_alive={3}. Preserving in-flight Jobs and all chat sessions." -f
+            $script:LastKnownActiveWork, $script:LastKnownActiveRequests,
+            $ownedCoreAlive, $ownedTunnelAlive)
+        return
+    }
+
+    $script:SelfHealInProgress = $true
+    try {
+        Write-TrayLog "Runtime health failed 3 consecutive checks; starting controlled self-heal."
+        $script:RuntimeState = "Starting"
+        Update-TrayStatus
+
+        if (-not $health) {
+            if (-not (Stop-OwnedCadGptComponent)) {
+                $script:RuntimeState = "Degraded"
+                Update-TrayStatus
+                return
+            }
+        }
+
+        if (-not $tunnelHealthy) {
+            if (-not (Stop-OwnedTunnelComponent)) {
+                $script:RuntimeState = "Degraded"
+                Update-TrayStatus
+                return
+            }
+        }
+
+        Start-Sleep -Milliseconds 600
+        Start-CadGptRuntime
+
+        if ((Get-CadGptHealth) -and (Test-TunnelHealthy)) {
+            $script:RuntimeHealthFailures = 0
+            Write-TrayLog "Controlled runtime self-heal completed successfully."
+        } else {
+            $script:RuntimeState = "Degraded"
+            Update-TrayStatus
+            Write-TrayLog "Controlled runtime self-heal did not restore full health."
+        }
+    } catch {
+        $script:RuntimeState = "Degraded"
+        Update-TrayStatus
+        Write-TrayLog "Controlled runtime self-heal failed: $($_.Exception.Message)"
+    } finally {
+        $script:SelfHealInProgress = $false
+    }
+}
+
+function Get-RuntimeStatus {
+    if ($script:RuntimeState -eq "Starting") { return "Starting" }
+    $health = Get-CadGptHealth
+    if (-not $health -or -not (Test-TunnelHealthy)) { return "Degraded" }
+    if (-not $script:CadGptPid -or -not (Test-OwnedCadGptProcess -ProcessId ([int]$script:CadGptPid))) { return "Degraded" }
+    if (-not $script:TunnelPid -or -not (Test-OwnedTunnelProcess -ProcessId ([int]$script:TunnelPid))) { return "Degraded" }
+    if ($health.cad_mcp.connected) { return "CAD Connected" }
+    if ([int]$health.active_work_registrations -gt 0) { return "Working" }
+    return "Ready"
+}
+
+$notify = New-Object System.Windows.Forms.NotifyIcon
+
+$trayIconPath = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "icon.png"))
+$trayIconBitmap = $null
+$trayIconHandle = [IntPtr]::Zero
+try {
+    if (Test-Path $trayIconPath) {
+        $trayIconBitmap = New-Object System.Drawing.Bitmap($trayIconPath)
+        $trayIconHandle = $trayIconBitmap.GetHicon()
+        $sourceIcon = [System.Drawing.Icon]::FromHandle($trayIconHandle)
+        $notify.Icon = [System.Drawing.Icon]$sourceIcon.Clone()
+    } else {
+        Write-TrayLog "Tray icon asset missing at $trayIconPath; using system fallback icon."
+        $notify.Icon = [System.Drawing.SystemIcons]::Application
+    }
+} catch {
+    Write-TrayLog "Failed to load tray icon from ${trayIconPath}: $($_.Exception.Message); using system fallback icon."
+    $notify.Icon = [System.Drawing.SystemIcons]::Application
+} finally {
+    if ($trayIconBitmap) { $trayIconBitmap.Dispose() }
+}
+$notify.Text = "CadGPT - Starting"
+
+$menu = New-Object System.Windows.Forms.ContextMenuStrip
+$statusItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$statusItem.Enabled = $false
+$statusItem.Text = "CadGPT: Starting"
+[void]$menu.Items.Add($statusItem)
+
+$cadItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$cadItem.Enabled = $false
+$cadItem.Text = "AutoCAD: checking..."
+[void]$menu.Items.Add($cadItem)
+
+$drawingItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$drawingItem.Enabled = $false
+$drawingItem.Text = "Drawings: checking..."
+[void]$menu.Items.Add($drawingItem)
+
+[void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+
+$logsItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$logsItem.Text = "Open diagnostics/logs"
+[void]$menu.Items.Add($logsItem)
+
+$restartItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$restartItem.Text = "Restart CadGPT"
+[void]$menu.Items.Add($restartItem)
+
+[void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+$exitItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$exitItem.Text = "Exit CadGPT"
+[void]$menu.Items.Add($exitItem)
+
+$notify.ContextMenuStrip = $menu
+$notify.Visible = $true
+Set-StartupStage 'tray_icon_visible'
+Write-TrayState
+Set-StartupStage 'tray_state_written'
+
+$logsItem.Add_Click({
+    if (Test-Path $LogDir) { Start-Process explorer.exe $LogDir }
+})
+$restartItem.Add_Click({
+    try { Restart-CadGptRuntime }
+    catch {
+        Write-TrayLog "Restart failed: $($_.Exception.Message)"
+        $script:RuntimeState = "Degraded"
+        Update-TrayStatus
+    }
+})
+$exitItem.Add_Click({
+    if ($script:Exiting) { return }
+    $script:Exiting = $true
+    try { Stop-VerifiedRuntime } catch {}
+    $notify.Visible = $false
+    [System.Windows.Forms.Application]::Exit()
+})
+$menu.Add_Opening({
+    Update-CadProbeStatus
+    Update-TrayStatus
+})
+
+$statusTimer = New-Object System.Windows.Forms.Timer
+$statusTimer.Interval = 60000
+$statusTimer.Add_Tick({ Update-TrayStatus })
+$statusTimer.Start()
+
+$selfHealTimer = New-Object System.Windows.Forms.Timer
+$selfHealTimer.Interval = 15000
+$selfHealTimer.Add_Tick({ Invoke-RuntimeSelfHeal })
+$selfHealTimer.Start()
+
+$cadProbeTimer = New-Object System.Windows.Forms.Timer
+$cadProbeTimer.Interval = 15000
+$cadProbeTimer.Add_Tick({ Update-CadProbeStatus })
+$cadProbeTimer.Start()
+
+$bootstrapTimer = New-Object System.Windows.Forms.Timer
+$bootstrapTimer.Interval = 250
+$bootstrapTimer.Add_Tick({
+    $bootstrapTimer.Stop()
+    try {
+        if ($RestartRuntimeOnStart) { Stop-VerifiedRuntime }
+        Update-CadProbeStatus
+        Start-CadGptRuntime
+    } catch {
+        Set-StartupStage 'runtime_bootstrap_failed'
+        Write-TrayLog "Runtime bootstrap failed: $($_.Exception.Message)"
+        $script:RuntimeState = "Degraded"
+        Update-TrayStatus
+    }
+})
+$bootstrapTimer.Start()
+
+Set-StartupStage 'message_loop_enter'
+try {
+    [System.Windows.Forms.Application]::Run()
+} catch {
+    Set-StartupStage 'message_loop_failed'
+    throw
+} finally {
+    Write-StartupTrace 'message_loop_exit'
+    $statusTimer.Stop()
+    $selfHealTimer.Stop()
+    $cadProbeTimer.Stop()
+    $bootstrapTimer.Stop()
+    Remove-Item $TrayReadyPath -Force -ErrorAction SilentlyContinue
+    $notify.Visible = $false
+    if ($notify.Icon -and $notify.Icon -ne [System.Drawing.SystemIcons]::Application) {
+        $notify.Icon.Dispose()
+    }
+    $notify.Dispose()
+    $menu.Dispose()
+    try { $mutex.ReleaseMutex() } catch {}
+    $mutex.Dispose()
+}
+) { return }
+    try {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $StartupTracePath) -ErrorAction Stop | Out-Null
+        Add-Content -LiteralPath $StartupTracePath -Value ("{0} | {1} | pid={2}" -f (Get-Date).ToString('s'), $Stage, $PID) -Encoding UTF8 -ErrorAction Stop
+    } catch { } # A log failure never prevents startup.
+}
+function Set-StartupStage([string]$Stage) {
+    $script:StartupStage = $Stage
+    if ($script:StartupTracing) { Write-StartupTrace $Stage }
+}
+trap {
+    if ($script:StartupTracing) { Write-StartupTrace ('fatal_at_' + $script:StartupStage) }
+    break
+}
+if ($script:StartupTracing) { Set-StartupStage 'powershell_entry' }
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
 
