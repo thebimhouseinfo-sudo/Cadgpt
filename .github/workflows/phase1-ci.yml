@@ -89,6 +89,9 @@ jobs:
               throw "PowerShell parse failed: $script"
             }
           }
+      - name: CadGPT startup trace smoke on PowerShell 5.1 and 7
+        shell: pwsh
+        run: ./scripts/test-cadgpt-startup-trace.ps1
       - name: Stage 0 probe default binding smoke on Windows PowerShell
         shell: powershell
         run: |
