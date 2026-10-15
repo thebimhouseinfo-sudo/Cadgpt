@@ -1085,7 +1085,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
               error: error instanceof Error ? error.message : String(error) };
           }
         }
-        const cleanup = await cleanupJobRuntimeForExecution(lease.workId);
+        const cleanup = await cleanupJobRuntimeForExecution(lease.workId, {
+          clearRuntimeScratch: outcome === "done",
+        });
         return toolResult("job_runtime_finish", { outcome, cleanup, autosave: autoSave,
           status: outcome === "done" ? (autoSave.saved === true ? "JOB_DONE_SAVED" : "JOB_DONE_AUTOSAVE_FAILED") : "JOB_FAILED" });
       } catch (error) {
