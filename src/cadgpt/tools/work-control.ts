@@ -249,6 +249,26 @@ export function registerWorkControlTools(
               work.executionId
             )
           : null;
+        // A fresh logical chat has no predecessor Work to hand off from.
+        // The Host-selected DWG is common, but its FILE metadata grant is
+        // independently read-only and scoped to this new Work.
+        let sharedDrawingRoot: string | null = null;
+        if (!inheritedDrawingRoot) {
+          const { primaryBoundDrawing, attachPrimaryDrawingForExecution } =
+            await import("../session/drawing-binding.js");
+          const primary = primaryBoundDrawing();
+          if (primary?.anchor_verified_readback === true) {
+            const { attachVerifiedDrawingMetadataReadOnly } =
+              await import("../runtime/drawing-persistence.js");
+            sharedDrawingRoot = attachVerifiedDrawingMetadataReadOnly(
+              work.executionId,
+              primary
+            );
+            if (requestedPath === "hybrid") {
+              attachPrimaryDrawingForExecution(work.executionId);
+            }
+          }
+        }
         const previousCleanup = previousExecution
           ? await cleanupExecutionState(previousExecution)
           : null;
@@ -294,6 +314,14 @@ export function registerWorkControlTools(
                 },
               }
             : {}),
+          ...(sharedDrawingRoot ? {
+            shared_drawing_metadata: {
+              drawing_root: sharedDrawingRoot,
+              file_access_authorized: true,
+              read_only: true,
+              note: "Verified Host-bound drawing metadata only; current Job output requires its own runtime result authorization.",
+            },
+          } : {}),
           ...(inheritedDrawingRoot ? {
             drawing_metadata_handoff: {
               inherited: true,
