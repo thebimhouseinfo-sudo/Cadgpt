@@ -20,6 +20,53 @@ export interface BoundDrawing {
 
 const contexts = new Map<string, Map<string, BoundDrawing>>();
 
+// One selected AutoCAD document per host; executions only borrow verified
+// references. Never clear the host selection when a chat stops.
+let primaryDrawing: BoundDrawing | null = null;
+
+export function primaryBoundDrawing(): BoundDrawing | null {
+  return primaryDrawing ? { ...primaryDrawing } : null;
+}
+
+export function selectPrimaryBoundDrawing(binding: BoundDrawing): void {
+  if (!binding.drawing_anchor || binding.anchor_verified_readback !== true) {
+    throw new Error("PRIMARY_DRAWING_UNVERIFIED: Drawing Anchor readback is required.");
+  }
+  primaryDrawing = { ...binding };
+}
+
+export function attachPrimaryDrawingForExecution(executionId: string): BoundDrawing | null {
+  const primary = primaryDrawing;
+  if (!primary) return null;
+  const existing = contexts.get(executionId);
+  if (existing?.size) {
+    const item = [...existing.values()][0];
+    if (existing.size === 1 && item.runtime_document_identity === primary.runtime_document_identity) {
+      return { ...item };
+    }
+    throw new Error("PRIMARY_DRAWING_CONFLICT: another drawing is already bound to this Work.");
+  }
+  const attached: BoundDrawing = {
+    ...primary,
+    execution_id: executionId,
+  };
+  executionContexts(executionId).set(attached.drawing_id, attached);
+  return { ...attached };
+}
+
+export async function validatePrimaryBoundDrawing(): Promise<BoundDrawing | null> {
+  if (!primaryDrawing) return null;
+  const documents = await listOpenDrawings();
+  if (!documents.some((item) =>
+    matchesBinding(item, primaryDrawing!) &&
+    String(item.host ?? "autocad").toLowerCase() === primaryDrawing!.host.toLowerCase()
+  )) {
+    primaryDrawing = null;
+    throw new Error("BOUND_DRAWING_STALE: the selected drawing is no longer open.");
+  }
+  return primaryBoundDrawing();
+}
+
 function extractPayload(raw: unknown): unknown {
   if (!raw || typeof raw !== "object") return raw;
   const obj = raw as {
@@ -271,6 +318,11 @@ export function resolveDrawingContext(drawingId?: string): BoundDrawing {
 export async function activateDrawingContext(
   binding: BoundDrawing
 ): Promise<BoundDrawing> {
+  if (primaryDrawing &&
+      (primaryDrawing.runtime_document_identity !== binding.runtime_document_identity ||
+        primaryDrawing.host.toLowerCase() !== binding.host.toLowerCase())) {
+    throw new Error("BOUND_DRAWING_REPLACED: the Host primary drawing was changed.");
+  }
   const docs = await listOpenDrawings();
   const available = docs.some((item) => matchesBinding(item, binding));
   if (!available) {
