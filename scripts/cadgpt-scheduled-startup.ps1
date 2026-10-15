@@ -14,6 +14,25 @@ function Get-CadGptTaskLauncher {
     if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Windows Script Host missing.' }
     @{ Execute = $exe; Arguments = ('"' + $TrayLauncherPath + '"'); WorkingDirectory = $ScriptDir }
 }
+function Test-CadGptSameUser([string]$Recorded, [string]$Expected) {
+    if ([string]::IsNullOrWhiteSpace($Recorded)) { return $false }
+    if ($Recorded -ieq $Expected) { return $true }
+    try {
+        $expectedSid = (New-Object System.Security.Principal.NTAccount($Expected)).Translate(
+            [System.Security.Principal.SecurityIdentifier]).Value
+        if ($Recorded -eq $expectedSid) { return $true }
+        $actualSid = (New-Object System.Security.Principal.NTAccount($Recorded)).Translate(
+            [System.Security.Principal.SecurityIdentifier]).Value
+        return $actualSid -eq $expectedSid
+    } catch { return $false }
+}
+function Test-CadGptLogonTrigger($Trigger) {
+    if (-not $Trigger) { return $false }
+    # Scheduler surfaces logon triggers as CIM objects. Use both class and
+    # inherited Type property to tolerate versions that present CIM differently.
+    return ($Trigger.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' -or
+            [string]$Trigger.Type -eq 'Logon')
+}
 function Test-CadGptTaskOwnership($Task, [string]$CurrentUser) {
     if (-not $Task -or @($Task.Actions).Count -ne 1) { return $false }
     $action = @($Task.Actions)[0]
@@ -28,8 +47,9 @@ function Test-CadGptTaskOwnership($Task, [string]$CurrentUser) {
     if (-not (Test-Path -LiteralPath (Join-Path $priorRoot 'cadgpt-tray.ps1') -PathType Leaf)) { return $false }
     if ([IO.Path]::GetFullPath([string]$action.WorkingDirectory).TrimEnd('\') -ine
         [IO.Path]::GetFullPath($priorRoot).TrimEnd('\')) { return $false }
-    if ($Task.Principal.UserId -ine $CurrentUser) { return $false }
-    if (@($Task.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' }).Count -ne 1) { return $false }
+    if (-not (Test-CadGptSameUser ([string]$Task.Principal.UserId) $CurrentUser)) { return $false }
+    $triggers = @($Task.Triggers)
+    if ($triggers.Count -ne 1 -or -not (Test-CadGptLogonTrigger $triggers[0])) { return $false }
     return $true
 }
 function Test-CadGptTaskContract($Task, $Launcher, [string]$CurrentUser) {
@@ -37,7 +57,8 @@ function Test-CadGptTaskContract($Task, $Launcher, [string]$CurrentUser) {
     $a = @($Task.Actions)[0]
     if ($a.Arguments -cne $Launcher.Arguments -or $a.WorkingDirectory -ine $Launcher.WorkingDirectory) { return $false }
     $trigger = @($Task.Triggers)[0]
-    if ($trigger.UserId -ine $CurrentUser -or [string]$trigger.Delay -ne 'PT10S' -or -not $trigger.Enabled) { return $false }
+    if (-not (Test-CadGptSameUser ([string]$trigger.UserId) $CurrentUser) -or
+        [string]$trigger.Delay -ne 'PT10S' -or -not $trigger.Enabled) { return $false }
     $p = $Task.Principal
     if ([string]$p.LogonType -notin @('Interactive','3')) { return $false }
     if ([string]$p.RunLevel -notin @('Limited','0')) { return $false }
