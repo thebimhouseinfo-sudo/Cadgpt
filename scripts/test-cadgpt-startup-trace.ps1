@@ -10,6 +10,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'cadgpt-tray.ps1') -Destination $fixture
     New-Item -ItemType Directory -Force -Path (Join-Path $fixture 'scripts') | Out-Null
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'scripts\cadgpt-startup-registry.ps1') -Destination (Join-Path $fixture 'scripts')
+    Copy-Item -LiteralPath (Join-Path $sourceRoot 'scripts\cadgpt-scheduled-startup.ps1') -Destination (Join-Path $fixture 'scripts')
     $env:LOCALAPPDATA = Join-Path $fixture 'local'
     New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
     $trace = Join-Path $env:LOCALAPPDATA 'CadGPT\logs\startup-launch.log'
@@ -74,20 +75,18 @@ try {
     if (-not $source.Contains('"Local\CadGPTTray"')) {
         throw 'CadGPT single-instance mutex missing'
     }
-    # GPTWorker-compatible precedence: Task Scheduler first, HKCU Run only
-    # as verified fallback. No unrelated scheduled task may be manipulated.
-    foreach ($required in @('New-ScheduledTaskTrigger -AtLogOn',
-        'Register-ScheduledTask -TaskName $StartupTaskName',
-        'Remove-CadGptStartupValue -RegistryKey $StartupKey',
-        'Install-CadGptStartupValue -RegistryKey $StartupKey',
-        'Get-CadGptStartupTask')) {
-        if (-not $source.Contains($required)) {
-            throw "Missing single-authority startup contract: $required"
-        }
+    # Single startup authority is implemented in the dedicated module.
+    $taskSource = Get-Content -LiteralPath (Join-Path $sourceRoot 'scripts\cadgpt-scheduled-startup.ps1') -Raw
+    foreach ($required in @('Test-CadGptTaskOwnership', 'Test-CadGptTaskContract',
+         'Register-ScheduledTask', 'Remove-CadGptScheduledTask',
+         'New-ScheduledTaskTrigger -AtLogOn', "trigger.Delay = 'PT10S'")) {
+        if (-not ($taskSource.Contains($required))) { throw "Missing Scheduled Task contract: $required" }
     }
-    if ($source -match '(?i)schtasks\.exe\s+/create') {
-        throw 'Unexpected secondary task creation path'
+    if (-not $source.Contains('Install-CadGptScheduledTask') -or
+        -not $source.Contains('Install-CadGptStartupValue')) {
+        throw 'Task-first startup with Registry fallback contract missing'
     }
+    if ($taskSource -match '(?i)schtasks\.exe\s+/create') { throw 'Unexpected task creation path' }
     Write-Host 'CadGPT isolated startup trace smoke PASS'
 } finally {
     $env:LOCALAPPDATA = $originalLocalAppData
