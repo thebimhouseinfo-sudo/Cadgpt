@@ -213,7 +213,16 @@ export async function bindDrawingForExecution(
       if (!attached) throw new Error("PRIMARY_DRAWING_ATTACH_FAILED");
       return attached;
     }
-    if (!options.allowExplicitRebind) {
+    // An AutoCAD crash/reopen changes the document lifetime identity.
+    // Retire the stale Host authority only after querying the open documents;
+    // never silently switch to another still-open drawing.
+    const primaryStillOpen = docs.some((item) =>
+      matchesBinding(item, primaryDrawing!) &&
+      String(item.host ?? "autocad").toLowerCase() === primaryDrawing!.host.toLowerCase()
+    );
+    if (!primaryStillOpen) {
+      primaryDrawing = null;
+    } else if (!options.allowExplicitRebind) {
       throw new Error("PRIMARY_DRAWING_ALREADY_BOUND: change the Host drawing only through an explicit workspace bind.");
     }
   }
