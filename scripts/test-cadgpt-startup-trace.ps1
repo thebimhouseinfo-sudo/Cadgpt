@@ -33,8 +33,20 @@ try {
     # Preflight must log its boundary on Windows PowerShell 5.1 and PS 7.
     # No .env or dist exists in this fixture, so no runtime/tunnel is started.
     foreach ($engine in @('powershell.exe', 'pwsh.exe')) {
-        & $engine -NoProfile -ExecutionPolicy Bypass -File $ps1 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) { throw "$engine unexpectedly started without .env" }
+        $executable = Get-Command $engine -ErrorAction SilentlyContinue
+        if (-not $executable) {
+            Write-Host "$engine unavailable; skipping optional engine."
+            continue
+        }
+        # A nonzero exit is EXPECTED here. Invoke the child as a process so
+        # Windows PowerShell 5.1 does not promote redirected stderr into a
+        # terminating NativeCommandError under ErrorActionPreference=Stop.
+        $stdout = Join-Path $fixture ($engine + '.stdout.log')
+        $stderr = Join-Path $fixture ($engine + '.stderr.log')
+        $child = Start-Process -FilePath $executable.Source -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $ps1 + '"')
+        ) -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        if ($child.ExitCode -eq 0) { throw "$engine unexpectedly started without .env" }
         $stages = @(Get-Content -LiteralPath $trace -ErrorAction Stop)
         foreach ($required in @('powershell_entry', 'preflight_start', 'env_missing', 'fatal_at_env_missing')) {
             if (-not ($stages -match [regex]::Escape($required))) {
