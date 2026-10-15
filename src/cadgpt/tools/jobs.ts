@@ -1057,17 +1057,25 @@ export function registerJobAuthoringTools(server: McpServer): void {
         if (outcome === "done") {
           // Save before releasing the Work's drawing authority. Cad host FIFO
           // prevents overlap with other chats' CAD calls; no new manager.
-          const drawing = resolveDrawingContext();
           try {
+            const drawing = resolveDrawingContext();
             await withCadHostLock(drawing.host, async () => {
               await activateDrawingContext(drawing);
               const response = await cadUpstream.callTool("acad_save_bound_document", {
                 runtime_document_id: drawing.runtime_document_identity,
               }) as { isError?: boolean; structuredContent?: Record<string, unknown>; content?: unknown };
               if (response.isError) throw new Error("CAD MCP returned tool error during autosave.");
-              const saved = response.structuredContent;
-              if (!saved || saved.saved !== true ||
-                  saved.runtime_document_id !== drawing.runtime_document_identity) {
+              let saved: unknown = response.structuredContent;
+              if (saved === undefined) {
+                const rawText = (response.content as Array<{ type?: string; text?: string }> | undefined)
+                  ?.find((item) => item.type === "text")?.text;
+                if (rawText) {
+                  try { saved = JSON.parse(rawText); } catch { saved = undefined; }
+                }
+              }
+              const evidence = saved as { saved?: unknown; runtime_document_id?: unknown } | undefined;
+              if (!evidence || evidence.saved !== true ||
+                  evidence.runtime_document_id !== drawing.runtime_document_identity) {
                 throw new Error("AUTOSAVE_UNVERIFIED: Python CAD MCP did not confirm save.");
               }
               autoSave = { attempted: true, saved: true, drawing: drawing.full_name };
