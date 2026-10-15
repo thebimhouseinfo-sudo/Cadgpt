@@ -1,6 +1,6 @@
 ﻿# CadGPT AutoCAD Add-in â€” Stage 0 Host Record
 
-Generated: 2026-10-08T08:44:01.6292820Z
+Generated: 2026-10-15T16:56:47.1330935Z
 Status: SUPPORTED
 Reason: None
 
@@ -18,7 +18,7 @@ Reason: None
 - Target framework: net46
 - Target source: AutoCAD 2018 / release 22.0 compatibility rule
 - AutoCAD series: R22.0
-- WebView2 runtime: 154.0.4258.62
+- WebView2 runtime: 155.0.4283.45
 - WebView profile: %LOCALAPPDATA%\CadGPT\runtime\autocad-addin\stage0-webview2
 
 ## Notes
