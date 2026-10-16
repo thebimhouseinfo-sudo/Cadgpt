@@ -1,7 +1,7 @@
 # CadGPT Core Function V5 — Detailed Implementation Plan and Self-Review
 
 **Date:** 2026-10-16  
-**Status:** PLANNING · not implemented · no claim of live CAD success  
+**Status:** PLANNING REVIEWED (RL-02 PASS — theory alignment and architecture feasibility only) · not implemented · no claim of live CAD success  
 **Implementation branch:** `feature/core-function-v5` **only**  
 **Human theory authority:** `docs/roadmap/CADGPT_CORE_FUNCTION_V5_BRANCH_PLAN.md` on this branch; informed by RevitGPT `docs/roadmap/P3_CORE_FUNCTION_THEORY_V5.md`.  
 **GSA binding:** `GSA-Projects/projects/01a0d70c-9683-7324-9d3d-a8231a93c63b/PROJECT.md` (Goal Drift fence).  
@@ -155,4 +155,33 @@ Before declaring any implementation slice ready, Reviewer checks:
 
 ## G. Current plan review state
 
-Initial Planner draft. Internal Reviewer to check before declaring `RL PASS`. No source implementation authorized by this document itself.
+### RL-01 — CR findings and Planner corrections
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| "BUILD -> RUN -> FIX" could be misread as a mandatory preliminary QA gate | GOAL_DRIFT risk | Section A explicitly states RUN is the real AutoCAD action; compiler/syntax checks are optional developer aids, not Job TEST stages |
+| Temp Job cleanup after restart could silently delete unknown directories | High | WP4 demands persistent minimal owner metadata, explicit completed/inactive evidence, and skip unknown/ambiguous IDs; never delete Drawing Anchor results |
+| Editing a registered Job in-place could accidentally give a running Job cross-library source WRITE | High | WP1 separates Builder authoring scope from Operator runtime ownership by execution identity and explicit target |
+| Replacing SYSTEM lease by direct helpers could weaken Python/file isolation | High | WP5 retains actual Python process/path/source safeguards, removes only user-visible acquire/release ceremony |
+| Broad V5 migration could import changes from main and violate branch independence | Medium | WP0/WP8 maintain separate worktree, no wholesale main merges, reviewed selective maintenance transfers |
+| "real run" could encourage retry after uncertain write | High | Sections A/WP5 prohibit implicit replay after ambiguous mutation outcomes |
+| User-named result may clash with an existing result | Medium | WP4 requires exact name validation + non-colliding exclusive creation; ask user to resolve conflicts rather than auto-rename |
+| WPs labelled "exit" might be implemented as gates blocking Job execution | GOAL_DRIFT risk | Exit criteria are engineering completion checks for V5 delivery, **never a runtime requirement for running a Job or Lisp** |
+
+**RL-01 conclusion:** corrections incorporated in the approved design description above. No new mandatory Operator/Builder run gates created.
+
+### RL-02 — Independent adversarial review, theory vs implementation map
+
+- **PASS:** two roles are ChatGPT execution modes, not competing autonomous agents.
+- **PASS:** one canonical reusable Job format; legacy Direct Python is a compatibility adapter, not a second public Job taxonomy.
+- **PASS:** Temp Job uses random *workspace* ID and human-named *persistent result* only when needed.
+- **PASS:** edit/run in owned folder without draft/checkout/promote, and separately register a reusable Temp Lisp on user command.
+- **PASS:** owner-scoped files, bound DWG, actual CAD host ordering, actual Save outcome retained.
+- **PASS:** no separate test stage, artificial approval, compatibility lock or whole-Job queue.
+- **PASS:** V5 branch is the only development/build branch; main remains independent maintenance.
+- **LIMITATION:** static code survey supports the dependency map but does **not** prove each runtime adapter works; implementation still requires real tool outcomes.
+- **FOLLOW-UP:** WP0 must enumerate import/export and tool endpoint callers before deleting any legacy surface. This is preventing regression, not adding a runtime gate.
+
+**RL-02 verdict: PLAN PASS for alignment with human V5 theory. Implementation NOT STARTED.**
+
+No source implementation authorized by this document itself.
