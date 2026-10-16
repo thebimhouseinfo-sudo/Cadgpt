@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { isSessionClaimed } from "../lib/admission.js";
+import { clearInactiveTempJobs } from "../runtime/temp-job-maintenance.js";
 import {
   activeWorkForSession,
   clearSessionWorkStopBarrier,
@@ -117,6 +118,7 @@ export function registerCadGptControlTool(
           "help",
           "status",
           "stop",
+          "cleartempjob",
         ]),
       },
       outputSchema: {
@@ -176,6 +178,13 @@ export function registerCadGptControlTool(
         surface === "ij" || surface === "ej"
       ) {
         text = assetPrompt(surface);
+      } else if (surface === "cleartempjob") {
+        const cleaned = await clearInactiveTempJobs();
+        text = "CG Temp Job cleanup: removed=" + cleaned.removed.length +
+          ", skipped=" + cleaned.skipped.length +
+          ", errors=" + cleaned.errors.length +
+          (cleaned.skipped.length ? "\\nSkipped: " + cleaned.skipped.join(", ") : "") +
+          (cleaned.errors.length ? "\\nErrors: " + cleaned.errors.join("; ") : "");
       } else if (surface === "help") {
         text = CADGPT_HELP;
       } else if (surface === "status") {
