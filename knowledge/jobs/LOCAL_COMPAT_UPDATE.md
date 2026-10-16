@@ -1,6 +1,6 @@
 # Local Custom Job Compatibility Update
 
-This file is the repair instruction carried by the current `JOB_LOCAL_COMPAT_EPOCH`. It is read only when the lightweight compatibility signal reports a mismatch. It is not a migration engine and it does not enumerate AppData by itself.
+This file is the optional compatibility review instruction carried by the current `JOB_LOCAL_COMPAT_EPOCH`. Contract drift and legacy `blocked_job_ids` are WARNINGS, never prerequisites to normal User Job execution or testing. Preserve all unrelated drawing-binding, authority, and platform safety gates. It is read only when the lightweight compatibility signal reports a mismatch. It is not a migration engine and it does not enumerate AppData by itself.
 
 ## Current signal
 
@@ -26,7 +26,7 @@ behavior in runtime code while leaving the versioned contract unchanged.
 
 The online/source side does not know which Custom Jobs exist on a user's machine.
 
-When this epoch is pending, `jobcreate` CONTRACT UPDATE must:
+When the user elects to review a pending epoch, `jobcreate` CONTRACT UPDATE should:
 
 1. call `job_list`;
 2. select User Registry Jobs only;
