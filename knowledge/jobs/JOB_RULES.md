@@ -218,10 +218,11 @@ documents even if the epoch was not bumped.
 
 Before normal User Job create/run/update work, CadGPT performs the O(1)
 `job_local_compat_status` check (epoch + fingerprint against the local
-checked marker). On mismatch, visibly notify the user and request a
-`jobcreate` CONTRACT UPDATE scan of actual User Job definitions. Do not
-quietly start an outdated User Job or assume a CadGPT core update has also
-replaced its permanent AppData `JOB.md`. When there is no mismatch, do
+checked marker). On mismatch, visibly warn the user and recommend a
+`jobcreate` CONTRACT UPDATE scan of actual User Job definitions. The warning
+must NOT block User Job execution, authoring, or runtime testing, including
+Jobs listed in legacy `blocked_job_ids`. Do not silently claim an outdated
+AppData `JOB.md` has been updated or compatibility-tested. When there is no mismatch, do
 not enumerate or inspect Job packages. Any unresolved pending actions
 from an earlier scan must still be displayed to the user without
 rerunning a full scan every time.
@@ -234,7 +235,7 @@ job_local_compat_status
 → job_get each local package only now
 → detect current-contract violations
 → checkout/fix/test/promote only affected Jobs
-→ report changed / unchanged / blocked items
+→ report changed / unchanged / review-required items
 → job_local_compat_mark_checked
 ```
 
