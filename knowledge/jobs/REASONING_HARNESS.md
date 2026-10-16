@@ -2,7 +2,7 @@
 
 Markdown Jobs are sequential reasoning workflows. The Job file defines the workflow order; the current drawing state determines the concrete action at each step.
 
-Before a normal User Reasoning Job starts, call `job_local_compat_status`. If it returns `update_required=true`, do not start the normal Job yet: route through `jobcreate` **CONTRACT UPDATE** mode, complete/report the local scan, then mark the compatibility epoch checked. When the status is already current, this check is only the small state comparison; do not inspect all Job packages.
+Before a normal User Reasoning Job starts, call `job_local_compat_status`. If it returns `update_required=true`, warn the user that this Job may require compatibility review and recommend `jobcreate` **CONTRACT UPDATE** mode, but allow the promoted Job to run or be tested without the scan. An old `blocked_job_ids` marker is a review warning only, not an execution gate. Do not claim compatibility or runtime PASS without evidence. When the status is already current, this check is only the small state comparison; do not inspect all Job packages.
 
 At the start of every actual Reasoning Job run, call `job_runtime_prepare(id=<registered-job-id>)` before any file mutation. Starting a Job automatically releases stale foreground/SYSTEM Job authority from the same logical chat, but it does not delete prior runtime bytes. Use the returned `runtime_root` for all raw/intermediate working data. If `recovery_pending=true`, drain/verify/delete the preserved pending work before or as part of the new run according to the Job contract.
 
