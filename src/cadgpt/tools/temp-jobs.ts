@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { currentToolLease } from "../lib/work-registration.js";
+import { activeWorkForSession, currentToolLease } from "../lib/work-registration.js";
 import { createOwnedTempJob } from "../runtime/temp-job-maintenance.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 
@@ -15,6 +15,10 @@ export function registerTempJobTools(server: McpServer): void {
     async () => {
       try {
         const lease = currentToolLease();
+        const active = activeWorkForSession(lease.sessionKey);
+        if (!active || active.executionId !== lease.workId || active.ownerType === "job") {
+          throw new Error("TEMP_JOB_BUILDER_WORK_REQUIRED: start/reuse Builder FILE or HYBRID work, not a registered Job execution.");
+        }
         const job = await createOwnedTempJob(lease.workId, lease.sessionKey);
         return toolResult("temp_job_create", {
           id: job.id,
