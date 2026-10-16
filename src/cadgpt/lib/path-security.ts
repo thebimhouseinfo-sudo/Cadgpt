@@ -6,7 +6,7 @@ import { getAppDataRoot } from "./appdata.js";
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(MODULE_DIR, "..", "..", "..");
-const APPDATA_READABLE_ROOTS = ["data", "libraries", "workspace"];
+const APPDATA_READABLE_ROOTS = ["data", "libraries", "workspace", "temp-jobs"];
 const APPDATA_WRITABLE_ROOTS = ["data", "workspace"];
 
 function normalizeForCompare(value: string): string {
