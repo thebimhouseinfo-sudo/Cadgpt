@@ -53,6 +53,7 @@ import { registerDrawingPersistenceTools } from "./tools/drawing-persistence.js"
 import { registerJobResultAccessTools } from "./tools/job-result-access.js";
 import { registerJobResultPatchTools, registerJobResultBatchPatchTools } from "./tools/job-result-patch.js";
 import { registerTempLispTools } from "./tools/temp-lisp.js";
+import { registerTempJobTools } from "./tools/temp-jobs.js";
 import { registerHumanPowerTools } from "./tools/human-power.js";
 import {
   humanPowerErrorLogPath,
@@ -297,6 +298,7 @@ function registerStableProductionSurface(server: McpServer): void {
   registerJobResultPatchTools(server);
   registerJobResultBatchPatchTools(server);
   registerTempLispTools(server);
+  registerTempJobTools(server);
   registerHumanPowerTools(server);
 
   if (isDevelopmentBuild()) {
@@ -423,7 +425,7 @@ export function createMcpServer(sessionKey: string): McpServer {
       capabilities: { logging: {}, tools: { listChanged: true } },
       instructions: [
         "CadGPT entry routing — highest priority: bare CadGPT plugin/icon invocation (including a connector renamed CG) or bare @cadgpt or @cg must call cadgpt_admission and return its welcome_text verbatim when present. Do not replace it with prose such as 'activated'.",
-        "Exact cg/ calls cadgpt_control(surface=commands); cg/list -> surface=list; cg/cl -> surface=cl; cg/cj -> surface=cj; cg/job -> surface=job; cg/rl -> register Lisp folder; cg/rj -> register Job folder; cg/il -> import Lisp; cg/el -> export Lisp; cg/ij -> import Job; cg/ej -> export Job; cg/mcp -> surface=mcp; cg/help -> surface=help; cg/stop -> surface=stop. cg/list reads tray cache only and never wakes full CAD MCP.",
+        "Exact cg/ calls cadgpt_control(surface=commands); cg/list -> surface=list; cg/cl -> surface=cl; cg/cj -> surface=cj; cg/job -> surface=job; cg/rl -> register Lisp folder; cg/rj -> register Job folder; cg/il -> import Lisp; cg/el -> export Lisp; cg/ij -> import Job; cg/ej -> export Job; cg/mcp -> surface=mcp; cg/help -> surface=help; cg/stop -> surface=stop; cg/cleartempjob -> surface=cleartempjob (inactive owned Temp Jobs only). cg/list reads tray cache only and never wakes full CAD MCP.",
         "CadGPT is explicit-launch, session-persistent.",
         "The user launches CadGPT once per ChatGPT conversation, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt or @cg. The connector may replace its underlying MCP transport/session without requiring the user to launch again.",
         "On a bare plugin/icon or bare @cadgpt or @cg launch, call cadgpt_admission once. If that launch also contains a real task, claim the session and continue directly instead of forcing the generic Welcome. After the session is claimed, do not call admission again on every turn.",
