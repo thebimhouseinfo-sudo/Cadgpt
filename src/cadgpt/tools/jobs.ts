@@ -156,28 +156,20 @@ async function assertJobLocalCompatReady(
   jobId?: string
 ): Promise<void> {
   const status = await getJobLocalCompatStatus();
-  if (!status.update_required) {
-    const blocked = jobId && status.blocked_job_ids.some(
-      (id) => id.toLowerCase() === jobId.trim().toLowerCase()
-    );
-    if (blocked) {
-      throw new Error(
-        `JOB_LOCAL_COMPAT_JOB_BLOCKED: Custom Job '${jobId}' has unresolved compatibility repairs. Notify the user and run jobcreate CONTRACT UPDATE for this Job before ${action}; do not execute the old JOB.md.`
-      );
-    }
-    return;
+  const flagged = Boolean(jobId && status.blocked_job_ids.some(
+    (id) => id.toLowerCase() === jobId.trim().toLowerCase()
+  ));
+  if (status.update_required || flagged) {
+    console.warn("[CadGPT] JOB_CONTRACT_COMPAT_WARNING", {
+      action,
+      job_id: jobId ?? null,
+      update_required: status.update_required,
+      flagged_for_review: flagged,
+      update_reason: status.update_reason,
+      source_epoch: status.source_epoch,
+      checked_epoch: status.checked_epoch,
+    });
   }
-  throw new Error(
-    [
-      "JOB_LOCAL_COMPAT_UPDATE_REQUIRED:",
-      `local Custom Jobs have not been checked for the current Job compatibility epoch before ${action}.`,
-      "Report the contract change to the user and request the jobcreate CONTRACT UPDATE scan before continuing. Use job_local_compat_status and knowledge/jobs/LOCAL_COMPAT_UPDATE.md. Inspect each registered User Job, identify outdated raw-first branches, Job Steps, HYBRID assumptions and source-error reporting; do not overwrite business choices without user approval. Report updated/unchanged/blocked Jobs and only then call job_local_compat_mark_checked.",
-      `source_epoch=${status.source_epoch}`,
-      `checked_epoch=${status.checked_epoch}`,
-      `update_reason=${status.update_reason}`,
-      `source_fingerprint=${status.source_fingerprint}`,
-    ].join(" ")
-  );
 }
 
 export async function listRegisteredJobs(): Promise<Array<{
@@ -381,7 +373,7 @@ export function registerJobDiscoveryTools(server: McpServer): void {
     {
       title: "Check Local Job Compatibility Signal",
       description:
-        "Lightweight O(1) compatibility check for local Custom Jobs. It reads only the small state marker and never scans User Registry Job packages. If update_required=true, jobcreate must run CONTRACT UPDATE mode before normal User Job create/run/update work.",
+        "Lightweight O(1) compatibility check for local Custom Jobs. It reads only the small state marker and never scans User Registry Job packages. If update_required=true, jobcreate CONTRACT UPDATE is recommended; normal User Job create/run/update and testing remain available with a visible warning.",
       inputSchema: {},
     },
     async () => {
@@ -396,9 +388,9 @@ export function registerJobDiscoveryTools(server: McpServer): void {
               ? "deep_scan_required"
               : "fast_path",
             instruction: status.update_required
-              ? "ATTENTION: Job behavior/contract changed. Notify the user and request a jobcreate CONTRACT UPDATE scan BEFORE starting a User Job. Follow knowledge/jobs/LOCAL_COMPAT_UPDATE.md. Inspect each installed User Job, ask approval for changes to its business workflow, validate/test/promote affected Jobs, and report the results before marking this source contract checked."
+              ? "WARNING: Job behavior/contract changed. Notify the user and recommend a jobcreate CONTRACT UPDATE scan; allow the User Job to run or be tested with caution. Follow knowledge/jobs/LOCAL_COMPAT_UPDATE.md. Inspect each installed User Job, ask approval for changes to its business workflow, validate/test/promote affected Jobs, and report the results before marking this source contract checked."
               : status.pending_actions.length || status.blocked_job_ids.length
-                ? "Compatibility scan finished but Custom Job repairs are pending. Show pending_actions and blocked_job_ids to the user; do not run any blocked User Job or claim it was repaired."
+                ? "Compatibility scan finished but Custom Job reviews remain pending. Show pending_actions and flagged Job ids as warnings; execution and tests remain permitted. Do not claim repairs have passed."
 
                 : "Compatibility signal matches. Do not deep-scan local Job packages.",
           }
@@ -468,7 +460,7 @@ export function registerJobDiscoveryTools(server: McpServer): void {
             pending_actions: compat.pending_actions,
             blocked_job_ids: compat.blocked_job_ids,
             ...(compat.update_required
-              ? { instruction: "Notify the user and run jobcreate CONTRACT UPDATE before executing a Custom Job." }
+              ? { instruction: "Warn the user about contract drift; allow execution/testing and recommend jobcreate CONTRACT UPDATE." }
               : {}),
           },
         });
@@ -537,7 +529,7 @@ export function registerJobDiscoveryTools(server: McpServer): void {
             blocked,
             update_reason: compat.update_reason,
             ...(compat.update_required || blocked
-              ? { instruction: "Notify the user: this Custom Job requires jobcreate CONTRACT UPDATE before normal execution. Do not silently use an outdated JOB.md." }
+              ? { instruction: "Warn the user this Custom Job needs compatibility review; allow execution/testing with its current JOB.md. Do not claim compatibility PASS." }
               : {}),
           },
           path: real,
@@ -803,7 +795,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Mark Local Job Compatibility Scan Complete",
       description:
-        "After jobcreate CONTRACT UPDATE has scanned all registered User Jobs and reported its findings to the user, mark the contract checked. Record pending_actions AND blocked_job_ids for any affected Job still requiring approval, tests or promotion; blocked Jobs remain non-executable while compatible Jobs can run. Reject incorrect scan counts.",
+        "After jobcreate CONTRACT UPDATE has scanned all registered User Jobs and reported its findings to the user, mark the contract checked. Record pending_actions AND blocked_job_ids for any affected Job still requiring approval, tests or promotion; flagged Jobs remain executable/testable with warnings; no compatibility PASS is implied. Reject incorrect scan counts.",
       inputSchema: {
         scanned_user_jobs: z
           .number()
@@ -820,7 +812,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
           .default([]),
         blocked_job_ids: z.array(z.string().min(1).max(160))
           .max(100)
-          .describe("REQUIRED explicit review: [] only if every affected User Job was repaired/accepted; otherwise list registered IDs whose changes are untested/unpromoted. These Jobs remain blocked."),
+          .describe("REQUIRED explicit review: [] only if every affected User Job was repaired/accepted; otherwise list registered IDs whose changes are untested/unpromoted. These Jobs remain flagged for review, not execution-blocked."),
       },
     },
     async ({
