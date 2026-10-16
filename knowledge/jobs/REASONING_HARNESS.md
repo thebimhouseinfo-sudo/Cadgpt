@@ -162,6 +162,12 @@ Additional required platform/storage rules:
 - Ask the user only when the selected branch requires a decision or
   an actual conflict cannot be resolved safely within existing authorization.
 
+## DWG save checkpoint at CAD-to-SYSTEM boundary
+
+For a promoted Job whose current workflow contains a DWG-mutating phase, execute its declared save checkpoint **immediately after the last confirmed DWG mutation in that phase**, before leaving CAD for independent analysis or SYSTEM-only processing, even while later Job steps remain pending. Save the exact execution-bound drawing via a verified available tool, record tool-confirmed success in the Job runtime, and only then proceed/release CAD authority. Do not wait for the final Job DONE/header transition. If a subsequent phase mutates DWG, its own save checkpoint is required. On save failure, stop with the original tool error and preserve resume evidence; do not replay the preceding mutation automatically.
+
+On resume, validate the prior drawing identity plus durable save receipt and underlying mutation evidence before skipping completed CAD work. An uncertain crash-time save is not a license to repeat non-idempotent Lisp; report the unresolved state. FILE-only or read-only Jobs do not save a DWG. If the promoted JOB.md does not yet contain this checkpoint, the executor must not silently invent unsupported tools or mutate the permanent Job; route the missing contract to Job Builder.
+
 ## Direct Jobs
 
 A `.py` Job is not processed by this harness. It is a direct Job: resolve the registered script and dispatch it through the direct Job runner without model planning between its internal operations.
