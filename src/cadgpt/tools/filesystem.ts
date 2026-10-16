@@ -100,10 +100,12 @@ function currentWritableRoots(): string[] {
   const draftRoots = jobAuthoring ? [getJobDraftRoot()] : [];
   if (reasoningScope) return [...new Set([...jobRoots, ...draftRoots])];
   if (jobRoots.length) return [...new Set([...jobRoots, ...draftRoots])];
+  const tempRoot = tempJobWritableRootForExecution(currentToolLease().workId);
+  // Temp Jobs write only to their own owned folder, never generic workspace/data.
+  if (tempRoot) return [tempRoot];
   return [
     ...new Set([
       ...getWritableRoots(),
-      ...(tempJobWritableRootForExecution(currentToolLease().workId) ? [tempJobWritableRootForExecution(currentToolLease().workId)!] : []),
       ...currentWritableDrawingMetadataRoots(),
       ...humanPowerRoots,
     ]),
