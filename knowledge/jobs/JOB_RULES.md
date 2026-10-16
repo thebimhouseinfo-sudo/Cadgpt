@@ -321,6 +321,18 @@ Use when a decision must be made from structured CAD data, explicit rules, mappi
 
 `write-lisp` is a system Skill, not a Job. A Job may call it from any step that requires AutoLISP creation or modification. The Job returns to the interrupted step after the applicable Lisp validation/test/promotion gate succeeds.
 
+## Mandatory DWG save checkpoint — Job Builder
+
+When authoring or updating a Job that mutates DWG content, Job Builder MUST place a **DWG save checkpoint immediately after the last CAD-mutating action of the current completed CAD phase**, **before** any subsequent independent FILE/SYSTEM analysis, post-processing, result publication, detached SYSTEM lease, or user-facing completion report. This is not necessarily the final business step of the Job. If a later phase mutates the DWG again, add another save checkpoint after that phase's last mutation.
+
+- The model executes the checkpoint using the **existing, verified drawing-save tool** for the exact execution-bound DWG; use a platform-supported Python save mechanism only if one is actually exposed and authorized. Never invent a tool, shell escape, external Python process or guessed ActiveDocument target. If unavailable, report `DWG_SAVE_TOOL_UNAVAILABLE` as an explicit platform blocker; do not claim a durable checkpoint.
+- The checkpoint must return explicit save success (or a tool-supported verification) for the same bound drawing/runtime identity. A dispatched command, generic transport success or an unrelated active-tab save is insufficient. Never save over another drawing or an unsaved temporary test document by inference.
+- Complete in-flight CAD mutations and release only locks that the save API requires; **retain the drawing authority needed for save**. Perform save before detaching into a post-CAD SYSTEM-only phase. Do not forcefully return every tool before attempting the save.
+- Persist a small checkpoint receipt in this Job's `runtime/**` with drawing anchor/identity, completed CAD phase, mutation evidence and save outcome, so resumed execution can check it against the current bound DWG and preserved intermediate outputs. Do not treat a stale checklist tick or a prior run's save as proof. Never automatically replay a potentially non-idempotent Lisp/drawing mutation after a crash when its outcome is uncertain.
+- If save fails, preserve Job runtime and results, report `DWG_SAVE_FAILED` with the actual tool error and STOP before progressing to external analysis as if DWG were durable. Never mark `DRAWING_SAVED` without evidence; do not rerun the mutation to compensate.
+- A read-only CAD phase or an entirely FILE/SYSTEM Job (such as an Excel-only MTO run) does not need a DWG save. A pause for manual interactive CAD editing saves only after that phase's edits are actually confirmed complete.
+- This is a Job Builder authoring rule and must be reflected in affected Job instructions, even when the user did not request save explicitly. Existing human-accepted Job logic and business steps must not be rewritten solely to accommodate the checkpoint; add the smallest safe instruction at the phase boundary. Do not mark old Jobs as regression-PASS without actual save evidence.
+
 ## `jobcreate` Integration Rule
 
 `jobcreate` owns Job authoring/refinement. It does not define a second Job semantic model; it implements this canonical contract.
