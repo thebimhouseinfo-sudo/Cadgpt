@@ -115,19 +115,15 @@ test("Job local compatibility fast path reads only the small epoch state and lea
     const runDirect = callbacks.get(
       "job_run_direct"
     );
-    const blocked = await runDirect({
+    const attempted = await runDirect({
       id: "custom-job",
       args: [],
     });
-    assert.equal(blocked.isError, true);
-    assert.match(
-      JSON.stringify(blocked),
-      /JOB_LOCAL_COMPAT_UPDATE_REQUIRED/
-    );
-    assert.doesNotMatch(
-      JSON.stringify(blocked),
-      /not valid json/
-    );
+    // Compatibility drift is warning-only; execution reaches real registry
+    // validation instead of stopping at a synthetic contract gate.
+    assert.equal(attempted.isError, true);
+    assert.doesNotMatch(JSON.stringify(attempted),
+      /JOB_LOCAL_COMPAT_UPDATE_REQUIRED|JOB_LOCAL_COMPAT_JOB_BLOCKED/);
 
     const prepareRuntime = callbacks.get(
       "job_runtime_prepare"
@@ -136,21 +132,13 @@ test("Job local compatibility fast path reads only the small epoch state and lea
       typeof prepareRuntime,
       "function"
     );
-    const blockedReasoning =
+    const attemptedReasoning =
       await prepareRuntime({
         id: "custom-job",
       });
-    assert.equal(
-      blockedReasoning.isError,
-      true
-    );
-    assert.match(
-      JSON.stringify(blockedReasoning),
-      /JOB_LOCAL_COMPAT_UPDATE_REQUIRED/
-    );
     assert.doesNotMatch(
-      JSON.stringify(blockedReasoning),
-      /not valid json/
+      JSON.stringify(attemptedReasoning),
+      /JOB_LOCAL_COMPAT_UPDATE_REQUIRED|JOB_LOCAL_COMPAT_JOB_BLOCKED/
     );
 
     const managedJob = path.join(
@@ -247,9 +235,11 @@ test("Job local compatibility fast path reads only the small epoch state and lea
       blocked_job_ids: ["custom-job"],
     });
     assert.equal(blockedMarker.isError, undefined, JSON.stringify(blockedMarker));
-    const blockedPrepare = await callbacks.get("job_runtime_prepare")({ id: "custom-job" });
-    assert.equal(blockedPrepare.isError, true);
-    assert.match(JSON.stringify(blockedPrepare), /JOB_LOCAL_COMPAT_JOB_BLOCKED/);
+    const flaggedPrepare = await callbacks.get("job_runtime_prepare")({ id: "custom-job" });
+    assert.doesNotMatch(
+      JSON.stringify(flaggedPrepare),
+      /JOB_LOCAL_COMPAT_JOB_BLOCKED|JOB_LOCAL_COMPAT_UPDATE_REQUIRED/
+    );
 
     const getJob = callbacks.get("job_get");
     const scanRead = await getJob({
