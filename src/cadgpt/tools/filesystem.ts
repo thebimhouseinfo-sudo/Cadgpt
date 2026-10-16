@@ -20,6 +20,7 @@ import {
   reasoningJobStorageScopeWasEntered,
 } from "../runtime/job-runtime.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
+import { tempJobWritableRootForExecution } from "../runtime/temp-job-maintenance.js";
 
 const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".py"]);
 
@@ -102,6 +103,7 @@ function currentWritableRoots(): string[] {
   return [
     ...new Set([
       ...getWritableRoots(),
+      ...(tempJobWritableRootForExecution(currentToolLease().workId) ? [tempJobWritableRootForExecution(currentToolLease().workId)!] : []),
       ...currentWritableDrawingMetadataRoots(),
       ...humanPowerRoots,
     ]),
