@@ -36,6 +36,16 @@
 - **Qwen / DeepSeek (chưa xác nhận trong consumer chat):** **Qwen Code** có Remote MCP (https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp/); **DeepSeek Harness** có MCP client (https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md). Đây là các **developer/harness clients**, không phải bằng chứng rằng ứng dụng **Qwen Chat** hoặc **DeepSeek Chat** có cơ chế thêm Remote MCP tương tự Grok. Giữ ở trạng thái **WATCH / UNVERIFIED consumer app**, không kết luận các model không thể gọi tool.
 - Khả năng công bố Public Plugin và cơ chế phân phối beta phải tuân thủ yêu cầu hiện hành của từng nền tảng; không xem việc có URL MCP là đã phát hành Public Plugin thành công.
 
+### Hướng nghiên cứu bổ sung: DeepSeek API (CANDIDATE — không phải DeepSeek Chat Connector)
+
+- **Quyết định về scope:** có thể **xem xét phương án cấu hình API DeepSeek** vì giá token thấp, nhưng **chưa chốt triển khai** và không thay thế ChatGPT-first / Microsoft 365 Copilot. Đây là một nhánh nghiên cứu AI runtime tùy chọn, không đưa vào beta routing/quota cốt lõi nếu chưa có lý do thực tế.
+- **Khác biệt kỹ thuật:** ứng dụng **DeepSeek Chat** chưa được xác nhận cho người dùng thêm Custom Remote MCP; **DeepSeek API** đã hỗ trợ function/tool calling, thinking/non-thinking, Responses API và giao diện tương thích SDK OpenAI/Anthropic. Để chạy CAI tools qua DeepSeek API, cần **AI client/harness** (CAI cung cấp hoặc client tương thích BYOK) và một **adapter MCP ↔ tool/function calling**. Không thể chỉ dán URL MCP vào DeepSeek API rồi sử dụng như một ứng dụng chat có MCP.
+- **Model API tham khảo (2026-10-17):** `deepseek-flash` → **DeepSeek-V4.1-Flash-1017**, không dùng lại các ví dụ cũ `deepseek-chat`/`deepseek-reasoner`. Base URL `https://api.deepseek.com`. Giá chính thức USD / 1 triệu tokens: input cache hit **$0.003 off-peak / $0.006 peak**, input cache miss **$0.15 / $0.30**, output **$0.60 / $1.20**. Giá thay đổi theo thời gian; giá API **tính theo tokens, không theo CAI tool executions**. Nguồn chính thức: https://api-docs.deepseek.com/quick_start/pricing/ và https://api-docs.deepseek.com/updates/ .
+- **Chi phí minh họa:** một lượt inference 10.000 input tokens (không cache) + 1.000 output tokens = **$0.0021 off-peak / $0.0042 peak**, chưa tính các vòng gọi model khác, CAD tool results, lịch sử chat, ảnh, latency và hạ tầng.
+- **Hai lựa chọn thương mại chưa chốt:** (A) **BYOK**, doanh nghiệp/cá nhân tự sở hữu và thanh toán DeepSeek API key; CAI vẫn thu phí tool executions; (B) **CAI-managed AI**, CAI trả phí DeepSeek tokens và phải định nghĩa quota/budget AI **riêng** ngoài quota CAI requests để không tạo nghĩa vụ inference không giới hạn. Không trộn hai đơn vị để định giá khi chưa đo usage.
+- **Hạn chế bảo mật:** không nhúng một shared API key vào bộ cài CAI; nếu dùng BYOK phải lưu/ủy quyền bí mật an toàn. API mode sẽ gửi prompts, context và tool outputs có chọn lọc tới DeepSeek: xem xét chính sách dữ liệu, tính bảo mật tài liệu kỹ thuật, sự đồng ý và quy định IT doanh nghiệp trước khi thử dữ liệu thật.
+- **Điều kiện xem xét tiếp:** đo tool-call accuracy, multi-turn reasoning, lệnh CAD dài/nhiều bước, chi phí token thực, latency và khả năng chạy qua adapter với chính các MCP tools đang có; chỉ dùng bản vẽ test/fixture được phép. **Chưa xây UI chat, billing AI, BYOK portal hoặc thay đổi core/runtime theo tài liệu này.**
+
 ## 3. Kiến trúc thương mại mục tiêu
 
 ```text
@@ -149,8 +159,8 @@ Cho phép **nghiên cứu dần** và tổ chức **một nhóm beta giới hạ
 ## 8. Ranh giới dữ liệu, tương thích và quyết định còn mở
 
 - Thiết kế tối thiểu cần bảo vệ phiên đăng nhập, xác thực OAuth/token, tenant isolation, ghép cặp/thu hồi device, chống gửi nhầm kết quả, và an toàn với các lệnh CAD mutating. Không truyền toàn bộ DWG qua cloud nếu không cần.
-- **Chưa chốt:** tên miền cụ thể; nhà cung cấp dịch vụ auth/billing; kiểu host Gateway; chính sách credits và đơn giá; số requests cho từng gói; giới hạn số máy/nhân viên; thời điểm đưa vào bản thương mại; hướng phát hành chính xác cho từng AI client.
-- **Không suy diễn:** số lượt CAI Requests = số Workers requests; Tunnel Free = hạ tầng vô hạn; một model có sẵn trong Copilot = mọi định dạng MCP/agent đều dùng được không cần tích hợp; AI có toàn bộ lịch sử hội thoại trong Gateway.
+- **Chưa chốt:** tên miền cụ thể; nhà cung cấp dịch vụ auth/billing; kiểu host Gateway; chính sách credits và đơn giá; số requests cho từng gói; giới hạn số máy/nhân viên; thời điểm đưa vào bản thương mại; hướng phát hành chính xác cho từng AI client; có hay không AI client hỗ trợ DeepSeek API và chọn BYOK hay CAI-managed AI.
+- **Không suy diễn:** số lượt CAI Requests = số Workers requests; Tunnel Free = hạ tầng vô hạn; một model có sẵn trong Copilot = mọi định dạng MCP/agent đều dùng được không cần tích hợp; AI có toàn bộ lịch sử hội thoại trong Gateway; DeepSeek API function calling = consumer DeepSeek Chat hỗ trợ Custom MCP; một CAI request = một lần inference/token cost.
 - Với mỗi thử nghiệm, chỉ ghi **kết quả quan sát thực tế**, phần chưa thử ghi **UNVERIFIED**. Tài liệu này không chứng nhận capability đã hoàn thành.
 
 ## 9. Tóm tắt quyết định
