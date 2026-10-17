@@ -58,8 +58,8 @@ test("V5 Temp job Builder creates, fixes, finishes, then safely cleans", async (
     revokeSessionAdmissions(session);
   }
   const clean = await clearTempJobs();
-  assert.equal(clean.removed.length, 1);
-  assert.equal(clean.skipped.length, 1); // unfinished B must be preserved
+  assert.equal(clean.removed.length, 2); // completed A and now-inactive B are both owned scratch
+  assert.equal(clean.skipped.length, 0);
 });
 
 test("V5 explicit Temp cleanup reclaims abandoned active source after owner process exit", async () => {
