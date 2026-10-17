@@ -64,8 +64,15 @@ export function registerJobSystemHelperTools(server: McpServer): void {
           // Legacy SYSTEM caller continues to work while V5 migrations occur.
           jobRoot = path.resolve(lease.job_root);
           writableRoots = [...lease.writable_roots];
-          const legacyRuntime = writableRoots.find(root =>
-            path.basename(root).toLowerCase() === "runtime" && isPathInside(root, jobRoot));
+          const legacyRuntime = writableRoots.find(root => {
+            const absolute = path.resolve(root);
+            const classic = path.basename(absolute).toLowerCase() === "runtime" &&
+              isPathInside(absolute, jobRoot);
+            const isolated = isPathInside(absolute, path.join(jobRoot, "runtime", "runs")) &&
+              /^[0-9a-f]{24}$/i.test(path.basename(absolute)) &&
+              path.dirname(absolute) === path.join(jobRoot, "runtime", "runs");
+            return classic || isolated;
+          });
           if (!legacyRuntime) throw new Error("SYSTEM_HELPER_RUNTIME_REQUIRED");
           runtimeRoot = legacyRuntime;
         } else {
