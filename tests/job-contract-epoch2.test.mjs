@@ -54,18 +54,16 @@ test("contract fingerprint invalidates checked Job scan even with identical inte
   }
 });
 
-test("epoch 2 guide contains raw-first Grille Tag regression and mandatory User Job update reporting", async () => {
+test("V5 legacy compatibility guide is diagnostic rather than a Job flow or promote gate", async () => {
   const guide = await fs.readFile(
     path.join(process.cwd(), "knowledge", "jobs", "LOCAL_COMPAT_UPDATE.md"),
     "utf8"
   );
   assert.match(guide, /JOB_LOCAL_COMPAT_EPOCH = 2/);
-  assert.match(guide, /check actual raw -> empty:/);
-  assert.match(guide, /nonempty: ask Update\/Skip/);
-  assert.match(guide, /Update: ask Load Lisp\/Check raw/);
-  assert.match(guide, /Skip: Check raw/);
-  assert.match(guide, /ask the user how to update the Job/);
-  assert.match(guide, /AFFECTED \/ BLOCKED/);
+  assert.match(guide, /warnings and historical signals/i);
+  assert.match(guide, /never blockers/);
+  assert.match(guide, /no mandatory/i);
+  assert.doesNotMatch(guide, /nonempty: ask Update\/Skip/);
 });
 
 test("Job discovery and CadGPT launch are required to expose changed contract rather than silently run", async () => {
