@@ -262,3 +262,26 @@ Commits through `4a803368e69fd27c4a91f86e0306a6b12e21b21a` on `feature/core-func
 **RL finding retained (not marked PASS):** multi-file `libraries.json` + `capabilities.json` updates are not yet an atomic single transaction across crash; replacing an existing library also needs a backup/restore path. Existing `replaceExisting=true` remains legacy behavior and V5 Temp Lisp publisher only requests `false`. Do not claim publication entirely crash-safe or V5 complete until fixed and built.
 
 **Remaining:** full legacy Job/runtime authority conversion, namespace stabilization, multi-Job/capability borrowing, Save standardization, draft/SYSTEM gate removal, Windows compilation/regression, and live AutoCAD acceptance. No human pull requested.
+
+## N. Continuous implementation and RL checkpoint — 2026-10-17
+
+**Branch:** `feature/core-function-v5` only. No child branch, main unchanged. This section records source evidence; **no Windows build or AutoCAD test has occurred**.
+
+### Implemented and reviewed in this continuation
+
+1. **Critical build blocker fixed:** `src/cadgpt/tools/user-assets.ts` erroneously contained `export export async function importLibrary`. It now exports precisely once. This was an actual source syntax error.
+2. **Stricter owner-root resolution:** `owned-source.ts` now checks canonical identity of the entire owned root before any Builder source write, rejecting junctions/symlinks pointing to sibling Jobs even within a shared library. `v5-builder-source.ts` validates owner root before creating directories and excludes internal TBH Toolkit writes. Regression source tests added.
+3. **Temp Job resilience:** Result creation removes a *still-empty* newly created folder when metadata commit fails; cleanup remains explicit. `cadgpt_control` now accepts an optional UUID for `cg/cleartempjob <id>`, as well as all completed Temp Jobs.
+4. **SYSTEM helper migration:** `job_system_run_helper` now accepts execution-owned prepared Job runtime without manual `job_system_acquire`. It keeps legacy SYSTEM leases and the existing hash-pinned helper snapshot, input JSON validation, explicit owned paths, `python -I`, and owned result roots. Tool authority is `work-or-system`, with no broad write grant. Regression authority assertions added. Legacy acquire/release APIs remain until callers migrated.
+5. **Legacy tool guidance:** `job_draft_new`, `job_checkout`, `job_promote_draft` now explicitly describe themselves as legacy compatibility paths, not V5 required stages. `cg/cj` and `cg/cl` instruct direct owned Builder authoring and real CAD LOAD/RUN.
+6. **Publication consistency:** Unique staging/registry temp filenames, serialized in-process publication and rollback compensation on a normal manifest/capability write failure. This does not claim power-loss atomicity.
+
+### RL: PASS for design direction; NOT ready for human CAD gate
+
+- Source owner isolation and bound CAD pathways remain mandatory.
+- No new Job TEST stage, draft/promote requirement, second planner, whole-Job lock or simulated CAD PASS was introduced.
+- One existing capability path, `job_capability_prepare`, already borrows a registered Lisp capability into the *calling* execution without starting its parent Job, then uses `cad__cad_run_lisp_command` with per-execution/drawing ownership. Preserve rather than duplicating it.
+- **Open implementation:** migrate old Job/FILE helper and Direct/Reasoning routing, remove obsolete runtime/user-facing lifecycle gates after compatibility preserved, validate actual Save positioning, guard simultaneous same-Job runtime roots, complete regression and Windows native AutoCAD verification.
+- **Engineering verification blocked:** GitHub reports no CI status attached to current feature commits; no Windows build runner or local AutoCAD available to this chat. Do not infer PASS from source commits.
+
+**Stop condition remains unchanged:** do not ask human to pull until software is actually ready for native CAD acceptance. A source-only checkpoint is not a human acceptance gate.
