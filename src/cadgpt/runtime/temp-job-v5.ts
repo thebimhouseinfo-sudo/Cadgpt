@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { getTempJobsRoot, getDrawingStorageRoot } from "../lib/appdata.js";
 import { getBoundDrawingsForExecution } from "../session/drawing-binding.js";
 import { newTempJobId, ownedSourceRoot, resolveOwnedSourceMutation } from "../lib/owned-source.js";
+import { resolveAbsoluteMutationPath } from "../lib/path-security.js";
 import { activeWorkForSession } from "../lib/work-registration.js";
 import { withFileMutationLocks } from "./file-scheduler.js";
 
@@ -176,6 +177,43 @@ export async function createTempResult(
     await fs.rm(tempMetadata, { force: true }).catch(() => {});
   }
   return { id, folder_name: folderName, drawing_anchor: binding.drawing_anchor, path: result };
+}
+async function resolveOwnedResultTarget(target: string, root: string): Promise<string> {
+  if (path.resolve(target) === path.resolve(root)) throw new Error("TEMP_JOB_RESULT_FILE_REQUIRED");
+  return resolveAbsoluteMutationPath(target, { allowedRoots: [root], forCreate: true });
+}
+/** Write a persisted Temp Job artifact only into its human-named, bound Drawing Anchor folder. */
+export async function writeTempResult(
+  id: string, execution: string, session: string, relativeFile: string, content: string,
+) {
+  const meta = await assertOwned(id, execution, session);
+  if (meta.state !== "active") throw new Error("TEMP_JOB_ALREADY_DONE");
+  if (!meta.result_folder || !meta.result_anchor) throw new Error("TEMP_JOB_RESULT_NOT_CREATED");
+  safeRelativeSource(relativeFile);
+  const binding = getBoundDrawingsForExecution(execution);
+  if (binding.length !== 1 || !binding[0].anchor_verified_readback ||
+      binding[0].drawing_anchor !== meta.result_anchor) {
+    throw new Error("TEMP_JOB_RESULT_DRAWING_MISMATCH");
+  }
+  const root = await fs.realpath(getDrawingStorageRoot());
+  const drawing = await fs.realpath(path.join(root, meta.result_anchor));
+  if (path.dirname(drawing) !== root) throw new Error("TEMP_JOB_DRAWING_PATH_ESCAPE");
+  const jobs = await fs.realpath(path.join(drawing, "jobs"));
+  if (path.dirname(jobs) !== drawing) throw new Error("TEMP_JOB_JOBS_PATH_ESCAPE");
+  const result = await fs.realpath(path.join(jobs, meta.result_folder));
+  if (path.dirname(result) !== jobs) throw new Error("TEMP_JOB_RESULT_PATH_ESCAPE");
+  const target = path.resolve(result, relativeFile);
+  const resolved = await resolveOwnedResultTarget(target, result);
+  const ext = path.extname(resolved).toLowerCase();
+  if (![".json", ".csv", ".txt", ".md", ".yaml", ".yml", ".xlsx"].includes(ext)) {
+    throw new Error("TEMP_JOB_UNSUPPORTED_RESULT_TYPE");
+  }
+  await withFileMutationLocks([resolved], async () => {
+    const safe = await resolveOwnedResultTarget(target, result);
+    await fs.mkdir(path.dirname(safe), { recursive: true });
+    await fs.writeFile(safe, content, { flag: "wx" });
+  });
+  return { id, result_name: meta.result_folder, path: resolved, bytes: Buffer.byteLength(content) };
 }
 export async function finishTempJob(id: string, execution: string, session: string) {
   const meta = await assertOwned(id, execution, session);
