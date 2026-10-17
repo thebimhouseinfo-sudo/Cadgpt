@@ -343,3 +343,14 @@ Commits through `4a803368e69fd27c4a91f86e0306a6b12e21b21a` on `feature/core-func
 **Verification:** GitHub Actions V5 Source CI `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39055663368` completed SUCCESS on both Windows and Linux (commit `9fff2e046a7dd71a18a57175d283cd5333c3b280`). This proves TypeScript build and automated source test suite, NOT native CAD RUN correctness.
 
 **RL residuals:** `source_path` currently accepts managed library path in explicit Builder execution, but complete target-level authorization of Builder edits and legacy FILE tool migration remain. Registered Direct Python Jobs still use their existing historical runner, and old draft/SYSTEM aliases still exist as compatibility. Same-Job runtime ownership, true save timing of legacy Direct scripts, Temp publication dependency closure, and AutoCAD acceptance remain to be completed. No user pull/human acceptance gate until source migration is complete.
+
+## Q. Implementation checkpoint — 2026-10-18
+
+**Same branch only:** `feature/core-function-v5`, no child branch or main modifications.
+
+- Reviewed legacy generic FILE tools: they remain purposely read-only for permanent managed libraries; updated their descriptions to direct users to exact-owner `v5_source_create/update` rather than obsolete draft promotion.
+- Added `runtime/builder-target.ts` to bind each Builder execution to the first **exact final source package** it writes. Subsequent attempts to write a neighboring Job/Lisp folder in that same execution fail with `V5_BUILDER_TARGET_OWNERSHIP_MISMATCH`; cleanup clears this binding. This is no global Job lock, approval gate, checkout, or extra RUN TEST stage.
+- `tests/v5-builder-target.test.mjs` proves same-source repeat, cross-source rejection and cleanup.
+- V5 source CI **PASS Windows + Linux** at `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39079075233` (commit `6f30c992b6a94ece14502e55b280e91e248965e5`). Confirms build/tests only, not AutoCAD host behavior.
+
+**Outstanding:** legacy Job runtime's exclusive `executionByJobRoot` still prevents simultaneous use of the same Job; source result isolation architecture and compatibility of full Job runtime/Direct Python flows must be addressed without cross-execution writes. Temp Lisp external dependency closure and native AutoCAD human gate are unverified. Do not claim V5 complete or request user installation.
