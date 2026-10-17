@@ -92,9 +92,10 @@ export function registerJobSystemHelperTools(server: McpServer): void {
             const isBuilder = ["jobcreate", "job-authoring"].includes(work.ownerId) ||
               work.capabilities.includes("job-authoring");
             const target = currentBuilderTarget(invoking.workId);
+            const canonical = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
             if (!isBuilder || !target ||
-                (await fs.realpath(target)).toLowerCase() !==
-                (await fs.realpath(owned.job_root)).toLowerCase()) {
+                canonical(await fs.realpath(target)) !==
+                canonical(await fs.realpath(owned.job_root))) {
               throw new Error("JOB_HELPER_BUILDER_TARGET_MISMATCH");
             }
           }
