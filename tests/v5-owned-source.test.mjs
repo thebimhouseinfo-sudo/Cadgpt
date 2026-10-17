@@ -23,7 +23,7 @@ test("V5 Temp Job UUID owns only its own source folder", async () => {
   const a = ownedSourceRoot(ownerA), b = ownedSourceRoot({ kind: "temp-job", id: idB });
   await fs.mkdir(a, { recursive: true });
   const own = path.join(a, "foo.lsp");
-  assert.equal(await resolveOwnedSourceMutation(own, ownerA, { forCreate: true }), own);
+  assert.equal(await resolveOwnedSourceMutation(own, ownerA, { forCreate: true }), path.join(await fs.realpath(a), "foo.lsp"));
   await assert.rejects(resolveOwnedSourceMutation(path.join(b, "evil.lsp"), ownerA, { forCreate: true }), /V5_SOURCE_OUTSIDE_OWNER/);
   await assert.rejects(resolveOwnedSourceMutation(path.join(a, "..", idB, "evil.lsp"), ownerA, { forCreate: true }), /V5_SOURCE_OUTSIDE_OWNER/);
 });
@@ -33,7 +33,7 @@ test("V5 reusable Job authoring grant excludes neighboring Job", async () => {
   const mine = ownedSourceRoot(owned);
   await fs.mkdir(mine, { recursive: true });
   const target = path.join(mine, "tools", "prepare.py");
-  assert.equal(await resolveOwnedSourceMutation(target, owned, { forCreate: true }), target);
+  assert.equal(await resolveOwnedSourceMutation(target, owned, { forCreate: true }), path.join(await fs.realpath(mine), "tools", "prepare.py"));
   await assert.rejects(resolveOwnedSourceMutation(path.join(root, "libraries", "jobs", "hvac", "job-b", "JOB.md"), owned, { forCreate: true }), /V5_SOURCE_OUTSIDE_OWNER/);
   assert.throws(() => ownedSourceRoot({ kind: "reusable-job", libraryId: "..", relativeFolder: "job-a" }), /V5_INVALID_LIBRARY_ID/);
 });
