@@ -20,6 +20,7 @@
 
 ### Đã chốt
 
+- **Job-first product positioning:** ưu tiên bán khả năng **tạo Job, vận hành Job và sử dụng Job Packs**; MCP/remote gateway là lớp công cụ/kết nối, không phải sản phẩm khác biệt tự thân.
 - **ChatGPT là AI client chính thức/ưu tiên** cho phát triển và trải nghiệm CAI; CAI/RAI **không phụ thuộc độc quyền** vào ChatGPT. **Định danh sản phẩm không phụ thuộc AI backend:** CAI/RAI là các Autodesk Add-in có panel; MCP-backed và Native AI là hai hướng kỹ thuật ở dưới cùng sản phẩm, không phải hai SKU/add-in buộc khách hàng tự chọn.
 - Ưu tiên hỗ trợ **Microsoft 365 Copilot / Copilot Chat dành cho doanh nghiệp** (ứng dụng Microsoft mà nhân viên sử dụng; **không phải GitHub Copilot trong VS Code**). Nhiều công ty kỹ thuật đã có hệ sinh thái Microsoft 365 nên CAI cần tận dụng kênh làm việc và cơ chế quản trị tập trung sẵn có.
 - Hỗ trợ thêm **Claude**; bổ sung **Grok (xAI)** làm ứng viên nghiên cứu beta vì ứng dụng Grok Web hỗ trợ Custom Remote MCP Connector. **Gemini: DEFERRED / không ưu tiên beta**, do Custom MCP trong Gemini Apps chưa phù hợp phân phối phổ thông/doanh nghiệp tại Việt Nam và đường Gemini Spark có rào cản chi phí/điều kiện truy cập. Qwen Chat, DeepSeek Chat và AI client khác chỉ tiếp tục theo dõi.
@@ -35,6 +36,27 @@
 - **Gemini (DEFERRED — không đưa vào CAI Cloud Beta):** Google có tài liệu về cách kết nối MCP URL trong Gemini Apps, **không đúng khi khẳng định Gemini hoàn toàn không hỗ trợ Custom MCP**. Tuy nhiên, hướng dẫn hiện giới hạn ở **tài khoản Google cá nhân tại Mỹ, từ 18 tuổi, tiếng Anh và bật Keep Activity**, chưa hỗ trợ tài khoản công ty/trường học. Tài liệu khác của Google gắn kết nối custom với **Gemini Spark**, là đường trả phí/điều kiện truy cập không phù hợp về kinh tế và trải nghiệm với CAI hiện tại. Chưa có cơ sở khẳng định luôn cần phê duyệt để thêm bất kỳ MCP nào; cần phân biệt giới hạn quyền truy cập với quy trình phê duyệt phát hành công khai. **Không triển khai/kiểm thử Gemini trong beta hiện tại**; chỉ tái cân nhắc khi có Custom MCP cho người dùng và doanh nghiệp tại thị trường mục tiêu với chi phí phù hợp. Nguồn: https://support.google.com/gemini/answer/17209137 và https://support.google.com/gemini/answer/17094507 .
 - **Qwen / DeepSeek (chưa xác nhận trong consumer chat):** **Qwen Code** có Remote MCP (https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp/); **DeepSeek Harness** có MCP client (https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md). Đây là các **developer/harness clients**, không phải bằng chứng rằng ứng dụng **Qwen Chat** hoặc **DeepSeek Chat** có cơ chế thêm Remote MCP tương tự Grok. Giữ ở trạng thái **WATCH / UNVERIFIED consumer app**, không kết luận các model không thể gọi tool.
 - Khả năng công bố Public Plugin và cơ chế phân phối beta phải tuân thủ yêu cầu hiện hành của từng nền tảng; không xem việc có URL MCP là đã phát hành Public Plugin thành công.
+
+### Định vị sản phẩm: Job-first, MCP chỉ là lớp công cụ/kết nối (quyết định chiến lược 2026-10-17)
+
+**Lợi thế khác biệt CAI/RAI không phải “AI nối được AutoCAD/Revit qua MCP”.** MCP là **protocol/tool interface**, giúp AI client tương tác với CAD/BIM Core; nó có thể được các nhóm khác xây dựng bằng nhiều con đường (pyRevit, C# Add-in, local bridge...) nên **không nên coi MCP bridge đơn thuần là sản phẩm cốt lõi hoặc moat dài hạn**.
+
+**Đề xuất giá trị dẫn đầu khi giới thiệu/bán sản phẩm:**
+
+1. **Job Creation / Job Authoring:** kỹ sư mô tả quy trình nghiệp vụ, CAI/RAI hỗ trợ tạo/refine workflow có thể tái sử dụng. Quy trình phát triển được review, validate, test trên bài toán CAD/BIM thực tế, và promote trước khi trở thành Job sẵn dùng; người dùng vẫn có khả năng tạo hoặc sửa Job theo quy tắc sản phẩm.
+2. **Job Runtime / Reliability:** thay vì chỉ gọi từng MCP tool đơn lẻ và phó mặc chuỗi thao tác cho AI, sản phẩm cung cấp workflow có mục tiêu, input/output, drawing/document binding, confirmation, error handling, trạng thái, postcondition, save/readback và khả năng kiểm thử. **Trong CAI hiện tại**, phân biệt **Direct Job (`.py`)** với **Reasoning Job (`.md`)** theo `knowledge/jobs/**`; **Native script-first** là hướng tiến hóa trong tương lai, không được mô tả là đã triển khai hoàn chỉnh.
+3. **Job Pack Library / Store:** tập hợp Job đã chuẩn hóa, kiểm thử và phân loại theo bộ môn/tác vụ để khách **tải về và sử dụng ngay**, giảm chi phí tự tạo từ đầu. Store chỉ download về làm input cho **Job Import đã có**; không xây lại registry/executor.
+4. **Phân phối và bảo trì năng lực:** khách mua Add-in + gói sử dụng, chọn kênh AI (GPT/Claude/Grok/CAI-managed hoặc self-host); cùng hệ sinh thái Job/Job Pack có thể mở rộng, cập nhật và được hỗ trợ kỹ thuật, độc lập với model AI hay kiểu kết nối bên dưới.
+
+**Bằng chứng cạnh tranh tại Revit (không suy diễn mức sử dụng thực tế):**
+
+- Có nhiều dự án public **Revit MCP bridge thông qua pyRevit**, ví dụ `mcp-servers-for-revit/mcp-server-for-revit-python` sử dụng **pyRevit Routes** làm lớp Revit API bridge; `Demolinator/revit-mcp-server` công bố hàng chục MCP tools; `danlion333/revit_mcp` sử dụng pyRevit + ExternalEvent/Transaction. Nguồn: https://github.com/mcp-servers-for-revit/mcp-server-for-revit-python , https://github.com/Demolinator/revit-mcp-server , https://github.com/danlion333/revit_mcp .
+- **pyRevit Agent Runtime** được mô tả trong tài liệu chính thức là **experimental** (in-Revit host đã được thử ở một số phiên bản; MCP server và CLI còn trong tiến trình). Thảo luận pyRevit ngày **2026-10-05** mô tả việc hướng tới `pyrevit mcp` tích hợp trực tiếp. Nguồn: https://docs.pyrevitlabs.io/agent-runtime/ , https://discourse.pyrevitlabs.io/t/pyrevit-agent-mcp-pyrevit-7/10591 .
+- Các ví dụ này chứng minh **kết nối Revit qua MCP có giải pháp thay thế**, **không chứng minh** các dự án đã production-ready, đạt adoption quy mô lớn, hoặc đầy đủ Job authoring/store/reliability như mục tiêu CAI/RAI. Tránh marketing so sánh không có benchmark.
+
+**Thông điệp thương mại ưu tiên:** “**CAI/RAI giúp kỹ sư tạo, chạy và tải các quy trình tự động hóa CAD/BIM đáng tin cậy (Jobs và Job Packs). AI và MCP là phương tiện tương tác và thực thi — không phải sản phẩm khách hàng mua chỉ để kết nối.**”
+
+**Phạm vi:** đây là **định vị sản phẩm**, không tự phát sinh coding tasks, không xóa MCP tools, không yêu cầu viết lại Job Runtime hoặc coi tất cả capability của RAI đã hoàn thành. Từng năng lực khi marketing/public release phải được kiểm chứng ở bản tương ứng.
 
 ### Job Pack Store — Download → existing Job Import (định hướng đã chốt 2026-10-17)
 
@@ -389,6 +411,8 @@ Cho phép **nghiên cứu dần** và tổ chức **một nhóm beta giới hạ
 
 ## 9. Tóm tắt quyết định
 
+> **Định vị cạnh tranh trung tâm:** **Job Creation + Job Runtime đáng tin cậy + Job Pack Store** là giá trị khác biệt CAI/RAI; **MCP chỉ là lớp tool/transport** và hiện có nhiều giải pháp kết nối Revit bằng pyRevit/MCP. Không quảng bá bridge đơn thuần là lợi thế độc quyền.
+>
 > **CAI/RAI hướng tới nền tảng CAD/BIM automation mở: (A) Remote MCP Mode — ChatGPT-first, ưu tiên Microsoft 365 Copilot doanh nghiệp, dùng chung remote integration/gateway và nhiều local connectors; (B) Native AI Mode tương lai — chat native trong CAD/BIM Add-in, **CAI/RAI tự chọn và điều phối model/API nội bộ**, có thể dùng cloud providers hoặc CAI-approved Ollama server của doanh nghiệp, tool thực thi local, **không có model picker/BYOK và không đi qua tunnel/MCP Cloud Gateway**. Bản thương mại bán CAI/RAI subscriptions/tool-execution quotas + top-up; Native AI có thể bán thêm AI credits do CAI/RAI quản lý. Doanh nghiệp mua và IT triển khai; ngôn ngữ do AI thích nghi; MCP Dev & Repair chỉ ở Development.**
 >
 > **Kênh thương mại mục tiêu:** **mỗi CAI (AutoCAD) và RAI (Revit) là một Add-in có panel tích hợp**, có thể phân phối/bán qua **Autodesk Design and Make Marketplace ngay cả khi backend còn dùng MCP**; Native AI là hướng nâng cấp vận hành bên trong cùng sản phẩm, **không phải sản phẩm thứ hai**. **Khi mua hoặc kích hoạt**, khách chọn **GPT/Claude/Grok (phí kết nối Tunnel/MCP), Native Managed AI (AI quota), hoặc Native Company Self-hosted (0 CAI/RAI tunnel/inference quota fee)**; luôn trả **Add-in base cố định + gói sử dụng**, được xem giá/tổng tiền và phí AI bên ngoài trước thanh toán; hình thức checkout trong Autodesk hay portal riêng phải kiểm tra điều khoản Marketplace. AI providers ở Native vẫn do CAI/RAI quản lý. Chưa chốt giá số, chưa có bản submit/review được Autodesk chấp nhận.
