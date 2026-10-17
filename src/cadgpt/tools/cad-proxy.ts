@@ -733,6 +733,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
 
           return await withCadHostLock(binding.host, async () => {
             await activateDrawingContext(binding);
+            invalidateBoundSave(currentToolLease().workId);
             const result = await cadUpstream.callTool(
               "cad_load_lisp_file",
               { path: lispPath }
