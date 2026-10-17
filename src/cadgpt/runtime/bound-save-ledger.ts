@@ -4,6 +4,23 @@
  * any subsequent CAD operation conservatively invalidates that witness.
  */
 const witnessed = new Map<string, string>();
+const mutatedExecutions = new Set<string>();
+
+export function notePotentialCadMutation(executionId: string): void {
+  if (!executionId) throw new Error("CAD_MUTATION_EXECUTION_REQUIRED");
+  mutatedExecutions.add(executionId);
+  witnessed.delete(executionId);
+}
+
+export function hasPotentialCadMutation(executionId: string): boolean {
+  return mutatedExecutions.has(executionId);
+}
+
+export function resetCadMutationTracking(executionId: string): void {
+  mutatedExecutions.delete(executionId);
+  witnessed.delete(executionId);
+}
+
 
 export function noteVerifiedBoundSave(executionId: string, documentIdentity: string): void {
   if (!executionId || !documentIdentity) throw new Error("BOUND_SAVE_WITNESS_ID_REQUIRED");
@@ -19,5 +36,5 @@ export function hasVerifiedBoundSave(executionId: string, documentIdentity: stri
 }
 
 export function clearBoundSaveForExecution(executionId: string): void {
-  witnessed.delete(executionId);
+  resetCadMutationTracking(executionId);
 }
