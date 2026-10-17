@@ -244,7 +244,7 @@ export async function resolveRegisteredAssetPath(
   return real;
 }
 
-export export async function importLibrary(kind: AssetKind, libraryId: string, name: string, folderPath: string, replaceExisting: boolean) {
+export async function importLibrary(kind: AssetKind, libraryId: string, name: string, folderPath: string, replaceExisting: boolean) {
   assertUserLibraryId(libraryId);
   if (!LIBRARY_ID.test(libraryId)) throw new Error("LIBRARY_ID_INVALID");
   const source = await assertSourceFolder(folderPath);
