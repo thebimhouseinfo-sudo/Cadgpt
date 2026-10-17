@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { currentToolLease } from "../lib/work-registration.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
-import { createTempJob, writeTempSource, updateTempSource, finishTempJob, clearTempJobs } from "../runtime/temp-job-v5.js";
+import { createTempJob, writeTempSource, updateTempSource, createTempResult, finishTempJob, clearTempJobs } from "../runtime/temp-job-v5.js";
 
 export function registerTempJobV5Tools(server: McpServer): void {
   server.registerTool("temp_job_create", {
@@ -44,6 +44,19 @@ export function registerTempJobV5Tools(server: McpServer): void {
       return toolResult("temp_job_source_update",
         await updateTempSource(id, l.workId, l.sessionKey, relative_path, content, expected_sha256));
     } catch (e) { return toolError("temp_job_source_update", e); }
+  });
+  server.registerTool("temp_job_result_create", {
+    title: "Create named Temp Job result on verified bound DWG",
+    description: "Only when persistent output is needed. Ask user for the folder name; never generate it from the Temp Job UUID.",
+    inputSchema: {
+      id: z.string().uuid(),
+      folder_name: z.string().min(1),
+    },
+  }, async ({ id, folder_name }) => {
+    try {
+      const lease = currentToolLease();
+      return toolResult("temp_job_result_create", await createTempResult(id, lease.workId, lease.sessionKey, folder_name));
+    } catch (error) { return toolError("temp_job_result_create", error); }
   });
   server.registerTool("temp_job_done", {
     title: "Mark Temp Job complete",
