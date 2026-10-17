@@ -54,6 +54,7 @@ import { registerJobResultAccessTools } from "./tools/job-result-access.js";
 import { registerJobResultPatchTools, registerJobResultBatchPatchTools } from "./tools/job-result-patch.js";
 import { registerTempLispTools } from "./tools/temp-lisp.js";
 import { registerTempJobV5Tools } from "./tools/temp-jobs-v5.js";
+import { registerV5BuilderSourceTools } from "./tools/v5-builder-source.js";
 import { registerHumanPowerTools } from "./tools/human-power.js";
 import {
   humanPowerErrorLogPath,
@@ -299,6 +300,7 @@ function registerStableProductionSurface(server: McpServer): void {
   registerJobResultBatchPatchTools(server);
   registerTempLispTools(server);
   registerTempJobV5Tools(server);
+  registerV5BuilderSourceTools(server);
   registerHumanPowerTools(server);
 
   if (isDevelopmentBuild()) {
