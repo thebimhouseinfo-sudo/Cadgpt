@@ -1087,15 +1087,17 @@ export function registerJobAuthoringTools(server: McpServer): void {
         "Finish the current Custom Job. Set outcome=done only after actual Job steps succeed. If the exact bound DWG was already verified saved after the last CAD change, do not save twice; otherwise run verified bound-DWG Save before DONE. Save failure is a real tool error and preserves runtime for repair. On failure use outcome=failed. This does not add a TEST or promotion stage.",
       inputSchema: {
         outcome: z.enum(["done", "failed"]).optional().default("failed"),
+        dwg_changed: z.boolean().optional().default(true)
+          .describe("Set false ONLY for a genuinely read-only/file-only Job; never skip Save after changing the DWG."),
       },
     },
-    async ({ outcome }) => {
+    async ({ outcome, dwg_changed }) => {
       try {
         const lease = currentToolLease();
         const runtime = activeJobRuntimeForExecution(lease.workId);
         if (!runtime) throw new Error("JOB_RUNTIME_NOT_ACTIVE: no Custom Job to finish.");
         let autoSave: Record<string, unknown> = { attempted: false };
-        if (outcome === "done") {
+        if (outcome === "done" && dwg_changed) {
           // Save before releasing the Work's drawing authority. Cad host FIFO
           // prevents overlap with other chats' CAD calls; no new manager.
           try {
@@ -1130,7 +1132,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
               error: error instanceof Error ? error.message : String(error) };
           }
         }
-        if (outcome === "done" && autoSave.saved !== true) {
+        if (outcome === "done" && dwg_changed && autoSave.saved !== true) {
           // Save failure is a real Job failure, not an ok tool payload.
           // Retain the prepared runtime and raw/result so Builder can repair
           // and safely complete after a verified save.
@@ -1138,7 +1140,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
         }
         const cleanup = await cleanupJobRuntimeForExecution(lease.workId);
         return toolResult("job_runtime_finish", { outcome, cleanup, autosave: autoSave,
-          status: outcome === "done" ? "JOB_DONE_SAVED" : "JOB_FAILED" });
+          status: outcome === "done" ? (dwg_changed ? "JOB_DONE_SAVED" : "JOB_DONE_READ_ONLY") : "JOB_FAILED" });
       } catch (error) {
         return toolError(
           "job_runtime_finish",
