@@ -23,6 +23,7 @@ import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import { hasVerifiedBoundSave, noteVerifiedBoundSave, invalidateBoundSave } from "../runtime/bound-save-ledger.js";
+import { assertBuilderTarget } from "../runtime/builder-target.js";
 import {
   drawingMetadataRootsForExecution,
   drawingMetadataWritableRootsForExecution,
@@ -935,6 +936,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
             throw new Error("V5_JOB_SOURCE_BUILDER_WORK_REQUIRED");
           }
           jobFile = realSource;
+          assertBuilderTarget(currentToolLease().workId, path.dirname(realSource));
           jobId = "v5:" + path.relative(sourceRoot, path.dirname(jobFile)).replaceAll("\\", "/");
         } else {
           if (!path.isAbsolute(draft_path!)) {
