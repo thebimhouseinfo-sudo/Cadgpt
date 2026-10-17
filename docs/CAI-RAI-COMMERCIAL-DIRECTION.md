@@ -23,7 +23,7 @@
 - **ChatGPT là AI client chính thức/ưu tiên** cho phát triển và trải nghiệm CAI; CAI/RAI **không phụ thuộc độc quyền** vào ChatGPT.
 - Ưu tiên hỗ trợ **Microsoft 365 Copilot / Copilot Chat dành cho doanh nghiệp** (ứng dụng Microsoft mà nhân viên sử dụng; **không phải GitHub Copilot trong VS Code**). Nhiều công ty kỹ thuật đã có hệ sinh thái Microsoft 365 nên CAI cần tận dụng kênh làm việc và cơ chế quản trị tập trung sẵn có.
 - Hỗ trợ thêm **Claude**; bổ sung **Grok (xAI)** làm ứng viên nghiên cứu beta vì ứng dụng Grok Web hỗ trợ Custom Remote MCP Connector. **Gemini: DEFERRED / không ưu tiên beta**, do Custom MCP trong Gemini Apps chưa phù hợp phân phối phổ thông/doanh nghiệp tại Việt Nam và đường Gemini Spark có rào cản chi phí/điều kiện truy cập. Qwen Chat, DeepSeek Chat và AI client khác chỉ tiếp tục theo dõi.
-- **AI provider** chịu trách nhiệm model, reasoning, conversation, hạn mức và chi phí AI. **CAI/RAI** chỉ chịu trách nhiệm công cụ CAD/BIM, kết nối, thực thi local, license và hạn mức sử dụng CAI/RAI. Không xây module theo dõi quota/model/giá của Microsoft, OpenAI hay Anthropic.
+- **Remote MCP Mode:** nền tảng AI bên thứ ba (ChatGPT/Copilot/Claude...) tự chịu trách nhiệm model, reasoning, conversation, quota và chi phí AI; CAI/RAI không xây module quản lý quota nhà cung cấp của họ. **Native AI Mode thương mại:** CAI/RAI **là bên bán dịch vụ AI tích hợp**, chịu trách nhiệm chọn/điều phối model, trả phí inference theo hợp đồng với upstream (hoặc cung cấp bundle model cho AI server doanh nghiệp), quản lý chi phí và AI credits của CAI/RAI. Hai mô hình trách nhiệm khác nhau, không gộp.
 - Người dùng không phải **tạo plugin hoặc Cloudflare Tunnel riêng** cho từng cá nhân/máy. Mục tiêu là **một public/distributable integration và một endpoint MCP chung cho từng sản phẩm**, kết nối đến đúng máy của người dùng qua Gateway.
 - Cùng một CAI subscription/request balance có thể được dùng từ các AI client được hỗ trợ; không bắt khách mua lại CAI chỉ vì đổi ứng dụng AI.
 
@@ -36,17 +36,17 @@
 - **Qwen / DeepSeek (chưa xác nhận trong consumer chat):** **Qwen Code** có Remote MCP (https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp/); **DeepSeek Harness** có MCP client (https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md). Đây là các **developer/harness clients**, không phải bằng chứng rằng ứng dụng **Qwen Chat** hoặc **DeepSeek Chat** có cơ chế thêm Remote MCP tương tự Grok. Giữ ở trạng thái **WATCH / UNVERIFIED consumer app**, không kết luận các model không thể gọi tool.
 - Khả năng công bố Public Plugin và cơ chế phân phối beta phải tuân thủ yêu cầu hiện hành của từng nền tảng; không xem việc có URL MCP là đã phát hành Public Plugin thành công.
 
-### Hướng nghiên cứu bổ sung: Native Add-in + Configurable AI APIs (CANDIDATE)
+### Hướng nghiên cứu bổ sung: Native Add-in + CAI/RAI-managed AI (CANDIDATE)
 
-**Đã làm rõ 2026-10-17:** Native API Mode **không phải DeepSeek-only**. Đây là một AI Client native nằm trong CAI/RAI Add-in, hỗ trợ **cấu hình nhiều nhà cung cấp model API**, gồm **cloud API** và **self-hosted API**. AI thực thi reasoning ở bên ngoài CAD host; tool dispatcher và các công việc CAD/BIM vẫn ở máy kỹ sư. **Không có Cloudflare Tunnel/Public Plugin/Cloud MCP Gateway trên đường điều khiển tool trong Native API Mode.**
+**Quyết định sản phẩm (2026-10-17):** Native AI Mode là **dịch vụ AI tích hợp do CAI/RAI quản lý**, không phải môi trường để người dùng chọn nhà cung cấp, model, API endpoint hoặc nhập API key. **Nhà phát triển CAI/RAI chọn sẵn model phù hợp**, có thể phối hợp nhiều cloud API hoặc self-hosted model; người dùng chỉ tương tác với **CAI AI / RAI AI** và mua gói/AI credits. Chi tiết model/routing là cấu hình nội bộ, **không hiển thị trên giao diện người dùng**. AI inference diễn ra bên ngoài CAD host; tool dispatcher/CAD execution vẫn nằm trên máy kỹ sư. **Không có Cloudflare Tunnel/Public Plugin/Cloud MCP Gateway trên đường điều khiển CAD trong Native AI Mode.**
 
 ```text
 CAI Add-in (AutoCAD) / RAI Add-in (Revit)
   ├── Native Chat UI + conversation & tool-call loop
-  ├── Configurable AI provider profile
-  │    ├── Cloud API (DeepSeek / OpenAI / Qwen / Claude / provider tương thích)
-  │    ├── Company AI server (Ollama / API server tương thích trên LAN/VPN)
-  │    └── [tùy chọn, không khuyến nghị mặc định] Model trên cùng workstation
+  ├── CAI/RAI-managed model router (không có user model picker)
+  │    ├── CAI AI Proxy → contracted cloud API provider(s)
+  │    ├── [Business] CAI-approved bundle → company Ollama/API server qua LAN/VPN
+  │    └── [không khuyến nghị mặc định] model trên cùng workstation
   └── Local tool dispatcher → local CAD/BIM Core → AutoCAD / Revit
 
 Model response / tool call → Local dispatcher → CAD/BIM result → Model API
@@ -54,15 +54,15 @@ Model response / tool call → Local dispatcher → CAD/BIM result → Model API
 
 #### Những nguyên tắc đã chốt
 
-- **Provider-agnostic:** CAI/RAI cho phép cấu hình API endpoint, model và credentials phù hợp. DeepSeek là **một provider giá rẻ đáng nghiên cứu**, không phải kiến trúc riêng. Không khẳng định mọi model hoặc API đều tương thích hoàn toàn; adapter và kiểm thử tool calling cần tùy provider.
-- **Cloud AI API:** model chạy tại nhà cung cấp; Add-in gọi HTTPS API và điều phối tool ngay trong máy CAD/BIM. Người dùng có thể dùng API riêng (BYOK); hình thức CAI-managed API (nếu có) là **chưa chốt**.
-- **Shared local AI API cho doanh nghiệp:** IT có thể triển khai **một máy chủ AI/GPU riêng** (ví dụ Ollama) trong mạng nội bộ để nhiều workstation CAI/RAI gửi yêu cầu inference. **Không bắt buộc tunnel**; kết nối có thể chỉ trong LAN/VPN. Model và trọng tải AI chạy trên server, **không chạy trên máy CAD/BIM của nhân viên**.
+- **Provider-agnostic nội bộ:** CAI/RAI có adapter để **nhà phát triển** cấu hình providers, endpoints, model profiles, credentials và routing; **không cung cấp model picker, BYOK/API-key settings hoặc custom API URL cho người dùng bản thương mại**. DeepSeek/Ollama Cloud chỉ là ứng viên upstream. Không giả định mọi API/model có tool-calling giống nhau; mỗi cấu hình phải được kiểm thử/kiểm soát.
+- **Cloud AI do CAI/RAI cung cấp:** Native Add-in gửi inference qua **CAI/RAI AI Proxy** (HTTPS) tới các upstream providers đã được chọn và có quyền thương mại phù hợp; upstream credentials chỉ lưu phía server. Local Add-in nhận tool/function calls, kiểm tra quyền rồi thực thi CAD/BIM. **Không có BYOK trong trải nghiệm khách hàng thương mại.**
+- **Shared local AI server cho doanh nghiệp (hướng triển khai riêng):** IT có thể triển khai **máy chủ AI/GPU riêng** (ví dụ Ollama) trong LAN/VPN để nhiều workstation dùng chung, nhưng **CAI/RAI phát hành và kiểm soát model bundle/profiles và routing được hỗ trợ**; khách hàng không tự chọn model. IT quản lý cơ sở hạ tầng, không phải model selection. Cấu hình thực tế, hợp đồng hỗ trợ và năng lực vận hành vẫn cần nghiên cứu; không bắt buộc tunnel.
 - **Model local trên workstation:** về mặt kỹ thuật có thể nếu máy đủ mạnh, nhưng **không coi là mặc định hoặc phương án mục tiêu**. AutoCAD/Revit đã dùng nhiều CPU, RAM và đôi khi GPU; chạy LLM nặng cùng máy có thể làm giảm hiệu suất thiết kế. Chỉ xem là ngoại lệ thử nghiệm tùy cấu hình.
 - **Ollama là một API server:** hỗ trợ REST API, tool calling và một **phần** OpenAI-compatible API, ví dụ local `http://localhost:11434/v1/` khi chạy cùng host (cấu hình địa chỉ theo triển khai thực tế). Ollama mặc định bind localhost; LAN deployment do IT quản lý, không tự mở port ra public Internet. Tham khảo: https://docs.ollama.com/api/openai-compatibility , https://docs.ollama.com/capabilities/tool-calling , https://docs.ollama.com/faq .
 - **Bảo mật LAN:** không coi token placeholder của API-compatible Ollama là xác thực thật. Với máy chủ dùng chung cần giới hạn mạng, phân quyền truy cập, TLS/authenticated reverse proxy hoặc biện pháp tương đương do IT quản lý; không chia sẻ server trần ra Internet. Doanh nghiệp quyết định chính sách xử lý dữ liệu dự án và AI usage.
 - **Không lẫn với Remote MCP Mode:** native mode không cần ứng dụng DeepSeek Chat / Qwen Chat hỗ trợ Custom MCP và không dùng cloud để route các CAD tool calls. Nếu cần kiểm tra license/quota thương mại, có thể sử dụng **kênh HTTPS license/usage riêng**, không nằm trong đường thực thi CAD. Đơn vị CAI/RAI request thương mại và chi phí token/model inference là hai khái niệm riêng; chi tiết local ledger, offline policy và chống gian lận chưa chốt.
 - **CAI/RAI Core vẫn là authoritative executor:** mọi model tool call cần qua local allowlist, quyền user, đúng drawing/document binding, xác nhận khi thay đổi dữ liệu và readback. Không cho model gửi lệnh CAD tùy ý vượt các contract đã có.
-- **Native Add-in chưa hoàn thiện:** Add-in CadGPT hiện tại chủ yếu host ChatGPT; **native chat orchestration**, cấu hình nhiều API providers và dùng shared Ollama server là **các khả năng tương lai cần nghiên cứu**, không phải chức năng đã sẵn có.
+- **Native Add-in chưa hoàn thiện:** Add-in CadGPT hiện tại chủ yếu host ChatGPT; **native chat orchestration**, bộ điều phối model nội bộ, AI Proxy/AI credits và shared Ollama server là **các khả năng tương lai cần nghiên cứu**, không phải chức năng đã sẵn có.
 
 #### Cấu hình local models theo vai trò (định hướng sizing, chưa benchmark)
 
@@ -81,7 +81,7 @@ Model response / tool call → Local dispatcher → CAD/BIM result → Model API
 
 #### CAI/RAI-managed AI credits từ Cloud API / Ollama Cloud (RESEARCH ONLY — resale rights chưa xác nhận)
 
-**Hướng kinh doanh cần nghiên cứu, chưa chốt:** CAI/RAI ngoài bán software subscription và tool-execution quota còn có thể bán **AI inference credits** cho khách hàng Native API Mode, ví dụ dùng dịch vụ inference của **Ollama Cloud** phía sau proxy của CAI. Khách không phải tự tạo/mua API key nhà cung cấp. Đây là dịch vụ inference **tích hợp trong sản phẩm**, cần phân biệt với **bán lại API/white-label API độc lập**.
+**Đã chốt mô hình kinh doanh mục tiêu:** CAI/RAI Native AI là **managed AI service gắn trong sản phẩm**: CAI/RAI bán gói AI/AI credits, **nhà phát triển chọn model và nhà cung cấp upstream**, người dùng không có tùy chọn model/API, không cần mua API key ngoài. **Chưa chốt khả năng thực hiện qua Ollama Cloud cụ thể** vì cần xác minh hợp đồng/quyền phân phối, chi phí và độ ổn định; đây là dịch vụ inference **nhúng trong sản phẩm**, không mặc định là kinh doanh API/white-label API độc lập.
 
 ```text
 CAI/RAI Native Add-in (chat, CAD/BIM local tool dispatcher)
@@ -96,12 +96,14 @@ Ollama Cloud / authorized model API provider
 CAI/RAI Native Add-in → verify tool schema/authority → local CAD/BIM action
 ```
 
+- **Trải nghiệm khách hàng đã chốt:** chỉ hiển thị thương hiệu **CAI AI / RAI AI**, tính năng/gói, số AI credits hoặc usage còn lại và chính sách dữ liệu; **không hiển thị tên model, kích thước model, model router, upstream API endpoint, temperature hoặc API key**. Operator (2B–4B) / Builder (7B–16B) là phân tầng **nội bộ**, do CAI/RAI quyết định và thay đổi sau khi kiểm thử.
+- **Minh bạch đúng phạm vi:** không cần công bố model cụ thể trên UI hoặc để khách chọn model; nhưng các thông tin về **bên xử lý dữ liệu, xử lý trên cloud hay máy chủ nội bộ, vùng xử lý, quyền sử dụng dữ liệu và nghĩa vụ pháp lý/hợp đồng** vẫn phải được cung cấp khi cần. Không quảng cáo sai rằng AI chạy hoàn toàn local nếu inference thực tế qua bên thứ ba.
 - **Không có Cloudflare Tunnel hoặc remote MCP routing cho lệnh CAD** ở nhánh Native API. Nếu triển khai proxy/cloud endpoint, nó chỉ quản lý **AI inference** và bảo mật provider credential; license/quota sync có thể là dịch vụ HTTPS riêng.
 - **Hai đơn vị tính phí độc lập:** (1) **CAI/RAI execution quota** = số tool executions; (2) **AI credits/tokens** = mức tiêu thụ inference (input, cache, output, multi-turn/tool-result context, từng model). Một tool call có thể cần nhiều model requests; không gộp hai loại thành 1:1.
 - **Ollama Cloud pricing ghi nhận 2026-10-17:** có API, bảng giá per-million-token, usage credits, Free pay-as-you-go và gói Pro/Max/Team. Team hiện công bố $500/tháng có $1,000 usage credits chia sẻ, nhưng **đó không phải xác nhận được phép reseller, cũng không phải bằng chứng biên lợi nhuận cố định**; giới hạn concurrent requests/quota và bảng model thay đổi theo plan. Nguồn: https://ollama.com/pricing và https://ollama.com/blog/transparent-pricing .
 - **Chưa được phép suy diễn quyền resale:** Điều khoản công khai tại https://ollama.com/terms **không cấp rõ quyền bán lại/white-label/re-export Cloud API** và có điều khoản hạn chế dùng dịch vụ phát triển sản phẩm cạnh tranh. **Yêu cầu xác nhận bằng văn bản/hợp đồng thương mại từ Ollama** cho từng mô hình phân phối (embedded AI feature vs independent API resale) và xem lại giấy phép các model được sử dụng. Chưa có xác nhận thì **không công bố CAI là reseller chính thức và không triển khai bán lại Ollama API**.
 - **Kiểm soát chi phí/rủi ro** nếu được phép: API key server-side, per-tenant/user limits và budgets, hard-stop khi hết AI credits, token usage ledger theo provider/model, đối soát hóa đơn, chống retry tính trùng, rate/concurrency protection, xác định thuế/phí, dữ liệu dự án và chính sách xử lý nội dung theo hợp đồng khách hàng.
-- **Lựa chọn dự phòng:** BYOK khách hàng trả trực tiếp nhà cung cấp; doanh nghiệp tự host Ollama server; hoặc nghiên cứu nhà cung cấp có chương trình OEM/reseller rõ ràng. Không yêu cầu build billing inference/proxy ở milestone core hay Cloud Beta hiện tại.
+- **Lựa chọn upstream dự phòng (nội bộ, không phải user choice):** CAI/RAI có thể chuyển sang nhà cung cấp inference có hợp đồng OEM/reseller rõ ràng hoặc cung cấp bản Business dùng **CAI-approved model bundle** trên AI server do IT doanh nghiệp host. **BYOK không nằm trong commercial user flow đã chốt.** Không yêu cầu build billing inference/proxy ở milestone core hay Cloud Beta hiện tại.
 
 #### Phương án nghiên cứu (không tự động thành work item)
 
@@ -223,12 +225,12 @@ Cho phép **nghiên cứu dần** và tổ chức **một nhóm beta giới hạ
 ## 8. Ranh giới dữ liệu, tương thích và quyết định còn mở
 
 - Thiết kế tối thiểu cần bảo vệ phiên đăng nhập, xác thực OAuth/token, tenant isolation, ghép cặp/thu hồi device, chống gửi nhầm kết quả, và an toàn với các lệnh CAD mutating. Không truyền toàn bộ DWG qua cloud nếu không cần.
-- **Chưa chốt:** tên miền cụ thể; nhà cung cấp dịch vụ auth/billing; kiểu host Gateway (Remote MCP Mode); chính sách credits và đơn giá; số requests cho từng gói; giới hạn số máy/nhân viên; thời điểm đưa vào bản thương mại; hướng phát hành chính xác cho từng AI client; thiết kế native chat/multi-provider adapter, local usage ledger/quota sync, cấu hình cloud API hoặc máy chủ Ollama của doanh nghiệp, BYOK hay CAI-managed AI cho Native API Mode, **quyền reseller/OEM của nhà cung cấp Cloud API**, AI credits pricing và inference proxy.
+- **Chưa chốt:** tên miền cụ thể; nhà cung cấp dịch vụ auth/billing; kiểu host Gateway (Remote MCP Mode); chính sách credits và đơn giá; số requests cho từng gói; giới hạn số máy/nhân viên; thời điểm đưa vào bản thương mại; hướng phát hành chính xác cho từng AI client; thiết kế native chat, **provider adapter/model routing nội bộ**, local usage ledger/quota sync, lựa chọn upstream AI cloud hoặc CAI-approved model bundle trên Ollama server doanh nghiệp, **quyền phân phối/reseller/OEM của từng upstream**, đơn giá AI credits và inference proxy. **Đã chốt: không có model selector hoặc BYOK cho người dùng thương mại.**
 - **Không suy diễn:** số lượt CAI Requests = số Workers requests; Tunnel Free = hạ tầng vô hạn; một model có sẵn trong Copilot = mọi định dạng MCP/agent đều dùng được không cần tích hợp; AI có toàn bộ lịch sử hội thoại trong Gateway; API function calling = consumer chat app hỗ trợ Custom MCP; mọi model hỗ trợ cùng một tool schema/độ tin cậy; một CAI request = một lần inference/token cost; Native API Mode có Cloudflare Tunnel/MCP Gateway điều phối lệnh CAD; chạy Ollama cùng workstation CAD là cấu hình mặc định; LAN Ollama server đã có bảo vệ xác thực an toàn.
 - Với mỗi thử nghiệm, chỉ ghi **kết quả quan sát thực tế**, phần chưa thử ghi **UNVERIFIED**. Tài liệu này không chứng nhận capability đã hoàn thành.
 
 ## 9. Tóm tắt quyết định
 
-> **CAI/RAI hướng tới nền tảng CAD/BIM automation mở: (A) Remote MCP Mode — ChatGPT-first, ưu tiên Microsoft 365 Copilot doanh nghiệp, dùng chung remote integration/gateway và nhiều local connectors; (B) Native API Mode tương lai — chat native trong CAD/BIM Add-in dùng các API cấu hình được (cloud providers hoặc Ollama server dùng chung trong doanh nghiệp), tool thực thi local, không qua tunnel/MCP Cloud Gateway. Cả hai theo gói quota tool executions + top-up; doanh nghiệp mua và IT triển khai; ngôn ngữ do AI thích nghi; MCP Dev & Repair chỉ ở Development.**
+> **CAI/RAI hướng tới nền tảng CAD/BIM automation mở: (A) Remote MCP Mode — ChatGPT-first, ưu tiên Microsoft 365 Copilot doanh nghiệp, dùng chung remote integration/gateway và nhiều local connectors; (B) Native AI Mode tương lai — chat native trong CAD/BIM Add-in, **CAI/RAI tự chọn và điều phối model/API nội bộ**, có thể dùng cloud providers hoặc CAI-approved Ollama server của doanh nghiệp, tool thực thi local, **không có model picker/BYOK và không đi qua tunnel/MCP Cloud Gateway**. Bản thương mại bán CAI/RAI subscriptions/tool-execution quotas + top-up; Native AI có thể bán thêm AI credits do CAI/RAI quản lý. Doanh nghiệp mua và IT triển khai; ngôn ngữ do AI thích nghi; MCP Dev & Repair chỉ ở Development.**
 >
 > **Hiện tại:** tiếp tục phát triển core CAI/RAI; có thể nghiên cứu Cloud Beta nhỏ để kiểm chứng routing, counting và quota distribution. Mở rộng CAD/BIM khác và triển khai thương mại toàn diện **chưa nằm trong phạm vi hiện tại**.
