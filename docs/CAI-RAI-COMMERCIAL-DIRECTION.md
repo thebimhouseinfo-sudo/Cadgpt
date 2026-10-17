@@ -22,7 +22,7 @@
 
 - **ChatGPT là AI client chính thức/ưu tiên** cho phát triển và trải nghiệm CAI; CAI/RAI **không phụ thuộc độc quyền** vào ChatGPT.
 - Ưu tiên hỗ trợ **Microsoft 365 Copilot / Copilot Chat dành cho doanh nghiệp** (ứng dụng Microsoft mà nhân viên sử dụng; **không phải GitHub Copilot trong VS Code**). Nhiều công ty kỹ thuật đã có hệ sinh thái Microsoft 365 nên CAI cần tận dụng kênh làm việc và cơ chế quản trị tập trung sẵn có.
-- Hỗ trợ thêm **Claude**, và nghiên cứu **Gemini** hoặc AI client khác khi có phương thức kết nối phù hợp.
+- Hỗ trợ thêm **Claude**; bổ sung **Grok (xAI)** làm ứng viên nghiên cứu beta vì ứng dụng Grok Web hỗ trợ Custom Remote MCP Connector. Nghiên cứu **Gemini** và AI client khác khi có phương thức kết nối phù hợp.
 - **AI provider** chịu trách nhiệm model, reasoning, conversation, hạn mức và chi phí AI. **CAI/RAI** chỉ chịu trách nhiệm công cụ CAD/BIM, kết nối, thực thi local, license và hạn mức sử dụng CAI/RAI. Không xây module theo dõi quota/model/giá của Microsoft, OpenAI hay Anthropic.
 - Người dùng không phải **tạo plugin hoặc Cloudflare Tunnel riêng** cho từng cá nhân/máy. Mục tiêu là **một public/distributable integration và một endpoint MCP chung cho từng sản phẩm**, kết nối đến đúng máy của người dùng qua Gateway.
 - Cùng một CAI subscription/request balance có thể được dùng từ các AI client được hỗ trợ; không bắt khách mua lại CAI chỉ vì đổi ứng dụng AI.
@@ -30,7 +30,9 @@
 ### Cần nghiên cứu/kiểm chứng
 
 - Mỗi AI provider có **cơ chế xuất bản, phê duyệt, xác thực và hỗ trợ remote MCP khác nhau**. Cùng một MCP backend **không đồng nghĩa** với cùng một gói plugin cài được trên mọi client.
-- Đánh giá đường phát hành phù hợp cho **ChatGPT**, **Microsoft 365 Copilot** (agent/connector và quản trị viên tổ chức), **Claude**; Gemini và các client khác tùy khả năng thực tế. Không cam kết tính năng hoặc quyền sử dụng của một gói AI cụ thể trước khi kiểm thử.
+- Đánh giá đường phát hành phù hợp cho **ChatGPT**, **Microsoft 365 Copilot** (agent/connector và quản trị viên tổ chức), **Claude**, **Grok**; Gemini và các client khác tùy khả năng thực tế. Không cam kết tính năng hoặc quyền sử dụng của một gói AI cụ thể trước khi kiểm thử.
+- **Grok (đã xác nhận tài liệu, chưa E2E CAI):** xAI hỗ trợ thêm Custom MCP server URL trên ứng dụng Grok Web và xác thực tương ứng; cần thử thực tế tool discovery, OAuth, thực thi và routing. Nguồn chính thức: https://docs.x.ai/grok/connectors và https://x.ai/news/grok-connectors (2026-05-06).
+- **Qwen / DeepSeek (chưa xác nhận trong consumer chat):** **Qwen Code** có Remote MCP (https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp/); **DeepSeek Harness** có MCP client (https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md). Đây là các **developer/harness clients**, không phải bằng chứng rằng ứng dụng **Qwen Chat** hoặc **DeepSeek Chat** có cơ chế thêm Remote MCP tương tự Grok. Giữ ở trạng thái **WATCH / UNVERIFIED consumer app**, không kết luận các model không thể gọi tool.
 - Khả năng công bố Public Plugin và cơ chế phân phối beta phải tuân thủ yêu cầu hiện hành của từng nền tảng; không xem việc có URL MCP là đã phát hành Public Plugin thành công.
 
 ## 3. Kiến trúc thương mại mục tiêu
@@ -138,7 +140,7 @@ Cho phép **nghiên cứu dần** và tổ chức **một nhóm beta giới hạ
 ### Có thể thử sau khi ba cơ chế trên ổn
 
 - Đăng ký/phân phối integration thử nghiệm trên ChatGPT; kiểm tra phát hành theo cơ chế thực tế của nền tảng.
-- Thử client **Microsoft 365 Copilot doanh nghiệp**, **Claude** và sau đó các AI client tương thích khác qua cùng Gateway và cùng local app; kiểm chứng MCP protocol/auth/tool invocation/result trên từng client.
+- Thử client **Microsoft 365 Copilot doanh nghiệp**, **Claude**, **Grok** và sau đó các AI client tương thích khác qua cùng Gateway và cùng local app; kiểm chứng MCP protocol/auth/tool invocation/result trên từng client. Qwen Chat và DeepSeek Chat chỉ đưa vào thử nghiệm khi xác nhận được hỗ trợ MCP ngay trong ứng dụng chat phù hợp với khách hàng.
 - Đo lưu lượng thật để lựa chọn Tunnel-to-origin hay Workers/DO, tối ưu chi phí free/paid khi cần.
 
 **Không tự phát sinh:** milestone/gate mới cho CAI/RAI Core, refactor transport, đổi tên codebase hàng loạt, mở rộng sang BricsCAD/BIM mới hoặc triển khai billing production trong beta.
