@@ -354,3 +354,12 @@ Commits through `4a803368e69fd27c4a91f86e0306a6b12e21b21a` on `feature/core-func
 - V5 source CI **PASS Windows + Linux** at `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39079075233` (commit `6f30c992b6a94ece14502e55b280e91e248965e5`). Confirms build/tests only, not AutoCAD host behavior.
 
 **Outstanding:** legacy Job runtime's exclusive `executionByJobRoot` still prevents simultaneous use of the same Job; source result isolation architecture and compatibility of full Job runtime/Direct Python flows must be addressed without cross-execution writes. Temp Lisp external dependency closure and native AutoCAD human gate are unverified. Do not claim V5 complete or request user installation.
+
+## R. 2026-10-18 continued WP5/WP6 implementation
+
+- Added exact-source targeting `runtime/builder-target.ts` with same-Work immutability of source package and Work cleanup (no artificial Job-level lock); V5 source CI Windows + Linux PASS `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39079075233`.
+- **V5-only same-Job parallel Builder RUN**: `prepareJobRuntimeForExecution` now stores scratch/Job Steps at `<Job>/runtime/runs/<hash-of-execution>` for Job IDs starting `v5:`, preventing cross-execution overwritten scratch and removing the legacy `JOB_RUNTIME_BUSY` gate for this route. Legacy registered Job/direct Python contracts remain unchanged pending separate adapter migration. Regression `tests/v5-parallel-runtime.test.mjs`.
+- **Opaque legacy Direct Python Save safety:** Python Direct Jobs can write AutoCAD through COM outside the wrapped CAD tools. Invalidate any prior verified Save witness before a non-file-only Direct Python invocation to prevent false DONE after a subsequent CAD mutation.
+- **Verification:** GitHub Actions `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39079332297` Windows + Ubuntu build/tests **PASS** on commit `039f7ae3a2843dfe5694b24ee01e5bbe310029a1`.
+
+**Review caution:** `v5:` Builder Job runs now have isolated scratch but still share the named Job result folder (file mutation locks and overwrite protection apply at mutation sites); business logic that hardcodes shared result filenames must handle collisions, not silently overwrite. Existing registered legacy Job runtime retains its lock and scratch layout for compatibility. V5 is still NOT fully completed, not installed on local Windows and not eligible for native AutoCAD human acceptance until legacy runtime migration and integration checks are done.
