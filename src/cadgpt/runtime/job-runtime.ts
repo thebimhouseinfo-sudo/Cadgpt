@@ -32,6 +32,7 @@ export interface PrepareJobRuntimeOptions {
    * Reasoning Jobs preserve runtime bytes so interrupted raw queues can resume.
    */
   resetRuntime?: boolean;
+  isolatedRun?: boolean;
 }
 
 const contextsByExecution =
@@ -348,7 +349,7 @@ export async function prepareJobRuntimeForExecution(
   // V5 Builder RUN uses an execution-isolated scratch subdirectory.
   // Two executions can use the same immutable Job source without a Job-wide
   // lock or cross-run JOB_STEPS overwrite. Legacy Job layouts are unchanged.
-  const v5OwnedRun = jobId.startsWith("v5:");
+  const v5OwnedRun = jobId.startsWith("v5:") || options.isolatedRun === true;
   const runtimeRoot = v5OwnedRun
     ? path.join(jobRoot, "runtime", "runs", createHash("sha256").update(executionId).digest("hex").slice(0, 24))
     : path.join(jobRoot, "runtime");
