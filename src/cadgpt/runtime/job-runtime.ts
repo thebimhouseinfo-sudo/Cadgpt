@@ -292,7 +292,10 @@ export function detachJobRuntimeForSystemLease(
   }
 
   const rootKey = jobRootKey(context.job_root);
-  if (executionByJobRoot.get(rootKey) !== executionId) {
+  const isolatedRunsRoot = path.join(context.job_root, "runtime", "runs");
+  const isolated = path.dirname(context.runtime_root) === isolatedRunsRoot &&
+    /^[0-9a-f]{24}$/i.test(path.basename(context.runtime_root));
+  if (!isolated && executionByJobRoot.get(rootKey) !== executionId) {
     throw new Error(
       "JOB_RUNTIME_OWNERSHIP_LOST: foreground execution no longer owns this Job runtime."
     );
@@ -300,7 +303,7 @@ export function detachJobRuntimeForSystemLease(
 
   contextsByExecution.delete(executionId);
   contextsBySystemToolId.set(key, context);
-  executionByJobRoot.set(rootKey, `system:${key}`);
+  if (!isolated) executionByJobRoot.set(rootKey, `system:${key}`);
   return context;
 }
 
