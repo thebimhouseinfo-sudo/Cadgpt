@@ -373,7 +373,7 @@ export function registerJobDiscoveryTools(server: McpServer): void {
     {
       title: "Check Local Job Compatibility Signal",
       description:
-        "Lightweight O(1) compatibility check for local Custom Jobs. It reads only the small state marker and never scans User Registry Job packages. If update_required=true, jobcreate CONTRACT UPDATE is recommended; normal User Job create/run/update and testing remain available with a visible warning.",
+        "Diagnostics only for legacy Job contract epochs. V5 does not require CONTRACT UPDATE or any compat scan to create, edit or RUN a Job.",
       inputSchema: {},
     },
     async () => {
@@ -1390,7 +1390,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Create New Job Draft",
       description:
-        "Create a new blank Job draft file (.py for direct Jobs, JOB.md for reasoning Jobs) under the Job draft root. Use this when authoring a brand-new Job from scratch. For editing an existing registered Job use job_checkout instead.",
+        "Legacy migration utility only. V5 Builder must author directly in the owned final Job folder using v5_source_create/v5_source_update; no Job draft, checkout or promotion is required to RUN. This tool is retained only for older package workflows.",
       inputSchema: {
         draft_path: z
           .string()
@@ -1486,7 +1486,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Checkout Managed Job for jobcreate",
       description:
-        "Checkout one registered managed Job package into an explicit draft path. The primary JOB.md/.py plus Job-owned lisp/**, dynamic-lisp/** and tools/** assets move together. runtime/** is execution scratch and is never checked out. Existing draft bundles require hash-confirmed overwrite.",
+        "Legacy compatibility utility. V5 direct Builder editing uses v5_source_update in the exact owned managed Job folder; never require checkout before editing/running. This tool preserves old package workflows only.",
       inputSchema: {
         registry_id: z.string().min(1),
         draft_path: z
@@ -1720,7 +1720,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Promote Tested Job Draft to Managed Library",
       description:
-        "Promote one validated Job draft package into an explicit managed Job target and synchronize User Registry rollback-safely. JOB.md/.py, lisp/**, dynamic-lisp/** and tools/** are promoted as one bundle. runtime/** is never promoted.",
+        "Legacy package migration utility only. V5 execution and in-place authoring never require this promotion; registered publication is separate and explicit when reusable capability discovery is requested.",
       inputSchema: {
         draft_path: z.string().min(1),
         registry_id: z.string().min(1).optional(),
