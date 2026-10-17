@@ -35,3 +35,20 @@ test("V5 Builder runs share definition but never shared scratch or Job Steps", a
     await cleanupJobRuntimeForExecution("v5-work-b");
   }
 });
+
+test("V5 registered Reasoning Jobs can run concurrently with independent scratch", async () => {
+  const dir = path.join(getJobLibrariesRoot(), "v5-shared", "registered");
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, "JOB.md");
+  await fs.writeFile(file, "# Registered Reasoning Job\n");
+  const a = await prepareJobRuntimeForExecution("registered-a", "registered-job-id", file, { isolatedRun: true });
+  const b = await prepareJobRuntimeForExecution("registered-b", "registered-job-id", file, { isolatedRun: true });
+  try {
+    assert.notEqual(a.runtime_root, b.runtime_root);
+    assert.ok(a.runtime_root.includes(path.join("runtime", "runs")));
+    assert.notEqual(jobStepsPath(a), jobStepsPath(b));
+  } finally {
+    await cleanupJobRuntimeForExecution("registered-a");
+    await cleanupJobRuntimeForExecution("registered-b");
+  }
+});
