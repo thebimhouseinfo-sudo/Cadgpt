@@ -120,6 +120,7 @@ export function registerCadGptControlTool(
           "stop",
           "cleartempjob",
         ]),
+        temp_job_id: z.string().uuid().optional(),
       },
       outputSchema: {
         text: z.string(),
@@ -145,7 +146,7 @@ export function registerCadGptControlTool(
           .optional(),
       },
     },
-    async ({ surface }) => {
+    async ({ surface, temp_job_id }) => {
       let text: string;
 
       if (
@@ -179,7 +180,7 @@ export function registerCadGptControlTool(
       ) {
         text = assetPrompt(surface);
       } else if (surface === "cleartempjob") {
-        const result = await clearTempJobs();
+        const result = await clearTempJobs(temp_job_id);
         text = `Temp Jobs: removed ${result.removed.length}, skipped ${result.skipped.length}.` +
           (result.skipped.length ? "\n" + result.skipped.map(e => `${e.id}: ${e.reason}`).join("\n") : "");
       } else if (surface === "help") {
