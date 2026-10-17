@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { getTempJobsRoot } from "../lib/appdata.js";
+import { getTempJobsRoot, getDrawingStorageRoot } from "../lib/appdata.js";
+import { getBoundDrawingsForExecution } from "../session/drawing-binding.js";
 import { newTempJobId, ownedSourceRoot, resolveOwnedSourceMutation } from "../lib/owned-source.js";
 import { activeWorkForSession } from "../lib/work-registration.js";
 import { withFileMutationLocks } from "./file-scheduler.js";
@@ -15,6 +16,8 @@ type TempMeta = {
   owner_session: string;
   state: "active" | "done";
   created_at: string;
+  result_folder?: string;
+  result_anchor?: string;
 };
 const active = new Map<string, string>();
 
@@ -132,6 +135,47 @@ export async function updateTempSource(
   } finally { await fs.rm(tmp, { force: true }).catch(() => {}); }
   return { id, path: resolved, sha256: createHash("sha256").update(content).digest("hex") };
   });
+}
+/**
+ * User-specified name only: no result is created for scratch-only Temp Jobs.
+ * The bound drawing and persisted Anchor are checked on every creation.
+ */
+export async function createTempResult(
+  id: string, execution: string, session: string, folderName: string,
+) {
+  const meta = await assertOwned(id, execution, session);
+  if (meta.state !== "active") throw new Error("TEMP_JOB_ALREADY_DONE");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(folderName) ||
+      folderName.includes("..")) throw new Error("TEMP_JOB_RESULT_NAME_INVALID");
+  if (meta.result_folder) throw new Error("TEMP_JOB_RESULT_ALREADY_SET");
+  const bindings = getBoundDrawingsForExecution(execution);
+  if (bindings.length !== 1) throw new Error("TEMP_JOB_BOUND_DRAWING_REQUIRED");
+  const binding = bindings[0];
+  if (!binding.anchor_verified_readback ||
+      typeof binding.drawing_anchor !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,179}$/.test(binding.drawing_anchor)) {
+    throw new Error("TEMP_JOB_VERIFIED_ANCHOR_REQUIRED");
+  }
+  const drawingsRoot = await fs.realpath(getDrawingStorageRoot());
+  const drawingPath = path.join(drawingsRoot, binding.drawing_anchor);
+  const realDrawing = await fs.realpath(drawingPath);
+  if (path.dirname(realDrawing) !== drawingsRoot) throw new Error("TEMP_JOB_DRAWING_PATH_ESCAPE");
+  const jobsPath = await fs.realpath(path.join(realDrawing, "jobs"));
+  if (path.dirname(jobsPath) !== realDrawing) throw new Error("TEMP_JOB_JOBS_PATH_ESCAPE");
+  const result = path.join(jobsPath, folderName);
+  await fs.mkdir(result); // no overwrite, no implicit rename
+  meta.result_folder = folderName;
+  meta.result_anchor = binding.drawing_anchor;
+  const root = ownedSourceRoot({ kind: "temp-job", id });
+  const metadataPath = path.join(root, META);
+  const tempMetadata = path.join(root, "." + randomUUID() + ".json");
+  try {
+    await fs.writeFile(tempMetadata, JSON.stringify(meta, null, 2), { flag: "wx" });
+    await fs.rename(tempMetadata, metadataPath);
+  } finally {
+    await fs.rm(tempMetadata, { force: true }).catch(() => {});
+  }
+  return { id, folder_name: folderName, drawing_anchor: binding.drawing_anchor, path: result };
 }
 export async function finishTempJob(id: string, execution: string, session: string) {
   const meta = await assertOwned(id, execution, session);
