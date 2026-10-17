@@ -204,7 +204,7 @@ export function registerFilesystemTools(server: McpServer): void {
       absolute_roots: currentReadableRoots(),
       writable_roots: currentWritableRoots().map(toCadgptPath),
       absolute_writable_roots: currentWritableRoots(),
-      managed_libraries_write_policy: "read-only to generic file tools; mutate through library_import/lisp_promote_draft/job_promote_draft",
+      managed_libraries_write_policy: "Generic FILE tools remain read-only for reusable libraries. V5 Builder uses v5_source_create/v5_source_update with exact owner-scoped final folder; registration is independent via v5_source_publish.",
     })
   );
 
@@ -341,7 +341,7 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_create",
     {
       title: "Create CadGPT Managed Text File",
-      description: "Create a new text asset inside generic writable AppData roots (workspace/data plus the execution-authorized drawing metadata root). path MUST be an absolute filesystem path. Permanent managed libraries are not writable through this tool.",
+      description: "Create a new text asset inside generic writable AppData roots (workspace/data plus the execution-authorized drawing metadata root). path MUST be an absolute filesystem path. Use v5_source_create for managed final Job/Lisp source; generic FILE never gains broad library-write permission.",
       inputSchema: {
         path: z.string(),
         content: z.string(),
@@ -428,7 +428,7 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_edit",
     {
       title: "Edit CadGPT Managed Text File",
-      description: "Apply an exact text replacement inside generic writable AppData roots (workspace/data plus the execution-authorized drawing metadata root). path MUST be an absolute filesystem path. Permanent managed libraries must use controlled promotion/import tools.",
+      description: "Apply an exact text replacement inside generic writable AppData roots (workspace/data plus the execution-authorized drawing metadata root). path MUST be an absolute filesystem path. Use v5_source_update for managed final Job/Lisp source with exact owner authorization; no mandatory promotion.",
       inputSchema: {
         path: z.string(),
         expected_sha256: z.string().length(64).describe("sha256 returned by file_read; prevents silent overwrite if another execution changed the file"),
