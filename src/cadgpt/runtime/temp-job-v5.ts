@@ -101,7 +101,7 @@ export async function writeTempSource(
     const safe = await resolveOwnedSourceMutation(target, { kind: "temp-job", id }, { forCreate: true });
     await fs.writeFile(safe, content, { flag: "wx" }); // never silently overwrite
   });
-  return { id, path: resolved, bytes: Buffer.byteLength(content) };
+  return { id, path: resolved, bytes: Buffer.byteLength(content), sha256: createHash("sha256").update(content).digest("hex") };
 }
 /** Safe FIX → RE-RUN source replacement, never a blind overwrite. */
 export async function updateTempSource(
@@ -137,6 +137,22 @@ export async function updateTempSource(
   return { id, path: resolved, sha256: createHash("sha256").update(content).digest("hex") };
   });
 }
+/** Verified file-only Temp Python source, owned by the current Builder Work. */
+export async function getOwnedTempPython(
+  id: string, execution: string, session: string, relative: string,
+): Promise<string> {
+  const meta = await assertOwned(id, execution, session);
+  if (meta.state !== "active") throw new Error("TEMP_JOB_ALREADY_DONE");
+  safeRelativeSource(relative);
+  const owner = { kind: "temp-job" as const, id };
+  const source = path.resolve(ownedSourceRoot(owner), relative);
+  if (path.extname(source).toLowerCase() !== ".py") throw new Error("TEMP_JOB_PYTHON_REQUIRED");
+  const resolved = await resolveOwnedSourceMutation(source, owner);
+  const stat = await fs.lstat(resolved);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("TEMP_JOB_PYTHON_UNSAFE_SOURCE");
+  return resolved;
+}
+
 /** Resolve a Temp Lisp for the same Builder execution; LOAD is handled by existing bound-CAD proxy. */
 export async function getOwnedTempLisp(
   id: string, execution: string, session: string, relative: string,
