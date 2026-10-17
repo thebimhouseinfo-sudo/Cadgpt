@@ -2,6 +2,7 @@ import { z } from "zod";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { importLibrary } from "./user-assets.js";
+import { runOwnedTempPython } from "../runtime/temp-python-v5.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { currentToolLease } from "../lib/work-registration.js";
 import { loadVerifiedLispForCurrentWork } from "./cad-proxy.js";
@@ -138,6 +139,24 @@ export function registerTempJobV5Tools(server: McpServer): void {
       return toolResult("temp_job_lisp_load",
         { id, source, drawing_id: result.drawing_id, loaded: true, commands: result.commands });
     } catch (error) { return toolError("temp_job_lisp_load", error); }
+  });
+  server.registerTool("temp_job_python_run", {
+    title: "Run trusted owned Temp Python file-only helper",
+    description: "Execute one exact SHA-verified Builder-owned Temp .py script with JSON input via isolated Python -I and no shell. Trusted source only; not an OS sandbox and never a replacement for bound CAD operations.",
+    inputSchema: {
+      id: z.string().uuid(),
+      relative_file: z.string().min(1),
+      expected_sha256: z.string().regex(/^[a-f0-9]{64}$/i),
+      input_json: z.string().default("{}"),
+    },
+  }, async ({ id, relative_file, expected_sha256, input_json }) => {
+    try {
+      const lease = currentToolLease();
+      return toolResult("temp_job_python_run", await runOwnedTempPython({
+        id, execution: lease.workId, session: lease.sessionKey,
+        relativeFile: relative_file, expectedSha256: expected_sha256, inputJson: input_json,
+      }));
+    } catch (error) { return toolError("temp_job_python_run", error); }
   });
   server.registerTool("temp_job_done", {
     title: "Mark Temp Job complete",
