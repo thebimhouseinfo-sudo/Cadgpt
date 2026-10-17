@@ -20,7 +20,7 @@
 
 ### Đã chốt
 
-- **ChatGPT là AI client chính thức/ưu tiên** cho phát triển và trải nghiệm CAI; CAI/RAI **không phụ thuộc độc quyền** vào ChatGPT.
+- **ChatGPT là AI client chính thức/ưu tiên** cho phát triển và trải nghiệm CAI; CAI/RAI **không phụ thuộc độc quyền** vào ChatGPT. **Định danh sản phẩm không phụ thuộc AI backend:** CAI/RAI là các Autodesk Add-in có panel; MCP-backed và Native AI là hai hướng kỹ thuật ở dưới cùng sản phẩm, không phải hai SKU/add-in buộc khách hàng tự chọn.
 - Ưu tiên hỗ trợ **Microsoft 365 Copilot / Copilot Chat dành cho doanh nghiệp** (ứng dụng Microsoft mà nhân viên sử dụng; **không phải GitHub Copilot trong VS Code**). Nhiều công ty kỹ thuật đã có hệ sinh thái Microsoft 365 nên CAI cần tận dụng kênh làm việc và cơ chế quản trị tập trung sẵn có.
 - Hỗ trợ thêm **Claude**; bổ sung **Grok (xAI)** làm ứng viên nghiên cứu beta vì ứng dụng Grok Web hỗ trợ Custom Remote MCP Connector. **Gemini: DEFERRED / không ưu tiên beta**, do Custom MCP trong Gemini Apps chưa phù hợp phân phối phổ thông/doanh nghiệp tại Việt Nam và đường Gemini Spark có rào cản chi phí/điều kiện truy cập. Qwen Chat, DeepSeek Chat và AI client khác chỉ tiếp tục theo dõi.
 - **Remote MCP Mode:** nền tảng AI bên thứ ba (ChatGPT/Copilot/Claude...) tự chịu trách nhiệm model, reasoning, conversation, quota và chi phí AI; CAI/RAI không xây module quản lý quota nhà cung cấp của họ. **Native AI Mode thương mại:** CAI/RAI **là bên bán dịch vụ AI tích hợp**, chịu trách nhiệm chọn/điều phối model, trả phí inference theo hợp đồng với upstream (hoặc cung cấp bundle model cho AI server doanh nghiệp), quản lý chi phí và AI credits của CAI/RAI. Hai mô hình trách nhiệm khác nhau, không gộp.
@@ -65,19 +65,40 @@ Model response / tool call → Local dispatcher → CAD/BIM result → Model API
 - **CAI/RAI Core vẫn là authoritative executor:** mọi model tool call cần qua local allowlist, quyền user, đúng drawing/document binding, xác nhận khi thay đổi dữ liệu và readback. Không cho model gửi lệnh CAD tùy ý vượt các contract đã có.
 - **Native Add-in chưa hoàn thiện:** Add-in CadGPT hiện tại chủ yếu host ChatGPT; **native chat orchestration**, bộ điều phối model nội bộ, AI Proxy/AI credits và shared Ollama server là **các khả năng tương lai cần nghiên cứu**, không phải chức năng đã sẵn có.
 
-#### Kênh phân phối chính thức: Autodesk Design and Make Marketplace (định hướng thương mại đã chọn)
+#### Kênh phân phối chính thức: một CAI/RAI Add-in trên Autodesk Marketplace (định hướng thương mại đã chốt)
 
-**Quyết định định hướng (2026-10-17):** phiên bản **CAI Native cho AutoCAD** và **RAI Native cho Revit** có thể được đóng gói và **đề xuất phát hành như add-in thương mại trả phí** trên **Autodesk Design and Make Marketplace** (Autodesk App Store trước đây). Đây là **kênh bán và phân phối native add-in**, độc lập với kênh Remote MCP/Public Plugin cho ChatGPT, Copilot, Claude hoặc Grok. **Chưa đăng sản phẩm/chưa được Autodesk phê duyệt**, vì CAI/RAI hiện còn đang phát triển.
+**Làm rõ quyết định (2026-10-17):** **CAI cho AutoCAD** và **RAI cho Revit** là **mỗi sản phẩm một Add-in có panel tích hợp vào phần mềm Autodesk**, có thể đóng gói và đề xuất phát hành/bán trên **Autodesk Design and Make Marketplace** (Autodesk App Store trước đây). **Không bắt buộc chuyển AI sang Native API mới được phát hành.** Kiến trúc hiện tại với **panel tích hợp + MCP/local tool layer bên dưới** đã là dạng Add-in phân phối được về nguyên tắc, nếu đáp ứng review, packaging, licensing và các điều kiện Marketplace. Native AI chỉ là **một cách vận hành nội bộ có thể phát triển về sau**, **không phải SKU/sản phẩm độc lập cần giới thiệu hoặc bán tách riêng**.
 
-- **Bằng chứng chính thức:** Autodesk có hướng dẫn publisher cho AutoCAD và Revit, Marketplace chấp nhận bên thứ ba đăng sản phẩm có giá, có cơ chế subscription và Entitlement API cho desktop apps, và quy trình review/đóng gói; không suy diễn rằng một bản AI add-in cụ thể chắc chắn sẽ được duyệt. Nguồn: https://aps.autodesk.com/marketplace/getting-started , https://aps.autodesk.com/marketplace/publisher-center/autocad-publisher-guidelines , https://aps.autodesk.com/marketplace/publisher-center/revit-publisher-guidelines .
-- **Trải nghiệm bán hàng:** user tìm **CAI AI** hoặc **RAI AI** trong Marketplace, cài đặt Add-in, đăng nhập/kích hoạt license và sử dụng ngay trong AutoCAD/Revit. **Không có màn hình chọn model/API key/provider**; CAI/RAI định nghĩa model, Operator/Builder routing và backend AI. Marketplace là kênh phân phối/install, **không chạy thay CAD/BIM Core hay tự điều phối AI**.
-- **Package/host integration:** AutoCAD theo autoloader bundle, `PackageContents.xml`, partial CUIX và Ribbon; Revit theo `.addin` manifest/bundle và Ribbon button; kiểm thử theo từng phiên bản/vertical công bố. Yêu cầu tương thích Autodesk có thể thay đổi theo năm; xác minh lại tại thời điểm nộp.
-- **Sẵn sàng hoạt động:** installer không yêu cầu user copy file/cài cấu hình thủ công; kích hoạt online tự động hoặc trial đầy đủ đủ dài cho kích hoạt theo guidelines. Tuân thủ host thread/document binding, hỗ trợ uninstall/update, tránh gây crash, mất dữ liệu, xung đột plug-in, làm chậm AutoCAD/Revit; đảm bảo save/readback và các quy tắc CAD mutating.
-- **License vs AI credits:** Autodesk Entitlement API chỉ hỗ trợ xác nhận quyền sử dụng app; **không giả định tự có ledger và top-up AI credits/CAI request quota**. Cần làm rõ phương thức bán subscription và credits, purchase/renewal/webhook, volume/business licensing, hỗ trợ tổ chức/IT deployment và các hạn chế giao dịch Marketplace trước khi quyết định checkout architecture. Tài liệu Publisher Getting Started hiện liệt kê PayPal và thông tin giá cho paid desktop apps; không suy diễn mức commission hoặc phí chính thức khi chưa kiểm tra hợp đồng.
-- **Dịch vụ AI nhúng trong add-in:** Native Mode vẫn có thể gọi **CAI AI inference proxy** qua HTTPS hoặc dùng **CAI-approved server Ollama nội bộ** của doanh nghiệp; **không dùng Cloudflare Tunnel/Remote MCP Gateway để route CAD commands**. Chính sách quyền riêng tư và điều khoản sử dụng phải mô tả trung thực dữ liệu đưa đến upstream/cloud hay ở nội bộ; **ẩn model name trên UI không có nghĩa được che giấu bên xử lý dữ liệu theo yêu cầu pháp lý/hợp đồng**.
-- **MCP compliance nếu áp dụng:** Marketplace hiện có yêu cầu hồ sơ bổ sung khi sản phẩm **expose tools qua MCP** (manifest và publisher security declaration). **Native script-first không mặc định là public MCP server**; nếu bản package thực tế cũng expose MCP, cần đánh giá các yêu cầu đó thay vì suy diễn được miễn.
-- **Phê duyệt:** sản phẩm phải qua Autodesk review về chất lượng, tính ổn định, legal/privacy, tương thích và trải nghiệm cài đặt. Được niêm yết trên Marketplace **không đồng nghĩa Autodesk bảo chứng AI hoặc cấp bảo đảm chất lượng**. Đối với trial, subscription, thanh toán, thay đổi package và yêu cầu riêng của công ty, dựa trên bản Publisher Agreement hiệu lực tại thời điểm nộp.
-- **Không tác động milestone hiện tại:** chỉ ghi định hướng kênh bán chính thức tương lai. **Không nộp app, không mua publisher services, không chuẩn bị release installer hoặc thay đổi code/roadmap** chỉ vì quyết định này.
+```text
+           AUTODESK MARKETPLACE
+              CAI Add-in / RAI Add-in
+                       │
+                       ▼
+         AutoCAD / Revit — Integrated Panel
+                       │
+       ┌───────────────┴────────────────┐
+       │                                │
+ [Current MCP-backed mode]     [Future Native AI mode]
+ Panel + AI client/MCP          Panel + managed API inference
+ + remote integration           + script-first orchestration
+       │                                │
+       └───────────────┬────────────────┘
+                       ▼
+         Local CAD/BIM Core + tool execution
+                       ▼
+                Active DWG / RVT
+```
+
+- **Một sản phẩm, nhiều cơ chế AI:** customer-facing offering là **CAI** hoặc **RAI**. MCP-backed mode và Native AI mode là **implementation modes / phiên bản năng lực nội bộ**, không quảng bá thành hai ứng dụng khác nhau, không bắt khách mua lại add-in chỉ vì thay backend. Mức hỗ trợ và quyền sử dụng thực tế theo license/gói sẽ thiết kế sau; **không ngầm cam kết một package đã hỗ trợ đủ hai mode hiện tại**.
+- **MCP-backed đã có panel:** panel có thể host giao diện AI bên ngoài (như WebView ChatGPT), trong khi MCP/Local Connector/Core xử lý commands và dữ liệu CAD/BIM ở phía dưới. Việc panel không tự chạy inference hoặc workflow chưa phải script-first **không loại trừ** khả năng đóng gói/phân phối add-in qua Autodesk Marketplace.
+- **Native AI là nâng cấp kiến trúc, không phải điều kiện phát hành:** nếu sau này triển khai Native API/managed model/script-first, có thể cập nhật cùng CAI/RAI Add-in; không yêu cầu tạo listing riêng chỉ vì thay AI inference/orchestration. Native mode không sử dụng Cloudflare Tunnel/Remote MCP Gateway để route CAD calls; **MCP-backed mode vẫn có dependency, xác thực và hạ tầng riêng cần đáp ứng**.
+- **Kênh phân phối vs kênh truy cập:** Autodesk Marketplace phân phối/cài đặt/đăng ký **Add-in host**. ChatGPT, Microsoft 365 Copilot, Claude, Grok... vẫn có thể là **AI clients/kênh điều khiển bên ngoài** thông qua tích hợp MCP, nhưng đó là khả năng mở rộng/cổng truy cập của **cùng CAI/RAI**, **không phải thương hiệu sản phẩm khác**.
+- **Trải nghiệm người dùng:** tìm CAI/RAI trên Marketplace, cài Add-in để có panel trong AutoCAD/Revit, kích hoạt license và sử dụng các tính năng thực sự được cung cấp. Nếu mode hiện tại yêu cầu đăng nhập dịch vụ AI ngoài, kết nối Internet, tài khoản/gói AI tương thích hoặc MCP integration, **phải công bố trung thực các dependency và chi phí đó**; không quảng cáo là không cần dịch vụ bên ngoài cho tới khi Native AI managed mode được triển khai.
+- **Package/host integration:** AutoCAD tuân thủ quy chuẩn autoloader/bundle, `PackageContents.xml`, UI/Ribbon khi áp dụng; Revit tuân thủ `.addin` manifest/bundle, Ribbon; test tương thích, cài đặt/gỡ cài đặt/upgrade, khởi động, host state/drawing binding và không gây crash/ảnh hưởng dữ liệu. Thông số packaging thực tế theo Autodesk publisher guidelines ở thời điểm nộp.
+- **License, entitlement và usage:** Marketplace/Autodesk Entitlement API có thể hỗ trợ xác nhận quyền dùng ứng dụng; **không mặc nhiên bao gồm** ledger CAI tool-execution quota, billing AI credits, top-up, B2B seat/license hay reconciliation. Phải xác minh chính sách pricing/trial, purchase flow, khoản thu ngoài Marketplace, thanh toán và tổ chức IT deployment trước release. Một tài khoản/gói CAI/RAI có thể dùng qua các đường truy cập được hỗ trợ, tùy điều khoản/license được chốt sau.
+- **Reviewer/security:** tuân thủ Autodesk review về installer, tính ổn định, compatible versions, privacy/security, third-party auth, việc panel tải nội dung online và quyền dữ liệu. Nếu add-in package expose MCP endpoints/tools, kiểm tra điều kiện MCP security declarations/manifest hiện hành. **Được đăng bán không đồng nghĩa Autodesk bảo chứng AI**.
+- **Tham khảo Autodesk chính thức:** https://aps.autodesk.com/marketplace/getting-started ; https://aps.autodesk.com/marketplace/publisher-center/autocad-publisher-guidelines ; https://aps.autodesk.com/marketplace/publisher-center/revit-publisher-guidelines . Điều khoản thay đổi theo thời điểm; **chưa đăng, chưa phê duyệt, chưa xác nhận một cấu hình CadGPT/RevitGPT cụ thể đáp ứng toàn bộ yêu cầu**.
+- **Ranh giới giai đoạn hiện tại:** giữ nguyên roadmap phát triển Core và beta riêng. Chỉ ghi nguyên tắc sản phẩm/kênh phân phối; **không tự động thực hiện release, packaging, đổi tên code, sửa routing hay tạo roadmap mới**.
 
 #### Native workflow — script-first, AI-in-the-loop (định hướng kiến trúc)
 
@@ -282,6 +303,6 @@ Cho phép **nghiên cứu dần** và tổ chức **một nhóm beta giới hạ
 
 > **CAI/RAI hướng tới nền tảng CAD/BIM automation mở: (A) Remote MCP Mode — ChatGPT-first, ưu tiên Microsoft 365 Copilot doanh nghiệp, dùng chung remote integration/gateway và nhiều local connectors; (B) Native AI Mode tương lai — chat native trong CAD/BIM Add-in, **CAI/RAI tự chọn và điều phối model/API nội bộ**, có thể dùng cloud providers hoặc CAI-approved Ollama server của doanh nghiệp, tool thực thi local, **không có model picker/BYOK và không đi qua tunnel/MCP Cloud Gateway**. Bản thương mại bán CAI/RAI subscriptions/tool-execution quotas + top-up; Native AI có thể bán thêm AI credits do CAI/RAI quản lý. Doanh nghiệp mua và IT triển khai; ngôn ngữ do AI thích nghi; MCP Dev & Repair chỉ ở Development.**
 >
-> **Kênh thương mại mục tiêu:** CAI Native (AutoCAD) và RAI Native (Revit) hướng tới **Autodesk Design and Make Marketplace** dưới dạng add-in thương mại; Remote MCP Mode phát hành qua các hệ sinh thái AI client tương ứng. Chưa có bản submit/review được Autodesk chấp nhận.
+> **Kênh thương mại mục tiêu:** **mỗi CAI (AutoCAD) và RAI (Revit) là một Add-in có panel tích hợp**, có thể phân phối/bán qua **Autodesk Design and Make Marketplace ngay cả khi backend còn dùng MCP**; Native AI là hướng nâng cấp vận hành bên trong cùng sản phẩm, **không phải sản phẩm thứ hai**. Các AI clients từ ChatGPT/Copilot/Claude/Grok có thể là kênh tương tác bổ sung, không làm phát sinh thương hiệu/ứng dụng riêng. Chưa có bản submit/review được Autodesk chấp nhận.
 >
 > **Hiện tại:** tiếp tục phát triển core CAI/RAI; có thể nghiên cứu Cloud Beta nhỏ để kiểm chứng routing, counting và quota distribution. Mở rộng CAD/BIM khác và triển khai thương mại toàn diện **chưa nằm trong phạm vi hiện tại**.
