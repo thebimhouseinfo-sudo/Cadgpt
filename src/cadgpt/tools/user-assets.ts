@@ -265,14 +265,15 @@ export export async function importLibrary(kind: AssetKind, libraryId: string, n
     const manifests = await readJson<{ libraries?: LibraryRecord[] }>(
       getUserLibrariesManifestPath(), { libraries: [] }
     );
-    if ((manifests.libraries ?? []).some(item => item.id === libraryId && item.kind === kind)) {
+    if ((manifests.libraries ?? []).some(item => item.id.toLowerCase() === libraryId.toLowerCase() && item.kind === kind)) {
       throw new Error("LIBRARY_ID_ALREADY_REGISTERED: choose an unused independent library id.");
     }
     const registry = await readJson<UserRegistry>(getUserCapabilitiesPath(), { version: 1, entries: [] });
     if (registry.entries.some(item => item.kind === kind &&
-        (item.library_id === libraryId || entries.some(incoming =>
-          incoming.id === item.id ||
-          (kind === "lisp" && incoming.commands.some(cmd => item.commands?.includes(cmd))))))) {
+        (item.library_id.toLowerCase() === libraryId.toLowerCase() || entries.some(incoming =>
+          incoming.id.toLowerCase() === item.id.toLowerCase() ||
+          (kind === "lisp" && incoming.commands.some(cmd =>
+            (item.commands ?? []).some(existing => existing.toLowerCase() === cmd.toLowerCase()))))))) {
       throw new Error("LISP_LIBRARY_COMMAND_OR_ID_COLLISION");
     }
   }
