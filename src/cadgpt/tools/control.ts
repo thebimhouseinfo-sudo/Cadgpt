@@ -21,7 +21,7 @@ function workflowPrompt(surface: "cl" | "cj" | "mcp" | "kug" | "kud"): string {
       "CG / Create Lisp",
       "────────────────────────────────",
       "Hãy mô tả Lisp bạn muốn tạo hoặc sửa.",
-      "Có drawing workspace thì CadGPT sẽ load/test; nếu chưa có vẫn có thể tạo hoặc sửa Lisp.",
+      "V5: Builder ghi source vào thư mục Lisp hoặc Temp Job đang sở hữu; LOAD/RUN trên drawing đã bind khi user yêu cầu. Không tạo bước TEST riêng hay bắt buộc checkout/promote.",
       "────────────────────────────────",
       "```",
     ].join("\n");
@@ -32,7 +32,7 @@ function workflowPrompt(surface: "cl" | "cj" | "mcp" | "kug" | "kud"): string {
       "CG / Create Job",
       "────────────────────────────────",
       "Hãy mô tả Job bạn muốn tạo hoặc sửa.",
-      "Job sẽ được author/validate theo Job workflow của CadGPT.",
+      "V5: Builder tạo/sửa Job trực tiếp trong thư mục sở hữu, RUN theo các bước thực tế, lỗi thì sửa và chạy lại bước an toàn. Không bắt buộc draft/checkout/promote.",
       "────────────────────────────────",
       "```",
     ].join("\n");
