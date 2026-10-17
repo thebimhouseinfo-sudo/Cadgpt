@@ -1,8 +1,9 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { currentToolLease } from "../lib/work-registration.js";
+import { loadVerifiedLispForCurrentWork } from "./cad-proxy.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
-import { createTempJob, writeTempSource, updateTempSource, createTempResult, writeTempResult, finishTempJob, clearTempJobs } from "../runtime/temp-job-v5.js";
+import { createTempJob, writeTempSource, updateTempSource, createTempResult, writeTempResult, getOwnedTempLisp, finishTempJob, clearTempJobs } from "../runtime/temp-job-v5.js";
 
 export function registerTempJobV5Tools(server: McpServer): void {
   server.registerTool("temp_job_create", {
@@ -72,6 +73,24 @@ export function registerTempJobV5Tools(server: McpServer): void {
       return toolResult("temp_job_result_write",
         await writeTempResult(id, lease.workId, lease.sessionKey, relative_file, content));
     } catch (error) { return toolError("temp_job_result_write", error); }
+  });
+  server.registerTool("temp_job_lisp_load", {
+    title: "Load a Temp Job Lisp on the bound AutoCAD drawing",
+    description: "Real AutoCAD LOAD of an owned Temp Job Lisp. Uses existing CAD host lock and requires confirmed loaded=true; no simulated TEST step.",
+    inputSchema: {
+      id: z.string().uuid(),
+      relative_file: z.string().min(1),
+      drawing_id: z.string().optional(),
+    },
+  }, async ({ id, relative_file, drawing_id }) => {
+    try {
+      const lease = currentToolLease();
+      const source = await getOwnedTempLisp(id, lease.workId, lease.sessionKey, relative_file);
+      const result = await loadVerifiedLispForCurrentWork(source, drawing_id);
+      if (!result.loaded) throw new Error("TEMP_JOB_LISP_LOAD_NOT_CONFIRMED");
+      return toolResult("temp_job_lisp_load",
+        { id, source, drawing_id: result.drawing_id, loaded: true, commands: result.commands });
+    } catch (error) { return toolError("temp_job_lisp_load", error); }
   });
   server.registerTool("temp_job_done", {
     title: "Mark Temp Job complete",
