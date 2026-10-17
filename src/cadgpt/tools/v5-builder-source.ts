@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { activeWorkForSession, currentToolLease } from "../lib/work-registration.js";
-import { ownedSourceRoot, resolveOwnedSourceMutation, type OwnedSource } from "../lib/owned-source.js";
+import { ownedSourceRoot, assertOwnedSourceRootSafe, resolveOwnedSourceMutation, type OwnedSource } from "../lib/owned-source.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 
@@ -52,6 +52,7 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
       const o = owner(kind, library_id, folder);
       const target = targetFor(o, relative_file);
       const directory = ownedSourceRoot(o);
+      await assertOwnedSourceRootSafe(o);
       await fs.mkdir(directory, { recursive: true });
       const result = await withFileMutationLocks([target], async () => {
         const resolved = await resolveOwnedSourceMutation(target, o, { forCreate: true });
@@ -72,6 +73,7 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
       assertBuilder();
       const o = owner(kind, library_id, folder);
       const target = targetFor(o, relative_file);
+      await assertOwnedSourceRootSafe(o);
       return await withFileMutationLocks([target], async () => {
         const resolved = await resolveOwnedSourceMutation(target, o);
         const before = await fs.readFile(resolved);
