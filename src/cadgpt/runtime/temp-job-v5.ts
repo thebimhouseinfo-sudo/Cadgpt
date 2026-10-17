@@ -137,6 +137,21 @@ export async function updateTempSource(
   return { id, path: resolved, sha256: createHash("sha256").update(content).digest("hex") };
   });
 }
+/** Resolve a Temp Lisp for the same Builder execution; LOAD is handled by existing bound-CAD proxy. */
+export async function getOwnedTempLisp(
+  id: string, execution: string, session: string, relative: string,
+): Promise<string> {
+  const meta = await assertOwned(id, execution, session);
+  if (meta.state !== "active") throw new Error("TEMP_JOB_ALREADY_DONE");
+  safeRelativeSource(relative);
+  const owner = { kind: "temp-job" as const, id };
+  const source = path.resolve(ownedSourceRoot(owner), relative);
+  if (path.extname(source).toLowerCase() !== ".lsp") throw new Error("TEMP_JOB_LISP_REQUIRED");
+  const resolved = await resolveOwnedSourceMutation(source, owner);
+  const stat = await fs.lstat(resolved);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("TEMP_JOB_LISP_UNSAFE_SOURCE");
+  return resolved;
+}
 /**
  * User-specified name only: no result is created for scratch-only Temp Jobs.
  * The bound drawing and persisted Anchor are checked on every creation.
