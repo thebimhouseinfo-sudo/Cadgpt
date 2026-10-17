@@ -20,7 +20,7 @@ const active = new Map<string, string>();
 
 function safeRelativeSource(relative: string): void {
   if (!relative || path.isAbsolute(relative) || path.win32.isAbsolute(relative) ||
-      relative.replaceAll("\\\\", "/").split("/").some(part => !part || part === "." || part === "..")) {
+      relative.replaceAll("\\", "/").split("/").some(part => !part || part === "." || part === "..")) {
     throw new Error("TEMP_JOB_INVALID_RELATIVE_SOURCE");
   }
 }
