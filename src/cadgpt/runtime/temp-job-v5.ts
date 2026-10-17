@@ -286,10 +286,14 @@ export async function clearTempJobs(id?: string) {
     try {
       const meta = await readMeta(item);
       const live = activeWorkForSession(meta.owner_session);
-      const activeOwner = (live && live.executionId === meta.owner_execution) || active.has(item);
-      const abandonedAfterCrash = meta.state === "active" && !activeOwner &&
-        wasOwnerProcessTerminated(meta.owner_pid);
-      if ((meta.state !== "done" && !abandonedAfterCrash) || activeOwner) {
+      // A process-local cache entry is not evidence of a live Work after
+      // stop/replacement. Never let it block explicit orphan cleanup forever.
+      const activeOwner = Boolean(live && live.executionId === meta.owner_execution);
+      const ownerProcessGone = wasOwnerProcessTerminated(meta.owner_pid);
+      const ownerInThisRuntime = meta.owner_pid === process.pid;
+      const abandoned = meta.state === "active" && !activeOwner &&
+        (ownerProcessGone || ownerInThisRuntime);
+      if ((meta.state !== "done" && !abandoned) || activeOwner) {
         skipped.push({ id: item, reason: "active_or_unverified_owner" }); continue;
       }
       const root = ownedSourceRoot({ kind: "temp-job", id: item });
@@ -305,6 +309,7 @@ export async function clearTempJobs(id?: string) {
       }
       await assertTreeSafe(root);
       await fs.rm(root, { recursive: true, force: false });
+      active.delete(item);
       removed.push(item);
     } catch (err) { skipped.push({ id: item, reason: String(err) }); }
   }
