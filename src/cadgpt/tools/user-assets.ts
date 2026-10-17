@@ -187,8 +187,33 @@ async function saveLibraryAndRegistry(record: LibraryRecord, entries: RegistryEn
   nextEntries.push(...entries);
   nextEntries.sort((a, b) => a.id.localeCompare(b.id));
 
-  await atomicJson(getUserLibrariesManifestPath(), { version: manifest.version || 1, libraries: nextLibraries });
-  await atomicJson(getUserCapabilitiesPath(), { version: registry.version || 1, entries: nextEntries });
+  const manifestPath = getUserLibrariesManifestPath();
+  const capabilitiesPath = getUserCapabilitiesPath();
+  const readExisting = async (file: string): Promise<string | null> => {
+    try { return await fs.readFile(file, "utf8"); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  };
+  const previousManifest = await readExisting(manifestPath);
+  const previousCapabilities = await readExisting(capabilitiesPath);
+  try {
+    await atomicJson(manifestPath, { version: manifest.version || 1, libraries: nextLibraries });
+    await atomicJson(capabilitiesPath, { version: registry.version || 1, entries: nextEntries });
+  } catch (error) {
+    // Compensation for ordinary write failures. The multi-file registry still
+    // cannot promise crash-atomic publication across power failure.
+    try {
+      if (previousManifest === null) await fs.rm(manifestPath, { force: true });
+      else await fs.writeFile(manifestPath, previousManifest, "utf8");
+      if (previousCapabilities === null) await fs.rm(capabilitiesPath, { force: true });
+      else await fs.writeFile(capabilitiesPath, previousCapabilities, "utf8");
+    } catch (rollbackError) {
+      throw new Error("LIBRARY_REGISTRY_PARTIAL_WRITE: publication and rollback failed: " + String(rollbackError));
+    }
+    throw error;
+  }
 }
 
 function managedRoot(kind: AssetKind, libraryId: string): string {
