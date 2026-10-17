@@ -45,13 +45,14 @@ export function ownedSourceRoot(owner: OwnedSource): string {
  */
 export async function resolveOwnedSourceMutation(
   target: string,
-  owner: OwnedSource
+  owner: OwnedSource,
+  options: { forCreate?: boolean } = {}
 ): Promise<string> {
   const root = ownedSourceRoot(owner);
   if (!path.isAbsolute(target) || !isPathInside(target, root) || path.resolve(target) === path.resolve(root)) {
     throw new Error("V5_SOURCE_OUTSIDE_OWNER");
   }
-  return resolveAbsoluteMutationPath(target, { allowedRoots: [root] });
+  return resolveAbsoluteMutationPath(target, { allowedRoots: [root], forCreate: options.forCreate === true });
 }
 
 export function newTempJobId(): string {
