@@ -101,14 +101,10 @@ test("CADGPT panel keeps one header, one background Job ticker row and the brows
     xaml,
     /x:Name="JobTickerText"/
   );
-  assert.doesNotMatch(
-    xaml,
-    /ConnectButton|RefreshButton|RetryButton|RecreateButton/
-  );
-  assert.doesNotMatch(
-    xaml,
-    /Connect this drawing|Refresh|Retry/
-  );
+  assert.match(xaml, /x:Name="ConnectDrawingButton"/);
+  assert.match(xaml, /Click="ConnectDrawingButton_Click"/);
+  assert.match(xaml, /Connect this drawing/);
+  assert.doesNotMatch(xaml, /RefreshButton|RetryButton|RecreateButton/);
 });
 
 
@@ -154,23 +150,15 @@ test("panel title and visual tab are CadGPT", () => {
   );
 });
 
-test("panel is observation-only and exposes no drawing connect action", () => {
-  assert.doesNotMatch(
-    code,
-    /ConnectDrawingAsync|ConnectButton_Click|RefreshButton_Click/
-  );
-  assert.doesNotMatch(
-    client,
-    /drawing\/connect|ConnectDrawingAsync/
-  );
-  assert.doesNotMatch(
-    indexSource,
-    /addin-control\/drawing\/connect/
-  );
-  assert.match(
-    indexSource,
-    /addin-control\/binding\/:pairId/
-  );
+test("panel has explicit authenticated drawing connect without silently replacing chat work", () => {
+  assert.match(code, /ConnectDrawingButton_Click/);
+  assert.match(code, /_control\.ConnectDrawingAsync/);
+  assert.match(client, /ConnectDrawingAsync/);
+  assert.match(client, /drawing\/connect/);
+  assert.match(indexSource, /app\.post\("\/addin-control\/drawing\/connect"/);
+  assert.match(indexSource, /authorizeAddinControl\(req, res\)/);
+  assert.match(indexSource, /addin-control\/binding\/:pairId/);
+  assert.doesNotMatch(code, /RefreshButton_Click/);
 });
 
 test("normal CadGPT browser binding flow is preserved", () => {
