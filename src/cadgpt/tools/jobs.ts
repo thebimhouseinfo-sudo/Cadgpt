@@ -867,7 +867,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Prepare Job Runtime",
       description:
-        "Authorize a Reasoning Job runtime and return a FRESH copy of its active JOB.md so the model can follow current branching rules on EVERY invocation. Re-evaluate read-only start conditions (raw/result existence) in the order specified by that JOB.md, then ask only its actual conditional user choices. Do not reuse previous-run route decisions or instructions merely discussed in chat. Starting Job B releases stale Job A authority without deleting files. Supply registered User Job id or managed draft path.",
+        "V5 Operator/Builder: prepare a Job from a registered id or Builder-owned final managed JOB.md source_path (without registration/draft/promote). Return FRESH authoritative workflow, follow only declared steps, STOP/REPORT on error, and Save exact bound DWG immediately after the last actual CAD mutation. Legacy draft_path remains compatibility only; starting Job B releases stale Job A authority without deleting another Job's files.",
       inputSchema: {
         id: z.string().min(1).optional(),
         draft_path: z.string().min(1).optional(),
