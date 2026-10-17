@@ -339,6 +339,52 @@ export async function importLibrary(kind: AssetKind, libraryId: string, name: st
   });
 }
 
+/**
+ * V5 publication only: index already-authored files in their managed final
+ * library location. No copy, checkout, promotion, preflight TEST or source edit.
+ */
+export async function publishManagedLibrary(
+  kind: AssetKind, libraryId: string, name: string
+) {
+  if (!LIBRARY_ID.test(libraryId)) throw new Error("V5_LIBRARY_ID_INVALID");
+  assertUserLibraryId(libraryId);
+  const root = managedRoot(kind, libraryId);
+  const parent = kind === "lisp" ? getLispLibrariesRoot() : getJobLibrariesRoot();
+  const canonicalParent = await fs.realpath(parent);
+  const canonicalRoot = await fs.realpath(root);
+  if (path.dirname(canonicalRoot) !== canonicalParent) throw new Error("V5_LIBRARY_OWNER_ROOT_ALIAS");
+  const stat = await fs.lstat(root);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("V5_LIBRARY_UNSAFE_ROOT");
+  const entries = await indexLibrary(kind, libraryId, root);
+  if (!entries.length) throw new Error("V5_LIBRARY_NO_REUSABLE_ASSETS");
+  const manifestFile = getUserLibrariesManifestPath();
+  const registryFile = getUserCapabilitiesPath();
+  return withFileMutationLocks([manifestFile, registryFile], async () => {
+    const manifest = await readJson<{ libraries: LibraryRecord[] }>(
+      manifestFile, { libraries: [] }
+    );
+    const existing = manifest.libraries.find(item =>
+      item.id.toLowerCase() === libraryId.toLowerCase() && item.kind === kind);
+    if (existing && libraryMode(existing) !== "managed") {
+      throw new Error("V5_LIBRARY_EXISTING_EXTERNAL_OWNERSHIP");
+    }
+    const registry = await readJson<UserRegistry>(registryFile, { version: 1, entries: [] });
+    const otherEntries = registry.entries.filter(item =>
+      !(item.kind === kind && item.library_id.toLowerCase() === libraryId.toLowerCase()));
+    if (entries.some(incoming => otherEntries.some(item =>
+      item.id.toLowerCase() === incoming.id.toLowerCase() ||
+      (kind === "lisp" && incoming.commands.some(cmd =>
+        item.kind === "lisp" &&
+        (item.commands ?? []).some(existingCmd => existingCmd.toLowerCase() === cmd.toLowerCase())))))) {
+      throw new Error("V5_LIBRARY_CAPABILITY_COLLISION");
+    }
+    await saveLibraryAndRegistry({
+      id: libraryId, kind, name, mode: "managed", root_path: root, enabled: true,
+    }, entries);
+    return { library_id: libraryId, kind, folder_path: root, registered: entries.length };
+  });
+}
+
 async function registerExternalLibrary(kind: AssetKind, libraryId: string, name: string, folderPath: string) {
   assertUserLibraryId(libraryId);
   const root = await assertSourceFolder(folderPath);
