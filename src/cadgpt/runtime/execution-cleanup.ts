@@ -1,4 +1,5 @@
 import { runtimeStateSnapshot } from "../lib/runtime-state.js";
+import { clearBoundSaveForExecution } from "./bound-save-ledger.js";
 import {
   consumeHumanPowerCleanup,
   hasActiveCadWork,
@@ -39,6 +40,9 @@ export async function cleanupExecutionState(
     cad_backend_slept: false,
     errors: [],
   };
+
+  // Expire the exact-DWG Save witness with its originating Work generation.
+  clearBoundSaveForExecution(executionId);
 
   // A Work-scoped consent grant must not survive stop/rebind/renewal.
   const { clearTrustedResultPatchApproval } = await import("./result-patch-approval.js");
