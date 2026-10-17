@@ -4,6 +4,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-v5-temp-"));
 const previous = process.env.CADGPT_APPDATA_ROOT;
@@ -58,4 +60,28 @@ test("V5 Temp job Builder creates, fixes, finishes, then safely cleans", async (
   const clean = await clearTempJobs();
   assert.equal(clean.removed.length, 1);
   assert.equal(clean.skipped.length, 1); // unfinished B must be preserved
+});
+
+test("V5 explicit Temp cleanup reclaims abandoned active source after owner process exit", async () => {
+  const session = "v5-temp-crash-reclaim";
+  checkAdmission(session, "@cg", "mention");
+  const work = createWorkRegistration({
+    sessionKey: session, ownerType: "file", ownerId: "job-authoring",
+    executionPath: "file",
+  });
+  let job;
+  try {
+    job = await createTempJob(work.executionId, session);
+    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+    await once(child, "exit");
+    const metadata = path.join(job.root, ".temp-job.json");
+    const meta = JSON.parse(await fs.readFile(metadata, "utf8"));
+    meta.owner_pid = child.pid;
+    await fs.writeFile(metadata, JSON.stringify(meta, null, 2));
+  } finally {
+    releaseSessionWork(session);
+    revokeSessionAdmissions(session);
+  }
+  const clean = await clearTempJobs(job.id);
+  assert.deepEqual(clean.removed, [job.id]);
 });
