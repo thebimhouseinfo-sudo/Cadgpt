@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { getTempJobsRoot } from "../lib/appdata.js";
 import { newTempJobId, ownedSourceRoot, resolveOwnedSourceMutation } from "../lib/owned-source.js";
 import { activeWorkForSession } from "../lib/work-registration.js";
+import { withFileMutationLocks } from "./file-scheduler.js";
 
 const META = ".temp-job.json";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -17,6 +18,12 @@ type TempMeta = {
 };
 const active = new Map<string, string>();
 
+function safeRelativeSource(relative: string): void {
+  if (!relative || path.isAbsolute(relative) || path.win32.isAbsolute(relative) ||
+      relative.replaceAll("\\\\", "/").split("/").some(part => !part || part === "." || part === "..")) {
+    throw new Error("TEMP_JOB_INVALID_RELATIVE_SOURCE");
+  }
+}
 function assertId(id: string): void {
   if (!UUID.test(id)) throw new Error("TEMP_JOB_INVALID_ID");
 }
@@ -25,7 +32,10 @@ async function readMeta(id: string): Promise<TempMeta> {
   const root = ownedSourceRoot({ kind: "temp-job", id });
   const stat = await fs.lstat(root);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("TEMP_JOB_UNSAFE_ROOT");
-  const meta: TempMeta = JSON.parse(await fs.readFile(path.join(root, META), "utf8"));
+  const metaFile = path.join(root, META);
+  const metaStat = await fs.lstat(metaFile);
+  if (!metaStat.isFile() || metaStat.isSymbolicLink()) throw new Error("TEMP_JOB_UNSAFE_METADATA");
+  const meta: TempMeta = JSON.parse(await fs.readFile(metaFile, "utf8"));
   if (meta.schema !== 1 || meta.id !== id ||
       !["active", "done"].includes(meta.state) ||
       typeof meta.owner_execution !== "string" ||
@@ -74,6 +84,7 @@ export async function writeTempSource(
   const meta = await assertOwned(id, execution, session);
   if (meta.state !== "active") throw new Error("TEMP_JOB_ALREADY_DONE");
   const root = ownedSourceRoot({ kind: "temp-job", id });
+  safeRelativeSource(relative);
   const target = path.resolve(root, relative);
   if (path.basename(target) === META) throw new Error("TEMP_JOB_METADATA_PROTECTED");
   const resolved = await resolveOwnedSourceMutation(target, { kind: "temp-job", id }, { forCreate: true });
@@ -82,7 +93,10 @@ export async function writeTempSource(
     throw new Error("TEMP_JOB_UNSUPPORTED_SOURCE_TYPE");
   }
   await fs.mkdir(path.dirname(resolved), { recursive: true });
-  await fs.writeFile(resolved, content, { flag: "wx" }); // never silently overwrite
+  await withFileMutationLocks([resolved], async () => {
+    const safe = await resolveOwnedSourceMutation(target, { kind: "temp-job", id }, { forCreate: true });
+    await fs.writeFile(safe, content, { flag: "wx" }); // never silently overwrite
+  });
   return { id, path: resolved, bytes: Buffer.byteLength(content) };
 }
 /** Safe FIX → RE-RUN source replacement, never a blind overwrite. */
@@ -93,6 +107,7 @@ export async function updateTempSource(
   const meta = await assertOwned(id, execution, session);
   if (meta.state !== "active") throw new Error("TEMP_JOB_ALREADY_DONE");
   const root = ownedSourceRoot({ kind: "temp-job", id });
+  safeRelativeSource(relative);
   const target = path.resolve(root, relative);
   if (path.basename(target) === META) throw new Error("TEMP_JOB_METADATA_PROTECTED");
   const resolved = await resolveOwnedSourceMutation(target, { kind: "temp-job", id });
@@ -100,6 +115,7 @@ export async function updateTempSource(
   if (![".lsp", ".dcl", ".json", ".py", ".txt", ".csv", ".md", ".yaml", ".yml"].includes(ext)) {
     throw new Error("TEMP_JOB_UNSUPPORTED_SOURCE_TYPE");
   }
+  return withFileMutationLocks([resolved], async () => {
   const old = await fs.readFile(resolved);
   const sha = createHash("sha256").update(old).digest("hex");
   if (!/^[a-f0-9]{64}$/i.test(expectedSha256) || sha !== expectedSha256.toLowerCase()) {
@@ -115,6 +131,7 @@ export async function updateTempSource(
     await fs.rename(tmp, resolved);
   } finally { await fs.rm(tmp, { force: true }).catch(() => {}); }
   return { id, path: resolved, sha256: createHash("sha256").update(content).digest("hex") };
+  });
 }
 export async function finishTempJob(id: string, execution: string, session: string) {
   const meta = await assertOwned(id, execution, session);
