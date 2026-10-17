@@ -70,6 +70,7 @@ const CORE_TOOLS = [
   { name: "asset_register_external", class: "libraries", summary: "Register and index a user Lisp/Job folder in place without copying it." },
   { name: "job_list", class: "workflow.jobs", summary: "List official Internal Jobs plus concrete User Jobs from managed Job Libraries." },
   { name: "job_get", class: "workflow.jobs", summary: "Load one Internal or User Job and identify its execution mode/owner." },
+  { name: "job_runtime_save_now", class: "workflow.jobs", summary: "Save exact bound DWG immediately after last CAD mutation; verified witness prevents duplicate finish Save." },
   { name: "job_run_direct", class: "workflow.jobs", summary: "Run one direct Job without model planning: built-in bounded executor for official Internal Jobs or fixed Python runtime for User .py Jobs." },
   { name: "v5_source_create", class: "workflow.builder", summary: "Builder creates owned Job/Lisp source directly in final managed folder; no draft stage." },
   { name: "v5_source_update", class: "workflow.builder", summary: "Builder repairs owned Job/Lisp source in place with exact SHA-256 compare-and-set." },
