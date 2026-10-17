@@ -46,3 +46,14 @@ test("V5 registers an already-authored managed Job in place without copying or c
   assert.equal(published.registered, 1);
   assert.equal(await fs.readFile(source, "utf8"), "# Sample Reusable Job\n\n## Steps\n1. Read input and report.\n");
 });
+
+test("V5 refreshes a previously published managed Job library without repromoting", async () => {
+  const { refreshPublishedManagedLibrary } = await import("../dist/cadgpt/tools/user-assets.js");
+  const { getJobLibrariesRoot } = await import("../dist/cadgpt/lib/appdata.js");
+  const second = path.join(getJobLibrariesRoot(), "v5-authoring-demo", "second-job");
+  await fs.mkdir(second, { recursive: true });
+  await fs.writeFile(path.join(second, "JOB.md"), "# Second Job\n\n## Steps\n1. Report.\n");
+  const refreshed = await refreshPublishedManagedLibrary("job", "v5-authoring-demo");
+  assert.equal(refreshed.registered, 2);
+  assert.equal(await refreshPublishedManagedLibrary("job", "never-published-v5"), null);
+});
