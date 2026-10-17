@@ -9,7 +9,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { cadUpstream } from "../runtime/cad-upstream.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
-import { noteVerifiedBoundSave, invalidateBoundSave } from "../runtime/bound-save-ledger.js";
+import { noteVerifiedBoundSave, invalidateBoundSave, notePotentialCadMutation } from "../runtime/bound-save-ledger.js";
 import { getRepoRoot } from "../lib/path-security.js";
 import { listBundledLispEntries } from "../lib/bundled-assets.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
@@ -53,6 +53,16 @@ const INTERNAL_UPSTREAM_TOOLS = new Set([
   // Outer CadGPT owns verified Lisp load/command execution state.
   "cad_load_lisp_file",
   "cad_run_lisp_command",
+]);
+
+const READ_ONLY_BOUND_CAD_TOOLS = new Set([
+  "acad_get_active_document", "acad_list_open_documents",
+  "cad_get_block", "cad_get_current_layer", "cad_get_entity",
+  "cad_host_status", "cad_inventory_layer_objects",
+  "cad_list_block_definitions", "cad_list_blocks", "cad_list_entities",
+  "cad_list_layers", "cad_preview_delete_entities", "cad_read_entity_properties",
+  "cad_observation_capture_start", "cad_observation_capture_status",
+  "cad_observation_capture_finish", "cad_observation_capture_cancel",
 ]);
 
 interface ToolManifest {
@@ -209,7 +219,7 @@ export async function loadVerifiedLispForCurrentWork(
   return withCadHostLock(binding.host, async () => {
     await activateDrawingContext(binding);
     // Loaded Lisp may autorun and mutate DWG; any earlier Save is stale.
-    invalidateBoundSave(currentToolLease().workId);
+    notePotentialCadMutation(currentToolLease().workId);
     const result = await cadUpstream.callTool("cad_load_lisp_file", {
       path: lispPath,
     });
@@ -546,7 +556,10 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
           return await withCadHostLock(binding.host, async () => {
             await activateDrawingContext(binding);
             const executionId = currentToolLease().workId;
-            if (tool.name !== "acad_save_bound_document") invalidateBoundSave(executionId);
+            if (tool.name !== "acad_save_bound_document") {
+              invalidateBoundSave(executionId);
+              if (!READ_ONLY_BOUND_CAD_TOOLS.has(tool.name)) notePotentialCadMutation(executionId);
+            }
             const result = (await cadUpstream.callTool(tool.name, upstreamArgs)) as any;
             if (!isToolErrorResult(result)) {
               recordCadCandidateSuccess(executionId, publicName);
@@ -682,7 +695,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
           // Consume outer authority before the upstream destructive call, matching
           // the CAD MCP one-shot semantics even if transport fails afterward.
           deletePreviewOwners.delete(token);
-          invalidateBoundSave(currentToolLease().workId);
+          notePotentialCadMutation(currentToolLease().workId);
 
           return await withCadHostLock(owner.host, async () => {
             await activateDrawingContext(binding);
@@ -733,7 +746,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
 
           return await withCadHostLock(binding.host, async () => {
             await activateDrawingContext(binding);
-            invalidateBoundSave(currentToolLease().workId);
+            notePotentialCadMutation(currentToolLease().workId);
             const result = await cadUpstream.callTool(
               "cad_load_lisp_file",
               { path: lispPath }
@@ -814,7 +827,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
             );
           }
 
-          invalidateBoundSave(currentToolLease().workId);
+          notePotentialCadMutation(currentToolLease().workId);
           return await withCadHostLock(binding.host, async () => {
             await activateDrawingContext(binding);
             const result = await cadUpstream.callTool(
