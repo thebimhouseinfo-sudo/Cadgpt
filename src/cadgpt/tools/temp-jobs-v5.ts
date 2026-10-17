@@ -1,4 +1,7 @@
 import { z } from "zod";
+import path from "node:path";
+import fs from "node:fs/promises";
+import { importLibrary } from "./user-assets.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { currentToolLease } from "../lib/work-registration.js";
 import { loadVerifiedLispForCurrentWork } from "./cad-proxy.js";
@@ -101,6 +104,29 @@ export function registerTempJobV5Tools(server: McpServer): void {
       const l = currentToolLease();
       return toolResult("temp_job_done", await finishTempJob(id, l.workId, l.sessionKey));
     } catch (e) { return toolError("temp_job_done", e); }
+  });
+  server.registerTool("temp_job_lisp_publish", {
+    title: "Publish selected Temp Lisp folder as independent reusable Lisp library",
+    description: "Only on explicit user request. Copy the owning Temp Lisp folder and its dependencies to an independent managed library, index/register once, refuse existing library collisions. No Temp Job promotion or mandatory rerun.",
+    inputSchema: {
+      id: z.string().uuid(),
+      relative_file: z.string().min(1),
+      library_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/),
+      library_name: z.string().min(1),
+    },
+  }, async ({ id, relative_file, library_id, library_name }) => {
+    try {
+      const lease = currentToolLease();
+      const source = await getOwnedTempLisp(id, lease.workId, lease.sessionKey, relative_file);
+      const folder = path.dirname(source);
+      const entries = await fs.readdir(folder, { withFileTypes: true });
+      if (entries.some(e => e.isSymbolicLink())) throw new Error("TEMP_LISP_DEPENDENCY_SYMLINK");
+      const published = await importLibrary("lisp", library_id, library_name, folder, false);
+      return toolResult("temp_job_lisp_publish", {
+        ...published, source, copied_folder: folder,
+        note: "Published independently; original Temp Job and its result are untouched.",
+      });
+    } catch (error) { return toolError("temp_job_lisp_publish", error); }
   });
   server.registerTool("temp_job_clear", {
     title: "Clear completed Temp Jobs",
