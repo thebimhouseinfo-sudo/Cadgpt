@@ -442,6 +442,29 @@ export async function prepareJobRuntimeForExecution(
           }
         }
 
+        // Registered legacy Jobs may keep the canonical checklist template at
+        // <Job>/runtime/JOB_STEPS.md. Seed a V5 execution-local copy, not a
+        // shared writable checklist. Previous checkmarks are reset below.
+        if (v5OwnedRun && (!current || jobRootKey(current.job_root) !== rootKey)) {
+          const template = path.join(jobRoot, "runtime", JOB_STEPS_FILENAME);
+          const targetSteps = jobStepsPath({ runtime_root: runtimeRoot } as JobRuntimeContext);
+          const exists = await fs.lstat(targetSteps).then(() => true, (error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return false;
+            throw error;
+          });
+          if (!exists) {
+            const templateInfo = await fs.lstat(template).catch((error: NodeJS.ErrnoException) => {
+              if (error.code === "ENOENT") return null;
+              throw error;
+            });
+            if (templateInfo) {
+              if (!templateInfo.isFile() || templateInfo.isSymbolicLink()) {
+                throw new Error("V5_JOB_STEPS_UNSAFE_LEGACY_TEMPLATE");
+              }
+              await fs.writeFile(targetSteps, await fs.readFile(template), { flag: "wx" });
+            }
+          }
+        }
         // A freshly claimed run resets stale ✓/✗ marks (including after a
         // driver crash), but repeated prepare in the SAME active execution
         // keeps its progress; none of this touches actual raw/results.
