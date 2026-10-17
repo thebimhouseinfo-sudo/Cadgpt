@@ -13,7 +13,7 @@ import {
   getUserLibrariesManifestPath,
 } from "../lib/appdata.js";
 import { getRepoRoot, isPathInside, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
-import { currentToolLease } from "../lib/work-registration.js";
+import { currentToolLease, activeWorkForSession } from "../lib/work-registration.js";
 import {
   getJobLocalCompatStatus,
   markJobLocalCompatChecked,
@@ -870,17 +870,16 @@ export function registerJobAuthoringTools(server: McpServer): void {
         "Authorize a Reasoning Job runtime and return a FRESH copy of its active JOB.md so the model can follow current branching rules on EVERY invocation. Re-evaluate read-only start conditions (raw/result existence) in the order specified by that JOB.md, then ask only its actual conditional user choices. Do not reuse previous-run route decisions or instructions merely discussed in chat. Starting Job B releases stale Job A authority without deleting files. Supply registered User Job id or managed draft path.",
       inputSchema: {
         id: z.string().min(1).optional(),
-        draft_path: z
-          .string()
-          .min(1)
-          .optional(),
+        draft_path: z.string().min(1).optional(),
+        source_path: z.string().min(1).optional()
+          .describe("V5 direct Builder RUN of an existing final managed library JOB.md, without registry publication or draft."),
       },
     },
-    async ({ id, draft_path }) => {
+    async ({ id, draft_path, source_path }) => {
       try {
-        if (Boolean(id) === Boolean(draft_path)) {
+        if ([id, draft_path, source_path].filter(Boolean).length !== 1) {
           throw new Error(
-            "JOB_RUNTIME_TARGET_REQUIRED: provide exactly one of id or draft_path."
+            "JOB_RUNTIME_TARGET_REQUIRED: provide exactly one of id, source_path or legacy draft_path."
           );
         }
 
@@ -911,6 +910,27 @@ export function registerJobAuthoringTools(server: McpServer): void {
                 entry.relative_path
               )
             );
+        } else if (source_path) {
+          if (!path.isAbsolute(source_path) || path.win32.isAbsolute(source_path) !== (process.platform === "win32") ||
+              path.basename(source_path).toLowerCase() !== "job.md") {
+            throw new Error("V5_JOB_SOURCE_ABSOLUTE_JOB_MD_REQUIRED");
+          }
+          const sourceRoot = await fs.realpath(getJobLibrariesRoot());
+          const realSource = await fs.realpath(source_path);
+          if (!isPathInside(realSource, sourceRoot)) throw new Error("V5_JOB_SOURCE_OUTSIDE_MANAGED_LIBRARY");
+          const actual = await fs.realpath(path.dirname(realSource));
+          // Alias under the library is acceptable only when it maps to the same
+          // canonical directory (Windows DOS aliases are normalized by realpath).
+          if (!isPathInside(actual, sourceRoot)) throw new Error("V5_JOB_SOURCE_OWNER_ESCAPE");
+          const currentWork = activeWorkForSession(currentToolLease().sessionKey);
+          if (!currentWork || currentWork.executionId !== currentToolLease().workId ||
+              currentWork.ownerType === "job" ||
+              !["jobcreate", "job-authoring"].includes(currentWork.ownerId) &&
+              !currentWork.capabilities.includes("job-authoring")) {
+            throw new Error("V5_JOB_SOURCE_BUILDER_WORK_REQUIRED");
+          }
+          jobFile = realSource;
+          jobId = "v5:" + path.relative(sourceRoot, path.dirname(jobFile)).replaceAll("\\", "/");
         } else {
           if (!path.isAbsolute(draft_path!)) {
             throw new Error(
