@@ -17,6 +17,6 @@ test("V5 can Save bound DWG immediately and avoid duplicate Save at finish", () 
 });
 
 test("V5 invalidates earlier Save on later Lisp mutation or autorun LOAD", () => {
-  assert.match(proxy, /invalidateBoundSave\(currentToolLease\(\)\.workId\)/);
+  assert.match(proxy, /notePotentialCadMutation\(currentToolLease\(\)\.workId\)/);
   assert.match(proxy, /noteVerifiedBoundSave\(executionId, binding\.runtime_document_identity\)/);
 });
