@@ -185,3 +185,16 @@ Before declaring any implementation slice ready, Reviewer checks:
 **RL-02 verdict: PLAN PASS for alignment with human V5 theory. Implementation NOT STARTED.**
 
 No source implementation authorized by this document itself.
+
+## H. Implementation checkpoint — 2026-10-17
+
+**Only branch:** `feature/core-function-v5`; no additional feature branch created; `main` unchanged in this implementation turn.
+
+- **WP0 SOURCE MAP WRITTEN:** `docs/roadmap/CADGPT_V5_DEPENDENCY_MAP.md` records real modules and migration order.
+- **WP1 PARTIAL SOURCE WRITTEN:** `src/cadgpt/lib/owned-source.ts` implements explicitly scoped reusable Job/Lisp/Temp owner roots, canonical target resolution, per-Temp random UUID generator; `tests/v5-owned-source.test.mjs` exercises own-folder, cross-owner, traversal and symlink rejection.
+- **Temp AppData root added:** `lib/appdata.ts` provisions `temp-jobs` in the V5 branch.
+- **NOT DONE:** Work/Builder caller authorization integration, file tool routing, Temp Job tool allocator and cleanup, result naming, Lisp direct load/promotion, SYSTEM helper simplification, legacy compatibility conversion, full regression and real CAD. No such outcome is claimed.
+- **RUN EVIDENCE:** Source commits verified through GitHub, but Windows TypeScript/test execution remains **UNVERIFIED**. This is engineering work in progress, not Job TEST/PROMOTE machinery.
+- **NEXT:** integrate WP1 into Builder-authorized file calls after verifying identity/ownership entrypoint, without granting managed `libraries/**` wildcard write access; keep every change on this same branch.
+
+**Review note:** No V5 gate, extra planner, independent test phase or new branch was introduced. Do not describe partial WP1 as complete WP1.
