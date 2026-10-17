@@ -73,6 +73,7 @@ const CORE_TOOLS = [
   { name: "job_run_direct", class: "workflow.jobs", summary: "Run one direct Job without model planning: built-in bounded executor for official Internal Jobs or fixed Python runtime for User .py Jobs." },
   { name: "v5_source_create", class: "workflow.builder", summary: "Builder creates owned Job/Lisp source directly in final managed folder; no draft stage." },
   { name: "v5_source_update", class: "workflow.builder", summary: "Builder repairs owned Job/Lisp source in place with exact SHA-256 compare-and-set." },
+  { name: "v5_source_publish", class: "workflow.builder", summary: "On explicit user request index already-authored managed Job/Lisp library without draft promotion." },
   { name: "temp_job_create", class: "workflow.temp", summary: "Builder allocates isolated UUID Temp Job workspace; no JOB.md required." },
   { name: "temp_job_source_create", class: "workflow.temp", summary: "Create a new source file only inside calling Builder-owned Temp Job." },
   { name: "temp_job_source_update", class: "workflow.temp", summary: "Hash-guarded repair of Builder-owned Temp Job source file." },
