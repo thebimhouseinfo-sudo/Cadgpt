@@ -57,7 +57,7 @@ Model response / tool call → Local dispatcher → CAD/BIM result → Model API
 
 - **Provider-agnostic nội bộ:** CAI/RAI có adapter để **nhà phát triển** cấu hình providers, endpoints, model profiles, credentials và routing; **không cung cấp model picker, BYOK/API-key settings hoặc custom API URL cho người dùng bản thương mại**. DeepSeek/Ollama Cloud chỉ là ứng viên upstream. Không giả định mọi API/model có tool-calling giống nhau; mỗi cấu hình phải được kiểm thử/kiểm soát.
 - **Cloud AI do CAI/RAI cung cấp:** Native Add-in gửi inference qua **CAI/RAI AI Proxy** (HTTPS) tới các upstream providers đã được chọn và có quyền thương mại phù hợp; upstream credentials chỉ lưu phía server. Local Add-in nhận tool/function calls, kiểm tra quyền rồi thực thi CAD/BIM. **Không có BYOK trong trải nghiệm khách hàng thương mại.**
-- **Shared local AI server cho doanh nghiệp (hướng triển khai riêng):** IT có thể triển khai **máy chủ AI/GPU riêng** (ví dụ Ollama) trong LAN/VPN để nhiều workstation dùng chung, nhưng **CAI/RAI phát hành và kiểm soát model bundle/profiles và routing được hỗ trợ**; khách hàng không tự chọn model. IT quản lý cơ sở hạ tầng, không phải model selection. Cấu hình thực tế, hợp đồng hỗ trợ và năng lực vận hành vẫn cần nghiên cứu; không bắt buộc tunnel.
+- **Shared local AI server cho doanh nghiệp (hướng triển khai riêng):** IT có thể triển khai **máy chủ AI/GPU riêng** (ví dụ Ollama) trong LAN/VPN để nhiều workstation dùng chung, nhưng **CAI/RAI phát hành và kiểm soát model bundle/profiles và routing được hỗ trợ**; khách hàng không tự chọn model. IT quản lý cơ sở hạ tầng, không phải model selection. **CAI/RAI không thu phí tunnel hoặc AI inference quota đối với self-host; vẫn thu Add-in base + gói sử dụng và áp dụng CAI/RAI tool quota của gói.** Cấu hình thực tế, hợp đồng hỗ trợ và năng lực vận hành vẫn cần nghiên cứu; không bắt buộc tunnel.
 - **Model local trên workstation:** về mặt kỹ thuật có thể nếu máy đủ mạnh, nhưng **không coi là mặc định hoặc phương án mục tiêu**. AutoCAD/Revit đã dùng nhiều CPU, RAM và đôi khi GPU; chạy LLM nặng cùng máy có thể làm giảm hiệu suất thiết kế. Chỉ xem là ngoại lệ thử nghiệm tùy cấu hình.
 - **Ollama là một API server:** hỗ trợ REST API, tool calling và một **phần** OpenAI-compatible API, ví dụ local `http://localhost:11434/v1/` khi chạy cùng host (cấu hình địa chỉ theo triển khai thực tế). Ollama mặc định bind localhost; LAN deployment do IT quản lý, không tự mở port ra public Internet. Tham khảo: https://docs.ollama.com/api/openai-compatibility , https://docs.ollama.com/capabilities/tool-calling , https://docs.ollama.com/faq .
 - **Bảo mật LAN:** không coi token placeholder của API-compatible Ollama là xác thực thật. Với máy chủ dùng chung cần giới hạn mạng, phân quyền truy cập, TLS/authenticated reverse proxy hoặc biện pháp tương đương do IT quản lý; không chia sẻ server trần ra Internet. Doanh nghiệp quyết định chính sách xử lý dữ liệu dự án và AI usage.
@@ -93,7 +93,7 @@ Model response / tool call → Local dispatcher → CAD/BIM result → Model API
 - **MCP-backed đã có panel:** panel có thể host giao diện AI bên ngoài (như WebView ChatGPT), trong khi MCP/Local Connector/Core xử lý commands và dữ liệu CAD/BIM ở phía dưới. Việc panel không tự chạy inference hoặc workflow chưa phải script-first **không loại trừ** khả năng đóng gói/phân phối add-in qua Autodesk Marketplace.
 - **Native AI là nâng cấp kiến trúc, không phải điều kiện phát hành:** nếu sau này triển khai Native API/managed model/script-first, có thể cập nhật cùng CAI/RAI Add-in; không yêu cầu tạo listing riêng chỉ vì thay AI inference/orchestration. Native mode không sử dụng Cloudflare Tunnel/Remote MCP Gateway để route CAD calls; **MCP-backed mode vẫn có dependency, xác thực và hạ tầng riêng cần đáp ứng**.
 - **Kênh phân phối vs kênh truy cập:** Autodesk Marketplace phân phối/cài đặt/đăng ký **Add-in host**. ChatGPT, Microsoft 365 Copilot, Claude, Grok... vẫn có thể là **AI clients/kênh điều khiển bên ngoài** thông qua tích hợp MCP, nhưng đó là khả năng mở rộng/cổng truy cập của **cùng CAI/RAI**, **không phải thương hiệu sản phẩm khác**.
-- **Trải nghiệm người dùng:** tìm CAI/RAI trên Marketplace, cài Add-in để có panel trong AutoCAD/Revit; trong luồng mua/kích hoạt (theo khả năng platform), **chọn một hoặc nhiều tích hợp ChatGPT, CAI/RAI Native AI, Claude, Grok và thấy giá rõ ràng từng mục + tổng tiền trước thanh toán**. Kích hoạt license và sử dụng các tính năng thực sự được cung cấp. Nếu mode hiện tại yêu cầu đăng nhập dịch vụ AI ngoài, kết nối Internet, tài khoản/gói AI tương thích hoặc MCP integration, **phải công bố trung thực các dependency và chi phí đó**; không quảng cáo là không cần dịch vụ bên ngoài cho tới khi Native AI managed mode được triển khai.
+- **Trải nghiệm người dùng:** tìm CAI/RAI trên Marketplace, cài Add-in để có panel trong AutoCAD/Revit; trong luồng mua/kích hoạt (theo khả năng platform), **chọn GPT, Claude, Grok (tính phí dịch vụ Tunnel/MCP), Native Managed AI (AI quota) hoặc Native Company Self-hosted (0 tunnel/AI inference fee), đồng thời thấy rõ phí base + gói + phụ phí liên quan và tổng tiền**. Kích hoạt license và sử dụng các tính năng thực sự được cung cấp. Nếu mode hiện tại yêu cầu đăng nhập dịch vụ AI ngoài, kết nối Internet, tài khoản/gói AI tương thích hoặc MCP integration, **phải công bố trung thực các dependency và chi phí đó**; không quảng cáo là không cần dịch vụ bên ngoài cho tới khi Native AI managed mode được triển khai.
 - **Package/host integration:** AutoCAD tuân thủ quy chuẩn autoloader/bundle, `PackageContents.xml`, UI/Ribbon khi áp dụng; Revit tuân thủ `.addin` manifest/bundle, Ribbon; test tương thích, cài đặt/gỡ cài đặt/upgrade, khởi động, host state/drawing binding và không gây crash/ảnh hưởng dữ liệu. Thông số packaging thực tế theo Autodesk publisher guidelines ở thời điểm nộp.
 - **License, entitlement và usage:** Marketplace/Autodesk Entitlement API có thể hỗ trợ xác nhận quyền dùng ứng dụng; **không mặc nhiên bao gồm** ledger CAI tool-execution quota, billing AI credits, top-up, B2B seat/license hay reconciliation. Phải xác minh chính sách pricing/trial, purchase flow, khoản thu ngoài Marketplace, thanh toán và tổ chức IT deployment trước release. Một tài khoản/gói CAI/RAI có thể dùng qua các đường truy cập được hỗ trợ, tùy điều khoản/license được chốt sau.
 - **Reviewer/security:** tuân thủ Autodesk review về installer, tính ổn định, compatible versions, privacy/security, third-party auth, việc panel tải nội dung online và quyền dữ liệu. Nếu add-in package expose MCP endpoints/tools, kiểm tra điều kiện MCP security declarations/manifest hiện hành. **Được đăng bán không đồng nghĩa Autodesk bảo chứng AI**.
@@ -220,7 +220,7 @@ Claude / AI khác ──────┘                    │
 
 ### Đã chốt — mô hình kinh doanh
 
-**Subscription theo gói + hạn mức lượt thực thi trong kỳ + mua thêm khi hết hạn mức (top-up).**
+**Giá thương mại = phí Add-in base cố định + phí gói sử dụng (có tool-execution quota) + phụ phí theo kênh AI nếu có; tool quota có thể top-up.** Với GPT/Claude/Grok: thu **dịch vụ Tunnel/Remote MCP**; với Native Managed Cloud AI: thu **AI quota/credits**, không thu tunnel; với Native Company Self-hosted AI: **0 phí tunnel và 0 phí inference quota của CAI/RAI**, nhưng **base + gói vẫn phải trả**. Không ấn định số tiền trước khi có price book.
 
 - **CAI Request** là đơn vị thương mại: một **lượt thực thi CAI tool hợp lệ**, dù được gọi qua **Remote MCP Mode** hay **Native API Mode**, **không phải** HTTP/Workers request hoặc API token. Việc trả dữ liệu qua response **không tự tạo thêm lượt CAI**. Chi tiết enforcement/quota sync của native mode chưa chốt.
 - AI suy luận/chat mà **không gọi CAI tool**: không tiêu thụ CAI Request.
@@ -230,44 +230,66 @@ Claude / AI khác ──────┘                    │
 - Gateway phải ghi trạng thái đủ để **reserve/commit/reconcile** quota khi gửi lệnh, thành công, từ chối trước thực thi, mất kết nối hoặc outcome chưa xác định. Không tự tuyên bố exactly-once trong mọi lỗi mạng.
 - Quota gói được cấp lại theo kỳ; khách hàng có thể mua thêm credits. Quy tắc chi tiết về thời hạn credits, rollover, đơn giá, giá gói, giới hạn thiết bị và xử lý thất bại **chưa chốt**.
 
-### Checkout: người mua chọn tích hợp AI và thấy rõ giá (định hướng đã chốt 2026-10-17)
+### Checkout: phí Add-in cố định + gói sử dụng + phí theo phương thức AI (đã chốt 2026-10-17)
 
-**Quyết định sản phẩm:** khi mua/đăng ký **CAI Add-in** hoặc **RAI Add-in**, khách hàng được **lựa chọn tích hợp ChatGPT (GPT), CAI Native AI (tên hiển thị tương ứng RAI AI cho Revit), Claude, Grok**. Đây là **lựa chọn kênh AI integration/entitlement**, **không phải chọn model hoặc nhà cung cấp inference nội bộ**. Các lựa chọn nằm dưới **cùng một sản phẩm Add-in**; không cần listing app khác hoặc mua lại Core license để đổi integration. Cho phép chọn một hoặc nhiều tích hợp và mở rộng/đổi sau mua theo policy thương mại sẽ chốt.
+**Công thức thương mại đã chốt:** mọi khách hàng mua **CAI (AutoCAD)** hoặc **RAI (Revit)** đều trả **phí Add-in base cố định** và chọn **gói sử dụng** (bao gồm quota tool executions/giới hạn quyền lợi theo gói; mức tiền và số quota chưa quyết định). Chỉ phát sinh **phụ phí liên quan đến cách AI được cung cấp**. Các mode cùng thuộc **một sản phẩm Add-in**, không phải các sản phẩm hoặc base-license riêng.
 
-| Lựa chọn trên checkout | AI path | Giá CAI/RAI phải hiển thị | Chi phí bên ngoài phải công bố |
+| Lựa chọn tích hợp khi mua | Phụ phí CAI/RAI trên base + gói | Ai cung cấp inference? | Phí ngoài CAI/RAI |
 | --- | --- | --- | --- |
-| **ChatGPT / GPT integration** | ChatGPT ↔ CAI/RAI Remote MCP | **Giá integration/chu kỳ, hoặc ghi rõ “Đã gồm / 0” nếu included** | Subscription/quota của OpenAI (nếu cần, khách thanh toán OpenAI; phụ thuộc điều kiện hỗ trợ MCP của plan) |
-| **CAI Native AI / RAI Native AI** | Native panel ↔ CAI/RAI-managed inference ↔ local CAD/BIM Core | **Giá tích hợp Native/chu kỳ + AI credits định mức, hoặc giá AI credit top-up**; luôn thể hiện lượng AI credits được cấp | **Không yêu cầu khách có API key hay subscription DeepSeek/Ollama riêng** cho managed cloud variant; inference cost là trách nhiệm CAI/RAI |
-| **Claude integration** | Claude ↔ CAI/RAI Remote MCP | **Giá integration/chu kỳ, hoặc “Đã gồm / 0”** | Subscription/quota của Anthropic nếu yêu cầu cho mức sử dụng; khách thanh toán Anthropic |
-| **Grok integration** | Grok ↔ CAI/RAI Remote MCP | **Giá integration/chu kỳ, hoặc “Đã gồm / 0”** | Subscription/quota của xAI nếu yêu cầu; khách thanh toán xAI |
+| **GPT / ChatGPT** | **Tunnel / Remote MCP service fee** | OpenAI, tài khoản người dùng | Subscription/plan AI do OpenAI thu nếu cần |
+| **Claude** | **Tunnel / Remote MCP service fee** | Anthropic, tài khoản người dùng | Subscription/plan AI do Anthropic thu nếu cần |
+| **Grok** | **Tunnel / Remote MCP service fee** | xAI, tài khoản người dùng | Subscription/plan AI do xAI thu nếu cần |
+| **CAI Native AI / RAI Native AI — Managed Cloud** | **AI quota / AI credits (theo gói hoặc nạp thêm)**; **không có tunnel fee** | AI inference do CAI/RAI chọn, quản lý và thanh toán cho upstream | Không yêu cầu khách mua API key/model/subscription riêng cho Native |
+| **CAI Native AI / RAI Native AI — Company Self-hosted** | **0 phí tunnel + 0 phí AI quota/inference của CAI/RAI** | Máy chủ Ollama/AI nội bộ của doanh nghiệp, model bundle/profile do CAI/RAI kiểm soát | **Doanh nghiệp tự chi trả máy chủ, GPU, điện, IT, vận hành**; không phải dịch vụ miễn phí hạ tầng |
 
-**Các số tiền cụ thể chưa được chủ sản phẩm phê duyệt; KHÔNG tự điền số USD/VND giả vào price book hoặc listing.** “Ghi rõ mức giá” là **điều kiện bắt buộc trước khi mở checkout**, nghĩa là mỗi tích hợp được bán phải có **giá số thực tế**, **đơn vị tiền tệ**, **chu kỳ** (tháng/năm/một lần), **quyền lợi đi kèm**, **giá gia hạn**, **thuế/phí**, **đơn giá top-up** nếu có. Nếu integration miễn phí kèm license, **ghi “Đã bao gồm / 0 [đơn vị tiền tệ]”, không bỏ trống**. Nếu một tích hợp chưa triển khai hoặc chưa cho phép mua, ghi **“Sắp ra mắt — chưa thể mua”**, **không hiển thị giá như đang bán**. Không công bố giá bên thứ ba như mức cố định của CAI/RAI.
+**Phí Add-in base + phí gói sử dụng vẫn áp dụng ở mọi lựa chọn, kể cả self-host.** Cụm từ **“self-host không tính phí”** chỉ có nghĩa **CAI/RAI không thu tunnel fee và không bán AI inference quota cho những lượt AI do khách tự vận hành trên server của họ**, **không có nghĩa miễn phí license, tool-execution package hoặc top-up công cụ**.
 
-**Breakdown phải xuất hiện trước nút thanh toán:**
+**Quy tắc tính phí:**
+
+1. **Base fixed fee:** cố định theo sản phẩm/gói thương mại được công bố (đơn vị, chu kỳ thanh toán chưa chốt); không thay đổi chỉ vì người dùng chọn GPT, Claude, Grok hoặc Native.
+2. **Usage package fee:** tùy gói quyền lợi/tool-execution quota khách chọn; tool quota là quyền dùng CAI/RAI Core, **không đồng nhất với token AI**. Có thể top-up tool executions theo chính sách gói.
+3. **MCP Tunnel service fee:** áp dụng khi bật **ít nhất một** kênh GPT/Claude/Grok qua Remote MCP. Đây là **phí dịch vụ kết nối/tunnel/gateway của CAI/RAI**, **không phải khẳng định Cloudflare thu tiền mỗi tunnel**. Khi một tài khoản chọn nhiều AI clients dùng **cùng hạ tầng MCP**, **không mặc định nhân ba tunnel fee**; nguyên tắc gộp theo account/org/seat/device và đơn giá cần được chốt riêng, không tính trùng một dịch vụ kết nối.
+4. **Native Managed AI fee:** không dùng tunnel; AI consumption trừ **AI quota/credits** theo chính sách định giá CAI/RAI. Nhà phát triển chọn model/providers/routing; khách không có API key, model picker hay BYOK. Có thể có AI quota bao gồm trong gói và top-up; chưa chốt đơn giá và chu kỳ.
+5. **Native Self-hosted AI fee:** **0 CAI/RAI tunnel fee, 0 CAI/RAI AI usage/AI credits charge**, không khấu trừ AI credits cho inference chạy trên server doanh nghiệp. **Vẫn dùng/ghi nhận CAI/RAI tool-execution quota theo gói base + package**; bảo mật, model bundle và vận hành server là vấn đề triển khai và hỗ trợ riêng. Không có nghĩa CAI chịu chi phí hardware/GPU.
+6. Nếu khách chọn nhiều phương thức (ví dụ GPT + Grok + Native Managed AI), cộng **base + package + đúng khoản tunnel service fee đã xác định + phần Native AI quota thực dùng/mua**, **không biến mỗi model/provider thành một license riêng**. Self-host không làm phát sinh khoản AI usage fee của CAI/RAI.
+
+**Bảng giá cần xuất hiện trước thanh toán, nhưng con số chưa được chủ sản phẩm phê duyệt**: tuyệt đối không tự bịa giá USD/VND, quota hoặc số seat. Khi công bố, mọi dòng cần giá thực tế, đơn vị tiền tệ, chu kỳ, quota kèm, điều kiện gia hạn, thuế/phí, top-up và tổng tiền cuối cùng. Nếu số tiền bằng 0 hoặc đã nằm trong gói, hiển thị rõ **0 / Đã bao gồm**. Phương thức chưa sẵn sàng (Native chưa triển khai, client integration chưa E2E pass) hiển thị **“Sắp ra mắt — chưa thể mua”**, không bán trước.
+
+**Mẫu price breakdown (placeholder, không phải giá bán đã chốt):**
 
 ```text
-CAI / RAI Add-in base subscription        [AMOUNT] / [PERIOD]
-Selected AI integrations:
-   [x] ChatGPT (GPT)                       [AMOUNT] / [PERIOD]
-   [x] CAI Native AI / RAI Native AI       [AMOUNT] / [PERIOD]
-       Included AI credits:                [QUANTITY + UNITS]
-       Extra AI credit top-up:             [AMOUNT] per [UNIT]
-   [ ] Claude                              [AMOUNT] / [PERIOD]
-   [ ] Grok                                [AMOUNT] / [PERIOD]
-Included CAD/BIM tool executions:          [QUANTITY]
-Extra tool-execution top-up:               [AMOUNT] per [UNIT]
-Discounts / Taxes / Other fees:           [AMOUNT]
-Total payable today:                      [AMOUNT + CURRENCY]
-Recurring renewal:                        [AMOUNT + CURRENCY / PERIOD]
-External AI provider costs, if any:       NOT INCLUDED; provider-billed
+CAI / RAI ADD-IN
+  Base fixed fee:                            [AMOUNT / PERIOD]
+  Selected usage package:                    [PACKAGE + AMOUNT / PERIOD]
+  Included CAD/BIM tool executions:           [COUNT]
+  Additional tool execution top-up:           [AMOUNT / UNIT] (only if purchased)
+
+AI CONNECTION CHOICES
+  [x] GPT/ChatGPT
+  [x] Grok
+  [ ] Claude
+  Remote MCP / Tunnel service:                [AMOUNT / PERIOD] (shared fee, not x2/x3)
+
+  [ ] Native Managed Cloud AI
+  Native AI included quota:                    [AI CREDIT AMOUNT] (if selected)
+  AI usage / AI credit top-up:                  [AMOUNT / UNIT] (if selected)
+  Native Managed Cloud tunnel fee:             0
+
+  [ ] Native Company Self-hosted AI
+  CAI/RAI Tunnel service fee:                  0 (for self-host mode)
+  CAI/RAI AI inference quota/usage charge:      0 (for self-host mode)
+  Company GPU/server/IT costs:                 External, company-funded
+
+Discounts/tax/fees:                            [AMOUNT]
+Total payable today:                           [AMOUNT + CURRENCY]
+Recurring renewal:                             [AMOUNT + CURRENCY / PERIOD]
+Third-party GPT/Grok/Claude subscription:      Provider-billed, not included
 ```
 
-- **Đơn vị thương mại tách riêng:** CAI/RAI Core subscription + entitlement/activation của tích hợp (giá có thể bằng 0 hoặc đã kèm gói) + CAI/RAI tool-execution quota/top-up + Native AI credits/top-up. **Không tự áp một khoản phí riêng cho mỗi MCP client khi chưa chốt price book.** Khi đã chốt giá, tổng tiền checkout phải tính rõ ràng và khớp invoice/license.
-- **Không ép khách chọn model:** khách chọn **ChatGPT / Native AI / Claude / Grok** như kênh sử dụng; riêng **Native AI** không có API provider/model/temperature/routing picker. CAI/RAI operator chọn upstream models và kiểm thử.
-- **Marketplace support chưa xác minh:** Autodesk Marketplace có quy trình bán desktop subscription và entitlement, **chưa xác nhận checkout của Autodesk cho phép một listing chứa nhiều dynamic integration options/add-ons và AI credit top-up**. Chỉ thiết kế **checkout option selector tại Marketplace nếu nền tảng/hợp đồng cho phép**; nếu không, dùng bước **activation/plan selection trong account portal/entitlement flow của CAI/RAI** sau khi cài/mua Add-in, **chỉ khi phù hợp điều khoản Autodesk về thanh toán ngoài Marketplace**. Không tuyên bố native Autodesk checkout đã hỗ trợ UI này.
-- **Khả dụng kỹ thuật theo từng mode:** ChatGPT/Claude/Grok còn phải qua điều kiện client-plan, approval/admin và E2E integration tests; Native AI chưa được triển khai. Chỉ bật lựa chọn checkout có khả năng cung cấp thực tế; không bán trước bằng lời hứa không có ngày ra mắt chắc chắn.
-- **Organization checkout:** công ty chọn số seats/device/usage pool và các integrations được quản trị viên phê duyệt; các mức giá/cách cấp license và hóa đơn Business cần price book riêng, không giả định nhân viên tự mua qua Marketplace.
-- **Chốt giá là quyết định thương mại riêng sau cost modeling:** tham chiếu API token costs, tool workload, gateway operations, commission/tax, hỗ trợ kỹ thuật, concurrency và hạn mức; không biến tài liệu định hướng thành bảng giá public có hiệu lực.
+- **Không cho user cấu hình model:** khách chọn **kênh GPT / Claude / Grok / Native Managed / Native Self-hosted** khi mua/kích hoạt, nhưng **không chọn model, temperature, reasoning budget, API URL, provider hoặc GPU sizing policy** trong CAI/RAI. IT doanh nghiệp triển khai self-host theo profile đã được CAI/RAI hỗ trợ.
+- **Marketplace checkout chưa xác minh:** Autodesk có quy trình app subscription/entitlement, nhưng chưa xác nhận hỗ trợ multi-option checkout, tunnel fee và AI quota top-up ngay trong listing. Nếu không, luồng lựa chọn/gia hạn có thể nằm ở CAI/RAI entitlement portal **chỉ khi đúng chính sách thanh toán Autodesk**. Phải công bố dependency/giá AI plan bên thứ ba.
+- **Organization:** doanh nghiệp mua theo gói và pooled quota, IT quản lý thiết bị/nhân viên; cách gộp tunnel fee và phân bổ quota theo organization cần định giá rõ trước release.
+- **Chưa chốt các đơn giá:** base fee, package tiers, giá tunnel service, AI credits và tool top-up; quy tắc gộp/tách tunnel fee khi mua nhiều client và mức hỗ trợ self-host. Chỉ ghi mô hình, không mở release/billing development ngay.
 
 ### Hai đối tượng khách hàng
 
@@ -342,6 +364,6 @@ Cho phép **nghiên cứu dần** và tổ chức **một nhóm beta giới hạ
 
 > **CAI/RAI hướng tới nền tảng CAD/BIM automation mở: (A) Remote MCP Mode — ChatGPT-first, ưu tiên Microsoft 365 Copilot doanh nghiệp, dùng chung remote integration/gateway và nhiều local connectors; (B) Native AI Mode tương lai — chat native trong CAD/BIM Add-in, **CAI/RAI tự chọn và điều phối model/API nội bộ**, có thể dùng cloud providers hoặc CAI-approved Ollama server của doanh nghiệp, tool thực thi local, **không có model picker/BYOK và không đi qua tunnel/MCP Cloud Gateway**. Bản thương mại bán CAI/RAI subscriptions/tool-execution quotas + top-up; Native AI có thể bán thêm AI credits do CAI/RAI quản lý. Doanh nghiệp mua và IT triển khai; ngôn ngữ do AI thích nghi; MCP Dev & Repair chỉ ở Development.**
 >
-> **Kênh thương mại mục tiêu:** **mỗi CAI (AutoCAD) và RAI (Revit) là một Add-in có panel tích hợp**, có thể phân phối/bán qua **Autodesk Design and Make Marketplace ngay cả khi backend còn dùng MCP**; Native AI là hướng nâng cấp vận hành bên trong cùng sản phẩm, **không phải sản phẩm thứ hai**. **Khi mua hoặc kích hoạt**, khách chọn **ChatGPT (GPT), CAI/RAI Native AI, Claude, Grok** (một hoặc nhiều tích hợp), **thấy rõ giá từng lựa chọn, phí AI bên ngoài và tổng tiền trước thanh toán**; hình thức checkout trong Autodesk hay portal riêng phải kiểm tra điều khoản Marketplace. AI providers ở Native vẫn do CAI/RAI quản lý. Chưa chốt giá số, chưa có bản submit/review được Autodesk chấp nhận.
+> **Kênh thương mại mục tiêu:** **mỗi CAI (AutoCAD) và RAI (Revit) là một Add-in có panel tích hợp**, có thể phân phối/bán qua **Autodesk Design and Make Marketplace ngay cả khi backend còn dùng MCP**; Native AI là hướng nâng cấp vận hành bên trong cùng sản phẩm, **không phải sản phẩm thứ hai**. **Khi mua hoặc kích hoạt**, khách chọn **GPT/Claude/Grok (phí kết nối Tunnel/MCP), Native Managed AI (AI quota), hoặc Native Company Self-hosted (0 CAI/RAI tunnel/inference quota fee)**; luôn trả **Add-in base cố định + gói sử dụng**, được xem giá/tổng tiền và phí AI bên ngoài trước thanh toán; hình thức checkout trong Autodesk hay portal riêng phải kiểm tra điều khoản Marketplace. AI providers ở Native vẫn do CAI/RAI quản lý. Chưa chốt giá số, chưa có bản submit/review được Autodesk chấp nhận.
 >
 > **Hiện tại:** tiếp tục phát triển core CAI/RAI; có thể nghiên cứu Cloud Beta nhỏ để kiểm chứng routing, counting và quota distribution. Mở rộng CAD/BIM khác và triển khai thương mại toàn diện **chưa nằm trong phạm vi hiện tại**.
