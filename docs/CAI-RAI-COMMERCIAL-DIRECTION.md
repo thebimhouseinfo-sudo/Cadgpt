@@ -48,6 +48,35 @@
 3. **Job Pack Library / Store:** tập hợp Job đã chuẩn hóa, kiểm thử và phân loại theo bộ môn/tác vụ để khách **tải về và sử dụng ngay**, giảm chi phí tự tạo từ đầu. Store chỉ download về làm input cho **Job Import đã có**; không xây lại registry/executor.
 4. **Phân phối và bảo trì năng lực:** khách mua Add-in + gói sử dụng, chọn kênh AI (GPT/Claude/Grok/CAI-managed hoặc self-host); cùng hệ sinh thái Job/Job Pack có thể mở rộng, cập nhật và được hỗ trợ kỹ thuật, độc lập với model AI hay kiểu kết nối bên dưới.
 
+#### Nguyên tắc tự động hóa: Data-first, Script-first; không dùng AI thao tác từng phần tử khi đã có thuật toán
+
+**Bài học sản phẩm từ use case Revit:** việc model có thể gọi Revit MCP và dựng từng cột là **khả năng biểu diễn công nghệ**, nhưng chưa phải phương án tối ưu về thời gian, token hay khả năng kiểm thử. Với bài toán **dựng cột theo bản vẽ định vị**, nếu có thể trích xuất thành bảng có cấu trúc, một **Job sử dụng CSV + Dynamo graph/Revit API script đã kiểm thử** thường phù hợp hơn việc model tự chọn/gọi từng lệnh đặt cột.
+
+```text
+Bản vẽ định vị cột / CSV sẵn có
+       │
+       ├─ Nếu chỉ là hình ảnh: AI/human đọc/đối chiếu dữ liệu cần thiết
+       │                         (không được đoán tọa độ thiếu)
+       ▼
+Column data table (ID, X, Y, Level, FamilyType, Rotation, ...)
+       │
+Validate: coordinate system, units, levels, types, duplicates, missing values
+       │
+Approved Job → Dynamo graph hoặc Revit API script
+       │
+Batch place/update column instances qua Revit host transaction rules
+       │
+Readback: count, IDs, locations, family types, errors; user confirmation/save
+```
+
+- **Quy tắc chọn phương pháp:** tác vụ lặp lại với dữ liệu rõ và luật hình học xác định → ưu tiên script/Job (Dynamo, Revit API, AutoLISP hoặc CAD-native code); tác vụ yêu cầu hiểu ngôn ngữ/ảnh, mapping mơ hồ hoặc thiết kế phương án mới → mới gọi AI cho **đúng công đoạn cần suy luận**. Model không cần giữ toàn bộ công việc thiết lập hình học trong từng bước reasoning.
+- **Không tuyệt đối hóa ảnh → CSV:** khi nguồn chỉ là ảnh hoặc PDF raster, việc nhận dạng vị trí/ký hiệu và tọa độ còn có sai số; cần căn cứ grid, scale, units, tọa độ dự án/linked CAD, levels/family type và review dữ liệu trước khi đặt cột. CSV chỉ hiệu quả khi dữ liệu được giải mã và xác nhận đúng.
+- **Ưu tiên một Job đã kiểm thử thay cho N tương tác model-per-element:** tránh vòng lặp model tự quyết định từng Revit API call. Một Job có thể gọi công cụ theo batch hoặc chia chunk theo giới hạn Revit; số lần thực thi công cụ thương mại tuân theo **logical CAI/RAI execution rules** đã chốt, không tự hứa “0 tool quota”. **Không gọi model inference trong vòng lặp nếu không cần** sẽ giảm AI tokens/API credits; batch time/performance còn tùy khối lượng model và môi trường.
+- **Validation và authority bắt buộc:** trước thao tác mutating phải kiểm tra tài liệu đang bind, tọa độ/đơn vị, type/level mapping, số lượng; sau thao tác phải đối chiếu phần tử được tạo/cập nhật, xử lý conflict/duplicates, transaction failure và save theo policy. Không thay thế kiểm tra kỹ thuật bằng kết luận của AI rằng hình vẽ “trông đúng”.
+- **Cơ chế tạo Job là điểm khác biệt:** khách không cần tự biết viết Dynamo/CSV cho mọi quy trình; CAI/RAI có thể hỗ trợ tạo Job reusable, test/promote, và **phát hành Job Pack cho khách khác tải và Import** qua Store đã định hướng. Người dùng cuối làm việc với automation, không phải một chuỗi command prompts.
+- **Không marketing thiếu căn cứ:** chưa đo benchmark cụ thể về speed, chính xác và token consumption của Claude-MCP vs Dynamo-CSV trên cùng input, nên mô tả là **ưu thế thiết kế/giả thuyết cần đo**, không quảng cáo con số giảm token, “nhanh hơn X lần”, hoặc loại trừ mọi trường hợp agentic dựng mô hình có ích.
+- **Đối chiếu Autodesk:** Autodesk Dynamo docs nêu rõ graph dùng để tự động hóa thao tác lặp lại và tạo geometry theo tọa độ; Autodesk Developer Blog đã mô tả Revit family instance placement từ danh sách XYZ trong text file. Nguồn: https://help.autodesk.com/cloudhelp/2025/ENU/RevitDynamo/files/RevitDynamo_About_Creating_Dynamo_Graphs_for_Revit_html.html và https://blog.autodesk.io/text-file-driven-automatic-placement-of-family-instances/ .
+
 **Bằng chứng cạnh tranh tại Revit (không suy diễn mức sử dụng thực tế):**
 
 - Có nhiều dự án public **Revit MCP bridge thông qua pyRevit**, ví dụ `mcp-servers-for-revit/mcp-server-for-revit-python` sử dụng **pyRevit Routes** làm lớp Revit API bridge; `Demolinator/revit-mcp-server` công bố hàng chục MCP tools; `danlion333/revit_mcp` sử dụng pyRevit + ExternalEvent/Transaction. Nguồn: https://github.com/mcp-servers-for-revit/mcp-server-for-revit-python , https://github.com/Demolinator/revit-mcp-server , https://github.com/danlion333/revit_mcp .
@@ -411,7 +440,7 @@ Cho phép **nghiên cứu dần** và tổ chức **một nhóm beta giới hạ
 
 ## 9. Tóm tắt quyết định
 
-> **Định vị cạnh tranh trung tâm:** **Job Creation + Job Runtime đáng tin cậy + Job Pack Store** là giá trị khác biệt CAI/RAI; **MCP chỉ là lớp tool/transport** và hiện có nhiều giải pháp kết nối Revit bằng pyRevit/MCP. Không quảng bá bridge đơn thuần là lợi thế độc quyền.
+> **Định vị cạnh tranh trung tâm:** **Job Creation + Job Runtime đáng tin cậy + Job Pack Store** là giá trị khác biệt CAI/RAI; **MCP chỉ là lớp tool/transport** và hiện có nhiều giải pháp kết nối Revit bằng pyRevit/MCP. **Data-first/Script-first**: với bài toán có dữ liệu và thuật toán xác định (ví dụ dựng cột theo CSV), ưu tiên Job + Dynamo/Revit API thay vì để AI gọi từng tool để dựng hình; AI chỉ xử lý khâu thật sự cần suy luận. Không quảng bá bridge đơn thuần là lợi thế độc quyền.
 >
 > **CAI/RAI hướng tới nền tảng CAD/BIM automation mở: (A) Remote MCP Mode — ChatGPT-first, ưu tiên Microsoft 365 Copilot doanh nghiệp, dùng chung remote integration/gateway và nhiều local connectors; (B) Native AI Mode tương lai — chat native trong CAD/BIM Add-in, **CAI/RAI tự chọn và điều phối model/API nội bộ**, có thể dùng cloud providers hoặc CAI-approved Ollama server của doanh nghiệp, tool thực thi local, **không có model picker/BYOK và không đi qua tunnel/MCP Cloud Gateway**. Bản thương mại bán CAI/RAI subscriptions/tool-execution quotas + top-up; Native AI có thể bán thêm AI credits do CAI/RAI quản lý. Doanh nghiệp mua và IT triển khai; ngôn ngữ do AI thích nghi; MCP Dev & Repair chỉ ở Development.**
 >
