@@ -87,27 +87,29 @@ Readback: count, IDs, locations, family types, errors; user confirmation/save
 
 **Phạm vi:** đây là **định vị sản phẩm**, không tự phát sinh coding tasks, không xóa MCP tools, không yêu cầu viết lại Job Runtime hoặc coi tất cả capability của RAI đã hoàn thành. Từng năng lực khi marketing/public release phải được kiểm chứng ở bản tương ứng.
 
-### Multitab gọn trong CAI/RAI Panel — giống browser về thao tác, không giống browser về hình thức (đã chốt 2026-10-17)
+### Multitab kiểu AutoCAD Model / Layout (đã chốt UX 2026-10-17)
 
-**Chủ sản phẩm đã làm rõ:** chỉ cần **nhiều tab trò chuyện như trình duyệt**: mở tab mới, chuyển tab, đóng tab; mỗi tab giữ nguyên nội dung của mình. **Không dựng một Task Workspace framework**, không Job manager, task scheduler, session dashboard hay giao diện trình duyệt thu nhỏ. Nhiều tab hoạt động được cho **ChatGPT/Claude/Grok qua WebView khi tương thích**, và **CAI/RAI Native Managed/Self-hosted qua chat UI tích hợp**, không cần website AI ngoài.
+**Chủ sản phẩm chốt mẫu tương tác:** người dùng CAD đã quen **dãy tab Model / Layout1 / Layout2 / +** để chuyển giữa Model Space và các Paper Space. **Sao chép phong cách chuyển tab này vào panel CAI/RAI** để mở/chuyển/đóng nhiều cuộc chat. **Không dùng pill chips, tab bar kiểu Chrome/Edge, URL bar hay Task Workspace framework.** Chỉ học **ngôn ngữ giao diện**, không thực sự chuyển AutoCAD Model Space/Paper Space khi bấm tab chat.
 
-**Ngôn ngữ thiết kế phải là CAD-native panel, không phải browser chrome:**
-- Đặt **thanh chuyển tab nhỏ, liền mạch với đầu panel** (dưới hoặc cùng vùng header binding). Hiển thị tab hiện hành, tên ngắn của các tab và nút **+** mở tab mới; tab đang chọn có trạng thái nổi bật vừa đủ, nút đóng **×** kín đáo. Tránh thanh URL, Back/Forward, refresh, icon browser, khung chrome lớn.
-- **Panel CAD thường hẹp**, nên tab không được chiếm quá nhiều chiều ngang hoặc cắt mất vùng chat: khi panel đủ rộng, hiển thị các **tab nhỏ kiểu pill/chip**; khi hẹp hoặc có nhiều tab, **thu thành tên tab hiện tại + nút chọn danh sách tab (dropdown/overflow) + nút +**. Chuyển tab chỉ một thao tác click, không bắt kéo thanh tab dài.
-- Có thể đổi tên ngắn cho tab nếu cần; không cố gắng đồng bộ mọi title và chi tiết trạng thái từ website AI. **Giữ bố cục panel/host drawing status thống nhất** khi chuyển tab; chỉ thay nội dung chat bên dưới. Màu, đường viền, typography theo panel CAI/RAI và theme CAD, không bê nguyên Chrome/Edge vào AutoCAD/Revit.
-- **Mỗi tab = một chat view**: với Web provider, giữ riêng WebView/navigational state (có thể dùng chung profile login); với Native Managed/Self-hosted, giữ hội thoại riêng trong cùng giao diện chat của CAI/RAI. Đổi tab không reset/navigate về trang chủ và không mất phần đang nhập. Nút **+** mở một chat mới theo tích hợp đang chọn, không tạo software process hay CAD Job.
-- **Quyền thực thi không đổi:** tab chỉ là UI. Các conversation AI được nhận diện/phân quyền theo phương thức tích hợp đang có; **không dùng việc đổi tab để đổi drawing binding, cấp quyền CAD hoặc tạo CAD executor mới**. Hiện bản ChatGPT WebView đang có 1 `Browser` và pairing 1 session; khi triển khai thêm tab WebView phải bảo đảm chat mới gắn session đúng, không giả định pair cũ tự hợp lệ với chat mới.
-- **Giới hạn khả dụng:** chưa chứng minh các website ChatGPT/Claude/Grok đều hỗ trợ embedded multi-conversation theo cùng cách; việc mở chat mới phải tuân theo UI/quyền của provider thực tế. Native/self-hosted không có phụ thuộc này vì chat UI do CAI/RAI cung cấp.
-- **Phạm vi:** đây chỉ là **quyết định UX đơn giản** để giảm việc phải mở browser ngoài. **Chưa triển khai**, không phát sinh roadmap/milestone/code change ngay và không biến thành thiết kế quản lý task phức tạp.
+**Bố cục/tương tác tối giản:**
+- **Một dải tab thấp, liền kề, ưu tiên đặt ở mép dưới vùng hội thoại trong panel**, tương tự thanh Model/Layout của CAD: `[ Chat 1 ][ Chat 2 ][ Chat 3 ][ + ]`. Có viền phân tách mảnh, tab active nổi bật nhẹ/underline như layout đang chọn; hòa với theme sáng/tối AutoCAD/Revit. Phía trên vẫn là header/indicator drawing binding chung; không thêm browser chrome.
+- **Click một tab** để hiển thị hội thoại và nội dung soạn thảo tương ứng, không reset page/chat. **Click `+`** để tạo tab chat mới theo tích hợp AI đang chọn. **Đóng/xóa tab** qua nút `×` nhỏ xuất hiện khi hover hoặc menu chuột phải `Close tab` / `Remove tab` — hành vi gần các Layout tabs mà người dùng đã quen.
+- **Đóng/xóa tab mặc định chỉ bỏ tab khỏi panel**, không xóa drawing, không xóa Model/Layout, không hủy Job đang chạy và **không tự xóa lịch sử hội thoại trên ChatGPT/Claude/Grok/CAI**. Nếu về sau có lệnh xóa vĩnh viễn cuộc hội thoại, nó phải là hành động riêng được xác nhận; không gán cho dấu `×` của tab.
+- **Panel hẹp/nhiều tab:** giữ tab kiểu Layout với khả năng scroll hoặc nút overflow/list để chọn tab nằm ngoài vùng nhìn; dấu `+` luôn dễ thấy. **Không biến toàn bộ giao diện thành browser** và không cần tự động đổi sang pill/dropdown style khác. Tab title ngắn/ellipsis để không che nội dung chat.
+- **Một tab = một hội thoại UI:** ChatGPT/Claude/Grok có thể dùng WebView theo khả năng tích hợp; Native Managed AI và Self-hosted dùng chat UI tích hợp. Các tab giữ state hội thoại riêng, có thể chia sẻ profile đăng nhập web khi hợp lệ; không yêu cầu AI phải có website. Đây là **hiển thị và chuyển hội thoại**, không phải Job runner, session dashboard hay CAD execution process riêng cho mỗi tab.
+- **Binding/quyền CAD giữ nguyên:** đổi tab chat **không tự đổi drawing/model đang bind**, không chuyển thật Model/Paper Space và không tạo quyền tool mới. Với WebView ChatGPT hiện tại, mỗi cuộc hội thoại cần được ghép đúng session/pairing thay vì mặc nhiên dùng pair của chat cũ; không cần phát minh thêm state machine cho tab.
+- **Hiện trạng / scope:** CadGPT Add-in hiện có một WebView; **chưa có multitab**. Đây là UX concept đã chốt, **chưa có chỉ thị triển khai, chưa thay code/roadmap**.
 
 ```text
-CAI                           DWG: MAGS 09.10.26
-[ Grille schedule ] [ Job draft ] [ + ]       ← panel rộng
-
-CAI                           DWG: MAGS 09.10.26
-[ Grille schedule  ▾ ] [ + ]                   ← panel hẹp/nhiều tab
-─────────────────────────────────────────────
-       Nội dung hội thoại tab đang chọn
+┌─────────────────────────────────────────┐
+│ CAI               DWG: MAGS.dwg         │
+│                                         │
+│           Nội dung chat đang chọn      │
+│                                         │
+│ [Lịch sử hội thoại / nhập lệnh AI]     │
+├─────────────────────────────────────────┤
+│ [Grille] [MTO] [Job draft] [+]      ⋯   │  ← CAD Model/Layout-style tabs
+└─────────────────────────────────────────┘
 ```
 
 ### Job Pack Store — Download → existing Job Import (định hướng đã chốt 2026-10-17)
@@ -499,7 +501,7 @@ Cho phép **nghiên cứu dần** và tổ chức **một nhóm beta giới hạ
 >
 > **Kênh thương mại mục tiêu:** **mỗi CAI (AutoCAD) và RAI (Revit) là một Add-in có panel tích hợp**, có thể phân phối/bán qua **Autodesk Design and Make Marketplace ngay cả khi backend còn dùng MCP**; Native AI là hướng nâng cấp vận hành bên trong cùng sản phẩm, **không phải sản phẩm thứ hai**. **Khi mua hoặc kích hoạt**, khách chọn **GPT/Claude/Grok (phí kết nối Tunnel/MCP), Native Managed AI (AI quota), hoặc Native Company Self-hosted (0 CAI/RAI tunnel/inference quota fee)**; luôn trả **Add-in base cố định + gói sử dụng**, được xem giá/tổng tiền và phí AI bên ngoài trước thanh toán; hình thức checkout trong Autodesk hay portal riêng phải kiểm tra điều khoản Marketplace. AI providers ở Native vẫn do CAI/RAI quản lý. Chưa chốt giá số, chưa có bản submit/review được Autodesk chấp nhận.
 >
-> **Multitab panel tối giản:** CAI/RAI chỉ cần mở/chuyển/đóng nhiều tab hội thoại như browser, **nhưng thiết kế switcher nhỏ, CAD-native**, khi hẹp dùng dropdown thay vì cả thanh browser. GPT/Claude/Grok dùng WebView khi hỗ trợ; Native Managed/Self-hosted dùng cùng chat UI tích hợp; **không cần website AI**, không đổi drawing binding, không xây thêm Task Workspace/Job runtime.
+> **Multitab kiểu Model/Layout của CAD:** tab chat dạng **dãy Layout tabs thấp ở đáy panel**, click chuyển hội thoại, `+` tạo tab, `×`/menu đóng tab; khi hẹp dùng scroll/overflow. **Không phải browser chrome, không phải trình quản lý Job và không chuyển Model/Paper Space thật.** GPT/Claude/Grok dùng WebView khi hỗ trợ, Native Managed/Self-hosted dùng chat UI tích hợp; tab không đổi quyền/drawing binding. Đóng tab không xóa cuộc chat hoặc bản vẽ.
 >
 > **Job Pack Store:** người dùng tìm và **Download** Job Pack từ catalog theo phân loại, sau đó Add-in **gọi lại chính Job Import hiện có** để đưa vào managed libraries/User Registry; không thiết kế importer/registry/runtime thứ hai. Chưa triển khai Store.
 >
