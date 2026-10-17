@@ -198,3 +198,14 @@ No source implementation authorized by this document itself.
 - **NEXT:** integrate WP1 into Builder-authorized file calls after verifying identity/ownership entrypoint, without granting managed `libraries/**` wildcard write access; keep every change on this same branch.
 
 **Review note:** No V5 gate, extra planner, independent test phase or new branch was introduced. Do not describe partial WP1 as complete WP1.
+
+## I. Implementation checkpoint — 2026-10-17 continuation
+
+- Only `feature/core-function-v5` was modified; no branch split, no main update.
+- V5 Temp Job runtime was implemented in `src/cadgpt/runtime/temp-job-v5.ts` with UUID-specific owned folders, independent persisted metadata, Builder execution ownership, source creation, SHA-guarded FIX updates, explicit DONE and completed-only cleanup.
+- MCP tools `temp_job_create`, `temp_job_source_create`, `temp_job_source_update`, `temp_job_done`, `temp_job_clear` are registered via `server-factory.ts`; `cg/cleartempjob` reaches the cleanup route.
+- Source-level regression coverage: `tests/v5-temp-job-lifecycle.test.mjs`, in addition to `tests/v5-owned-source.test.mjs`.
+- **NOT YET COMPLETE:** This is NOT the full WP4 definition: user-named Drawing Anchor results, Temp Lisp CAD LOAD+autorun, selective Lisp publication and full cross-restart/parallel safety have not been implemented. Reusable Job/Lisp in-place authoring and removing old draft/SYSTEM paths are likewise pending.
+- **NOT RUN:** no verified Windows TypeScript build, no suite results, no real bound AutoCAD. The presence of tests is an engineering safety measure; never turn them into a mandatory Job TEST stage.
+- **Review finding:** A Temp Job can be marked DONE without automatically running or saving DWG; this is deliberate: Operator/Builder verifies actual operations, not the cleanup facility. Cleanup skips missing/ambiguous state.
+- **Next:** integrate exact Builder reusable-source authoring and Temp Lisp bound CAD use, with no broad filesystem roots, then user-named Drawing Anchor results and independent Lisp registry publication. Preserve all V5 goals.
