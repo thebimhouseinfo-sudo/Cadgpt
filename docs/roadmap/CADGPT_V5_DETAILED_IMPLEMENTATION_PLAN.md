@@ -209,3 +209,13 @@ No source implementation authorized by this document itself.
 - **NOT RUN:** no verified Windows TypeScript build, no suite results, no real bound AutoCAD. The presence of tests is an engineering safety measure; never turn them into a mandatory Job TEST stage.
 - **Review finding:** A Temp Job can be marked DONE without automatically running or saving DWG; this is deliberate: Operator/Builder verifies actual operations, not the cleanup facility. Cleanup skips missing/ambiguous state.
 - **Next:** integrate exact Builder reusable-source authoring and Temp Lisp bound CAD use, with no broad filesystem roots, then user-named Drawing Anchor results and independent Lisp registry publication. Preserve all V5 goals.
+
+## J. Implementation continuation — 2026-10-17
+
+- **Same branch only:** `feature/core-function-v5`; no main edits.
+- Temp Job same-file source updates now serialize under the existing file scheduler; reject absolute/Windows-rooted/traversal source paths and symlinked metadata. Source creation rejects overwrite.
+- Implemented explicit `temp_job_result_create`: an independently user-provided result folder name (never UUID), exact verified bound Drawing Anchor, existing jobs result parent, non-overwriting directory create. The user must supply a name only when persistent results are wanted.
+- `tests/v5-temp-job-lifecycle.test.mjs` traversal expectation updated to reflect explicit invalid-relative-path error.
+- **Unverified:** no build/test execution or actual CAD actions yet. Source reviews only. The result creator currently provisions the folder; scoped result write authorization remains future integration work. Do not imply full end-to-end Temp result workflow.
+- **RL finding:** the Temp Job runtime must not use general AppData writable roots; source tool validates owning Work. Future authoring and result writes must keep that property. Another finding: returning a newly provisioned folder is not equivalent to persisting output. These are code-completion findings, not business/Job TEST gates.
+- **Next priority:** connect reusable Job/Lisp in-place editing with exact Builder target scope; then integrate scoped result writes, owned Temp Lisp CAD LOAD and selective independent Lisp publication. The full system is NOT READY for pull or acceptance.
