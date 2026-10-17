@@ -331,3 +331,15 @@ Commits through `4a803368e69fd27c4a91f86e0306a6b12e21b21a` on `feature/core-func
 - **Still not fully retired**: legacy Direct-vs-Reasoning presentation, explicit SYSTEM acquire/release and draft/checkout/promote API compatibility surfaces. They remain non-mandatory but present; do not remove until migrated consumers validated.
 - **Concurrency limitation to review**: `JOB_RUNTIME_BUSY` still protects **the same Job runtime root** from two concurrent writers. It does not lock unrelated Jobs. To eliminate it safely requires per-execution scratch layout without breaking legacy raw paths; do not remove blindly.
 - **CI is a development check, not a user Job TEST stage**, and no claim of overall V5 approval or main replacement is made.
+
+## P. Implementation continuation — 2026-10-18, code + source CI
+
+**Same V5 branch exclusively.** The following was implemented in source, not approved by a live AutoCAD test:
+
+- `job_runtime_finish` now accepts `dwg_changed=false` for genuinely read-only/file-only Jobs; it returns `JOB_DONE_READ_ONLY` without an unnecessary DWG Save. Mutating Jobs retain fail-closed verified Save and cannot use that shortcut legitimately.
+- `job_runtime_prepare` now accepts `source_path` pointing to an **actual final managed JOB.md**, in addition to registered `id` and legacy draft path. Builder work authorization and canonical source containment are checked; the Job can RUN before any Registry publication. This removes an actual draft/promote prerequisite for new reusable Job authoring.
+- Regression source tests added for direct unregistered JOB.md path and read-only Save finish semantics.
+
+**Verification:** GitHub Actions V5 Source CI `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39055663368` completed SUCCESS on both Windows and Linux (commit `9fff2e046a7dd71a18a57175d283cd5333c3b280`). This proves TypeScript build and automated source test suite, NOT native CAD RUN correctness.
+
+**RL residuals:** `source_path` currently accepts managed library path in explicit Builder execution, but complete target-level authorization of Builder edits and legacy FILE tool migration remain. Registered Direct Python Jobs still use their existing historical runner, and old draft/SYSTEM aliases still exist as compatibility. Same-Job runtime ownership, true save timing of legacy Direct scripts, Temp publication dependency closure, and AutoCAD acceptance remain to be completed. No user pull/human acceptance gate until source migration is complete.
