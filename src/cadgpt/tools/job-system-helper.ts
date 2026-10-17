@@ -17,7 +17,7 @@ const execFileAsync = promisify(execFile);
 const sha256 = (bytes: string | Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
 
-function pythonExecutable(): string {
+export function pythonExecutable(): string {
   const override = process.env.CAD_MCP_PYTHON?.trim();
   if (override) {
     if (path.isAbsolute(override)) return override;
