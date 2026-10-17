@@ -52,3 +52,22 @@ test("V5 registered Reasoning Jobs can run concurrently with independent scratch
     await cleanupJobRuntimeForExecution("registered-b");
   }
 });
+
+test("V5 registered Job imports legacy checklist as independent unmarked template", async () => {
+  const dir = path.join(getJobLibrariesRoot(), "v5-shared", "template-job");
+  const runtime = path.join(dir, "runtime");
+  await fs.mkdir(runtime, { recursive: true });
+  const file = path.join(dir, "JOB.md");
+  await fs.writeFile(file, "# Templated Job\n");
+  const legacy = path.join(runtime, "JOB_STEPS.md");
+  await fs.writeFile(legacy, "- [✓] Previously done\n- [✗] Previously failed\n");
+  const a = await prepareJobRuntimeForExecution("templated-execution", "registered-template-job", file, { isolatedRun: true });
+  try {
+    const seeded = await fs.readFile(jobStepsPath(a), "utf8");
+    assert.match(seeded, /- \[ \] Previously done/);
+    assert.match(seeded, /- \[ \] Previously failed/);
+    assert.match(await fs.readFile(legacy, "utf8"), /- \[✓\] Previously done/);
+  } finally {
+    await cleanupJobRuntimeForExecution("templated-execution");
+  }
+});
