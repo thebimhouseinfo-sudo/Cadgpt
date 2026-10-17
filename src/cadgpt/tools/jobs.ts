@@ -1077,9 +1077,15 @@ export function registerJobAuthoringTools(server: McpServer): void {
               error: error instanceof Error ? error.message : String(error) };
           }
         }
+        if (outcome === "done" && autoSave.saved !== true) {
+          // Save failure is a real Job failure, not an ok tool payload.
+          // Retain the prepared runtime and raw/result so Builder can repair
+          // and safely complete after a verified save.
+          throw new Error("JOB_SAVE_FAILED: " + String(autoSave.error ?? "bound DWG save not verified"));
+        }
         const cleanup = await cleanupJobRuntimeForExecution(lease.workId);
         return toolResult("job_runtime_finish", { outcome, cleanup, autosave: autoSave,
-          status: outcome === "done" ? (autoSave.saved === true ? "JOB_DONE_SAVED" : "JOB_DONE_AUTOSAVE_FAILED") : "JOB_FAILED" });
+          status: outcome === "done" ? "JOB_DONE_SAVED" : "JOB_FAILED" });
       } catch (error) {
         return toolError(
           "job_runtime_finish",
