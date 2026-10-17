@@ -1,6 +1,6 @@
 # V5 Local Custom Job Compatibility — Diagnostic Only
 
-This file describes the **legacy epoch marker**, not a Job migration step. The binding rules are in `knowledge/jobs/JOB_RULES.md` and the human-approved V5 theory. Existing `JOB_LOCAL_COMPAT_EPOCH=2` remains readable for backward compatibility only.
+This file describes the **legacy epoch marker**, not a Job migration step. The binding rules are in `knowledge/jobs/JOB_RULES.md` and the human-approved V5 theory. Existing epoch remains readable for backward compatibility only.\n\n`JOB_LOCAL_COMPAT_EPOCH = 2` is the historical marker, not a release gate.
 
 The lightweight `job_local_compat_status` tool may report `update_required`, `pending_actions` and historical `blocked_job_ids`. In V5 these are **warnings and historical signals**, never blockers to creating, editing, running or safely repairing a User Job. No mandatory `jobcreate CONTRACT UPDATE` scan, checkout, re-validation, mock TEST or promotion is required before RUN.
 
