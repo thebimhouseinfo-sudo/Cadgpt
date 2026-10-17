@@ -995,7 +995,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
               source_path: jobFile,
               source_sha256: workflowSha256,
               content: workflowSource,
-              instruction: "This is the current promoted JOB.md, freshly read for this run. Follow its exact entry conditions and user choice branches. Do not follow previous chat decisions if the file differs. Inspect the actual raw/result folders as required before choosing any route.",
+              instruction: "This is the current registered JOB.md, freshly read for this run. Follow its exact entry conditions and user choices. Do not invent business steps. After the final DWG mutation call job_runtime_save_now immediately; STOP/REPORT if Save fails. If no later CAD call occurs, job_runtime_finish reuses the verified Save and will not save twice. For a file-only Job, do not invent a CAD mutation or Save requirement.",
             },
             runtime_root:
               runtime.runtime_root,
@@ -1084,7 +1084,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Finish Job Runtime",
       description:
-        "Finish the current Custom Job. Set outcome=done ONLY after all workflow and validation steps succeeded; this automatically saves the bound DWG using Python CAD MCP. On failure, stop, or interruption use outcome=failed (default), with no save. This is runtime behavior, not a JOB.md step.",
+        "Finish the current Custom Job. Set outcome=done only after actual Job steps succeed. If the exact bound DWG was already verified saved after the last CAD change, do not save twice; otherwise run verified bound-DWG Save before DONE. Save failure is a real tool error and preserves runtime for repair. On failure use outcome=failed. This does not add a TEST or promotion stage.",
       inputSchema: {
         outcome: z.enum(["done", "failed"]).optional().default("failed"),
       },
