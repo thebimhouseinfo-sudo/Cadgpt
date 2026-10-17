@@ -34,3 +34,15 @@ test("V5 independent Lisp command names cannot silently collide", async () => {
   await assert.rejects(importLibrary("lisp", "v5-another-library", "Another", source, false),
     /LISP_LIBRARY_COMMAND_OR_ID_COLLISION/);
 });
+
+test("V5 registers an already-authored managed Job in place without copying or checkout", async () => {
+  const { publishManagedLibrary } = await import("../dist/cadgpt/tools/user-assets.js");
+  const { getJobLibrariesRoot } = await import("../dist/cadgpt/lib/appdata.js");
+  const dir = path.join(getJobLibrariesRoot(), "v5-authoring-demo", "first-job");
+  await fs.mkdir(dir, { recursive: true });
+  const source = path.join(dir, "JOB.md");
+  await fs.writeFile(source, "# Sample Reusable Job\n\n## Steps\n1. Read input and report.\n");
+  const published = await publishManagedLibrary("job", "v5-authoring-demo", "V5 Direct Builder");
+  assert.equal(published.registered, 1);
+  assert.equal(await fs.readFile(source, "utf8"), "# Sample Reusable Job\n\n## Steps\n1. Read input and report.\n");
+});
