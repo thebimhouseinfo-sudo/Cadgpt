@@ -78,6 +78,7 @@ const CORE_TOOLS = [
   { name: "temp_job_create", class: "workflow.temp", summary: "Builder allocates isolated UUID Temp Job workspace; no JOB.md required." },
   { name: "temp_job_source_create", class: "workflow.temp", summary: "Create a new source file only inside calling Builder-owned Temp Job." },
   { name: "temp_job_source_update", class: "workflow.temp", summary: "Hash-guarded repair of Builder-owned Temp Job source file." },
+  { name: "temp_job_python_run", class: "workflow.temp", summary: "Run SHA-verified trusted Temp Python as FILE-only JSON helper; never bypass bound CAD host." },
   { name: "temp_job_result_create", class: "workflow.temp", summary: "Create user-named persistent result under exact verified Drawing Anchor." },
   { name: "temp_job_result_write", class: "workflow.temp", summary: "Write only own user-named Drawing Anchor result, refusing overwrites." },
   { name: "temp_job_lisp_load", class: "workflow.temp", summary: "Use bound AutoCAD host to load owned Temp Lisp; require confirmed loaded=true." },
