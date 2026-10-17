@@ -15,6 +15,7 @@ type TempMeta = {
   id: string;
   owner_execution: string;
   owner_session: string;
+  owner_pid?: number;
   state: "active" | "done";
   created_at: string;
   result_folder?: string;
@@ -73,7 +74,8 @@ export async function createTempJob(execution: string, session: string) {
     }
     const meta: TempMeta = {
       schema: 1, id, owner_execution: execution,
-      owner_session: session, state: "active", created_at: new Date().toISOString(),
+      owner_session: session, owner_pid: process.pid,
+      state: "active", created_at: new Date().toISOString(),
     };
     try { await fs.writeFile(path.join(root, META), JSON.stringify(meta, null, 2), { flag: "wx" }); }
     catch (err) { await fs.rm(root, { recursive: true }); throw err; }
@@ -264,6 +266,16 @@ export async function finishTempJob(id: string, execution: string, session: stri
   active.delete(id);
   return { id, state: "done" };
 }
+function wasOwnerProcessTerminated(pid: number | undefined): boolean {
+  if (!Number.isSafeInteger(pid) || !pid || pid <= 0 || pid === process.pid) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH";
+  }
+}
+
 export async function clearTempJobs(id?: string) {
   const ids = id ? [id] : (await fs.readdir(getTempJobsRoot(), { withFileTypes: true })
     .catch((err: NodeJS.ErrnoException) => err.code === "ENOENT" ? [] : Promise.reject(err)))
@@ -274,10 +286,11 @@ export async function clearTempJobs(id?: string) {
     try {
       const meta = await readMeta(item);
       const live = activeWorkForSession(meta.owner_session);
-      if (meta.state !== "done" ||
-          (live && live.executionId === meta.owner_execution) ||
-          active.has(item)) {
-        skipped.push({ id: item, reason: "active_or_unfinished" }); continue;
+      const activeOwner = (live && live.executionId === meta.owner_execution) || active.has(item);
+      const abandonedAfterCrash = meta.state === "active" && !activeOwner &&
+        wasOwnerProcessTerminated(meta.owner_pid);
+      if ((meta.state !== "done" && !abandonedAfterCrash) || activeOwner) {
+        skipped.push({ id: item, reason: "active_or_unverified_owner" }); continue;
       }
       const root = ownedSourceRoot({ kind: "temp-job", id: item });
       // Verify nested entries; never follow a symlink/junction into another owner.
