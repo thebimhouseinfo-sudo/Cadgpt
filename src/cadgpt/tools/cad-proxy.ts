@@ -208,6 +208,8 @@ export async function loadVerifiedLispForCurrentWork(
 
   return withCadHostLock(binding.host, async () => {
     await activateDrawingContext(binding);
+    // Loaded Lisp may autorun and mutate DWG; any earlier Save is stale.
+    invalidateBoundSave(currentToolLease().workId);
     const result = await cadUpstream.callTool("cad_load_lisp_file", {
       path: lispPath,
     });
@@ -680,6 +682,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
           // Consume outer authority before the upstream destructive call, matching
           // the CAD MCP one-shot semantics even if transport fails afterward.
           deletePreviewOwners.delete(token);
+          invalidateBoundSave(currentToolLease().workId);
 
           return await withCadHostLock(owner.host, async () => {
             await activateDrawingContext(binding);
