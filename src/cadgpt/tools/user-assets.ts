@@ -242,7 +242,7 @@ export async function resolveRegisteredAssetPath(
   return real;
 }
 
-async function importLibrary(kind: AssetKind, libraryId: string, name: string, folderPath: string, replaceExisting: boolean) {
+export async function importLibrary(kind: AssetKind, libraryId: string, name: string, folderPath: string, replaceExisting: boolean) {
   assertUserLibraryId(libraryId);
   const source = await assertSourceFolder(folderPath);
   const entries = await indexLibrary(kind, libraryId, source);
