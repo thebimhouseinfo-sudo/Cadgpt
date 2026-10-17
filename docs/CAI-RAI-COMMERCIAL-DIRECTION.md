@@ -42,7 +42,8 @@
 
 ```text
 CAI Add-in (AutoCAD) / RAI Add-in (Revit)
-  ├── Native Chat UI + conversation & tool-call loop
+  ├── Native Chat UI + scripted workflow/state-machine engine
+  │    └── Chỉ gọi AI ở các step cần suy luận hoặc xử lý ngữ nghĩa
   ├── CAI/RAI-managed model router (không có user model picker)
   │    ├── CAI AI Proxy → contracted cloud API provider(s)
   │    ├── [Business] CAI-approved bundle → company Ollama/API server qua LAN/VPN
@@ -63,6 +64,36 @@ Model response / tool call → Local dispatcher → CAD/BIM result → Model API
 - **Không lẫn với Remote MCP Mode:** native mode không cần ứng dụng DeepSeek Chat / Qwen Chat hỗ trợ Custom MCP và không dùng cloud để route các CAD tool calls. Nếu cần kiểm tra license/quota thương mại, có thể sử dụng **kênh HTTPS license/usage riêng**, không nằm trong đường thực thi CAD. Đơn vị CAI/RAI request thương mại và chi phí token/model inference là hai khái niệm riêng; chi tiết local ledger, offline policy và chống gian lận chưa chốt.
 - **CAI/RAI Core vẫn là authoritative executor:** mọi model tool call cần qua local allowlist, quyền user, đúng drawing/document binding, xác nhận khi thay đổi dữ liệu và readback. Không cho model gửi lệnh CAD tùy ý vượt các contract đã có.
 - **Native Add-in chưa hoàn thiện:** Add-in CadGPT hiện tại chủ yếu host ChatGPT; **native chat orchestration**, bộ điều phối model nội bộ, AI Proxy/AI credits và shared Ollama server là **các khả năng tương lai cần nghiên cứu**, không phải chức năng đã sẵn có.
+
+#### Native workflow — script-first, AI-in-the-loop (định hướng kiến trúc)
+
+**Định hướng đã chốt ngày 2026-10-17:** Native Add-in được ưu tiên về độ ổn định vì các **step runtime sẽ do script/code đã được kiểm thử và version hóa điều phối**, thay vì để AI đọc tuần tự **Job/step mô tả bằng Markdown** rồi tự quyết định có làm đúng các bước hay không. Markdown vẫn hữu ích để **thiết kế Job, giải thích, review và sinh tài liệu** trong giai đoạn development, nhưng **không phải nguồn thực thi/quyết định flow tại runtime Native**.
+
+```text
+User intent → Native Workflow Router
+                  │
+          Trusted Script/State Machine
+          (versioned steps + contracts)
+                  │
+     ┌────────────┼────────────┐
+     ▼            ▼            ▼
+ Deterministic   AI stage    User Approval
+ CAD/BIM Tools   (nếu cần)  (khi bắt buộc)
+     │            │            │
+     └────────────┴────────────┘
+                  ▼
+        Validate/Postcondition
+                  ▼
+         Save / Readback / Result
+```
+
+- **Script là authority về trình tự:** định nghĩa step IDs, điều kiện tiền/hậu kiểm, nhánh lỗi, timeout, checkpoint/resume, giới hạn retry, trạng thái kết thúc; AI **không được tự ý nhảy bước, thêm bước, bỏ bước hay quyết định save/commit trái workflow contract**.
+- **AI chỉ là một bước được gọi có điều kiện:** Operator 2B–4B dành cho semantic intent/mapping/phân loại dữ liệu có cấu trúc; Builder 7B–16B chỉ khi workflow yêu cầu suy luận hoặc tạo nội dung phức tạp. Các bước thuần quy tắc/chuyển đổi/kiểm tra/sửa bản vẽ dùng **deterministic code/tool**; có thể hoàn thành nhiều Job mà không cần gọi model sau bước nhận intent.
+- **Structured interfaces:** đầu vào/đầu ra bước AI, tool và script phải có schema và validation; không để lời văn tự do của model trở thành command/runtime instruction. Kết quả AI không hợp lệ → error rõ ràng hoặc escalation đúng chính sách, **không âm thầm cố đoán**.
+- **CAD/BIM host authority:** các script được đóng gói và kiểm thử trong Native Add-in/Job package, thực thi qua API/dispatcher phù hợp với threading, transaction và document/drawing binding của AutoCAD/Revit. **Không thực thi script sinh tùy ý từ phản hồi model** khi chưa qua review, trust boundary và policy của sản phẩm.
+- **Mutating steps:** kiểm tra drawing/document anchor, quyền và user approval theo quy định; có idempotency key/checkpoint, readback sau thay đổi và save đúng thời điểm. Không retry mù khi CAD side effect chưa rõ. Error handling, rollback/compensation chỉ áp dụng nơi host/tool thực sự hỗ trợ.
+- **Giảm rủi ro, không tuyên bố tuyệt đối:** script-first giảm nondeterminism và overthinking từ LLM, nhưng không tự loại bỏ lỗi ở script, CAD API, data hoặc môi trường. Cần test từng script/phiên bản và kịch bản lỗi, giữ log có thể truy vết nhưng không rò dữ liệu dự án.
+- **Phạm vi thời điểm hiện tại:** đây là **hướng thiết kế native sản phẩm tương lai**; không yêu cầu lập tức chuyển đổi/xóa các Job Markdown và runtime MCP/Core hiện tại, không thêm work item vào milestone đang triển khai chỉ nhờ tài liệu định hướng.
 
 #### Cấu hình local models theo vai trò (định hướng sizing, chưa benchmark)
 
