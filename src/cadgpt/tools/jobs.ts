@@ -22,7 +22,7 @@ import { getBoundDrawingsForExecution } from "../session/drawing-binding.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
-import { hasVerifiedBoundSave, noteVerifiedBoundSave, invalidateBoundSave } from "../runtime/bound-save-ledger.js";
+import { hasVerifiedBoundSave, noteVerifiedBoundSave, invalidateBoundSave, notePotentialCadMutation, hasPotentialCadMutation, resetCadMutationTracking } from "../runtime/bound-save-ledger.js";
 import { assertBuilderTarget } from "../runtime/builder-target.js";
 import {
   drawingMetadataRootsForExecution,
@@ -656,7 +656,7 @@ export async function executeDirectJobScript(
   const runScript = () => {
     // Legacy Direct Python can mutate AutoCAD through COM outside the CAD
     // proxy. Never reuse a Save witness across such an opaque invocation.
-    if (!options.fileOnly) invalidateBoundSave(lease.workId);
+    if (!options.fileOnly) notePotentialCadMutation(lease.workId);
     return execFileAsync(
     python,
     [script, ...args],
@@ -996,6 +996,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
             jobFile,
             { resetRuntime: false, isolatedRun: Boolean(id || source_path) }
           );
+        if (!sameActiveJob) resetCadMutationTracking(lease.workId);
         // A FILE-only Job B can resume on a drawing root already verified
         // during Job A, with no second CAD bind or invented AppData path.
         // Only B's own result namespace becomes writable; other Job results
@@ -1124,6 +1125,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
         const runtime = activeJobRuntimeForExecution(lease.workId);
         if (!runtime) throw new Error("JOB_RUNTIME_NOT_ACTIVE: no Custom Job to finish.");
         let autoSave: Record<string, unknown> = { attempted: false };
+        if (outcome === "done" && !dwg_changed && hasPotentialCadMutation(lease.workId)) {
+          throw new Error("JOB_READ_ONLY_CONFLICT: this execution issued a CAD mutation; verified Save is required.");
+        }
         if (outcome === "done" && dwg_changed) {
           // Save before releasing the Work's drawing authority. Cad host FIFO
           // prevents overlap with other chats' CAD calls; no new manager.
