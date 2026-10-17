@@ -176,7 +176,9 @@ export async function createTempResult(
   const drawingPath = path.join(drawingsRoot, binding.drawing_anchor);
   const realDrawing = await fs.realpath(drawingPath);
   if (path.dirname(realDrawing) !== drawingsRoot) throw new Error("TEMP_JOB_DRAWING_PATH_ESCAPE");
-  const jobsPath = await fs.realpath(path.join(realDrawing, "jobs"));
+  const intendedJobsPath = path.join(realDrawing, "jobs");
+  await fs.mkdir(intendedJobsPath, { recursive: true });
+  const jobsPath = await fs.realpath(intendedJobsPath);
   if (path.dirname(jobsPath) !== realDrawing) throw new Error("TEMP_JOB_JOBS_PATH_ESCAPE");
   const result = path.join(jobsPath, folderName);
   await fs.mkdir(result); // no overwrite, no implicit rename
