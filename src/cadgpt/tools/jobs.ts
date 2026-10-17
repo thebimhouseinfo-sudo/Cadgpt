@@ -22,6 +22,7 @@ import { getBoundDrawingsForExecution } from "../session/drawing-binding.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
+import { hasVerifiedBoundSave } from "../runtime/bound-save-ledger.js";
 import {
   drawingMetadataRootsForExecution,
   drawingMetadataWritableRootsForExecution,
@@ -1051,6 +1052,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
           // prevents overlap with other chats' CAD calls; no new manager.
           try {
             const drawing = resolveDrawingContext();
+            if (hasVerifiedBoundSave(lease.workId, drawing.runtime_document_identity)) {
+              autoSave = { attempted: false, saved: true, drawing: drawing.full_name, early_save_verified: true };
+            } else {
             await withCadHostLock(drawing.host, async () => {
               await activateDrawingContext(drawing);
               const response = await cadUpstream.callTool("acad_save_bound_document", {
@@ -1072,6 +1076,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
               }
               autoSave = { attempted: true, saved: true, drawing: drawing.full_name };
             });
+            }
           } catch (error) {
             autoSave = { attempted: true, saved: false,
               error: error instanceof Error ? error.message : String(error) };
