@@ -8,6 +8,50 @@ import { loadVerifiedLispForCurrentWork } from "./cad-proxy.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { createTempJob, writeTempSource, updateTempSource, createTempResult, writeTempResult, getOwnedTempLisp, finishTempJob, clearTempJobs } from "../runtime/temp-job-v5.js";
 
+async function assertIndependentLispFolder(root: string): Promise<void> {
+  const canonical = await fs.realpath(root);
+  const files: string[] = [];
+  async function visit(dir: string): Promise<void> {
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      const item = path.join(dir, entry.name);
+      const stat = await fs.lstat(item);
+      if (stat.isSymbolicLink()) throw new Error("TEMP_LISP_DEPENDENCY_SYMLINK");
+      if (stat.isDirectory()) {
+        await visit(item);
+      } else if (stat.isFile()) {
+        files.push(item);
+      } else {
+        throw new Error("TEMP_LISP_DEPENDENCY_SPECIAL_FILE");
+      }
+    }
+  }
+  await visit(canonical);
+  const inside = (target: string) => {
+    const rel = path.relative(canonical, target);
+    return rel && rel !== ".." && !rel.startsWith(".." + path.sep) && !path.isAbsolute(rel);
+  };
+  for (const file of files.filter(item => path.extname(item).toLowerCase() === ".lsp")) {
+    const code = await fs.readFile(file, "utf8");
+    // Obvious literal file dependencies must be copied along with the Lisp.
+    // Dynamically computed dependencies cannot be inferred safely.
+    const literal = /\(\s*(?:load|load_dialog)\s+"([^"]+)"/gi;
+    for (const match of code.matchAll(literal)) {
+      const value = match[1];
+      if (path.isAbsolute(value) || path.win32.isAbsolute(value)) {
+        throw new Error("TEMP_LISP_EXTERNAL_DEPENDENCY: " + value);
+      }
+      const ref = path.resolve(path.dirname(file), value);
+      if (!inside(ref)) throw new Error("TEMP_LISP_DEPENDENCY_OUTSIDE_SELECTED_FOLDER: " + value);
+      const tries = path.extname(ref) ? [ref] : [ref, ref + ".lsp"];
+      if (!(await Promise.all(tries.map(candidate => fs.stat(candidate).then(
+        stat => stat.isFile(), () => false
+      )))).some(Boolean)) {
+        throw new Error("TEMP_LISP_DEPENDENCY_NOT_COPIED: " + value);
+      }
+    }
+  }
+}
+
 export function registerTempJobV5Tools(server: McpServer): void {
   server.registerTool("temp_job_create", {
     title: "Create temporary Job workspace",
@@ -119,8 +163,7 @@ export function registerTempJobV5Tools(server: McpServer): void {
       const lease = currentToolLease();
       const source = await getOwnedTempLisp(id, lease.workId, lease.sessionKey, relative_file);
       const folder = path.dirname(source);
-      const entries = await fs.readdir(folder, { withFileTypes: true });
-      if (entries.some(e => e.isSymbolicLink())) throw new Error("TEMP_LISP_DEPENDENCY_SYMLINK");
+      await assertIndependentLispFolder(folder);
       const published = await importLibrary("lisp", library_id, library_name, folder, false);
       return toolResult("temp_job_lisp_publish", {
         ...published, source, copied_folder: folder,
