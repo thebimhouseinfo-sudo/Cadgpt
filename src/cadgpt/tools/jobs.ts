@@ -652,7 +652,11 @@ export async function executeDirectJobScript(
       env.CADGPT_JOB_RESULT_ROOT = jobResultRoot;
     }
   };
-  const runScript = () => execFileAsync(
+  const runScript = () => {
+    // Legacy Direct Python can mutate AutoCAD through COM outside the CAD
+    // proxy. Never reuse a Save witness across such an opaque invocation.
+    if (!options.fileOnly) invalidateBoundSave(lease.workId);
+    return execFileAsync(
     python,
     [script, ...args],
     {
@@ -663,6 +667,7 @@ export async function executeDirectJobScript(
       maxBuffer: 4 * 1024 * 1024,
     }
   );
+  };
 
   try {
     // Legacy Direct Python Jobs may perform CAD COM operations themselves.
