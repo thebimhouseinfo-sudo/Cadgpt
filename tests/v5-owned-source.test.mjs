@@ -52,3 +52,20 @@ test("V5 canonical resolver rejects symlink escape", async (t) => {
   }
   await assert.rejects(resolveOwnedSourceMutation(path.join(link, "evil.lsp"), owned, { forCreate: true }), /outside|roots|mutation/i);
 });
+
+test("V5 rejects a symlinked owner root redirected to another Job", async (t) => {
+  const from = { kind: "reusable-job", libraryId: "junction-fixture", relativeFolder: "job-a" };
+  const to = { kind: "reusable-job", libraryId: "junction-fixture", relativeFolder: "job-b" };
+  const wrong = ownedSourceRoot(to);
+  await fs.mkdir(wrong, { recursive: true });
+  const link = ownedSourceRoot(from);
+  try { await fs.symlink(wrong, link, process.platform === "win32" ? "junction" : "dir"); }
+  catch (error) {
+    if (["EPERM", "EACCES"].includes(error.code)) { t.skip("Symlinks unavailable"); return; }
+    throw error;
+  }
+  await assert.rejects(
+    resolveOwnedSourceMutation(path.join(link, "JOB.md"), from, { forCreate: true }),
+    /V5_OWNER_ROOT_ALIAS_BLOCKED/
+  );
+});
