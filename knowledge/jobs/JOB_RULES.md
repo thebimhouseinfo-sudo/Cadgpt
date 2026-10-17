@@ -23,6 +23,7 @@ A reusable capability is indexed only when explicitly requested: `v5_source_publ
 - Allocate `%LOCALAPPDATA%/CadGPT/temp-jobs/<UUID>/` using `temp_job_create`. UUID belongs to temporary scratch **only**.
 - A Temp Job needs no `JOB.md`, Job Registry entry, draft or whole-Job promotion.
 - Builder uses `temp_job_source_create`, `temp_job_source_update`, optional `temp_job_lisp_load`, then the normal bound CAD execution tools. Loaded Lisp success requires `loaded=true`; run command success is separate.
+- A Temp Job may run its own trusted, hash-pinned **file-only** Python helper using `temp_job_python_run` and JSON input. This is not an OS sandbox and is never an alternative path for AutoCAD mutations; CAD execution still goes through the verified host and drawing tools.
 - Only if user wants **persisted results**, request a meaningful *user-chosen* folder name and use `temp_job_result_create` followed by `temp_job_result_write`. Locate under that exact verified Drawing Anchor, never use the Temp UUID as result name. Reject collisions instead of inventing a rename.
 - `temp_job_done` marks an inactive completed Temp Job. `cg/cleartempjob` or `temp_job_clear` deletes only recognized completed inactive Temp source folders. Keep named persistent results and independently published Lisp.
 
