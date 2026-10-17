@@ -13,7 +13,8 @@ test("Custom Job DONE does not mandate runtime scratch deletion", () => {
   const finish = jobs.slice(start, next);
   assert.doesNotMatch(finish, /clearRuntimeScratch: outcome === "done"/);
   assert.match(finish, /cleanupJobRuntimeForExecution\(lease\.workId/);
-  assert.match(finish, /JOB_DONE_AUTOSAVE_FAILED/);
+  assert.match(finish, /JOB_SAVE_FAILED/);
+  assert.doesNotMatch(finish, /JOB_DONE_AUTOSAVE_FAILED/);
 });
 
 test("runtime scratch cleanup cannot target Job result or permanent assets", () => {
