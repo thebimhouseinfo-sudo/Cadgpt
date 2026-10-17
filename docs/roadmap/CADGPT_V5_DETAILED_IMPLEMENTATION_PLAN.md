@@ -285,3 +285,29 @@ Commits through `4a803368e69fd27c4a91f86e0306a6b12e21b21a` on `feature/core-func
 - **Engineering verification blocked:** GitHub reports no CI status attached to current feature commits; no Windows build runner or local AutoCAD available to this chat. Do not infer PASS from source commits.
 
 **Stop condition remains unchanged:** do not ask human to pull until software is actually ready for native CAD acceptance. A source-only checkpoint is not a human acceptance gate.
+
+## O. Continuous implementation checkpoint — 2026-10-17 (GitHub Actions verified)
+
+**Branch discipline:** ALL CadGPT source changes in this checkpoint were committed to `feature/core-function-v5`; no child branch and no main edits. **GitHub Actions V5 Source CI** now runs on Windows and Linux; current source passed both runners at `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39042944682` (commit `2f28e290ecf92458134906de2bfec1f8baed9ffc`).
+
+**Major corrections made during automatic review cycle:**
+- Fixed real TypeScript parse error `export export async`, verified by CI compilation.
+- Updated 3 stale compatibility/UI tests using the already-approved maintenance expectations from main **by selectively copying only those test contracts**, not merging branches. Corrected a fourth outdated autosave expectation for the V5 failure contract.
+- On Windows, resolved test assertions that incorrectly compared DOS 8.3 temporary path aliases against canonical long paths, without weakening canonical path protection. 244 tests then passed on both Windows and Linux (before subsequent source publication work).
+- Source-specific ownership resolver rejects cross-Job junction aliases and protected internal TBH Toolkit library; Temp result creation protects user-named persisted data.
+- Python helper accepts an active prepared, owned Job runtime without requiring manual SYSTEM acquire/release (legacy route remains available).
+- `job_runtime_finish` now returns tool failure and preserves Job runtime when exact bound-DWG Save fails; no false `JOB_DONE_AUTOSAVE_FAILED` represented as success.
+- `v5_source_publish` indexes source already authored in the final Job/Lisp library folder, **only on explicit reusable registration request**. `v5_source_create/update` refresh previously-published managed library registry on edits, without publishing as-yet-unregistered source. CI Windows+Linux PASS at `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39042944682`.
+
+**WP state (strict, no inflated completion):**
+- WP0 dependency map: DONE.
+- WP1 owner-scoped Builder + Temp source tools: IMPLEMENTED BASIC PATH; complete audit of legacy FILE and authoring paths remains.
+- WP2 reusable in-place Job authoring + opt-in publication: IMPLEMENTED BASIC PATH; legacy Direct/Reasoning adaptations remain.
+- WP3 Temp Lisp LOAD + selective publication: IMPLEMENTED BASIC PATH; native CAD LOAD and dependency closure beyond selected folder remain to verify.
+- WP4 Temp allocator, user-named persistent result writes, explicit cleanup and id-specific cleanup: IMPLEMENTED BASIC PATH; concurrency/crash rollback and native run verification remain.
+- WP5 capability borrowing: reused existing `job_capability_prepare`; execution-owned Python helper path added. Removal of remaining obsolete SYSTEM Job-level ceremonies and same-Job locking design remains.
+- WP6 Save: fixed fail-open behavior. **Position of Save exactly after final CAD mutation vs finish cleanup still needs integration review.**
+- WP7 old draft/checkouts/promote: marked legacy and default CG Builder guidance points to direct authoring, but physical legacy routes/tests still exist.
+- WP8 source CI: PASS Windows/Linux. **Native installed Windows tray + real bound AutoCAD end-to-end: NOT RUN.**
+
+**RL conclusion:** Source CI PASS does not permit asserting V5 implementation complete, native AutoCAD tested, or Ready for Main. Remaining WP5–WP7 are material. Do not ask human to pull until those are genuinely resolved. Preserve V5 theory, do not add back Job TEST or approval/promotion gates.
