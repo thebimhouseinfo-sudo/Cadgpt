@@ -39,3 +39,15 @@ test("V5 owner source path rejects traversal before mutation", async () => {
     /V5_SOURCE_OUTSIDE_OWNER/
   );
 });
+
+test("V5 unregistered final JOB.md can prepare for real RUN without draft promotion", async () => {
+  const fsSync = await import("node:fs");
+  const source = fsSync.readFileSync(path.join(import.meta.dirname, "..", "src", "cadgpt", "tools", "jobs.ts"), "utf8");
+  const start = source.indexOf('"job_runtime_prepare"');
+  const end = source.indexOf('"job_runtime_finish"', start);
+  const part = source.slice(start, end);
+  assert.match(part, /source_path: z\.string\(\)\.min\(1\)\.optional\(\)/);
+  assert.match(part, /V5_JOB_SOURCE_BUILDER_WORK_REQUIRED/);
+  assert.match(part, /V5_JOB_SOURCE_OUTSIDE_MANAGED_LIBRARY/);
+  assert.match(part, /jobId = "v5:"/);
+});
