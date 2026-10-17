@@ -254,3 +254,11 @@ Commits through `4a803368e69fd27c4a91f86e0306a6b12e21b21a` on `feature/core-func
 **Remaining issues:** publication is folder-granular (the user should explicitly name the selected folder), and copy of dependencies outside that folder is not yet supported; the current tool description must not claim broader dependency closure. Existing `importLibrary` publish does not implement a transactional registry update across multiple JSON files—review/fix as part of registry simplification. Legacy Job runtime, capability borrowing, save normalization, abandoned draft paths, and full Windows build/live AutoCAD remain open. No human pull request yet.
 
 **Goal review:** selective independent Lisp publication is permitted by the approved theory; mandatory Temp Job promotion, mock CAD test and new approval gates were not introduced. Engineering regression tests remain development evidence only.
+
+## M. Implementation checkpoint — 2026-10-17
+
+**Only feature/core-function-v5 modified.** Fixed a blocking TypeScript integration defect: `temp_job_lisp_publish` imported `importLibrary` without it being exported; `user-assets.ts` now exports the existing publisher. Hardened reusable Lisp publication: case-insensitive command/library ID collision detection, same-file registry mutation serialization, unique import staging, and no deletion of a different import's staging folder. Regression source is still present.
+
+**RL finding retained (not marked PASS):** multi-file `libraries.json` + `capabilities.json` updates are not yet an atomic single transaction across crash; replacing an existing library also needs a backup/restore path. Existing `replaceExisting=true` remains legacy behavior and V5 Temp Lisp publisher only requests `false`. Do not claim publication entirely crash-safe or V5 complete until fixed and built.
+
+**Remaining:** full legacy Job/runtime authority conversion, namespace stabilization, multi-Job/capability borrowing, Save standardization, draft/SYSTEM gate removal, Windows compilation/regression, and live AutoCAD acceptance. No human pull requested.
