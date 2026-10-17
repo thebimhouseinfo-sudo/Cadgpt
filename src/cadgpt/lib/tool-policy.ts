@@ -39,6 +39,7 @@ export function toolAuthority(toolName: string): ToolAuthority {
 }
 
 export function toolFamily(toolName: string): string {
+  if (toolName === "job_runtime_save_now") return "cad";
   if (toolName === "temp_job_lisp_load") return "cad";
   if (toolName.startsWith("temp_job_") || toolName.startsWith("v5_source_")) return "filesystem";
   if (toolName.startsWith("knowledge_")) return "knowledge";
