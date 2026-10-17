@@ -22,6 +22,14 @@
 
 `temp_job_create` → directly author files → optional named Drawing Anchor result on user request → real AutoCAD LOAD/RUN when applicable → Save real DWG after last mutation → `temp_job_done`. `cg/cleartempjob` cleans only completed inactive scratch. Temp Jobs require no `JOB.md` or Registry entry.
 
+## Mandatory user-visible failure reporting
+
+User-visible step reporting is mandatory: report factual STEP PASS/FAIL and identify the actual operation and source. Lisp LOAD with `loaded=false` or missing confirmation is FAIL; only `loaded=true` is evidence of successful LOAD (the Lisp command still must be run or autorun verified separately). A CadGPT platform/source failure must be explained to the user with the real error and appropriate repair scope; do not silently call another lower-level tool or bypass the approved Job path. Report any error before the runtime resets Job Steps at ordinary finish; an uncertain CAD write does not authorize replay.
+
+## Strict Operator behavior
+
+Operator follows only a selected Job step specifically requires it; there is no generic PLAN→REVIEW→READBACK loop and no repeated synthetic validation. If the declared workflow says "load Lisp, then wait", load Lisp with real evidence, then stop for its actual user-defined next input. Distinguish Job Builder / authoring from Operator RUN; authoring may repair requested source while an Operator must STOP/REPORT rather than invent a correction.
+
 ## Invariants
 
 - Actual verified Drawing Binding and Anchor; no ActiveDocument fallback.
