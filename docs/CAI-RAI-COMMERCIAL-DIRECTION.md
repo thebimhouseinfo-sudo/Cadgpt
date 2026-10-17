@@ -36,6 +36,33 @@
 - **Qwen / DeepSeek (chưa xác nhận trong consumer chat):** **Qwen Code** có Remote MCP (https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp/); **DeepSeek Harness** có MCP client (https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md). Đây là các **developer/harness clients**, không phải bằng chứng rằng ứng dụng **Qwen Chat** hoặc **DeepSeek Chat** có cơ chế thêm Remote MCP tương tự Grok. Giữ ở trạng thái **WATCH / UNVERIFIED consumer app**, không kết luận các model không thể gọi tool.
 - Khả năng công bố Public Plugin và cơ chế phân phối beta phải tuân thủ yêu cầu hiện hành của từng nền tảng; không xem việc có URL MCP là đã phát hành Public Plugin thành công.
 
+### Job Pack Store — Download → existing Job Import (định hướng đã chốt 2026-10-17)
+
+**Đã có cơ chế Job Import trong CadGPT, không xây lại installer, registry hay lifecycle.** User hiện có thể yêu cầu AI nhập Job từ **đường dẫn thư mục nguồn**; bản thương mại chỉ thêm một **Store/Catalog phân loại Job Pack** và đổi bước cung cấp nguồn từ **user/AI nêu đường dẫn** thành **user chọn Job Pack → hệ thống Download → gọi lại chính luồng Import hiện có với đường dẫn nguồn vừa tải**. Về mặt nghiệp vụ, đây là **download + existing import**, không phải hệ thống Job kiểu khác.
+
+```text
+CAI/RAI panel → Job Pack Catalog (search/category/details)
+                           ↓ [Download / Install]
+                  Download signed/verified package
+                           ↓
+              Local temporary import source path
+                           ↓
+             EXISTING Job import / managed-copy logic
+                           ↓
+            Managed Job Library + User Registry
+                           ↓
+                Existing Job execution path
+```
+
+- **Danh mục chung:** cho phép filter theo sản phẩm **CAI/AutoCAD** hoặc **RAI/Revit**, bộ môn (ví dụ HVAC/MEP, Quantity Takeoff, Drawing Automation, Data Management, QA/QC, BIM) và nhiệm vụ; mỗi pack có tên, mô tả, tác giả/publisher, phiên bản, tương thích host/core, yêu cầu đầu vào/quyền, trạng thái đã cài và tùy chọn update. Đây là taxonomy định hướng; pack cụ thể chưa công bố.
+- **Một Job Pack** có thể chứa một hoặc nhiều Job và toàn bộ executable/private assets cần thiết theo **hợp đồng Job Library hiện có**. **Không phát minh thêm format thực thi hoặc copy thủ công từng file**; catalog/download chỉ cần xuất đúng cấu trúc nguồn mà Job Import đã chấp nhận. Nếu cần wrapper metadata cho catalog/version, nó chỉ là metadata phân phối, không thay quyền thực thi của Job.
+- **Giữ ownership và đường dẫn hiện hành:** nguồn tải về chỉ là **external/import source**, không chạy trực tiếp ở cache download. Job Import copy vào `appdata/libraries/jobs/<library-id>/**` và đăng ký qua **User Registry** theo contract hiện tại. **Không ghi đè Internal Registry/official Jobs**, không bypass registry/drawing binding; không sửa ngược package trên Store.
+- **Đảm bảo an toàn:** Store publisher kiểm thử/đóng gói và ký hoặc gắn digest của pack; client xác minh integrity, khả năng tương thích, job IDs và quyền truy cập trước import. Nếu import hiện tại chưa có các xác minh cần thiết cho nguồn online, chỉ bổ sung **gate trước Import**, không nhân bản importer. Job chứa script/LISP phải được coi là executable, không tự tải và chạy ngầm.
+- **Cập nhật và gỡ:** dùng job ID, library ID và version để xác định đã cài; không âm thầm overwrite Job đã được khách chỉnh sửa. Khi update, dùng **lifecycle kiểm tra/checkout/validate/test/promote** và recovery/rollback được hỗ trợ, hoặc báo user cần xử lý; tránh phá nguồn Job đang chạy. Chi tiết cơ chế update/uninstall thực tế cần nghiên cứu dựa trên khả năng existing importer và registry, không giả vờ đã có.
+- **Mô hình thương mại:** có thể có pack miễn phí, pack kèm gói CAI/RAI, pack mua riêng, nhưng **chưa chốt giá/phí**. Giao diện nên hiển thị quyền sử dụng và giá trước download/checkout; không gộp nhầm phí Job Pack với phí tunnel hay AI inference.
+- **Cùng một hệ sinh thái:** Job Pack Store là **thư viện chức năng trong CAI/RAI Add-in**, không bắt buộc phát hành từng pack thành một Autodesk App độc lập. Autodesk Marketplace phân phối Add-in chính; các pack có thể được giới thiệu ở kênh này nếu quy tắc cho phép. Không giả định Autodesk có API store/download pack hộ.
+- **Trạng thái:** đây là **thiết kế trải nghiệm phân phối mới**. Cơ chế local import hiện có, nhưng **catalog, host phân phối, download/installation UI và publish flow chưa được chứng minh đã tồn tại**. Không mở rộng scope phát triển Core hoặc chuyển runtime Job Markdown → Native scripts chỉ vì Store.
+
 ### Hướng nghiên cứu bổ sung: Native Add-in + CAI/RAI-managed AI (CANDIDATE)
 
 **Quyết định sản phẩm (2026-10-17):** Native AI Mode là **dịch vụ AI tích hợp do CAI/RAI quản lý**, không phải môi trường để người dùng chọn nhà cung cấp, model, API endpoint hoặc nhập API key. **Nhà phát triển CAI/RAI chọn sẵn model phù hợp**, có thể phối hợp nhiều cloud API hoặc self-hosted model; người dùng chỉ tương tác với **CAI AI / RAI AI** và mua gói/AI credits. Chi tiết model/routing là cấu hình nội bộ, **không hiển thị trên giao diện người dùng**. AI inference diễn ra bên ngoài CAD host; tool dispatcher/CAD execution vẫn nằm trên máy kỹ sư. **Không có Cloudflare Tunnel/Public Plugin/Cloud MCP Gateway trên đường điều khiển CAD trong Native AI Mode.**
@@ -365,5 +392,7 @@ Cho phép **nghiên cứu dần** và tổ chức **một nhóm beta giới hạ
 > **CAI/RAI hướng tới nền tảng CAD/BIM automation mở: (A) Remote MCP Mode — ChatGPT-first, ưu tiên Microsoft 365 Copilot doanh nghiệp, dùng chung remote integration/gateway và nhiều local connectors; (B) Native AI Mode tương lai — chat native trong CAD/BIM Add-in, **CAI/RAI tự chọn và điều phối model/API nội bộ**, có thể dùng cloud providers hoặc CAI-approved Ollama server của doanh nghiệp, tool thực thi local, **không có model picker/BYOK và không đi qua tunnel/MCP Cloud Gateway**. Bản thương mại bán CAI/RAI subscriptions/tool-execution quotas + top-up; Native AI có thể bán thêm AI credits do CAI/RAI quản lý. Doanh nghiệp mua và IT triển khai; ngôn ngữ do AI thích nghi; MCP Dev & Repair chỉ ở Development.**
 >
 > **Kênh thương mại mục tiêu:** **mỗi CAI (AutoCAD) và RAI (Revit) là một Add-in có panel tích hợp**, có thể phân phối/bán qua **Autodesk Design and Make Marketplace ngay cả khi backend còn dùng MCP**; Native AI là hướng nâng cấp vận hành bên trong cùng sản phẩm, **không phải sản phẩm thứ hai**. **Khi mua hoặc kích hoạt**, khách chọn **GPT/Claude/Grok (phí kết nối Tunnel/MCP), Native Managed AI (AI quota), hoặc Native Company Self-hosted (0 CAI/RAI tunnel/inference quota fee)**; luôn trả **Add-in base cố định + gói sử dụng**, được xem giá/tổng tiền và phí AI bên ngoài trước thanh toán; hình thức checkout trong Autodesk hay portal riêng phải kiểm tra điều khoản Marketplace. AI providers ở Native vẫn do CAI/RAI quản lý. Chưa chốt giá số, chưa có bản submit/review được Autodesk chấp nhận.
+>
+> **Job Pack Store:** người dùng tìm và **Download** Job Pack từ catalog theo phân loại, sau đó Add-in **gọi lại chính Job Import hiện có** để đưa vào managed libraries/User Registry; không thiết kế importer/registry/runtime thứ hai. Chưa triển khai Store.
 >
 > **Hiện tại:** tiếp tục phát triển core CAI/RAI; có thể nghiên cứu Cloud Beta nhỏ để kiểm chứng routing, counting và quota distribution. Mở rộng CAD/BIM khác và triển khai thương mại toàn diện **chưa nằm trong phạm vi hiện tại**.
