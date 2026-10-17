@@ -38,6 +38,8 @@ export function toolAuthority(toolName: string): ToolAuthority {
 }
 
 export function toolFamily(toolName: string): string {
+  if (toolName === "temp_job_lisp_load") return "cad";
+  if (toolName.startsWith("temp_job_") || toolName.startsWith("v5_source_")) return "filesystem";
   if (toolName.startsWith("knowledge_")) return "knowledge";
   if (toolName.startsWith("file_")) return "filesystem";
   if (toolName.startsWith("lisp_")) return "lisp-authoring";
