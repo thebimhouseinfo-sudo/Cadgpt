@@ -59,9 +59,9 @@ async function readJson<T>(target: string, fallback: T): Promise<T> {
 
 async function atomicJson(target: string, value: unknown): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true });
-  const temp = path.join(path.dirname(target), "." + path.basename(target) + ".tmp");
+  const temp = path.join(path.dirname(target), "." + path.basename(target) + "." + randomUUID() + ".tmp");
   try {
-    await fs.writeFile(temp, JSON.stringify(value, null, 2) + "\n", "utf8");
+    await fs.writeFile(temp, JSON.stringify(value, null, 2) + "\n", { encoding: "utf8", flag: "wx" });
     await fs.rename(temp, target);
   } finally {
     await fs.rm(temp, { force: true }).catch(() => undefined);
