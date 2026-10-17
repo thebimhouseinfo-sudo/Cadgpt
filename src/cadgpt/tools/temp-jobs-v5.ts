@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { currentToolLease } from "../lib/work-registration.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
-import { createTempJob, writeTempSource, updateTempSource, createTempResult, finishTempJob, clearTempJobs } from "../runtime/temp-job-v5.js";
+import { createTempJob, writeTempSource, updateTempSource, createTempResult, writeTempResult, finishTempJob, clearTempJobs } from "../runtime/temp-job-v5.js";
 
 export function registerTempJobV5Tools(server: McpServer): void {
   server.registerTool("temp_job_create", {
@@ -57,6 +57,21 @@ export function registerTempJobV5Tools(server: McpServer): void {
       const lease = currentToolLease();
       return toolResult("temp_job_result_create", await createTempResult(id, lease.workId, lease.sessionKey, folder_name));
     } catch (error) { return toolError("temp_job_result_create", error); }
+  });
+  server.registerTool("temp_job_result_write", {
+    title: "Write into this Temp Job's named Drawing Anchor result",
+    description: "Create a new result file in the exact user-named, verified bound drawing result. No overwrite or cross-Job access.",
+    inputSchema: {
+      id: z.string().uuid(),
+      relative_file: z.string().min(1),
+      content: z.string(),
+    },
+  }, async ({ id, relative_file, content }) => {
+    try {
+      const lease = currentToolLease();
+      return toolResult("temp_job_result_write",
+        await writeTempResult(id, lease.workId, lease.sessionKey, relative_file, content));
+    } catch (error) { return toolError("temp_job_result_write", error); }
   });
   server.registerTool("temp_job_done", {
     title: "Mark Temp Job complete",
