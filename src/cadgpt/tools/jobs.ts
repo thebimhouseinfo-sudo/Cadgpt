@@ -22,7 +22,7 @@ import { getBoundDrawingsForExecution } from "../session/drawing-binding.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
-import { hasVerifiedBoundSave } from "../runtime/bound-save-ledger.js";
+import { hasVerifiedBoundSave, noteVerifiedBoundSave, invalidateBoundSave } from "../runtime/bound-save-ledger.js";
 import {
   drawingMetadataRootsForExecution,
   drawingMetadataWritableRootsForExecution,
@@ -1027,6 +1027,54 @@ export function registerJobAuthoringTools(server: McpServer): void {
           "job_runtime_prepare",
           error
         );
+      }
+    }
+  );
+
+  server.registerTool(
+    "job_runtime_save_now",
+    {
+      title: "Save exact bound DWG after final CAD mutation",
+      description: "Operator/Builder calls immediately after the last DWG mutation. Save is verified on the exact bound runtime document identity; subsequent CAD operations invalidate this proof, preventing false Job DONE.",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const lease = currentToolLease();
+        if (!activeJobRuntimeForExecution(lease.workId)) {
+          throw new Error("JOB_RUNTIME_NOT_ACTIVE");
+        }
+        const drawing = resolveDrawingContext();
+        return await withCadHostLock(drawing.host, async () => {
+          await activateDrawingContext(drawing);
+          invalidateBoundSave(lease.workId);
+          const response = await cadUpstream.callTool("acad_save_bound_document", {
+            runtime_document_id: drawing.runtime_document_identity,
+          }) as { isError?: boolean; structuredContent?: Record<string, unknown>; content?: unknown };
+          if (response.isError) throw new Error("JOB_BOUND_SAVE_UPSTREAM_ERROR");
+          let saved: unknown = response.structuredContent;
+          if (saved === undefined) {
+            const rawText = (response.content as Array<{ type?: string; text?: string }> | undefined)
+              ?.find(item => item.type === "text")?.text;
+            if (rawText) {
+              try { saved = JSON.parse(rawText); } catch { saved = undefined; }
+            }
+          }
+          const evidence = saved as { saved?: unknown; runtime_document_id?: unknown } | undefined;
+          if (!evidence || evidence.saved !== true ||
+              evidence.runtime_document_id !== drawing.runtime_document_identity) {
+            throw new Error("JOB_BOUND_SAVE_UNVERIFIED");
+          }
+          noteVerifiedBoundSave(lease.workId, drawing.runtime_document_identity);
+          return toolResult("job_runtime_save_now", {
+            saved: true,
+            drawing_id: drawing.drawing_id,
+            runtime_document_identity: drawing.runtime_document_identity,
+            final_save_verified: true,
+          });
+        });
+      } catch (error) {
+        return toolError("job_runtime_save_now", error);
       }
     }
   );
