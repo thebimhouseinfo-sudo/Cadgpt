@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 import {
   getJobDraftRoot,
@@ -344,7 +345,13 @@ export async function prepareJobRuntimeForExecution(
 ): Promise<JobRuntimeContext> {
   const jobRoot =
     await managedJobRootForFile(jobFile);
-  const runtimeRoot = path.join(jobRoot, "runtime");
+  // V5 Builder RUN uses an execution-isolated scratch subdirectory.
+  // Two executions can use the same immutable Job source without a Job-wide
+  // lock or cross-run JOB_STEPS overwrite. Legacy Job layouts are unchanged.
+  const v5OwnedRun = jobId.startsWith("v5:");
+  const runtimeRoot = v5OwnedRun
+    ? path.join(jobRoot, "runtime", "runs", createHash("sha256").update(executionId).digest("hex").slice(0, 24))
+    : path.join(jobRoot, "runtime");
   const current =
     contextsByExecution.get(executionId);
 
@@ -365,6 +372,7 @@ export async function prepareJobRuntimeForExecution(
       const existingExecution =
         executionByJobRoot.get(rootKey);
       if (
+        !v5OwnedRun &&
         existingExecution &&
         existingExecution !== executionId
       ) {
@@ -390,7 +398,7 @@ export async function prepareJobRuntimeForExecution(
       // lock keeps another execution from observing an unclaimed gap while
       // runtime ownership changes. Reasoning Jobs preserve runtime bytes for
       // crash/relaunch recovery; Direct Jobs explicitly request a reset.
-      executionByJobRoot.set(
+      if (!v5OwnedRun) executionByJobRoot.set(
         rootKey,
         executionId
       );
