@@ -261,6 +261,21 @@ export async function importLibrary(kind: AssetKind, libraryId: string, name: st
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
+  if (!replaceExisting) {
+    const manifests = await readJson<{ libraries?: LibraryRecord[] }>(
+      getUserLibrariesManifestPath(), { libraries: [] }
+    );
+    if ((manifests.libraries ?? []).some(item => item.id === libraryId && item.kind === kind)) {
+      throw new Error("LIBRARY_ID_ALREADY_REGISTERED: choose an unused independent library id.");
+    }
+    const registry = await readJson<UserRegistry>(getUserCapabilitiesPath(), { version: 1, entries: [] });
+    if (registry.entries.some(item => item.kind === kind &&
+        (item.library_id === libraryId || entries.some(incoming =>
+          incoming.id === item.id ||
+          (kind === "lisp" && incoming.commands.some(cmd => item.commands?.includes(cmd))))))) {
+      throw new Error("LISP_LIBRARY_COMMAND_OR_ID_COLLISION");
+    }
+  }
   if (exists && !replaceExisting) throw new Error("Library đã tồn tại. Chỉ thay thế khi user yêu cầu.");
 
   const staging = target + ".importing";
