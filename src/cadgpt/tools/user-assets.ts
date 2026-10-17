@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -244,60 +246,72 @@ export async function resolveRegisteredAssetPath(
 
 export export async function importLibrary(kind: AssetKind, libraryId: string, name: string, folderPath: string, replaceExisting: boolean) {
   assertUserLibraryId(libraryId);
+  if (!LIBRARY_ID.test(libraryId)) throw new Error("LIBRARY_ID_INVALID");
   const source = await assertSourceFolder(folderPath);
   const entries = await indexLibrary(kind, libraryId, source);
   const targetParent = kind === "lisp" ? getLispLibrariesRoot() : getJobLibrariesRoot();
   await fs.mkdir(targetParent, { recursive: true });
   const target = await resolveAbsoluteMutationPath(path.join(targetParent, libraryId), {
-    allowedRoots: [targetParent],
-    forCreate: true,
-    label: "CadGPT user library",
+    allowedRoots: [targetParent], forCreate: true, label: "CadGPT user library",
   });
-
-  let exists = false;
-  try {
-    await fs.stat(target);
-    exists = true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-  if (!replaceExisting) {
-    const manifests = await readJson<{ libraries?: LibraryRecord[] }>(
-      getUserLibrariesManifestPath(), { libraries: [] }
+  // Registry publication is serialized with other imports in THIS process.
+  // No job-level lock, test gate or approval phase is added.
+  return withFileMutationLocks([
+    getUserLibrariesManifestPath(), getUserCapabilitiesPath(), target,
+  ], async () => {
+    const manifest = await readJson<{ version: number; libraries: LibraryRecord[] }>(
+      getUserLibrariesManifestPath(), { version: 1, libraries: [] }
     );
-    if ((manifests.libraries ?? []).some(item => item.id.toLowerCase() === libraryId.toLowerCase() && item.kind === kind)) {
-      throw new Error("LIBRARY_ID_ALREADY_REGISTERED: choose an unused independent library id.");
+    const registry = await readJson<UserRegistry>(
+      getUserCapabilitiesPath(), { version: 1, entries: [] }
+    );
+    const exists = await fs.lstat(target).then(() => true, error => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    });
+    if (!replaceExisting) {
+      if (exists || manifest.libraries.some(item =>
+          item.id.toLowerCase() === libraryId.toLowerCase() && item.kind === kind)) {
+        throw new Error("LIBRARY_ID_ALREADY_REGISTERED");
+      }
+      const used = new Set(registry.entries.filter(item => item.kind === "lisp")
+        .flatMap(item => (item.commands ?? []).map(cmd => cmd.toLowerCase())));
+      if (kind === "lisp" && entries.some(entry =>
+          entry.commands.some(cmd => used.has(cmd.toLowerCase())))) {
+        throw new Error("LISP_LIBRARY_COMMAND_OR_ID_COLLISION");
+      }
+      if (registry.entries.some(item =>
+          entries.some(entry => item.id.toLowerCase() === entry.id.toLowerCase()))) {
+        throw new Error("LIBRARY_REGISTRY_ID_COLLISION");
+      }
     }
-    const registry = await readJson<UserRegistry>(getUserCapabilitiesPath(), { version: 1, entries: [] });
-    if (registry.entries.some(item => item.kind === kind &&
-        (item.library_id.toLowerCase() === libraryId.toLowerCase() || entries.some(incoming =>
-          incoming.id.toLowerCase() === item.id.toLowerCase() ||
-          (kind === "lisp" && incoming.commands.some(cmd =>
-            (item.commands ?? []).some(existing => existing.toLowerCase() === cmd.toLowerCase()))))))) {
-      throw new Error("LISP_LIBRARY_COMMAND_OR_ID_COLLISION");
+    // Exclusive staging. Never remove another import's staging directory.
+    const staging = path.join(targetParent, "." + libraryId + "-" + randomUUID() + ".importing");
+    try {
+      await fs.cp(source, staging, {
+        recursive: true, errorOnExist: true, force: false,
+        filter: item => ![".git", ".svn"].includes(path.basename(item)),
+      });
+      if (exists && replaceExisting) {
+        // Legacy replacement remains explicitly requested, not used by V5 Temp publishing.
+        await fs.rm(target, { recursive: true, force: false });
+      }
+      await fs.rename(staging, target);
+      try {
+        await saveLibraryAndRegistry({
+          id: libraryId, kind, name, mode: "managed",
+          root_path: target, enabled: true,
+        }, entries);
+      } catch (error) {
+        // Do not leave an unregistered published library after a failed registry update.
+        if (!exists) await fs.rm(target, { recursive: true, force: true });
+        throw error;
+      }
+    } finally {
+      await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined);
     }
-  }
-  if (exists && !replaceExisting) throw new Error("Library đã tồn tại. Chỉ thay thế khi user yêu cầu.");
-
-  const staging = target + ".importing";
-  await fs.rm(staging, { recursive: true, force: true });
-  await fs.cp(source, staging, {
-    recursive: true,
-    filter: (item) => ![".git", ".svn"].includes(path.basename(item)),
+    return { library_id: libraryId, kind, folder_path: target, registered: entries.length, entries };
   });
-  if (exists) await fs.rm(target, { recursive: true, force: true });
-  await fs.rename(staging, target);
-
-  await saveLibraryAndRegistry({
-    id: libraryId,
-    kind,
-    name,
-    mode: "managed",
-    root_path: target,
-    enabled: true,
-  }, entries);
-
-  return { library_id: libraryId, kind, folder_path: target, registered: entries.length, entries };
 }
 
 async function registerExternalLibrary(kind: AssetKind, libraryId: string, name: string, folderPath: string) {
