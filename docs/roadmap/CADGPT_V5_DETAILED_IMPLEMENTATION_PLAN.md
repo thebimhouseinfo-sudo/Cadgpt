@@ -241,3 +241,16 @@ Completed source slices:
 8. WP8: Windows build, regression, live CAD, installed tray/add-in independent release proof.
 
 **RL checkpoint:** No extra user Job RUN/TEST/promotion gate was introduced. `v5_source_*` uses an explicit Builder work role; independent Job execution cannot call it. CAD loader reuse preserves bound host authority. **No claim of build PASS, no real CAD acceptance, no user pull requested.**
+
+## L. V5 implementation checkpoint — 2026-10-17 continued
+
+Commits through `4a803368e69fd27c4a91f86e0306a6b12e21b21a` on `feature/core-function-v5` **only**. `main` untouched.
+
+**Implemented source (not runtime-PASS):**
+- `temp_job_lisp_publish`: explicit user-triggered copy of the *selected Lisp-containing folder* and its accompanying assets into an independent managed Lisp Library via existing `importLibrary`; no promotion of the Temp Job and no forced post-copy run. Does not delete originals.
+- Added registry collision rejection for existing library IDs and duplicate Lisp command names before writing new managed Lisp library; no silent overwrite.
+- `tests/v5-temp-lisp-publish.test.mjs` covers independent copy, repeated library rejection and command collision (test source created; execution not verified).
+
+**Remaining issues:** publication is folder-granular (the user should explicitly name the selected folder), and copy of dependencies outside that folder is not yet supported; the current tool description must not claim broader dependency closure. Existing `importLibrary` publish does not implement a transactional registry update across multiple JSON files—review/fix as part of registry simplification. Legacy Job runtime, capability borrowing, save normalization, abandoned draft paths, and full Windows build/live AutoCAD remain open. No human pull request yet.
+
+**Goal review:** selective independent Lisp publication is permitted by the approved theory; mandatory Temp Job promotion, mock CAD test and new approval gates were not introduced. Engineering regression tests remain development evidence only.
