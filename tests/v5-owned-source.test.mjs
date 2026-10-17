@@ -69,3 +69,11 @@ test("V5 rejects a symlinked owner root redirected to another Job", async (t) =>
     /V5_OWNER_ROOT_ALIAS_BLOCKED/
   );
 });
+
+test("V5 protected internal toolkit is never Builder writable", async () => {
+  const { ownedSourceRoot } = await import("../dist/cadgpt/lib/owned-source.js");
+  assert.throws(
+    () => ownedSourceRoot({ kind: "reusable-lisp", libraryId: "TBH-TOOLKIT", relativeFolder: "lisp" }),
+    /V5_INTERNAL_LIBRARY_READ_ONLY/
+  );
+});
