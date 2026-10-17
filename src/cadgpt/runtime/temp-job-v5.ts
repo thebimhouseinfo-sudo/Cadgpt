@@ -205,7 +205,7 @@ export async function writeTempResult(
   const target = path.resolve(result, relativeFile);
   const resolved = await resolveOwnedResultTarget(target, result);
   const ext = path.extname(resolved).toLowerCase();
-  if (![".json", ".csv", ".txt", ".md", ".yaml", ".yml", ".xlsx"].includes(ext)) {
+  if (![".json", ".csv", ".txt", ".md", ".yaml", ".yml"].includes(ext)) {
     throw new Error("TEMP_JOB_UNSUPPORTED_RESULT_TYPE");
   }
   await withFileMutationLocks([resolved], async () => {
