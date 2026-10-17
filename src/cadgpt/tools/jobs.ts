@@ -1152,9 +1152,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
   server.registerTool(
     "job_system_acquire",
     {
-      title: "Acquire Job SYSTEM Lease",
+      title: "Legacy Job SYSTEM Lease Acquire",
       description:
-        "Hand off the current prepared User Reasoning Job runtime from foreground work to a detached SYSTEM lease. Use only after all CAD-dependent input and any final Job result location have already been resolved. The SYSTEM tool_id is exactly the canonical Job id.",
+        "Legacy compatibility only. V5 Job helper runs from the execution-owned prepared Job runtime without manual SYSTEM lease acquire/release; new Jobs must not require this transition.",
       inputSchema: {
         id: z.string().min(1),
       },
@@ -1250,9 +1250,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
   server.registerTool(
     "job_system_release",
     {
-      title: "Release Job SYSTEM Lease",
+      title: "Legacy Job SYSTEM Lease Release",
       description:
-        "Release the active detached Job SYSTEM lease after its independent data-processing tail is complete. Pass tool_id=<job_id>. Release is limited to the logical CadGPT session that owns the lease.",
+        "Legacy compatibility only for already-detached jobs; V5 owned helper calls do not require a release step.",
       inputSchema: {},
     },
     async () => {
