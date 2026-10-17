@@ -9,6 +9,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { cadUpstream } from "../runtime/cad-upstream.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
+import { noteVerifiedBoundSave, invalidateBoundSave } from "../runtime/bound-save-ledger.js";
 import { getRepoRoot } from "../lib/path-security.js";
 import { listBundledLispEntries } from "../lib/bundled-assets.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
@@ -542,9 +543,22 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
 
           return await withCadHostLock(binding.host, async () => {
             await activateDrawingContext(binding);
+            const executionId = currentToolLease().workId;
+            if (tool.name !== "acad_save_bound_document") invalidateBoundSave(executionId);
             const result = (await cadUpstream.callTool(tool.name, upstreamArgs)) as any;
             if (!isToolErrorResult(result)) {
-              recordCadCandidateSuccess(currentToolLease().workId, publicName);
+              recordCadCandidateSuccess(executionId, publicName);
+              if (tool.name === "acad_save_bound_document") {
+                const payload = extractUpstreamPayload(result);
+                if (findPayloadField(payload, "saved") === true &&
+                    findPayloadField(payload, "runtime_document_id") === binding.runtime_document_identity) {
+                  noteVerifiedBoundSave(executionId, binding.runtime_document_identity);
+                } else {
+                  invalidateBoundSave(executionId);
+                }
+              }
+            } else if (tool.name === "acad_save_bound_document") {
+              invalidateBoundSave(executionId);
             }
             return result;
           });
