@@ -188,6 +188,11 @@ export async function createTempResult(
   try {
     await fs.writeFile(tempMetadata, JSON.stringify(meta, null, 2), { flag: "wx" });
     await fs.rename(tempMetadata, metadataPath);
+  } catch (error) {
+    // Result publication was not reported successful. Roll back only a still
+    // empty directory we just created; never delete user result files.
+    await fs.rmdir(result).catch(() => {});
+    throw error;
   } finally {
     await fs.rm(tempMetadata, { force: true }).catch(() => {});
   }
