@@ -11,6 +11,7 @@ import { toolError, toolResult } from "../lib/tool-result.js";
 import { currentJobSystemLease } from "../runtime/system-lease.js";
 import { activeJobRuntimeForExecution } from "../runtime/job-runtime.js";
 import { currentToolLease, activeWorkForSession } from "../lib/work-registration.js";
+import { currentBuilderTarget } from "../runtime/builder-target.js";
 
 const execFileAsync = promisify(execFile);
 const sha256 = (bytes: string | Buffer) =>
@@ -80,12 +81,22 @@ export function registerJobSystemHelperTools(server: McpServer): void {
           // prepared Job context is the sole source of ownership authority.
           const invoking = currentToolLease();
           const work = activeWorkForSession(invoking.sessionKey);
-          if (!work || work.executionId !== invoking.workId || work.ownerType !== "job") {
-            throw new Error("JOB_HELPER_OWNED_JOB_WORK_REQUIRED");
+          if (!work || work.executionId !== invoking.workId) {
+            throw new Error("JOB_HELPER_ACTIVE_WORK_REQUIRED");
           }
           const owned = activeJobRuntimeForExecution(invoking.workId);
           if (!owned || (work.jobId && work.jobId !== owned.job_id)) {
             throw new Error("JOB_HELPER_PREPARED_RUNTIME_REQUIRED");
+          }
+          if (work.ownerType !== "job") {
+            const isBuilder = ["jobcreate", "job-authoring"].includes(work.ownerId) ||
+              work.capabilities.includes("job-authoring");
+            const target = currentBuilderTarget(invoking.workId);
+            if (!isBuilder || !target ||
+                (await fs.realpath(target)).toLowerCase() !==
+                (await fs.realpath(owned.job_root)).toLowerCase()) {
+              throw new Error("JOB_HELPER_BUILDER_TARGET_MISMATCH");
+            }
           }
           jobRoot = path.resolve(owned.job_root);
           runtimeRoot = path.resolve(owned.runtime_root);
