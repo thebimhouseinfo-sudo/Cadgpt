@@ -7,6 +7,7 @@ import { activeWorkForSession, currentToolLease } from "../lib/work-registration
 import { ownedSourceRoot, assertOwnedSourceRootSafe, resolveOwnedSourceMutation, type OwnedSource } from "../lib/owned-source.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { assertBuilderTarget } from "../runtime/builder-target.js";
 import { publishManagedLibrary, refreshPublishedManagedLibrary } from "./user-assets.js";
 
 const digest = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
@@ -69,6 +70,7 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
       const target = targetFor(o, relative_file);
       const directory = ownedSourceRoot(o);
       await assertOwnedSourceRootSafe(o);
+      assertBuilderTarget(currentToolLease().workId, directory);
       await fs.mkdir(directory, { recursive: true });
       const result = await withFileMutationLocks([target], async () => {
         const resolved = await resolveOwnedSourceMutation(target, o, { forCreate: true });
@@ -91,6 +93,7 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
       const o = owner(kind, library_id, folder);
       const target = targetFor(o, relative_file);
       await assertOwnedSourceRootSafe(o);
+      assertBuilderTarget(currentToolLease().workId, ownedSourceRoot(o));
       const result = await withFileMutationLocks([target], async () => {
         const resolved = await resolveOwnedSourceMutation(target, o);
         const before = await fs.readFile(resolved);
