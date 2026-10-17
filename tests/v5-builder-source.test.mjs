@@ -33,7 +33,7 @@ test("V5 owner source path rejects traversal before mutation", async () => {
   const own = { kind: "reusable-job", libraryId: "hvac", relativeFolder: "own-job" };
   const rootA = ownedSourceRoot(own);
   await fs.mkdir(rootA, { recursive: true });
-  assert.equal(await resolveOwnedSourceMutation(path.join(rootA, "JOB.md"), own, { forCreate: true }), path.join(rootA, "JOB.md"));
+  assert.equal(await resolveOwnedSourceMutation(path.join(rootA, "JOB.md"), own, { forCreate: true }), path.join(await fs.realpath(rootA), "JOB.md"));
   await assert.rejects(
     resolveOwnedSourceMutation(path.join(root, "libraries", "jobs", "hvac", "other-job", "JOB.md"), own, { forCreate: true }),
     /V5_SOURCE_OUTSIDE_OWNER/
