@@ -810,6 +810,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
             );
           }
 
+          invalidateBoundSave(currentToolLease().workId);
           return await withCadHostLock(binding.host, async () => {
             await activateDrawingContext(binding);
             const result = await cadUpstream.callTool(
