@@ -992,7 +992,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
             lease.workId,
             jobId,
             jobFile,
-            { resetRuntime: false }
+            { resetRuntime: false, isolatedRun: Boolean(id || source_path) }
           );
         // A FILE-only Job B can resume on a drawing root already verified
         // during Job A, with no second CAD bind or invented AppData path.
