@@ -33,6 +33,9 @@ export function ownedSourceRoot(owner: OwnedSource): string {
   if (!SEGMENT.test(owner.libraryId) || owner.libraryId === "." || owner.libraryId === "..") {
     throw new Error("V5_INVALID_LIBRARY_ID");
   }
+  if (owner.libraryId.toLowerCase() === "tbh-toolkit") {
+    throw new Error("V5_INTERNAL_LIBRARY_READ_ONLY");
+  }
   const parts = safeSegments(owner.relativeFolder);
   return path.join(
     owner.kind === "reusable-job" ? getJobLibrariesRoot() : getLispLibrariesRoot(),
