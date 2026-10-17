@@ -385,6 +385,21 @@ export async function publishManagedLibrary(
   });
 }
 
+/** Refresh an already-published managed library after an in-place Builder edit.
+ * Unpublished draft-free source remains unpublished until explicitly requested.
+ */
+export async function refreshPublishedManagedLibrary(kind: AssetKind, libraryId: string) {
+  const manifest = await readJson<{ libraries?: LibraryRecord[] }>(
+    getUserLibrariesManifestPath(), { libraries: [] }
+  );
+  const published = (manifest.libraries ?? []).find(
+    item => item.kind === kind && item.id.toLowerCase() === libraryId.toLowerCase()
+  );
+  if (!published || published.enabled === false ||
+      libraryMode(published) !== "managed") return null;
+  return publishManagedLibrary(kind, libraryId, published.name);
+}
+
 async function registerExternalLibrary(kind: AssetKind, libraryId: string, name: string, folderPath: string) {
   assertUserLibraryId(libraryId);
   const root = await assertSourceFolder(folderPath);
