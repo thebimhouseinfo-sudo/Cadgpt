@@ -219,3 +219,25 @@ No source implementation authorized by this document itself.
 - **Unverified:** no build/test execution or actual CAD actions yet. Source reviews only. The result creator currently provisions the folder; scoped result write authorization remains future integration work. Do not imply full end-to-end Temp result workflow.
 - **RL finding:** the Temp Job runtime must not use general AppData writable roots; source tool validates owning Work. Future authoring and result writes must keep that property. Another finding: returning a newly provisioned folder is not equivalent to persisting output. These are code-completion findings, not business/Job TEST gates.
 - **Next priority:** connect reusable Job/Lisp in-place editing with exact Builder target scope; then integrate scoped result writes, owned Temp Lisp CAD LOAD and selective independent Lisp publication. The full system is NOT READY for pull or acceptance.
+
+## K. Implementation continuation — 2026-10-17 (second continuation)
+
+**All source updates on `feature/core-function-v5` only.**
+
+Completed source slices:
+- Scoped `temp_job_result_write` writes a new text result into the exact, user-named Drawing Anchor folder under a single verified bound DWG; refuses cross-anchor, overwrite, traversal and non-text workbook masquerading.
+- `v5_source_create` and `v5_source_update` directly author reusable Job/Lisp source in an explicit owner folder; Builder-only active Work with file authority and same-file SHA conflict checks. These are direct authoring tools, not new draft/promote gates.
+- `temp_job_lisp_load` invokes the existing verified CAD loader rather than a simulator. Lisp path policy admits only an *active, owning Builder execution*'s Temp Lisp; ordinary loads from arbitrary Temp directories remain rejected.
+- Temp source same-file mutations and Windows traversal restrictions hardened, retaining the canonical resolver.
+
+**Remaining major engineering work (not hidden):**
+1. WP1: integrate Builder source grant and exact Job runtime boundaries into legacy generic FILE/Job helper routes; direct tools currently coexist with old draft surfaces.
+2. WP2: replace old source/routing distinction for Direct vs Reasoning registered Jobs, preserve existing named Job flows; remove compulsory promotion/checkouts.
+3. WP3: selective Temp Lisp copying + independent registry publication with dependency resolution; prove AutoCAD upstream loader accepts Temp file and real LOAD/run.
+4. WP4: result ownership lifecycle and collision/concurrency recovery; explicit `cg/cleartempjob <id>` form remains absent from fake CLI.
+5. WP5: capability borrowing and simplification of SYSTEM lease orchestration.
+6. WP6: uniform save-after-last-CAD-mutation for all reusable Jobs, including legacy Direct Python cases.
+7. WP7: retire old draft, lease and compatibility-gate paths after replacement is functional, including docs/skills and tests.
+8. WP8: Windows build, regression, live CAD, installed tray/add-in independent release proof.
+
+**RL checkpoint:** No extra user Job RUN/TEST/promotion gate was introduced. `v5_source_*` uses an explicit Builder work role; independent Job execution cannot call it. CAD loader reuse preserves bound host authority. **No claim of build PASS, no real CAD acceptance, no user pull requested.**
