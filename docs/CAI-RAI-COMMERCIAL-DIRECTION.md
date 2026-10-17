@@ -79,6 +79,30 @@ Model response / tool call → Local dispatcher → CAD/BIM result → Model API
 - **Tiêu chí kiểm chứng:** chọn tool và truyền tham số chính xác, từ chối thao tác không có quyền, tuân thủ xác nhận CAD mutating, xử lý lỗi và multi-step flow; đo latency, VRAM/RAM, tool-call success rate, số user đồng thời và hiệu quả escalation. Model trong dải 2B–4B vẫn có thể thiếu độ chính xác tool calling, suy luận hoặc xử lý ngữ cảnh dài; nếu benchmark không đạt, điều chỉnh model, bổ sung dữ liệu/schema rõ ràng hoặc escalation sang Builder thay vì nới lỏng xác thực CAD.
 - **Không đưa các con số trên thành yêu cầu bắt buộc đối với khách hàng** (cloud providers/AI server nội bộ có khả năng khác nhau); không phải chỉ thị mua GPU/triển khai model ngay trong giai đoạn Core Development.
 
+#### CAI/RAI-managed AI credits từ Cloud API / Ollama Cloud (RESEARCH ONLY — resale rights chưa xác nhận)
+
+**Hướng kinh doanh cần nghiên cứu, chưa chốt:** CAI/RAI ngoài bán software subscription và tool-execution quota còn có thể bán **AI inference credits** cho khách hàng Native API Mode, ví dụ dùng dịch vụ inference của **Ollama Cloud** phía sau proxy của CAI. Khách không phải tự tạo/mua API key nhà cung cấp. Đây là dịch vụ inference **tích hợp trong sản phẩm**, cần phân biệt với **bán lại API/white-label API độc lập**.
+
+```text
+CAI/RAI Native Add-in (chat, CAD/BIM local tool dispatcher)
+      │ HTTPS inference request
+      ▼
+CAI AI Proxy (user/org auth + AI usage/budget + per-user ledger)
+      │ Provider key chỉ lưu phía server
+      ▼
+Ollama Cloud / authorized model API provider
+      │ model response + tool call + token usage
+      ▼
+CAI/RAI Native Add-in → verify tool schema/authority → local CAD/BIM action
+```
+
+- **Không có Cloudflare Tunnel hoặc remote MCP routing cho lệnh CAD** ở nhánh Native API. Nếu triển khai proxy/cloud endpoint, nó chỉ quản lý **AI inference** và bảo mật provider credential; license/quota sync có thể là dịch vụ HTTPS riêng.
+- **Hai đơn vị tính phí độc lập:** (1) **CAI/RAI execution quota** = số tool executions; (2) **AI credits/tokens** = mức tiêu thụ inference (input, cache, output, multi-turn/tool-result context, từng model). Một tool call có thể cần nhiều model requests; không gộp hai loại thành 1:1.
+- **Ollama Cloud pricing ghi nhận 2026-10-17:** có API, bảng giá per-million-token, usage credits, Free pay-as-you-go và gói Pro/Max/Team. Team hiện công bố $500/tháng có $1,000 usage credits chia sẻ, nhưng **đó không phải xác nhận được phép reseller, cũng không phải bằng chứng biên lợi nhuận cố định**; giới hạn concurrent requests/quota và bảng model thay đổi theo plan. Nguồn: https://ollama.com/pricing và https://ollama.com/blog/transparent-pricing .
+- **Chưa được phép suy diễn quyền resale:** Điều khoản công khai tại https://ollama.com/terms **không cấp rõ quyền bán lại/white-label/re-export Cloud API** và có điều khoản hạn chế dùng dịch vụ phát triển sản phẩm cạnh tranh. **Yêu cầu xác nhận bằng văn bản/hợp đồng thương mại từ Ollama** cho từng mô hình phân phối (embedded AI feature vs independent API resale) và xem lại giấy phép các model được sử dụng. Chưa có xác nhận thì **không công bố CAI là reseller chính thức và không triển khai bán lại Ollama API**.
+- **Kiểm soát chi phí/rủi ro** nếu được phép: API key server-side, per-tenant/user limits và budgets, hard-stop khi hết AI credits, token usage ledger theo provider/model, đối soát hóa đơn, chống retry tính trùng, rate/concurrency protection, xác định thuế/phí, dữ liệu dự án và chính sách xử lý nội dung theo hợp đồng khách hàng.
+- **Lựa chọn dự phòng:** BYOK khách hàng trả trực tiếp nhà cung cấp; doanh nghiệp tự host Ollama server; hoặc nghiên cứu nhà cung cấp có chương trình OEM/reseller rõ ràng. Không yêu cầu build billing inference/proxy ở milestone core hay Cloud Beta hiện tại.
+
 #### Phương án nghiên cứu (không tự động thành work item)
 
 - So sánh chất lượng **tool/function calling**, hiểu CAD/BIM, reasoning nhiều bước, ngữ cảnh dài, latency, concurrent users và chi phí vận hành trên cloud API so với shared Ollama server.
@@ -199,7 +223,7 @@ Cho phép **nghiên cứu dần** và tổ chức **một nhóm beta giới hạ
 ## 8. Ranh giới dữ liệu, tương thích và quyết định còn mở
 
 - Thiết kế tối thiểu cần bảo vệ phiên đăng nhập, xác thực OAuth/token, tenant isolation, ghép cặp/thu hồi device, chống gửi nhầm kết quả, và an toàn với các lệnh CAD mutating. Không truyền toàn bộ DWG qua cloud nếu không cần.
-- **Chưa chốt:** tên miền cụ thể; nhà cung cấp dịch vụ auth/billing; kiểu host Gateway (Remote MCP Mode); chính sách credits và đơn giá; số requests cho từng gói; giới hạn số máy/nhân viên; thời điểm đưa vào bản thương mại; hướng phát hành chính xác cho từng AI client; thiết kế native chat/multi-provider adapter, local usage ledger/quota sync, cấu hình cloud API hoặc máy chủ Ollama của doanh nghiệp và BYOK hay CAI-managed AI cho Native API Mode.
+- **Chưa chốt:** tên miền cụ thể; nhà cung cấp dịch vụ auth/billing; kiểu host Gateway (Remote MCP Mode); chính sách credits và đơn giá; số requests cho từng gói; giới hạn số máy/nhân viên; thời điểm đưa vào bản thương mại; hướng phát hành chính xác cho từng AI client; thiết kế native chat/multi-provider adapter, local usage ledger/quota sync, cấu hình cloud API hoặc máy chủ Ollama của doanh nghiệp, BYOK hay CAI-managed AI cho Native API Mode, **quyền reseller/OEM của nhà cung cấp Cloud API**, AI credits pricing và inference proxy.
 - **Không suy diễn:** số lượt CAI Requests = số Workers requests; Tunnel Free = hạ tầng vô hạn; một model có sẵn trong Copilot = mọi định dạng MCP/agent đều dùng được không cần tích hợp; AI có toàn bộ lịch sử hội thoại trong Gateway; API function calling = consumer chat app hỗ trợ Custom MCP; mọi model hỗ trợ cùng một tool schema/độ tin cậy; một CAI request = một lần inference/token cost; Native API Mode có Cloudflare Tunnel/MCP Gateway điều phối lệnh CAD; chạy Ollama cùng workstation CAD là cấu hình mặc định; LAN Ollama server đã có bảo vệ xác thực an toàn.
 - Với mỗi thử nghiệm, chỉ ghi **kết quả quan sát thực tế**, phần chưa thử ghi **UNVERIFIED**. Tài liệu này không chứng nhận capability đã hoàn thành.
 
