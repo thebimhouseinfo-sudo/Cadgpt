@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
 import { getTempJobsRoot } from "../lib/appdata.js";
 import { newTempJobId, ownedSourceRoot, resolveOwnedSourceMutation } from "../lib/owned-source.js";
 import { activeWorkForSession } from "../lib/work-registration.js";
@@ -83,6 +84,37 @@ export async function writeTempSource(
   await fs.mkdir(path.dirname(resolved), { recursive: true });
   await fs.writeFile(resolved, content, { flag: "wx" }); // never silently overwrite
   return { id, path: resolved, bytes: Buffer.byteLength(content) };
+}
+/** Safe FIX → RE-RUN source replacement, never a blind overwrite. */
+export async function updateTempSource(
+  id: string, execution: string, session: string, relative: string,
+  content: string, expectedSha256: string,
+) {
+  const meta = await assertOwned(id, execution, session);
+  if (meta.state !== "active") throw new Error("TEMP_JOB_ALREADY_DONE");
+  const root = ownedSourceRoot({ kind: "temp-job", id });
+  const target = path.resolve(root, relative);
+  if (path.basename(target) === META) throw new Error("TEMP_JOB_METADATA_PROTECTED");
+  const resolved = await resolveOwnedSourceMutation(target, { kind: "temp-job", id });
+  const ext = path.extname(resolved).toLowerCase();
+  if (![".lsp", ".dcl", ".json", ".py", ".txt", ".csv", ".md", ".yaml", ".yml"].includes(ext)) {
+    throw new Error("TEMP_JOB_UNSUPPORTED_SOURCE_TYPE");
+  }
+  const old = await fs.readFile(resolved);
+  const sha = createHash("sha256").update(old).digest("hex");
+  if (!/^[a-f0-9]{64}$/i.test(expectedSha256) || sha !== expectedSha256.toLowerCase()) {
+    throw new Error("TEMP_JOB_SOURCE_CONFLICT");
+  }
+  const tmp = path.join(path.dirname(resolved), "." + randomUUID() + ".tmp");
+  try {
+    await fs.writeFile(tmp, content, { flag: "wx" });
+    // Recheck immediately before atomic replacement (same-work call concurrency
+    // must still serialize by target at the FILE scheduler boundary).
+    const latest = createHash("sha256").update(await fs.readFile(resolved)).digest("hex");
+    if (latest !== sha) throw new Error("TEMP_JOB_SOURCE_CONFLICT");
+    await fs.rename(tmp, resolved);
+  } finally { await fs.rm(tmp, { force: true }).catch(() => {}); }
+  return { id, path: resolved, sha256: createHash("sha256").update(content).digest("hex") };
 }
 export async function finishTempJob(id: string, execution: string, session: string) {
   const meta = await assertOwned(id, execution, session);
