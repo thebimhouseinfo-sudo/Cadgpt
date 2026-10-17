@@ -15,7 +15,8 @@ export type AppDataArea =
   | "drawings"
   | "knowledge"
   | "state"
-  | "logs";
+  | "logs"
+  | "temp-jobs";
 
 /**
  * CadGPT user/runtime data root.
@@ -100,6 +101,10 @@ export function getDynamicLispRoot(): string {
   return getAppDataPath("runtime", "dynamic-lisp");
 }
 
+export function getTempJobsRoot(): string {
+  return getAppDataPath("temp-jobs");
+}
+
 export function getRunDataRoot(): string {
   return getAppDataPath("data", "runs");
 }
@@ -118,6 +123,7 @@ export async function ensureAppDataLayout(): Promise<void> {
     getLispDraftRoot(),
     getJobDraftRoot(),
     getDynamicLispRoot(),
+    getTempJobsRoot(),
     getDrawingStorageRoot(),
     getAppDataPath("knowledge"),
     getAppDataPath("state"),
