@@ -53,6 +53,7 @@ import { registerDrawingPersistenceTools } from "./tools/drawing-persistence.js"
 import { registerJobResultAccessTools } from "./tools/job-result-access.js";
 import { registerJobResultPatchTools, registerJobResultBatchPatchTools } from "./tools/job-result-patch.js";
 import { registerTempLispTools } from "./tools/temp-lisp.js";
+import { registerTempJobV5Tools } from "./tools/temp-jobs-v5.js";
 import { registerHumanPowerTools } from "./tools/human-power.js";
 import {
   humanPowerErrorLogPath,
@@ -297,6 +298,7 @@ function registerStableProductionSurface(server: McpServer): void {
   registerJobResultPatchTools(server);
   registerJobResultBatchPatchTools(server);
   registerTempLispTools(server);
+  registerTempJobV5Tools(server);
   registerHumanPowerTools(server);
 
   if (isDevelopmentBuild()) {
