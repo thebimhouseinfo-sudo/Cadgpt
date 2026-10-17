@@ -87,44 +87,28 @@ Readback: count, IDs, locations, family types, errors; user confirmation/save
 
 **Phạm vi:** đây là **định vị sản phẩm**, không tự phát sinh coding tasks, không xóa MCP tools, không yêu cầu viết lại Job Runtime hoặc coi tất cả capability của RAI đã hoàn thành. Từng năng lực khi marketing/public release phải được kiểm chứng ở bản tương ứng.
 
-### Universal Multitab Task Workspace — không phụ thuộc AI có web hay không (đã chốt 2026-10-17)
+### Multitab gọn trong CAI/RAI Panel — giống browser về thao tác, không giống browser về hình thức (đã chốt 2026-10-17)
 
-**Hiệu chỉnh yêu cầu từ chủ sản phẩm:** Multitab **không phải nhiều WebView đơn thuần**. Vấn đề thực tế hiện nay là phải **mở browser ngoài để tạo thêm ChatGPT task**; với **CAI/RAI Native AI Cloud** và **Company Self-hosted AI**, không có website/chat web của nhà cung cấp để mở task mới. **CAI/RAI Add-in phải cung cấp một Task Workspace multitab ngay trong panel**, dùng được với **mọi lựa chọn AI**. Đây là thành phần UX nền tảng của một CAI/RAI Add-in, không chờ triển khai Native AI mới thiết kế.
+**Chủ sản phẩm đã làm rõ:** chỉ cần **nhiều tab trò chuyện như trình duyệt**: mở tab mới, chuyển tab, đóng tab; mỗi tab giữ nguyên nội dung của mình. **Không dựng một Task Workspace framework**, không Job manager, task scheduler, session dashboard hay giao diện trình duyệt thu nhỏ. Nhiều tab hoạt động được cho **ChatGPT/Claude/Grok qua WebView khi tương thích**, và **CAI/RAI Native Managed/Self-hosted qua chat UI tích hợp**, không cần website AI ngoài.
 
-**Phân tách đúng hai lớp:**
-- **Task Tab = phiên làm việc**: mỗi tab giữ identity/ngữ cảnh hội thoại riêng, tiêu đề, thông điệp, input draft, task/job đang làm và trạng thái liên quan (nếu có). Tạo `+ New Task` phải tạo một **conversation/task mới** ngay trong panel, không chỉ đổi URL hay đổi model. Chuyển tab không được lẫn lịch sử, input, tool authorization hoặc kết quả.
-- **AI Interface = nội dung của tab**:
-  - **GPT/ChatGPT, Claude, Grok:** có thể hiển thị qua **WebView/Web client** khi provider cho phép embedded login, điều hướng sang chat mới và MCP integration tương thích. Tạo tab mới cần tạo/mở **một hội thoại thực sự riêng** của dịch vụ tương ứng; không giả định mọi website có cùng URL hoặc API tạo task.
-  - **CAI Native / RAI Native — Managed Cloud AI:** hiển thị **native chat UI do Add-in làm chủ**; `+ New Task` khởi tạo cuộc hội thoại mới trong CAI/RAI, inference đi qua CAI/RAI-managed backend theo chính sách. **Không cần trang web của model provider, không có model picker/BYOK**.
-  - **CAI Native / RAI Native — Company Self-hosted:** sử dụng **cùng native chat UI**, chỉ đổi nơi inference sang máy chủ AI doanh nghiệp đã được cấu hình/hỗ trợ. `+ New Task` vẫn tạo conversation riêng và chạy qua CAD/BIM tool/Job layer như Native Cloud; **không cần website hoặc trình duyệt ngoài**. Không áp dụng CAI/RAI AI inference quota/tunnel fee cho lượt inference tự host theo mô hình giá đã chốt.
-- **“WebView” là phương tiện hiển thị tùy mode, không phải điều kiện tồn tại của tab.** Native chat UI có thể được thực hiện bằng WPF hoặc giao diện local HTML hiển thị trong WebView2, nhưng **không phải một website AI bên thứ ba**; implementation renderer còn mở.
+**Ngôn ngữ thiết kế phải là CAD-native panel, không phải browser chrome:**
+- Đặt **thanh chuyển tab nhỏ, liền mạch với đầu panel** (dưới hoặc cùng vùng header binding). Hiển thị tab hiện hành, tên ngắn của các tab và nút **+** mở tab mới; tab đang chọn có trạng thái nổi bật vừa đủ, nút đóng **×** kín đáo. Tránh thanh URL, Back/Forward, refresh, icon browser, khung chrome lớn.
+- **Panel CAD thường hẹp**, nên tab không được chiếm quá nhiều chiều ngang hoặc cắt mất vùng chat: khi panel đủ rộng, hiển thị các **tab nhỏ kiểu pill/chip**; khi hẹp hoặc có nhiều tab, **thu thành tên tab hiện tại + nút chọn danh sách tab (dropdown/overflow) + nút +**. Chuyển tab chỉ một thao tác click, không bắt kéo thanh tab dài.
+- Có thể đổi tên ngắn cho tab nếu cần; không cố gắng đồng bộ mọi title và chi tiết trạng thái từ website AI. **Giữ bố cục panel/host drawing status thống nhất** khi chuyển tab; chỉ thay nội dung chat bên dưới. Màu, đường viền, typography theo panel CAI/RAI và theme CAD, không bê nguyên Chrome/Edge vào AutoCAD/Revit.
+- **Mỗi tab = một chat view**: với Web provider, giữ riêng WebView/navigational state (có thể dùng chung profile login); với Native Managed/Self-hosted, giữ hội thoại riêng trong cùng giao diện chat của CAI/RAI. Đổi tab không reset/navigate về trang chủ và không mất phần đang nhập. Nút **+** mở một chat mới theo tích hợp đang chọn, không tạo software process hay CAD Job.
+- **Quyền thực thi không đổi:** tab chỉ là UI. Các conversation AI được nhận diện/phân quyền theo phương thức tích hợp đang có; **không dùng việc đổi tab để đổi drawing binding, cấp quyền CAD hoặc tạo CAD executor mới**. Hiện bản ChatGPT WebView đang có 1 `Browser` và pairing 1 session; khi triển khai thêm tab WebView phải bảo đảm chat mới gắn session đúng, không giả định pair cũ tự hợp lệ với chat mới.
+- **Giới hạn khả dụng:** chưa chứng minh các website ChatGPT/Claude/Grok đều hỗ trợ embedded multi-conversation theo cùng cách; việc mở chat mới phải tuân theo UI/quyền của provider thực tế. Native/self-hosted không có phụ thuộc này vì chat UI do CAI/RAI cung cấp.
+- **Phạm vi:** đây chỉ là **quyết định UX đơn giản** để giảm việc phải mở browser ngoài. **Chưa triển khai**, không phát sinh roadmap/milestone/code change ngay và không biến thành thiết kế quản lý task phức tạp.
 
-**Giao diện tối giản:**
 ```text
-CAI / RAI PANEL — [Host-selected DWG/RVT] [Job Ticker]
-┌──────────────────────────────────────────────────┐
-│ [Task 1 ×] [Task 2 ×] [Task 3 ×]  [+ New Task]   │
-├──────────────────────────────────────────────────┤
-│ Task title / chosen AI integration                │
-│                                                  │
-│   Web client (GPT / Claude / Grok)               │
-│                 OR                               │
-│   Native chat (Managed Cloud / Self-hosted)      │
-│                                                  │
-│   Conversation messages and task interaction     │
-│   [Message input ...]                            │
-└──────────────────────────────────────────────────┘
-```
+CAI                           DWG: MAGS 09.10.26
+[ Grille schedule ] [ Job draft ] [ + ]       ← panel rộng
 
-**Hành vi tối thiểu cần có:**
-- Mở/đóng/chuyển tab, đổi tiêu đề, tạo **New Task** ngay trong Add-in; tùy license, chọn AI integration **đã mua và thực sự khả dụng** cho tab; không cho chọn model/API endpoint/provider nội bộ.
-- Với Web client, giữ state riêng từng WebView và dùng chung account/profile khi phù hợp; **không Navigate về trang chủ mỗi lần chuyển tab**. Với native client, chat history/context phải do CAI/RAI quản lý và lưu/khôi phục theo chính sách; không buộc inference/chat vào WebView2 web session.
-- **Task/session riêng, drawing/model binding do host quản lý:** các tab được phép tham chiếu **một primary bound document đã xác nhận**, nhưng **không có nghĩa là cùng một session/pair có quyền thực thi**. Mỗi task phải có context/authorization hợp lệ qua cơ chế hiện hành; chuyển tab hoặc tạo tab không thay đổi host-selected DWG/RVT, không cấp quyền ngầm và không cho hai write calls tranh chấp CAD host.
-- **Không đồng nhất tab với Job:** một tab có thể tạo/chạy một Job nhưng cũng có thể chỉ chat/tra cứu; Job có thể tiếp tục theo Job Runtime hiện có khi người dùng chuyển tab. Không tạo Job runner, scheduler, background worker hay process mới cho mỗi tab. Một CAD tool call vẫn là request → execute → result/error, không biến thành workflow dài.
-- **Hiện trạng code:** `addins/cadgpt-autocad/ChatView.xaml` hiện có duy nhất một `WebView2 Browser` bắt đầu tại `https://chatgpt.com/`; `WebViewProfile` chỉ lưu login/profile và không giữ last conversation URL; `ChatView.xaml.cs` quản lý một pair ID; `src/cadgpt/lib/addin-control.ts` liên kết pair với một ChatGPT logical session. Muốn nhiều GPT tasks phải giải quyết **session/pair attribution theo từng hội thoại/tab**, không cho tab mới mượn quyền của tab cũ. Native task sessions cần identity/auth riêng với browser session; không tạo quyền CAD nhờ việc mở tab.
-- **Resource hygiene:** dùng lazy initialization cho WebViews, cleanup khi đóng tab, và tránh một binding timer/host poll per tab; giữ toolbar host binding và ticker chung. Không chia sẻ hoặc lưu credential/session secret trong tab titles, URLs hoặc task files. Nếu hỗ trợ restore các task tabs sau restart, chỉ restore dữ liệu được phép và yêu cầu re-validate CAD binding trước thao tác ghi.
-- **Bản đầu tiên:** ưu tiên chứng minh `+ New Task` và chuyển/lưu ngữ cảnh **2–3 task độc lập ngay trong panel**; khi backend native được triển khai, **cùng tab shell** phục vụ cả managed và self-host. Không coi việc embed Claude/Grok hoặc Native UI là đã hoàn thành cho đến khi có tích hợp thực tế.
-- **Phạm vi:** quyết định **kiến trúc UX/định hướng sản phẩm**; **chưa có Multitab hay Native task-chat runtime** trong Add-in hiện tại, không tự phát sinh code changes/milestones chỉ vì ghi lại yêu cầu này.
+CAI                           DWG: MAGS 09.10.26
+[ Grille schedule  ▾ ] [ + ]                   ← panel hẹp/nhiều tab
+─────────────────────────────────────────────
+       Nội dung hội thoại tab đang chọn
+```
 
 ### Job Pack Store — Download → existing Job Import (định hướng đã chốt 2026-10-17)
 
@@ -515,7 +499,7 @@ Cho phép **nghiên cứu dần** và tổ chức **một nhóm beta giới hạ
 >
 > **Kênh thương mại mục tiêu:** **mỗi CAI (AutoCAD) và RAI (Revit) là một Add-in có panel tích hợp**, có thể phân phối/bán qua **Autodesk Design and Make Marketplace ngay cả khi backend còn dùng MCP**; Native AI là hướng nâng cấp vận hành bên trong cùng sản phẩm, **không phải sản phẩm thứ hai**. **Khi mua hoặc kích hoạt**, khách chọn **GPT/Claude/Grok (phí kết nối Tunnel/MCP), Native Managed AI (AI quota), hoặc Native Company Self-hosted (0 CAI/RAI tunnel/inference quota fee)**; luôn trả **Add-in base cố định + gói sử dụng**, được xem giá/tổng tiền và phí AI bên ngoài trước thanh toán; hình thức checkout trong Autodesk hay portal riêng phải kiểm tra điều khoản Marketplace. AI providers ở Native vẫn do CAI/RAI quản lý. Chưa chốt giá số, chưa có bản submit/review được Autodesk chấp nhận.
 >
-> **Universal Multitab Task Workspace:** CAI/RAI panel phải tạo/chuyển nhiều **task/conversation riêng** bằng `+ New Task`, **kể cả khi AI không có website**. GPT/Claude/Grok dùng WebView nếu được hỗ trợ; Native Managed AI và Company Self-hosted dùng **giao diện chat riêng của Add-in**, không phụ thuộc external browser/WebView của provider. Tab là task/session, không phải Job runner hoặc một CAD host mới; shared host binding và per-task authorization vẫn phải chính xác.
+> **Multitab panel tối giản:** CAI/RAI chỉ cần mở/chuyển/đóng nhiều tab hội thoại như browser, **nhưng thiết kế switcher nhỏ, CAD-native**, khi hẹp dùng dropdown thay vì cả thanh browser. GPT/Claude/Grok dùng WebView khi hỗ trợ; Native Managed/Self-hosted dùng cùng chat UI tích hợp; **không cần website AI**, không đổi drawing binding, không xây thêm Task Workspace/Job runtime.
 >
 > **Job Pack Store:** người dùng tìm và **Download** Job Pack từ catalog theo phân loại, sau đó Add-in **gọi lại chính Job Import hiện có** để đưa vào managed libraries/User Registry; không thiết kế importer/registry/runtime thứ hai. Chưa triển khai Store.
 >
