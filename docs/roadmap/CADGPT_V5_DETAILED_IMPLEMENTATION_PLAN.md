@@ -311,3 +311,23 @@ Commits through `4a803368e69fd27c4a91f86e0306a6b12e21b21a` on `feature/core-func
 - WP8 source CI: PASS Windows/Linux. **Native installed Windows tray + real bound AutoCAD end-to-end: NOT RUN.**
 
 **RL conclusion:** Source CI PASS does not permit asserting V5 implementation complete, native AutoCAD tested, or Ready for Main. Remaining WP5–WP7 are material. Do not ask human to pull until those are genuinely resolved. Preserve V5 theory, do not add back Job TEST or approval/promotion gates.
+
+## P. Implementation + RL checkpoint — verified cross-platform V5 default flow
+
+**Only branch:** `feature/core-function-v5`. Latest audited source CI at `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39043577635` **PASS Ubuntu and Windows** (after `job_runtime_save_now`, Save ledger and demoted legacy SYSTEM APIs).
+
+### Newly implemented
+- Added `runtime/bound-save-ledger.ts`: exact Work execution + DWG-runtime-identity witness of confirmed Save, invalidated by subsequent CAD proxy calls, loaded/autorunning Lisp and destructive execution; cleared on Work cleanup.
+- Added `job_runtime_save_now`: Operator can invoke right after last DWG mutation. Saves exact bound runtime document and verifies returned `saved: true` AND matching `runtime_document_id`, then records witness. Actual error fails tool.
+- `job_runtime_finish` reuses that verified witness and doesn't Save again if there has been no subsequent CAD operation; if no witness exists it falls back to a verified bound Save. Save failure returns an ERROR and preserves runtime, no false DONE.
+- `job_runtime_prepare` now tells Operator to Save immediately after last DWG change and STOP/REPORT if save fails; no additional TEST/promotion gate.
+- `job_system_acquire/release` are explicitly described as legacy-only, not default V5 Builder/Operator workflow.
+- Regression `tests/v5-bound-save-ledger.test.mjs` and `tests/v5-bound-save-contract.test.mjs` check execution/DWG isolation and early Save integration.
+- Direct managed Job/Lisp in-place publication and indexed registry refresh have passed Windows/Linux CI at `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39042944682`.
+
+### Review and remaining human-gate criteria
+- PASS (source): TypeScript build and repository tests on real Windows and Linux cloud runners.
+- NOT YET PROVED: Live AutoCAD bound DWG, commands/autorun, real Job sequence and Save on host. Those are native human acceptance only when code implementation is ready.
+- **Still not fully retired**: legacy Direct-vs-Reasoning presentation, explicit SYSTEM acquire/release and draft/checkout/promote API compatibility surfaces. They remain non-mandatory but present; do not remove until migrated consumers validated.
+- **Concurrency limitation to review**: `JOB_RUNTIME_BUSY` still protects **the same Job runtime root** from two concurrent writers. It does not lock unrelated Jobs. To eliminate it safely requires per-execution scratch layout without breaking legacy raw paths; do not remove blindly.
+- **CI is a development check, not a user Job TEST stage**, and no claim of overall V5 approval or main replacement is made.
