@@ -36,17 +36,34 @@
 - **Qwen / DeepSeek (chưa xác nhận trong consumer chat):** **Qwen Code** có Remote MCP (https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp/); **DeepSeek Harness** có MCP client (https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md). Đây là các **developer/harness clients**, không phải bằng chứng rằng ứng dụng **Qwen Chat** hoặc **DeepSeek Chat** có cơ chế thêm Remote MCP tương tự Grok. Giữ ở trạng thái **WATCH / UNVERIFIED consumer app**, không kết luận các model không thể gọi tool.
 - Khả năng công bố Public Plugin và cơ chế phân phối beta phải tuân thủ yêu cầu hiện hành của từng nền tảng; không xem việc có URL MCP là đã phát hành Public Plugin thành công.
 
-### Hướng nghiên cứu bổ sung: DeepSeek API (CANDIDATE — không phải DeepSeek Chat Connector)
+### Hướng nghiên cứu bổ sung: Native Add-in + DeepSeek API (CANDIDATE)
 
-- **Quyết định về scope:** có thể **xem xét phương án cấu hình API DeepSeek** vì giá token thấp, nhưng **chưa chốt triển khai** và không thay thế ChatGPT-first / Microsoft 365 Copilot. Đây là một nhánh nghiên cứu AI runtime tùy chọn, không đưa vào beta routing/quota cốt lõi nếu chưa có lý do thực tế.
-- **Khác biệt kỹ thuật:** ứng dụng **DeepSeek Chat** chưa được xác nhận cho người dùng thêm Custom Remote MCP; **DeepSeek API** đã hỗ trợ function/tool calling, thinking/non-thinking, Responses API và giao diện tương thích SDK OpenAI/Anthropic. Để chạy CAI tools qua DeepSeek API, cần **AI client/harness** (CAI cung cấp hoặc client tương thích BYOK) và một **adapter MCP ↔ tool/function calling**. Không thể chỉ dán URL MCP vào DeepSeek API rồi sử dụng như một ứng dụng chat có MCP.
-- **Model API tham khảo (2026-10-17):** `deepseek-flash` → **DeepSeek-V4.1-Flash-1017**, không dùng lại các ví dụ cũ `deepseek-chat`/`deepseek-reasoner`. Base URL `https://api.deepseek.com`. Giá chính thức USD / 1 triệu tokens: input cache hit **$0.003 off-peak / $0.006 peak**, input cache miss **$0.15 / $0.30**, output **$0.60 / $1.20**. Giá thay đổi theo thời gian; giá API **tính theo tokens, không theo CAI tool executions**. Nguồn chính thức: https://api-docs.deepseek.com/quick_start/pricing/ và https://api-docs.deepseek.com/updates/ .
-- **Chi phí minh họa:** một lượt inference 10.000 input tokens (không cache) + 1.000 output tokens = **$0.0021 off-peak / $0.0042 peak**, chưa tính các vòng gọi model khác, CAD tool results, lịch sử chat, ảnh, latency và hạ tầng.
-- **Hai lựa chọn thương mại chưa chốt:** (A) **BYOK**, doanh nghiệp/cá nhân tự sở hữu và thanh toán DeepSeek API key; CAI vẫn thu phí tool executions; (B) **CAI-managed AI**, CAI trả phí DeepSeek tokens và phải định nghĩa quota/budget AI **riêng** ngoài quota CAI requests để không tạo nghĩa vụ inference không giới hạn. Không trộn hai đơn vị để định giá khi chưa đo usage.
-- **Hạn chế bảo mật:** không nhúng một shared API key vào bộ cài CAI; nếu dùng BYOK phải lưu/ủy quyền bí mật an toàn. API mode sẽ gửi prompts, context và tool outputs có chọn lọc tới DeepSeek: xem xét chính sách dữ liệu, tính bảo mật tài liệu kỹ thuật, sự đồng ý và quy định IT doanh nghiệp trước khi thử dữ liệu thật.
-- **Điều kiện xem xét tiếp:** đo tool-call accuracy, multi-turn reasoning, lệnh CAD dài/nhiều bước, chi phí token thực, latency và khả năng chạy qua adapter với chính các MCP tools đang có; chỉ dùng bản vẽ test/fixture được phép. **Chưa xây UI chat, billing AI, BYOK portal hoặc thay đổi core/runtime theo tài liệu này.**
+**Làm rõ kiến trúc đã chốt ngày 2026-10-17:** Khi CAI/RAI sử dụng **model qua API**, **giao diện chat là native trong Add-in của AutoCAD/Revit** và **AI tool calls được thực thi trực tiếp trong runtime local**. Nhánh này **không đi qua Public Plugin, Cloud MCP Gateway hay Cloudflare Tunnel để truyền lệnh CAD**. Đây là một kiến trúc riêng, **không phải** adapter AI client ở phía sau remote MCP Gateway.
 
-## 3. Kiến trúc thương mại mục tiêu
+```text
+[AutoCAD + CAI Native Add-in]             [Revit + RAI Native Add-in]
+        │    Chat UI native                         │   Chat UI native
+        │                                           │
+        ▼                                           ▼
+    DeepSeek API (HTTPS)                      DeepSeek API (HTTPS)
+        │ tool/function call                      │ tool/function call
+        ▼                                           ▼
+    Local tool dispatcher                     Local tool dispatcher
+        │                                           │
+        ▼                                           ▼
+    CAI Core / AutoCAD                        RAI Core / Revit
+```
+
+- **Luồng thực thi:** (1) người dùng chat trong Add-in; (2) Add-in/client gọi DeepSeek API trực tiếp qua HTTPS; (3) model trả tool/function call; (4) native local dispatcher kiểm tra quyền, drawing/document binding, an toàn rồi thực thi CAD/BIM trên cùng máy; (5) kết quả tool trả lại model qua API, phản hồi hiển thị trong Add-in. **Không có bước điều phối qua tunnel/Gateway** trên đường lệnh CAD.
+- **Không phụ thuộc ứng dụng DeepSeek Chat có Custom MCP.** DeepSeek API hỗ trợ tool/function calling; tool schema có thể xuất từ các capability đang có để adapter local dùng, nhưng **không cần vận hành MCP remote server/cloud** cho chế độ native này.
+- **Không nhầm với Add-in hiện tại:** CadGPT có AutoCAD Add-in dùng WebView2 để host ChatGPT. Native AI chat gọi API và quản lý vòng tool call **chưa phải tính năng đã triển khai**; đây là hướng phát triển tương lai.
+- **Phí AI:** token API được nhà cung cấp model tính riêng; **CAI tool-execution quota** là đơn vị license sản phẩm. Với native mode, nếu áp dụng subscription quota dùng chung, đếm thực thi **tại local** và đồng bộ/đối soát với dịch vụ license/quota qua kênh HTTPS riêng khi cần; **không dùng Cloud MCP Gateway để route lệnh**. Chưa chốt cơ chế chống giả mạo/offline/lease và mức yêu cầu kết nối liên tục.
+- **BYOK là ứng viên ban đầu:** khách hàng tự có và thanh toán API key, được bảo vệ trong bộ nhớ bí mật phù hợp với Windows/doanh nghiệp; tuyệt đối không nhúng shared provider key vào installer. **CAI-managed API key** (nếu lựa chọn sau này) sẽ cần thành phần cấp quyền/proxy an toàn ở server, nên **không còn là gọi trực tiếp nhà cung cấp API hoàn toàn từ local**; chưa chốt làm.
+- **Model API tham khảo (ghi nhận 2026-10-17):** `deepseek-flash`, base URL `https://api.deepseek.com`; giá DeepSeek API tính theo **input/output tokens**, biến động theo model/cache/thời điểm, **không theo số lần thực thi tool CAI**. Để triển khai phải xác minh lại model, tính năng, giá và điều khoản trực tiếp tại https://api-docs.deepseek.com/quick_start/pricing/ .
+- **Ranh giới an toàn:** không chuyển toàn bộ DWG/RVT lên nhà cung cấp AI theo mặc định; chỉ chuyển thông tin ngữ cảnh/tool results cần thiết sau kiểm tra và chính sách dữ liệu của công ty. Tool calls từ model không được phép vượt host authorization hay thực thi CAD command tùy ý.
+- **Giai đoạn nghiên cứu:** dùng dữ liệu test để đánh giá tính chính xác của tool calling, nhiều vòng reasoning, độ trễ, chi phí tokens, khả năng tận dụng core hiện tại và thiết kế UI native. **Chưa triển khai Native Chat, billing API, cổng BYOK, hay refactor core chỉ vì định hướng này.**
+
+## 3. Kiến trúc thương mại mục tiêu — Remote MCP Mode
 
 ```text
 ChatGPT ───────────────┐
@@ -65,7 +82,7 @@ Claude / AI khác ──────┘                    │
                        AutoCAD A                       AutoCAD B
 ```
 
-### Đã chốt — nguyên tắc
+### Đã chốt — nguyên tắc (chỉ áp dụng Remote MCP Mode)
 
 - **Một endpoint công khai chung, nhiều Local Connectors**. Không yêu cầu một Cloudflare account, tunnel ID hay plugin riêng cho từng khách hàng.
 - **Local Connector chủ động kết nối ra Gateway** (giao thức truyền tải cụ thể sẽ thử nghiệm); không mở cổng AutoCAD trực tiếp ra Internet.
@@ -74,7 +91,7 @@ Claude / AI khác ──────┘                    │
 - Giữ nguyên nguyên tắc **drawing/work binding và execution authority** của runtime hiện hành; Cloud Gateway **không thay thế** thẩm quyền CAD local, không tự ý chọn drawing và không bỏ qua các xác nhận an toàn cho lệnh ghi.
 - Mỗi thiết bị có định danh/chứng thực riêng; không dùng shared credential nhúng trong tất cả bộ cài, không tin vào user ID/device ID do model tự khai báo.
 
-### Chưa chốt — lựa chọn hạ tầng
+### Chưa chốt — lựa chọn hạ tầng (chỉ áp dụng Remote MCP Mode)
 
 - **Cloudflare Tunnel dùng chung tới Gateway tự host** và **Cloudflare Workers + Durable Objects/D1** là những phương án cần đánh giá, **chưa phải quyết định triển khai cố định**.
 - Nếu dùng Workers, request quota của Cloudflare tính theo quy tắc dịch vụ cloud tương ứng; nếu chỉ proxy qua Tunnel tới origin không dùng Workers thì **không áp dụng quota Workers chỉ vì đi qua Tunnel**.
@@ -86,7 +103,7 @@ Claude / AI khác ──────┘                    │
 
 **Subscription theo gói + hạn mức lượt thực thi trong kỳ + mua thêm khi hết hạn mức (top-up).**
 
-- **CAI Request** là đơn vị thương mại: một **lượt gọi thực thi MCP tool hợp lệ** cho CAI, **không phải** HTTP/Workers request nội bộ. Việc tool trả dữ liệu qua response **không tự tạo thêm lượt CAI**.
+- **CAI Request** là đơn vị thương mại: một **lượt thực thi CAI tool hợp lệ**, dù được gọi qua **Remote MCP Mode** hay **Native API Mode**, **không phải** HTTP/Workers request hoặc API token. Việc trả dữ liệu qua response **không tự tạo thêm lượt CAI**. Chi tiết enforcement/quota sync của native mode chưa chốt.
 - AI suy luận/chat mà **không gọi CAI tool**: không tiêu thụ CAI Request.
 - Những hoạt động hạ tầng như auth, khám phá tool, heartbeat, reconnect, kiểm tra quota, quản lý phiên: không tự động tiêu thụ CAI Request.
 - Một lần thực thi đọc, ghi hoặc ghi rồi trả kết quả đều có thể là **một lượt CAI**. Việc một tác vụ gồm **nhiều lần gọi tool** có thể tiêu thụ nhiều lượt; chưa chốt giá/trọng số riêng cho các tool nặng.
@@ -159,12 +176,12 @@ Cho phép **nghiên cứu dần** và tổ chức **một nhóm beta giới hạ
 ## 8. Ranh giới dữ liệu, tương thích và quyết định còn mở
 
 - Thiết kế tối thiểu cần bảo vệ phiên đăng nhập, xác thực OAuth/token, tenant isolation, ghép cặp/thu hồi device, chống gửi nhầm kết quả, và an toàn với các lệnh CAD mutating. Không truyền toàn bộ DWG qua cloud nếu không cần.
-- **Chưa chốt:** tên miền cụ thể; nhà cung cấp dịch vụ auth/billing; kiểu host Gateway; chính sách credits và đơn giá; số requests cho từng gói; giới hạn số máy/nhân viên; thời điểm đưa vào bản thương mại; hướng phát hành chính xác cho từng AI client; có hay không AI client hỗ trợ DeepSeek API và chọn BYOK hay CAI-managed AI.
-- **Không suy diễn:** số lượt CAI Requests = số Workers requests; Tunnel Free = hạ tầng vô hạn; một model có sẵn trong Copilot = mọi định dạng MCP/agent đều dùng được không cần tích hợp; AI có toàn bộ lịch sử hội thoại trong Gateway; DeepSeek API function calling = consumer DeepSeek Chat hỗ trợ Custom MCP; một CAI request = một lần inference/token cost.
+- **Chưa chốt:** tên miền cụ thể; nhà cung cấp dịch vụ auth/billing; kiểu host Gateway (Remote MCP Mode); chính sách credits và đơn giá; số requests cho từng gói; giới hạn số máy/nhân viên; thời điểm đưa vào bản thương mại; hướng phát hành chính xác cho từng AI client; thiết kế native chat/adapter, local usage ledger/quota sync, và BYOK hay CAI-managed AI cho Native API Mode.
+- **Không suy diễn:** số lượt CAI Requests = số Workers requests; Tunnel Free = hạ tầng vô hạn; một model có sẵn trong Copilot = mọi định dạng MCP/agent đều dùng được không cần tích hợp; AI có toàn bộ lịch sử hội thoại trong Gateway; DeepSeek API function calling = consumer DeepSeek Chat hỗ trợ Custom MCP; một CAI request = một lần inference/token cost; Native API Mode có Cloudflare Tunnel/MCP Gateway điều phối lệnh CAD.
 - Với mỗi thử nghiệm, chỉ ghi **kết quả quan sát thực tế**, phần chưa thử ghi **UNVERIFIED**. Tài liệu này không chứng nhận capability đã hoàn thành.
 
 ## 9. Tóm tắt quyết định
 
-> **CAI/RAI hướng tới nền tảng CAD/BIM automation mở đối với AI client: ChatGPT-first, ưu tiên Microsoft 365 Copilot doanh nghiệp, một remote integration/gateway dùng chung, nhiều local connectors riêng được xác thực; bán theo gói quota tool executions + top-up; doanh nghiệp mua và IT triển khai; ngôn ngữ do AI thích nghi; MCP Dev & Repair chỉ ở Development.**
+> **CAI/RAI hướng tới nền tảng CAD/BIM automation mở: (A) Remote MCP Mode — ChatGPT-first, ưu tiên Microsoft 365 Copilot doanh nghiệp, dùng chung remote integration/gateway và nhiều local connectors; (B) Native API Mode tương lai — chat native trong CAD/BIM Add-in gọi model API trực tiếp, tool thực thi local, không qua tunnel/MCP Cloud Gateway. Cả hai theo gói quota tool executions + top-up; doanh nghiệp mua và IT triển khai; ngôn ngữ do AI thích nghi; MCP Dev & Repair chỉ ở Development.**
 >
 > **Hiện tại:** tiếp tục phát triển core CAI/RAI; có thể nghiên cứu Cloud Beta nhỏ để kiểm chứng routing, counting và quota distribution. Mở rộng CAD/BIM khác và triển khai thương mại toàn diện **chưa nằm trong phạm vi hiện tại**.
