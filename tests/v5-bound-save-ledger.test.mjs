@@ -5,6 +5,9 @@ import {
   invalidateBoundSave,
   hasVerifiedBoundSave,
   clearBoundSaveForExecution,
+  notePotentialCadMutation,
+  hasPotentialCadMutation,
+  resetCadMutationTracking,
 } from "../dist/cadgpt/runtime/bound-save-ledger.js";
 
 test("V5 Save witness is bound to exact execution and DWG lifetime identity", () => {
@@ -20,4 +23,13 @@ test("V5 Save witness never survives Work cleanup", () => {
   noteVerifiedBoundSave("execution-b", "dwg-runtime-b");
   clearBoundSaveForExecution("execution-b");
   assert.equal(hasVerifiedBoundSave("execution-b", "dwg-runtime-b"), false);
+});
+
+test("V5 possible CAD mutation disallows silent read-only completion and invalidates Save", () => {
+  noteVerifiedBoundSave("exec-mutated", "dwg-one");
+  notePotentialCadMutation("exec-mutated");
+  assert.equal(hasPotentialCadMutation("exec-mutated"), true);
+  assert.equal(hasVerifiedBoundSave("exec-mutated", "dwg-one"), false);
+  resetCadMutationTracking("exec-mutated");
+  assert.equal(hasPotentialCadMutation("exec-mutated"), false);
 });
