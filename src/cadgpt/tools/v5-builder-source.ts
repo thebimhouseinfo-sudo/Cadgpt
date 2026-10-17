@@ -7,6 +7,7 @@ import { activeWorkForSession, currentToolLease } from "../lib/work-registration
 import { ownedSourceRoot, assertOwnedSourceRootSafe, resolveOwnedSourceMutation, type OwnedSource } from "../lib/owned-source.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
+import { publishManagedLibrary } from "./user-assets.js";
 
 const digest = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
 const extension = new Set([".md", ".txt", ".json", ".py", ".lsp", ".dcl", ".csv", ".yaml", ".yml"]);
@@ -35,6 +36,21 @@ function targetFor(o: OwnedSource, relative: string): string {
   return target;
 }
 export function registerV5BuilderSourceTools(server: McpServer): void {
+  server.registerTool("v5_source_publish", {
+    title: "Publish already-authored managed Job/Lisp library",
+    description: "Explicit publication of reusable capabilities already written and run in their final managed library. No draft, checkout or Job promotion stage.",
+    inputSchema: {
+      kind: z.enum(["job", "lisp"]),
+      library_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/),
+      library_name: z.string().min(1),
+    },
+  }, async ({ kind, library_id, library_name }) => {
+    try {
+      assertBuilder();
+      return toolResult("v5_source_publish",
+        await publishManagedLibrary(kind, library_id, library_name));
+    } catch (error) { return toolError("v5_source_publish", error); }
+  });
   const schema = {
     kind: z.enum(["reusable-job", "reusable-lisp"]),
     library_id: z.string().min(1),
