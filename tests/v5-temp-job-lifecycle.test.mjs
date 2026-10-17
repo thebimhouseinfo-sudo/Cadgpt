@@ -38,7 +38,7 @@ test("V5 Temp job Builder creates, fixes, finishes, then safely cleans", async (
     );
     await assert.rejects(
       writeTempSource(a.id, work.executionId, session, "../escape.lsp", "bad"),
-      /V5_SOURCE_OUTSIDE_OWNER/
+      /TEMP_JOB_INVALID_RELATIVE_SOURCE/
     );
     const wrongSha = "0".repeat(64);
     await assert.rejects(updateTempSource(a.id, work.executionId, session, "lisp/foo.lsp", "(princ 2)", wrongSha), /TEMP_JOB_SOURCE_CONFLICT/);
