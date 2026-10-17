@@ -8,7 +8,7 @@ import { loadVerifiedLispForCurrentWork } from "./cad-proxy.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { createTempJob, writeTempSource, updateTempSource, createTempResult, writeTempResult, getOwnedTempLisp, finishTempJob, clearTempJobs } from "../runtime/temp-job-v5.js";
 
-async function assertIndependentLispFolder(root: string): Promise<void> {
+export async function assertIndependentLispFolder(root: string): Promise<void> {
   const canonical = await fs.realpath(root);
   const files: string[] = [];
   async function visit(dir: string): Promise<void> {
