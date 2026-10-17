@@ -64,6 +64,21 @@ Model response / tool call → Local dispatcher → CAD/BIM result → Model API
 - **CAI/RAI Core vẫn là authoritative executor:** mọi model tool call cần qua local allowlist, quyền user, đúng drawing/document binding, xác nhận khi thay đổi dữ liệu và readback. Không cho model gửi lệnh CAD tùy ý vượt các contract đã có.
 - **Native Add-in chưa hoàn thiện:** Add-in CadGPT hiện tại chủ yếu host ChatGPT; **native chat orchestration**, cấu hình nhiều API providers và dùng shared Ollama server là **các khả năng tương lai cần nghiên cứu**, không phải chức năng đã sẵn có.
 
+#### Cấu hình local models theo vai trò (định hướng sizing, chưa benchmark)
+
+**Giả thuyết cấu hình do chủ sản phẩm đưa ra (2026-10-17):** để tối ưu máy chủ AI nội bộ dùng chung trong doanh nghiệp, phân tách mô hình theo **Operator** và **Builder**. Đây là kích thước model mục tiêu, **chưa phải chứng nhận mọi model trong dải kích thước đó đều chạy đúng**.
+
+| Vai trò | Quy mô model mục tiêu | Inference policy | Phạm vi |
+| --- | --- | --- | --- |
+| **Operator** | **Khoảng 2B parameters** | **Temperature thấp**, ưu tiên ổn định, deterministic schema/tool use (tham khảo 0–0.2 tùy API/model) | Nhận intent, lựa chọn công cụ, điền tham số và điều phối workflow/toàn bộ tool đã được kiểm chứng |
+| **Builder** | **Khoảng 7B–16B parameters** | Cấu hình theo model/tác vụ; không mặc định phải temperature cao | Phân tích/phân rã bài toán CAD/BIM phức tạp, xây phương án, soạn nội dung nghiệp vụ hoặc Lisp/Dynamo/Job trong các workflow **được phép** |
+
+- **Routing inference theo độ khó/tác vụ** tại Native AI Client (hoặc dịch vụ inference nội bộ) để tác vụ đơn giản gọi Operator, chỉ nâng lên Builder khi cần. Có thể tải Builder theo nhu cầu hoặc dùng server chung tối ưu concurrency, không cần mặc định chạy cả hai model trên workstation.
+- **Host of record là AutoCAD/Revit trên máy kỹ sư**; AI Server chỉ sinh quyết định/tool call, **không trực tiếp chiếm quyền CAD**. Local dispatcher kiểm tra tool allowlist, schema, drawing/document binding, an toàn, xác nhận và kết quả readback bất kể kích thước model.
+- **Không đồng nhất Builder với MCP Dev & Repair:** công cụ phát triển/sửa chữa **MCP tools nội bộ** vẫn loại bỏ khỏi bản thương mại. Builder phục vụ các workflow người dùng được phép; việc tạo hoặc sửa nội dung người dùng (ví dụ Lisp/Job nếu sản phẩm cho phép) phải chịu cùng policy/validation/approval như Core.
+- **Tiêu chí kiểm chứng:** chọn tool và truyền tham số chính xác, từ chối thao tác không có quyền, tuân thủ xác nhận CAD mutating, xử lý lỗi và multi-step flow; đo latency, VRAM/RAM, tool-call success rate, số user đồng thời và hiệu quả escalation. Model ~2B có thể thiếu tool calling hoặc khả năng suy luận cần thiết; nếu benchmark không đạt, điều chỉnh model hoặc phân luồng thay vì nới lỏng xác thực CAD.
+- **Không đưa các con số trên thành yêu cầu bắt buộc đối với khách hàng** (cloud providers/AI server nội bộ có khả năng khác nhau); không phải chỉ thị mua GPU/triển khai model ngay trong giai đoạn Core Development.
+
 #### Phương án nghiên cứu (không tự động thành work item)
 
 - So sánh chất lượng **tool/function calling**, hiểu CAD/BIM, reasoning nhiều bước, ngữ cảnh dài, latency, concurrent users và chi phí vận hành trên cloud API so với shared Ollama server.
