@@ -114,36 +114,33 @@ CAI/RAI panel → Job Pack Catalog (search/category/details)
 - **Cùng một hệ sinh thái:** Job Pack Store là **thư viện chức năng trong CAI/RAI Add-in**, không bắt buộc phát hành từng pack thành một Autodesk App độc lập. Autodesk Marketplace phân phối Add-in chính; các pack có thể được giới thiệu ở kênh này nếu quy tắc cho phép. Không giả định Autodesk có API store/download pack hộ.
 - **Trạng thái:** đây là **thiết kế trải nghiệm phân phối mới**. Cơ chế local import hiện có, nhưng **catalog, host phân phối, download/installation UI và publish flow chưa được chứng minh đã tồn tại**. Không mở rộng scope phát triển Core hoặc chuyển runtime Job Markdown → Native scripts chỉ vì Store.
 
-### CAD execution in-process: document binding và recovery (định hướng nghiên cứu, chưa phê duyệt migration)
+### CAD execution in-process: binding chính xác và tool call ngắn (định hướng nghiên cứu, chưa triển khai)
 
-**Quan sát của chủ sản phẩm (2026-10-17):** Add-in C# hiện tại tương đối ổn định, nhưng trong thực tế đôi khi vẫn cần restart để khôi phục trạng thái; phần điều khiển CAD chạy **bên trong AutoCAD** có lợi thế kiểm soát drawing/model chính xác hơn so với quan sát/thao tác qua COM từ tiến trình ngoài. **Chưa xác định được nguyên nhân cụ thể của các lần restart**; không mặc nhiên kết luận do COM, WebView, MCP hay AutoCAD host. Đề xuất một spike giới hạn để đánh giá chuyển **CAD execution backend** từ Python COM sang AutoCAD .NET API in-process, **không viết lại MCP/Job System và không yêu cầu triển khai ngay**.
+**Hiệu chỉnh nguyên tắc (2026-10-17):** không thiết kế CAD MCP tool call như **một software process / long-running Job**. **Một lần gọi CAD tool thường là một thao tác ngắn, đồng bộ: nhận yêu cầu → thực hiện → trả kết quả**. Ngay cả AutoLISP có hàng trăm biểu thức cũng có thể hoàn thành rất nhanh. **Độ dài source LISP không đồng nghĩa thời gian thực thi dài**; tác vụ cụ thể phải được đo trên AutoCAD thực tế, không áp quy trình orchestration phức tạp chỉ vì code nhiều dòng. Job nhiều bước là tầng khác, không biến từng tool call thành state machine.
 
-**Đối chiếu code CadGPT hiện tại:**
-- `runtimes/cad-mcp/connection/acad.py` dùng `win32com.client.GetActiveObject` và cache COM application; `connection/session.py` tìm drawing qua COM `Documents`, nhận dạng lifetime bằng application/document HWND rồi `Activate()`. `src/cadgpt/session/drawing-binding.ts` có outer binding và gọi list/open/activate để kiểm tra trước khi chạy.
-- `addins/cadgpt-autocad/ChatView.xaml.cs` đã quan sát `Application.DocumentManager`, cache `WeakReference<Document>` cho bound document và poll trạng thái panel; hiện đây chủ yếu là **UI/binding evidence**, chưa phải CAD API executor cho business tools. Không xem trạng thái panel ổn định là bằng chứng Python COM execution đã ổn định tuyệt đối.
-- `src/cadgpt/runtime/cad-upstream.ts` quản lý một Python CAD MCP subprocess over stdio; `src/cadgpt/tools/cad-proxy.ts` điều phối tool schemas/host locks/drawing binding. **Lớp transport và orchestration không cần bị loại bỏ** nếu executor chuyển thành DLL.
+**Quan sát hiện trạng từ source:**
+- Python CAD MCP dùng COM từ bên ngoài AutoCAD (`runtimes/cad-mcp/connection/acad.py`, `connection/session.py`). Outer CadGPT bảo vệ drawing binding và kích hoạt đúng document trước khi chạy công cụ.
+- AutoCAD C# Add-in đã chạy **bên trong host**, đọc `DocumentManager` và theo dõi bound document cho panel (`addins/cadgpt-autocad/ChatView.xaml.cs`). Panel hiện khá ổn định, nhưng user đôi khi phải restart để lấy lại sự ổn định; **chưa có bằng chứng nguyên nhân do COM hay do thành phần nào**.
 
-**Ranh giới backend đề xuất:**
+**Hướng chuyển backend nếu được chọn:** giữ nguyên tên/schema MCP tools, CAI/RAI Job và Registry; thay phần **thao tác CAD bằng COM ngoài tiến trình** bằng **.NET API trong Add-in DLL đang có**. Mỗi tool call được chuyển qua một IPC mỏng (Named Pipe hoặc giao tiếp local tương đương, lựa chọn kỹ thuật chưa chốt), sau đó DLL thao tác **đúng Document đã bind** và trả kết quả ngay. **Không xây thêm một Job runner, workflow engine, queue nghiệp vụ, retry scheduler, accepted/started/completed protocol hay recovery framework mới cho từng tool call.**
 
 ```text
-AI clients (ChatGPT/Claude/Grok, future Native AI)
-    → CAI MCP/Job/Registry/Policy (giữ tool names, schemas, quotas)
-    → Local execution transport (có thể IPC/Named Pipe; cần xác thực/quyền)
-    → AutoCAD in-process .NET execution dispatcher
-         → AutoCAD DocumentManager + exact bound Document identity
-         → approved CAD API transactions / existing verified LISP path
-         → validated results + readback
+MCP tool call (existing schema)
+      → local bridge (thin request/response)
+      → AutoCAD .NET DLL
+      → verify exact bound Document
+      → execute AutoCAD API / verified Lisp command
+      → return result/error
 ```
 
-- **Drawing binding trực tiếp:** dùng `DocumentManager` và document lifecycle events (`DocumentCreated`, `DocumentActivated`, `DocumentToBeDestroyed`, `DocumentDestroyed`) để theo dõi lifetime đúng host; duy trì ID phiên riêng cho **mỗi lần mở document**, đối chiếu exact handle/reference + host lifetime với binding được user xác nhận. **Active document không tự động là authorized bound drawing**. Đóng rồi mở lại cùng file/path/name phải được coi là lifetime khác và không thực thi lệnh trên stale binding; khi reload/save-as cần xác định đúng quy tắc giữ/chuyển authority.
-- **CAD context bắt buộc:** local dispatcher không được gọi API CAD trực tiếp trên background IPC/HTTP/WebView callback thread; marshal/queue qua execution context hợp lệ của AutoCAD, dùng `DocumentLock` khi cần và `Transaction` cho DB mutations. Locking, threading, reentrancy, user commands, undo/redo, và R22.0/.NET Framework 4.6 compatibility là **release gates phải chứng minh bằng thử nghiệm thực tế**, không được suy diễn DLL = an toàn.
-- **Recovery phải chia lớp:** (a) lỗi AI/WebView/remote MCP → reconnect/reload phần tương ứng; (b) lỗi Python CAD MCP process/IPC/connector → restart/reconnect worker khi chắc chắn không có CAD mutation pending; (c) stale drawing/session → **fail closed và yêu cầu rebind**; (d) host AutoCAD/DLL ở trạng thái hỏng → hướng dẫn save/recover/restart AutoCAD có kiểm soát. **Không tuyên bố có thể unload/restart DLL độc lập ngay khi AutoCAD đang chạy** hoặc mọi tình huống đều self-heal. Bảo vệ unsaved DWG và không auto-kill AutoCAD.
-- **Chống retry mù:** mutation nhận correlation/operation ID, return tình trạng **accepted/started/completed/readback/unknown**, không xem IPC timeout là chắc chắn chưa ghi. Khi reconnect phải reconcile trạng thái; từ chối retry write chưa xác định kết quả, tránh duplicate entities/attributes. Checkpoint và save tuân theo authority Job/drawing có sẵn.
-- **Chẩn đoán trước migration:** lưu mã lỗi và trạng thái tối thiểu (không log dữ liệu bản vẽ): COM busy/unavailable, Python subprocess exits, IPC timeout, binding mismatches, WebView crashes, CAD exception, version/runtime, drawing close/reopen/sleep/resume; phân biệt restart **bridge**, **panel** hay **AutoCAD**. Nên so sánh COM vs DLL trên cùng fixtures: nhiều DWG, switch/save-as/close-reopen, 100–500+ entities, batch mutations, user interaction trong lúc Job chạy, idle/sleep và reconnect.
-- **Thử nghiệm tăng dần:** giữ Python COM làm đường fallback có kiểm soát; trước tiên thử read-only document inventory/entity lookup, sau đó bounded batch properties, save/readback; chỉ chuyển group tool sau khi đạt E2E trên host thật và chứng minh tương đương semantics/compatibility, ưu tiên readback và latency p50/p95. **Không tạo MCP surface thứ hai, không rewrite Job Registry, không tự đổi roadmap/milestones**.
-- **Revit khác AutoCAD:** RAI/Revit Add-in vốn là .NET in-process; vấn đề là đúng Revit API context (`ExternalEvent`, `Transaction`, `Document` validity), không đơn thuần chuyển COM sang DLL. Mô hình policy, precise binding và recover vẫn có thể tái sử dụng về mặt ý tưởng, không chia sẻ implementation một cách mù quáng.
+**Yêu cầu tối thiểu không thể bỏ qua:**
+- **Document chính xác:** `MdiActiveDocument` không tự động đồng nghĩa với drawing user đã bind. DLL có thể dùng host Document reference và sự kiện mở/đóng document để kiểm tra đối tượng tồn tại. Nếu bound document đã đóng hoặc stale, **trả lỗi và yêu cầu rebind**, không chọn bản vẽ khác theo tên/path.
+- **CAD API context:** dù lệnh ngắn, callback IPC không tự có quyền sửa database; đưa thao tác vào đúng AutoCAD execution context và dùng `DocumentLock`/`Transaction` khi API yêu cầu. Đây là quy tắc CAD host, **không phải workflow orchestration dài hạn**.
+- **Kết quả rõ ràng:** return success/error và readback khi nghiệp vụ cần, nhất là write operations. Nếu mất phản hồi sau lệnh thay đổi bản vẽ, **không tự gọi lại mù**; thông báo lỗi để kiểm tra trạng thái, không áp hàng loạt trạng thái trung gian/ledger mới.
+- **Restart không phải phương thức vận hành thường xuyên:** lỗi panel thì reload panel; lỗi bridge thì reconnect bridge nếu an toàn; vấn đề trong host thì xử lý ở mức host. Không cần cơ chế tự restart toàn bộ AutoCAD hoặc giám sát phức tạp cho mỗi tool call.
+- **Kiểm thử vừa đủ:** chọn vài tool đại diện (document lookup, entity read, property update hoặc Lisp load/run), chứng minh đúng drawing, trả kết quả, không gây lỗi khi đổi/đóng/mở DWG và hoạt động được trên phiên bản AutoCAD đang hỗ trợ. Chỉ mở rộng nếu kết quả thật tốt hơn COM, **không mặc định cần benchmark lớn hay refactor toàn hệ thống**.
 
-**Nguồn Autodesk để kiểm tra khi thiết kế spike:** https://help.autodesk.com/cloudhelp/2026/KOR/OARX-DevGuide-Managed/files/GUID-E619BB54-D531-4640-BB74-B61E6CA13238.htm ; https://help.autodesk.com/cloudhelp/2018/ENU/OARX-DevGuide-Managed/files/GUID-A2CD7540-69C5-4085-BCE8-2A8ACE16BFDD.htm . Phải đối chiếu version thực tế thay vì giả định APIs của bản mới có sẵn ở AutoCAD 2018.
+**Ranh giới:** đây là hướng tối giản hóa backend của **CAI AutoCAD**; **RAI Revit** đã dùng .NET/Revit API in-process nên không phải bài toán COM-to-DLL tương tự. Không đổi code, milestone hay roadmap chỉ vì nhận định kiến trúc này.
 
 ### Hướng nghiên cứu bổ sung: Native Add-in + CAI/RAI-managed AI (CANDIDATE)
 
@@ -471,7 +468,7 @@ Cho phép **nghiên cứu dần** và tổ chức **một nhóm beta giới hạ
 
 ## 9. Tóm tắt quyết định
 
-> **Hướng nghiên cứu độ ổn định CAD execution:** tận dụng AutoCAD .NET Add-in hiện có để bind đúng document lifetime và dispatch CAD operations in-process, giảm phụ thuộc external COM. Hiện panel khá ổn nhưng đôi lúc cần restart; **chưa xác minh root cause**. Chỉ spike/benchmark COM-vs-DLL, giữ MCP/Job/Registry và fail-closed/recovery an toàn, chưa phê duyệt refactor/migration.
+> **Hướng nghiên cứu CAD execution tối giản:** mỗi CAD tool call là **request → thực thi nhanh → result/error**, không phải Job/process dài. Có thể tận dụng AutoCAD .NET DLL hiện có để bind chính xác Document và thực thi CAD API thay COM, giữ MCP schemas, Job, Registry và chỉ dùng IPC mỏng; **không tự thêm workflow/retry/recovery framework theo từng tool**. Panel đôi khi cần restart nhưng root cause chưa xác minh; chưa quyết định migration.
 >
 > **Định vị cạnh tranh trung tâm:** **Job Creation + Job Runtime đáng tin cậy + Job Pack Store** là giá trị khác biệt CAI/RAI; **MCP chỉ là lớp tool/transport** và hiện có nhiều giải pháp kết nối Revit bằng pyRevit/MCP. **Data-first/Script-first**: với bài toán có dữ liệu và thuật toán xác định (ví dụ dựng cột theo CSV), ưu tiên Job + Dynamo/Revit API thay vì để AI gọi từng tool để dựng hình; AI chỉ xử lý khâu thật sự cần suy luận. Không quảng bá bridge đơn thuần là lợi thế độc quyền.
 >
