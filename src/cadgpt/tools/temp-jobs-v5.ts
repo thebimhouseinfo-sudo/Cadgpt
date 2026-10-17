@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { currentToolLease } from "../lib/work-registration.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
-import { createTempJob, writeTempSource, finishTempJob, clearTempJobs } from "../runtime/temp-job-v5.js";
+import { createTempJob, writeTempSource, updateTempSource, finishTempJob, clearTempJobs } from "../runtime/temp-job-v5.js";
 
 export function registerTempJobV5Tools(server: McpServer): void {
   server.registerTool("temp_job_create", {
@@ -28,6 +28,22 @@ export function registerTempJobV5Tools(server: McpServer): void {
       const l = currentToolLease();
       return toolResult("temp_job_source_create", await writeTempSource(id, l.workId, l.sessionKey, relative_path, content));
     } catch (e) { return toolError("temp_job_source_create", e); }
+  });
+  server.registerTool("temp_job_source_update", {
+    title: "Fix one owned Temp Job source file",
+    description: "Replace source after an error with exact SHA-256 expected content, then user can re-run real CAD operation.",
+    inputSchema: {
+      id: z.string().uuid(),
+      relative_path: z.string().min(1),
+      content: z.string(),
+      expected_sha256: z.string().regex(/^[a-f0-9]{64}$/i),
+    },
+  }, async ({ id, relative_path, content, expected_sha256 }) => {
+    try {
+      const l = currentToolLease();
+      return toolResult("temp_job_source_update",
+        await updateTempSource(id, l.workId, l.sessionKey, relative_path, content, expected_sha256));
+    } catch (e) { return toolError("temp_job_source_update", e); }
   });
   server.registerTool("temp_job_done", {
     title: "Mark Temp Job complete",
