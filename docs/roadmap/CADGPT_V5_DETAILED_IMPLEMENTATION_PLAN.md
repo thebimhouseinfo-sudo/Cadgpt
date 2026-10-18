@@ -373,3 +373,12 @@ All code changes were committed directly to `feature/core-function-v5`; no child
 **CI:** GitHub Actions `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39127225100` PASS on Windows and Ubuntu. This is source build/regression PASS, not native AutoCAD acceptance.
 
 **RL:** No new workflow gate introduced. Legacy `JOB_RUNTIME_BUSY` protection is intentionally retained for shared legacy runtime; V5 execution-isolated path permits concurrent same-Job runs. Remaining end-to-end gaps (especially owned-file authorization, real AutoCAD host and installed add-in, obsolete runtime routes) remain unresolved; V5 is **NOT READY FOR HUMAN GATE**.
+
+## S. 2026-10-18 — Stale Work FILE grant fails closed
+
+- V5 branch only; no main or child branch changes.
+- Fixed `tools/filesystem.ts` to return **zero generic writable roots** when current Work is absent, replaced (lease execution mismatch), or closing. This closes an execution-revocation race that could otherwise return generic AppData writable paths.
+- The earlier active Job Work owner-only runtime/result rule remains in force; Builder edits into managed Job/Lisp source continue to require the separate `v5_source_create/update` exact-owner tools. Generic FILE draft write scope is classified as legacy compatibility only.
+- Added regression contract `tests/v5-job-file-ownership.test.mjs` for stale/replaced/closing Work handling.
+- Source CI for `c60c80ffa71cefd4573ea335b64e1e8bed1e2ccc`: `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39127866609`. Linux passed; Windows status requires final readback.
+- This is **not** full Core V5 acceptance or native AutoCAD verification. Legacy Direct/SYSTEM and generic FILE/Builder edit migration are still material.
