@@ -1335,13 +1335,52 @@ export function registerJobAuthoringTools(server: McpServer): void {
       description:
         "Run one direct Job without model planning. Official Internal Jobs use bounded built-in CadGPT executors; User Registry .py Jobs use CadGPT's fixed Python runtime. User .md Jobs are rejected and must use the reasoning Job harness.",
       inputSchema: {
-        id: z.string().min(1),
+        id: z.string().min(1).optional(),
+        source_path: z.string().min(1).optional()
+          .describe("V5 Builder: absolute existing .py source inside exact managed Job owner; registration is not required."),
         args: z.array(z.string()).max(50).optional().default([]),
       },
     },
-    async ({ id, args }) => {
+    async ({ id, source_path, args }) => {
       try {
-        const internal = getInternalJob(id);
+        if (Boolean(id) === Boolean(source_path)) {
+          throw new Error("DIRECT_JOB_TARGET_REQUIRED: specify registered id OR Builder source_path.");
+        }
+        if (source_path) {
+          if (!path.isAbsolute(source_path) || path.extname(source_path).toLowerCase() !== ".py") {
+            throw new Error("V5_DIRECT_SOURCE_ABSOLUTE_PY_REQUIRED");
+          }
+          const lease = currentToolLease();
+          const work = activeWorkForSession(lease.sessionKey);
+          const isBuilder = work?.executionId === lease.workId &&
+            work.ownerType !== "job" && !work.closing &&
+            (["jobcreate", "job-authoring"].includes(work.ownerId) ||
+             work.capabilities.includes("job-authoring"));
+          if (!isBuilder) throw new Error("V5_DIRECT_BUILDER_WORK_REQUIRED");
+          const root = await fs.realpath(getJobLibrariesRoot());
+          const source = await fs.realpath(source_path);
+          const owner = await fs.realpath(path.dirname(source));
+          if (!isPathInside(owner, root) || !isPathInside(source, owner)) {
+            throw new Error("V5_DIRECT_SOURCE_OUTSIDE_MANAGED_JOB");
+          }
+          const targetOwner = currentBuilderTarget(lease.workId);
+          const equal = (a: string, b: string) => process.platform === "win32"
+            ? a.toLowerCase() === b.toLowerCase() : a === b;
+          if (!targetOwner || !equal(await fs.realpath(targetOwner), owner)) {
+            throw new Error("V5_DIRECT_BUILDER_TARGET_MISMATCH");
+          }
+          await releasePriorJobAuthorityForStart({
+            executionId: lease.workId, sessionKey: lease.sessionKey,
+          });
+          const executed = await executeDirectJobScript(
+            source, args, "v5:" + path.relative(root, owner).replaceAll("\\\\", "/"),
+            { fileOnly: false },
+          );
+          return toolResult("job_run_direct", {
+            registry: "unregistered-v5", source_path: source, ...executed,
+          });
+        }
+        const internal = getInternalJob(id!);
         if (internal) {
           const callLease =
             currentToolLease();
@@ -1361,11 +1400,11 @@ export function registerJobAuthoringTools(server: McpServer): void {
 
         await assertJobLocalCompatReady(
           "running a User Job",
-          id
+          id!
         );
         const jobs = await loadJobs();
         const entry = jobs.find(
-          (job) => job.id.toLowerCase() === id.trim().toLowerCase()
+          (job) => job.id.toLowerCase() === id!.trim().toLowerCase()
         );
         if (!entry) throw new Error(`Job not found: ${id}`);
         const relative = safeRelativeRegisteredJob(entry.relative_path);
