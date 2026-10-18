@@ -51,3 +51,13 @@ test("V5 unregistered final JOB.md can prepare for real RUN without draft promot
   assert.match(part, /V5_JOB_SOURCE_OUTSIDE_MANAGED_LIBRARY/);
   assert.match(part, /jobId = "v5:"/);
 });
+
+test("V5 Direct Python runner allows only exact Builder-owned final managed source", () => {
+  const src = fs.readFileSync(path.resolve(import.meta.dirname, "../src/cadgpt/tools/jobs.ts"), "utf8");
+  const section = src.slice(src.indexOf('"job_run_direct"'), src.indexOf('"job_run_direct_draft"'));
+  assert.match(section, /source_path: z\.string\(\)\.min\(1\)\.optional\(\)/);
+  assert.match(section, /V5_DIRECT_BUILDER_WORK_REQUIRED/);
+  assert.match(section, /V5_DIRECT_BUILDER_TARGET_MISMATCH/);
+  assert.match(section, /V5_DIRECT_SOURCE_OUTSIDE_MANAGED_JOB/);
+  assert.match(section, /executeDirectJobScript\(/);
+});
