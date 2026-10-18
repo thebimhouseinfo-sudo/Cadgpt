@@ -110,6 +110,8 @@ function currentWritableRoots(): string[] {
   // reasoning Job scratch scope; managed libraries remain excluded.
   const draftRoots = jobAuthoring ? [getJobDraftRoot()] : [];
   if (reasoningScope) return [...new Set([...jobRoots, ...draftRoots])];
+  // Legacy compatibility Work with an active runtime also stays scoped to
+  // that exact runtime; never inherit broad data/workspace writes.
   if (jobRoots.length) return [...new Set([...jobRoots, ...draftRoots])];
   return [
     ...new Set([
