@@ -172,7 +172,7 @@ async function saveLibraryAndRegistry(record: LibraryRecord, entries: RegistryEn
     { version: 1, libraries: [] }
   );
   const nextLibraries = manifest.libraries.filter(
-    (item) => !(item.id === record.id && item.kind === record.kind)
+    (item) => !(item.id.toLowerCase() === record.id.toLowerCase() && item.kind === record.kind)
   );
   nextLibraries.push(record);
   nextLibraries.sort((a, b) => (a.kind + ":" + a.id).localeCompare(b.kind + ":" + b.id));
@@ -182,7 +182,7 @@ async function saveLibraryAndRegistry(record: LibraryRecord, entries: RegistryEn
     { version: 1, entries: [] }
   );
   const nextEntries = registry.entries.filter(
-    (item) => !(item.kind === record.kind && item.library_id === record.id)
+    (item) => !(item.kind === record.kind && item.library_id.toLowerCase() === record.id.toLowerCase())
   );
   nextEntries.push(...entries);
   nextEntries.sort((a, b) => a.id.localeCompare(b.id));
