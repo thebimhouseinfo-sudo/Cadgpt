@@ -222,9 +222,24 @@ async function cleanupJobRuntimeContext(
       // Job runtime/ is scratch, not persisted Job definition or result.
       // Remove only direct children of the canonical Job-owned runtime
       // directory, preserving the checklist and all sibling Job assets.
-      const expectedRuntime = path.join(context.job_root, "runtime");
-      if (path.resolve(context.runtime_root) !== path.resolve(expectedRuntime)) {
+      const expectedRuntime = path.resolve(context.job_root, "runtime");
+      const isolatedRuns = path.join(expectedRuntime, "runs");
+      const resolvedRuntime = path.resolve(context.runtime_root);
+      const isolated = path.dirname(resolvedRuntime) === isolatedRuns &&
+        /^[0-9a-f]{24}$/i.test(path.basename(resolvedRuntime));
+      if (resolvedRuntime !== expectedRuntime && !isolated) {
         throw new Error("JOB_RUNTIME_CLEANUP_SCOPE: unexpected runtime root.");
+      }
+      const realParent = await fs.realpath(path.dirname(resolvedRuntime));
+      const realExpectedParent = await fs.realpath(
+        isolated ? isolatedRuns : path.dirname(expectedRuntime)
+      );
+      if (realParent !== realExpectedParent) {
+        throw new Error("JOB_RUNTIME_CLEANUP_SCOPE: runtime parent identity changed.");
+      }
+      const runtimeStat = await fs.lstat(resolvedRuntime);
+      if (!runtimeStat.isDirectory() || runtimeStat.isSymbolicLink()) {
+        throw new Error("JOB_RUNTIME_CLEANUP_SCOPE: runtime directory is unsafe.");
       }
       await withFileMutationLocks([context.runtime_root], async () => {
         for (const entry of await fs.readdir(context.runtime_root)) {
