@@ -363,3 +363,13 @@ Commits through `4a803368e69fd27c4a91f86e0306a6b12e21b21a` on `feature/core-func
 - **Verification:** GitHub Actions `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39079332297` Windows + Ubuntu build/tests **PASS** on commit `039f7ae3a2843dfe5694b24ee01e5bbe310029a1`.
 
 **Review caution:** `v5:` Builder Job runs now have isolated scratch but still share the named Job result folder (file mutation locks and overwrite protection apply at mutation sites); business logic that hardcodes shared result filenames must handle collisions, not silently overwrite. Existing registered legacy Job runtime retains its lock and scratch layout for compatibility. V5 is still NOT fully completed, not installed on local Windows and not eligible for native AutoCAD human acceptance until legacy runtime migration and integration checks are done.
+
+## Q. Implementation continuity — 2026-10-18
+
+All code changes were committed directly to `feature/core-function-v5`; no child branch or main changes.
+
+**Fix completed:** The execution-isolated V5 Job runtime under `<job>/runtime/runs/<execution-hash>` now supports scoped scratch cleanup without requiring the legacy shared `<job>/runtime` path. Cleanup validates the runtime path is either the exact legacy root or a 24-character execution-run folder under the exact isolated runs parent; checks real parent identity and rejects symlink directories, preventing deletion of neighboring Job or session scratch. Updated the source contract test `tests/custom-job-runtime-scratch-cleanup.test.mjs` to reflect both supported paths.
+
+**CI:** GitHub Actions `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39127225100` PASS on Windows and Ubuntu. This is source build/regression PASS, not native AutoCAD acceptance.
+
+**RL:** No new workflow gate introduced. Legacy `JOB_RUNTIME_BUSY` protection is intentionally retained for shared legacy runtime; V5 execution-isolated path permits concurrent same-Job runs. Remaining end-to-end gaps (especially owned-file authorization, real AutoCAD host and installed add-in, obsolete runtime routes) remain unresolved; V5 is **NOT READY FOR HUMAN GATE**.
