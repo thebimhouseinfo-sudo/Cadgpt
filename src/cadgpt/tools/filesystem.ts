@@ -90,6 +90,11 @@ function currentWritableRoots(): string[] {
   // the prior reasoning Job has left its narrower runtime scope in this Work.
   const lease = currentToolLease();
   const currentWork = activeWorkForSession(lease.sessionKey);
+  // V5: never recover generic writable roots when the current execution was
+  // revoked, replaced or is closing. The per-call lease must still match.
+  if (!currentWork || currentWork.executionId !== lease.workId || currentWork.closing) {
+    return [];
+  }
   // V5: a Job Work must never regain generic data/workspace WRITE when
   // its prepared runtime has finished or its ownership was released.
   // A prior reasoning-scope marker alone is insufficient for legacy Direct
