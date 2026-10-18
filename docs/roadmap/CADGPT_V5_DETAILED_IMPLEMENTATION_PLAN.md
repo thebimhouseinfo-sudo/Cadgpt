@@ -382,3 +382,13 @@ All code changes were committed directly to `feature/core-function-v5`; no child
 - Added regression contract `tests/v5-job-file-ownership.test.mjs` for stale/replaced/closing Work handling.
 - Source CI for `c60c80ffa71cefd4573ea335b64e1e8bed1e2ccc`: `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39127866609`. Linux passed; Windows status requires final readback.
 - This is **not** full Core V5 acceptance or native AutoCAD verification. Legacy Direct/SYSTEM and generic FILE/Builder edit migration are still material.
+
+## T. V5 FILE result ownership fix — 2026-10-18
+
+All source changes remain solely on `feature/core-function-v5`; no main update or branch split.
+
+**Security fix:** `assertNotGenericJobResultMutation` previously protected only folders ending `-result`, but V5 explicitly allows arbitrary **user-named** Temp/Reusable Job result folders under `Drawing Anchor/jobs/`. Generic FILE mutation now checks **all** descendants of `jobs/` regardless of folder name, and permits write only to execution-owned runtime/result roots. Protected Human Power exception remains explicit and audited separately. Test `tests/v5-job-file-ownership.test.mjs` asserts this new path contract.
+
+**CI:** `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39145613264` launched on Ubuntu and Windows. Status must be read back; no live CAD acceptance evidence has been produced.
+
+**Remaining:** complete legacy Direct/SYSTEM tool removal where safe, actual host integration acceptance, publication crash consistency, and any outstanding owner-scoped authoring migration. Not human gate ready.
