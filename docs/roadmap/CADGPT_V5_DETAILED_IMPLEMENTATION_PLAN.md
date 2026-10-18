@@ -400,3 +400,17 @@ All source edits on `feature/core-function-v5` only, no main modification.
 - `saveLibraryAndRegistry` now matches existing Library IDs case-insensitively in both manifest and capability registry during replacement/refresh, consistent with Windows semantics. Added idempotency regression coverage.
 - CI `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39150514209`: Ubuntu source build/tests PASS. Windows CI pending readback when this checkpoint was written; do not assert Windows PASS until observed.
 - **Open:** Registry multi-file power-loss atomicity, legacy Direct/SYSTEM retirement, bound-host native AutoCAD acceptance and remaining V5 roadmap items. Still not human-gate ready.
+
+## V. Implementation continuation — 2026-10-19
+
+**All CadGPT code changes only on `feature/core-function-v5`**, no main edits and no child branch.
+
+Completed implementation slices:
+1. `cleanupJobRuntimeForExecution` preserves the execution context until cleanup succeeds; retry is now possible after an ordinary I/O failure rather than losing Job ownership on failure.
+2. Managed library manifest/Registry refresh matches Library ID case-insensitively, preventing duplicate Library identities on Windows.
+3. `job_run_direct` accepts either existing registered `id` **or** V5 `source_path` for direct unregistered Builder-owned final managed `.py`. Only an active Builder Work with exact canonical `currentBuilderTarget` can use this path. It invokes the existing Direct executor directly, without draft, checkout, registration or promotion. Existing registered/internal Job paths remain.
+4. Regression tests cover cleanup retry ordering, Registry idempotency and direct Python Builder source route.
+
+Source CI Windows and Ubuntu **PASS** at `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39150768488` (commit `0ed017a7371c5071c42bc55b407dac9d0531a390`). Source CI is not native AutoCAD acceptance.
+
+Remaining V5 blockers include native CAD bound-host LOAD/RUN/Save, exhaustive legacy Direct/SYSTEM retirement, and registry crash atomicity. **Not human-gate ready**. No user pull requested.
