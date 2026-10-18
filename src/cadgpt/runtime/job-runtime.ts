@@ -346,14 +346,20 @@ export async function cleanupJobRuntimeForExecution(
 ): Promise<Record<string, unknown>> {
   const context =
     contextsByExecution.get(executionId);
-  contextsByExecution.delete(executionId);
   if (!context) {
     return {
       active: false,
       removed_empty_result_roots: 0,
     };
   }
-  return cleanupJobRuntimeContext(context, executionId, options);
+  // Keep the owner context until cleanup succeeds. If filesystem cleanup
+  // fails, callers may retry; losing the context would orphan scratch and
+  // leave a legacy same-Job execution lock unreachable.
+  const cleaned = await cleanupJobRuntimeContext(context, executionId, options);
+  if (contextsByExecution.get(executionId) === context) {
+    contextsByExecution.delete(executionId);
+  }
+  return cleaned;
 }
 
 export async function prepareJobRuntimeForExecution(
