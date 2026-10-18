@@ -23,7 +23,7 @@ import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import { hasVerifiedBoundSave, noteVerifiedBoundSave, invalidateBoundSave, notePotentialCadMutation, hasPotentialCadMutation, resetCadMutationTracking } from "../runtime/bound-save-ledger.js";
-import { assertBuilderTarget } from "../runtime/builder-target.js";
+import { assertBuilderTarget, currentBuilderTarget } from "../runtime/builder-target.js";
 import {
   drawingMetadataRootsForExecution,
   drawingMetadataWritableRootsForExecution,
