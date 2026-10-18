@@ -17,3 +17,11 @@ test("V5 generic FILE writes fail closed when Work lease is stale or closing", (
   assert.match(section, /!currentWork \|\| currentWork\.executionId !== lease\.workId \|\| currentWork\.closing/);
   assert.ok(section.indexOf("currentWork.closing") < section.indexOf("...getWritableRoots()"));
 });
+
+test("V5 protects every user-named Job result, not just legacy -result suffix", () => {
+  const section = source.slice(source.indexOf("export function assertNotGenericJobResultMutation"),
+    source.indexOf("async function assertNotManagedHvacKnowledgeMutation"));
+  assert.match(section, /parts\[1\]\.toLowerCase\(\) !== "jobs"/);
+  assert.doesNotMatch(section, /endsWith\("-result"\)/);
+  assert.match(section, /jobRuntimeWritableRootsForExecution\(currentToolLease\(\)\.workId\)/);
+});
