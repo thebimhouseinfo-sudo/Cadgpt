@@ -392,3 +392,11 @@ All source changes remain solely on `feature/core-function-v5`; no main update o
 **CI:** `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39145613264` launched on Ubuntu and Windows. Status must be read back; no live CAD acceptance evidence has been produced.
 
 **Remaining:** complete legacy Direct/SYSTEM tool removal where safe, actual host integration acceptance, publication crash consistency, and any outstanding owner-scoped authoring migration. Not human gate ready.
+
+## U. 2026-10-19 — Cleanup retry and Registry identity correctness
+
+All source edits on `feature/core-function-v5` only, no main modification.
+- `cleanupJobRuntimeForExecution` no longer discards its execution context **before** filesystem cleanup. Context is deleted only after successful cleanup and only if it is still the same context; error permits retry instead of orphaning the Job owner state. A regression source assertion covers this ordering.
+- `saveLibraryAndRegistry` now matches existing Library IDs case-insensitively in both manifest and capability registry during replacement/refresh, consistent with Windows semantics. Added idempotency regression coverage.
+- CI `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39150514209`: Ubuntu source build/tests PASS. Windows CI pending readback when this checkpoint was written; do not assert Windows PASS until observed.
+- **Open:** Registry multi-file power-loss atomicity, legacy Direct/SYSTEM retirement, bound-host native AutoCAD acceptance and remaining V5 roadmap items. Still not human-gate ready.
