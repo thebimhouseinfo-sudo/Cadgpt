@@ -79,8 +79,16 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
         await fs.writeFile(checked, content, { flag: "wx" });
         return { path: checked, sha256: digest(content) };
       });
-      const refreshed = await refreshPublishedManagedLibrary(kind === "reusable-job" ? "job" : "lisp", library_id);
-      return toolResult("v5_source_create", { ...result, registry_refreshed: refreshed !== null });
+      try {
+        const refreshed = await refreshPublishedManagedLibrary(kind === "reusable-job" ? "job" : "lisp", library_id);
+        return toolResult("v5_source_create", { ...result, source_created: true, registry_refreshed: refreshed !== null });
+      } catch (registryError) {
+        return toolResult("v5_source_create", {
+          ...result, source_created: true, registry_refreshed: false,
+          registry_refresh_error: String(registryError),
+          note: "Source was already written. Do NOT replay creation; repair Registry separately.",
+        });
+      }
     } catch (e) { return toolError("v5_source_create", e); }
   });
   server.registerTool("v5_source_update", {
@@ -106,8 +114,16 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
         } finally { await fs.rm(tmp, { force: true }).catch(() => {}); }
         return { path: resolved, sha256: digest(content) };
       });
-      const refreshed = await refreshPublishedManagedLibrary(kind === "reusable-job" ? "job" : "lisp", library_id);
-      return toolResult("v5_source_update", { ...result, registry_refreshed: refreshed !== null });
+      try {
+        const refreshed = await refreshPublishedManagedLibrary(kind === "reusable-job" ? "job" : "lisp", library_id);
+        return toolResult("v5_source_update", { ...result, source_updated: true, registry_refreshed: refreshed !== null });
+      } catch (registryError) {
+        return toolResult("v5_source_update", {
+          ...result, source_updated: true, registry_refreshed: false,
+          registry_refresh_error: String(registryError),
+          note: "Source was already updated. Do NOT replay mutation; repair Registry separately.",
+        });
+      }
     } catch (e) { return toolError("v5_source_update", e); }
   });
 }
