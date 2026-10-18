@@ -86,8 +86,8 @@ function currentWritableRoots(): string[] {
   const reasoningScope = reasoningJobStorageScopeWasEntered(
     currentToolLease().workId
   );
-  // Explicit jobcreate authoring may edit only managed job drafts even when
-  // the prior reasoning Job has left its narrower runtime scope in this Work.
+  // Legacy jobcreate drafts remain a compatibility path. V5 authoring
+  // must use v5_source_create/update with an exact managed library owner.
   const lease = currentToolLease();
   const currentWork = activeWorkForSession(lease.sessionKey);
   // V5: never recover generic writable roots when the current execution was
