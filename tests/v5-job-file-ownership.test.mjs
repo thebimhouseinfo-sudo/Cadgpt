@@ -25,3 +25,10 @@ test("V5 protects every user-named Job result, not just legacy -result suffix", 
   assert.doesNotMatch(section, /endsWith\("-result"\)/);
   assert.match(section, /jobRuntimeWritableRootsForExecution\(currentToolLease\(\)\.workId\)/);
 });
+
+test("V5 retains Job runtime owner context until filesystem cleanup succeeds", () => {
+  const runtime = fs.readFileSync(path.resolve(import.meta.dirname, "../src/cadgpt/runtime/job-runtime.ts"), "utf8");
+  const segment = runtime.slice(runtime.indexOf("export async function cleanupJobRuntimeForExecution("), runtime.indexOf("export async function prepareJobRuntimeForExecution("));
+  assert.ok(segment.indexOf("await cleanupJobRuntimeContext(context, executionId, options)") < segment.indexOf("contextsByExecution.delete(executionId)"));
+  assert.match(segment, /contextsByExecution\.get\(executionId\) === context/);
+});
