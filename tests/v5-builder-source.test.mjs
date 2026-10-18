@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -53,7 +54,7 @@ test("V5 unregistered final JOB.md can prepare for real RUN without draft promot
 });
 
 test("V5 Direct Python runner allows only exact Builder-owned final managed source", () => {
-  const src = fs.readFileSync(path.resolve(import.meta.dirname, "../src/cadgpt/tools/jobs.ts"), "utf8");
+  const src = fsSync.readFileSync(path.resolve(import.meta.dirname, "../src/cadgpt/tools/jobs.ts"), "utf8");
   const section = src.slice(src.indexOf('"job_run_direct"'), src.indexOf('"job_run_direct_draft"'));
   assert.match(section, /source_path: z\.string\(\)\.min\(1\)\.optional\(\)/);
   assert.match(section, /V5_DIRECT_BUILDER_WORK_REQUIRED/);
