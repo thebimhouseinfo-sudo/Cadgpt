@@ -18,7 +18,9 @@ test("Custom Job DONE does not mandate runtime scratch deletion", () => {
 });
 
 test("runtime scratch cleanup cannot target Job result or permanent assets", () => {
-  assert.match(runtime, /expectedRuntime = path\.join\(context\.job_root, "runtime"\)/);
+  assert.match(runtime, /expectedRuntime = path\.resolve\(context\.job_root, "runtime"\)/);
+  assert.match(runtime, /isolatedRuns = path\.join\(expectedRuntime, "runs"\)/);
+  assert.match(runtime, /runtime parent identity changed/);
   assert.match(runtime, /JOB_RUNTIME_CLEANUP_SCOPE/);
   assert.match(runtime, /if \(entry === JOB_STEPS_FILENAME\) continue/);
   assert.match(runtime, /fs\.rm\(path\.join\(context\.runtime_root, entry\)/);
