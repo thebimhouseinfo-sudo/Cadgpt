@@ -57,3 +57,15 @@ test("V5 refreshes a previously published managed Job library without repromotin
   assert.equal(refreshed.registered, 2);
   assert.equal(await refreshPublishedManagedLibrary("job", "never-published-v5"), null);
 });
+
+test("V5 case-insensitive managed Library publication does not duplicate registry identity", async () => {
+  const { publishManagedLibrary } = await import("../dist/cadgpt/tools/user-assets.js");
+  const { getUserLibrariesManifestPath, getUserCapabilitiesPath } = await import("../dist/cadgpt/lib/appdata.js");
+  await publishManagedLibrary("job", "v5-authoring-demo", "Renamed Existing Job");
+  const manifest = JSON.parse(await fs.readFile(getUserLibrariesManifestPath(), "utf8"));
+  const records = manifest.libraries.filter(item => item.kind === "job" &&
+    item.id.toLowerCase() === "v5-authoring-demo");
+  assert.equal(records.length, 1);
+  const registry = JSON.parse(await fs.readFile(getUserCapabilitiesPath(), "utf8"));
+  assert.equal(new Set(registry.entries.map(entry => entry.id.toLowerCase())).size, registry.entries.length);
+});
