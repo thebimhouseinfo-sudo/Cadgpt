@@ -90,6 +90,13 @@ function currentWritableRoots(): string[] {
   // the prior reasoning Job has left its narrower runtime scope in this Work.
   const lease = currentToolLease();
   const currentWork = activeWorkForSession(lease.sessionKey);
+  // V5: a Job Work must never regain generic data/workspace WRITE when
+  // its prepared runtime has finished or its ownership was released.
+  // A prior reasoning-scope marker alone is insufficient for legacy Direct
+  // Jobs, so deny generic fallback for every active Job Work.
+  if (currentWork?.executionId === lease.workId && currentWork.ownerType === "job") {
+    return [...new Set(jobRoots)];
+  }
   const jobAuthoring = currentWork?.executionId === lease.workId &&
     (currentWork.ownerType === "skill" && currentWork.ownerId === "jobcreate" ||
      currentWork.capabilities.includes("job-authoring"));
