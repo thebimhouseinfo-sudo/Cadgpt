@@ -133,8 +133,10 @@ export function assertNotGenericJobResultMutation(target: string): void {
   const rel = path.relative(root, path.resolve(target));
   if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return;
   const parts = rel.split(path.sep);
-  if (parts.length < 4 || parts[1] !== "jobs" ||
-      !parts[2].toLowerCase().endsWith("-result")) return;
+  // V5 result directories are user-named and need not end with -result.
+  // No generic FILE operation can edit ANY Job's persisted result without
+  // that execution owning the exact result root.
+  if (parts.length < 3 || parts[1].toLowerCase() !== "jobs") return;
   const allowedOwnedRoots = jobRuntimeWritableRootsForExecution(currentToolLease().workId);
   if (allowedOwnedRoots.some(base => {
     const relative = path.relative(path.resolve(base), path.resolve(target));
