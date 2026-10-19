@@ -1027,7 +1027,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
             lease.workId,
             jobId,
             jobFile,
-            { resetRuntime: false, isolatedRun: Boolean(id || source_path) }
+            { resetRuntime: false }
           );
         if (!sameActiveJob) resetCadMutationTracking(lease.workId);
         // A FILE-only Job B can resume on a drawing root already verified
