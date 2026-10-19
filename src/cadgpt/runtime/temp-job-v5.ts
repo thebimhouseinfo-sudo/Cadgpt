@@ -53,7 +53,7 @@ async function assertOwned(id: string, execution: string, session: string): Prom
     throw new Error("TEMP_JOB_NOT_OWNED");
   }
   const current = activeWorkForSession(session);
-  if (!current || current.executionId !== execution || current.ownerType === "job") {
+  if (!current || current.closing || current.executionId !== execution || current.ownerType === "job") {
     throw new Error("TEMP_JOB_BUILDER_WORK_REQUIRED");
   }
   return meta;
