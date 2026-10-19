@@ -15,7 +15,7 @@ test('Custom Job finish requires explicitly successful outcome for autosave', ()
   assert.match(segment, /outcome: z\.enum\(\["done", "failed"\]\)\.optional\(\)\.default\("failed"\)/);
   assert.match(segment, /if \(outcome === "done" && dwg_changed\)/);
   assert.match(segment, /JOB_DONE_READ_ONLY/);
-  assert.match(segment, /await cleanupJobRuntimeForExecution\(lease\.workId\)/);
+  assert.match(segment, /await cleanupJobRuntimeForExecution\(lease\.workId,/);
   assert.match(segment, /JOB_SAVE_FAILED/);
   assert.match(segment, /autoSave\.saved !== true/);
   assert.doesNotMatch(segment, /JOB_DONE_AUTOSAVE_FAILED/);
