@@ -7,8 +7,9 @@ import { activeWorkForSession, currentToolLease } from "../lib/work-registration
 import { ownedSourceRoot, assertOwnedSourceRootSafe, resolveOwnedSourceMutation, type OwnedSource } from "../lib/owned-source.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
-import { assertBuilderTarget } from "../runtime/builder-target.js";
+import { assertBuilderTarget, currentBuilderTarget } from "../runtime/builder-target.js";
 import { publishManagedLibrary, refreshPublishedManagedLibrary } from "./user-assets.js";
+import { getJobLibrariesRoot, getLispLibrariesRoot } from "../lib/appdata.js";
 
 const digest = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
 const extension = new Set([".md", ".txt", ".json", ".py", ".lsp", ".dcl", ".csv", ".yaml", ".yml"]);
@@ -48,6 +49,20 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
   }, async ({ kind, library_id, library_name }) => {
     try {
       assertBuilder();
+      const builderTarget = currentBuilderTarget(currentToolLease().workId);
+      if (!builderTarget) throw new Error("V5_PUBLISH_BUILDER_TARGET_REQUIRED");
+      const libraryRoot = path.join(
+        kind === "job" ? getJobLibrariesRoot() : getLispLibrariesRoot(),
+        library_id,
+      );
+      const canonicalLibrary = await fs.realpath(libraryRoot);
+      const canonicalOwner = await fs.realpath(builderTarget);
+      const equal = (value: string) => process.platform === "win32"
+        ? value.toLowerCase() : value;
+      const relative = path.relative(equal(canonicalLibrary), equal(canonicalOwner));
+      if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+        throw new Error("V5_PUBLISH_BUILDER_TARGET_MISMATCH");
+      }
       return toolResult("v5_source_publish",
         await publishManagedLibrary(kind, library_id, library_name));
     } catch (error) { return toolError("v5_source_publish", error); }
