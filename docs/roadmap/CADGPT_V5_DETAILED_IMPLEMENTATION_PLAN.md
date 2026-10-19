@@ -91,6 +91,22 @@ Verify implementation against actual human criteria, not against obsolete checkp
 - No merge/deploy to `main` or production without human release approval.
 **Acceptance:** source review and tests pass, native evidence truthfully reported, no product-goal drift.
 
+## Current source implementation status (2026-10-19)
+
+This is status only, **not a separate roadmap**. The WP0–WP8 definitions above remain the only coding instructions.
+
+| WP | Verified source progress | Remaining behavior |
+|---|---|---|
+| WP5 — SYSTEM continuity | Fixed SYSTEM release to retain foreground Job runtime; repeat acquire/release regression PASS | Real CAD ↔ SYSTEM native acceptance |
+| WP5 — Job Stop | Added `cg/jobstop` that cleans current Job without `cg/stop`, Work teardown or CAD MCP disconnect; control regression PASS | Live session + CAD MCP acceptance |
+| WP5/WP6 — single Job execution | Same Job second execution rejected; different Jobs permitted; no new execution-hash runtime directories | Real multi-chat acceptance; old scratch directories migration only if genuinely needed |
+| WP6 — scratch | `job_runtime_finish(outcome=done)` clears Job scratch; failed completion preserves diagnostics and Drawing Anchor results | Native Save/result behavior |
+| WP3 — Promote | V5 Builder source create/update no longer automatically refresh Registry. Existing explicit `v5_source_publish` retained | Slim legacy Registry metadata and source SHA execution gate still to audit/fix |
+| WP1 — `cg/jobupdate` | **NOT IMPLEMENTED**: existing source Builder role still accepts owner IDs without an exact command grant | Explicit user-triggered, target-scoped authorization and tests |
+| WP2/WP4/WP7/WP8 | Earlier baseline implementation exists | Audit remaining legacy routes and anchored identity, native acceptance; no main deploy |
+
+**Latest CI:** source build/test PASS Windows + Ubuntu for `68ac9066`, [run 39274088614](https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39274088614). This is **source regression PASS only**, not native AutoCAD PASS. Do not claim V5 fully complete.
+
 ## Scope & review rules
 - Every planned source change must name one WP goal and user-visible behavior it fixes; no autonomous new feature.
 - Gate review: REMOVE historical Registry SHA / draft / checkout / repeated promote requirement / same-Job concurrency machinery; KEEP exact owner containment, real bound Anchor, safe CAD command ordering, explicit Job update authorization and Save failures.
