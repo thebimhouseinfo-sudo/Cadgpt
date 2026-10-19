@@ -58,7 +58,7 @@ test("V5 registered Job resets legacy checklist in place", async () => {
     const seeded = await fs.readFile(jobStepsPath(a), "utf8");
     assert.match(seeded, /- \[ \] Previously done/);
     assert.match(seeded, /- \[ \] Previously failed/);
-    assert.match(await fs.readFile(legacy, "utf8"), /- \[✓\] Previously done/);
+    assert.match(await fs.readFile(legacy, "utf8"), /- \[ \] Previously done/);
   } finally {
     await cleanupJobRuntimeForExecution("templated-execution");
   }
