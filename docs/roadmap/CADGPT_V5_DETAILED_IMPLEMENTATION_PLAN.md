@@ -414,3 +414,11 @@ Completed implementation slices:
 Source CI Windows and Ubuntu **PASS** at `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39150768488` (commit `0ed017a7371c5071c42bc55b407dac9d0531a390`). Source CI is not native AutoCAD acceptance.
 
 Remaining V5 blockers include native CAD bound-host LOAD/RUN/Save, exhaustive legacy Direct/SYSTEM retirement, and registry crash atomicity. **Not human-gate ready**. No user pull requested.
+
+## W. Implementation continuation — 2026-10-19
+
+- **Branch:** `feature/core-function-v5` only; main unchanged.
+- Fixed Windows Direct Python Builder `job_run_direct(source_path)` virtual identity to use platform separators via `path.relative(...).split(path.sep).join("/")`, rather than replacing doubled backslashes only. Regression source check added.
+- Closed a publication scope gap: `v5_source_publish` previously required only a Builder role and could target an unrelated managed Library ID. Publication now requires an existing exact Builder-owned target beneath the requested managed Library's canonical root, with no cross-library publication. Regression test added.
+- **Source CI:** Windows and Ubuntu PASS at `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39226071919`, source commit `3aaab81b4ee3cc84947346eb4d6975e4fc11b2af`.
+- **Still NOT READY for human CAD gate:** Legacy Direct/SYSTEM retirement and registry crash consistency remain; native bound AutoCAD tests have not been performed. Do not infer complete V5 readiness from source CI.
