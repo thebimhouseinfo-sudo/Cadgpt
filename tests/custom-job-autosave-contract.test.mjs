@@ -19,7 +19,7 @@ test('Custom Job finish requires explicitly successful outcome for autosave', ()
   assert.match(segment, /JOB_SAVE_FAILED/);
   assert.match(segment, /autoSave\.saved !== true/);
   assert.doesNotMatch(segment, /JOB_DONE_AUTOSAVE_FAILED/);
-  assert.ok(segment.indexOf("JOB_SAVE_FAILED") < segment.indexOf("await cleanupJobRuntimeForExecution(lease.workId)"));
+  assert.ok(segment.indexOf("JOB_SAVE_FAILED") < segment.indexOf("await cleanupJobRuntimeForExecution(lease.workId,"));
   assert.match(segment, /withCadHostLock\(drawing\.host/);
   assert.match(segment, /activateDrawingContext\(drawing\)/);
   assert.match(segment, /acad_save_bound_document/);
