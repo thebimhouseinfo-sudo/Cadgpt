@@ -10,21 +10,33 @@ import { toolError, toolResult } from "../lib/tool-result.js";
 import { assertBuilderTarget, currentBuilderTarget } from "../runtime/builder-target.js";
 import { publishManagedLibrary } from "./user-assets.js";
 import { getJobLibrariesRoot, getLispLibrariesRoot } from "../lib/appdata.js";
+import { assertJobUpdateGrant, hasJobUpdateGrantForWork, isNewJobPackageForExecution, recordNewJobPackage } from "../runtime/job-update-grant.js";
 
 const digest = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
 const extension = new Set([".md", ".txt", ".json", ".py", ".lsp", ".dcl", ".csv", ".yaml", ".yml"]);
-function assertBuilder(): void {
+function assertBuilder(kind: "reusable-job" | "reusable-lisp"): void {
   const lease = currentToolLease();
   const active = activeWorkForSession(lease.sessionKey);
+  const conventionalBuilder = active && active.ownerType !== "job" &&
+    (active.ownerId === "job-authoring" || active.ownerId === "lisp-authoring" ||
+     active.ownerId === "jobcreate" || active.capabilities.includes("job-authoring") ||
+     active.capabilities.includes("lisp-authoring"));
+  const explicitlyGrantedJob = kind === "reusable-job" &&
+    hasJobUpdateGrantForWork(lease.sessionKey, lease.workId);
   if (!active || active.closing || active.executionId !== lease.workId ||
-      active.ownerType === "job" || active.executionPath === "cad" ||
-      (active.ownerId !== "job-authoring" && active.ownerId !== "lisp-authoring" &&
-       active.ownerId !== "jobcreate" &&
-       !active.capabilities.includes("job-authoring") &&
-       !active.capabilities.includes("lisp-authoring"))) {
+      active.executionPath === "cad" || (!conventionalBuilder && !explicitlyGrantedJob)) {
     throw new Error("V5_EXPLICIT_BUILDER_WORK_REQUIRED");
   }
 }
+
+function assertExistingJobEdit(kind: "reusable-job" | "reusable-lisp", root: string): void {
+  if (kind !== "reusable-job") return;
+  const lease = currentToolLease();
+  if (!isNewJobPackageForExecution(lease.workId, root)) {
+    assertJobUpdateGrant(lease.sessionKey, lease.workId, root);
+  }
+}
+
 function owner(kind: "reusable-job" | "reusable-lisp", libraryId: string, folder: string): OwnedSource {
   return { kind, libraryId, relativeFolder: folder };
 }
@@ -48,7 +60,7 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
     },
   }, async ({ kind, library_id, library_name }) => {
     try {
-      assertBuilder();
+      assertBuilder(kind === "job" ? "reusable-job" : "reusable-lisp");
       const builderTarget = currentBuilderTarget(currentToolLease().workId);
       if (!builderTarget) throw new Error("V5_PUBLISH_BUILDER_TARGET_REQUIRED");
       const libraryRoot = path.join(
@@ -80,10 +92,15 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
     inputSchema: schema,
   }, async ({ kind, library_id, folder, relative_file, content }) => {
     try {
-      assertBuilder();
+      assertBuilder(kind);
       const o = owner(kind, library_id, folder);
       const target = targetFor(o, relative_file);
       const directory = ownedSourceRoot(o);
+      const existingPackage = await fs.stat(directory).then(() => true, (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      });
+      if (existingPackage) assertExistingJobEdit(kind, directory);
       await assertOwnedSourceRootSafe(o);
       assertBuilderTarget(currentToolLease().workId, directory);
       await fs.mkdir(directory, { recursive: true });
@@ -94,6 +111,7 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
         await fs.writeFile(checked, content, { flag: "wx" });
         return { path: checked, sha256: digest(content) };
       });
+      if (kind === "reusable-job" && !existingPackage) recordNewJobPackage(currentToolLease().workId, directory);
       return toolResult("v5_source_create", { ...result, source_created: true });
     } catch (e) { return toolError("v5_source_create", e); }
   });
@@ -103,9 +121,10 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
     inputSchema: { ...schema, expected_sha256: z.string().regex(/^[0-9a-f]{64}$/i) },
   }, async ({ kind, library_id, folder, relative_file, content, expected_sha256 }) => {
     try {
-      assertBuilder();
+      assertBuilder(kind);
       const o = owner(kind, library_id, folder);
       const target = targetFor(o, relative_file);
+      assertExistingJobEdit(kind, ownedSourceRoot(o));
       await assertOwnedSourceRootSafe(o);
       assertBuilderTarget(currentToolLease().workId, ownedSourceRoot(o));
       const result = await withFileMutationLocks([target], async () => {
