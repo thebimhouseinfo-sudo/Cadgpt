@@ -316,9 +316,9 @@ export function detachJobRuntimeForSystemLease(
     );
   }
 
-  contextsByExecution.delete(executionId);
+  // Borrow SYSTEM capability without moving Job ownership away from its execution.
+  // The Job may invoke CAD and then acquire SYSTEM again in the same workflow.
   contextsBySystemToolId.set(key, context);
-  if (!isolated) executionByJobRoot.set(rootKey, `system:${key}`);
   return context;
 }
 
@@ -328,16 +328,13 @@ export async function cleanupJobRuntimeForSystemLease(
   const key = systemToolKey(toolId);
   const context = contextsBySystemToolId.get(key);
   contextsBySystemToolId.delete(key);
-  if (!context) {
-    return {
-      active: false,
-      removed_empty_result_roots: 0,
-    };
-  }
-  return cleanupJobRuntimeContext(
-    context,
-    `system:${key}`
-  );
+  // SYSTEM release ends only the borrowed capability. It must never
+  // cleanup runtime, Job Steps, results or the foreground Job execution.
+  return {
+    active: Boolean(context),
+    released: Boolean(context),
+    removed_empty_result_roots: 0,
+  };
 }
 
 export async function cleanupJobRuntimeForExecution(
