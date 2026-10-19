@@ -92,6 +92,7 @@ export function registerCadGptControlTool(
     listJobs: () => Promise<string>;
     stopCurrentWork: () => Promise<{ stopped: boolean; pending: boolean }>;
     stopCurrentJob: () => Promise<{ stopped: boolean; detail: string }>;
+    authorizeJobUpdate: (libraryId?: string, folder?: string) => Promise<string>;
   }
 ): void {
   server.registerTool(
@@ -120,9 +121,12 @@ export function registerCadGptControlTool(
           "status",
           "stop",
           "jobstop",
+          "jobupdate",
           "cleartempjob",
         ]),
         temp_job_id: z.string().uuid().optional(),
+        job_library_id: z.string().optional(),
+        job_folder: z.string().optional(),
       },
       outputSchema: {
         text: z.string(),
@@ -148,7 +152,7 @@ export function registerCadGptControlTool(
           .optional(),
       },
     },
-    async ({ surface, temp_job_id }) => {
+    async ({ surface, temp_job_id, job_library_id, job_folder }) => {
       let text: string;
 
       if (
@@ -181,6 +185,8 @@ export function registerCadGptControlTool(
         surface === "ij" || surface === "ej"
       ) {
         text = assetPrompt(surface);
+      } else if (surface === "jobupdate") {
+        text = await options.authorizeJobUpdate(job_library_id, job_folder);
       } else if (surface === "jobstop") {
         const result = await options.stopCurrentJob();
         text = result.detail;
