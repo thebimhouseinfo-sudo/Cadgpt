@@ -25,6 +25,7 @@ import {
   setWorkExpirationHandler,
   validateWorkHandle,
   isDevelopmentBuild,
+  hasActiveToolLeaseForExecution,
   type ExecutionPath,
 } from "./lib/work-registration.js";
 import {
@@ -72,10 +73,13 @@ import { cleanupExecutionState } from "./runtime/execution-cleanup.js";
 import { withCadHostLock } from "./runtime/cad-scheduler.js";
 import {
   getJobSystemLease,
+  jobSystemLeaseForSession,
+  jobSystemLeaseHasInFlightCall,
+  releaseJobSystemLease,
   releaseJobSystemLeasesForSession,
   runWithJobSystemLease,
 } from "./runtime/system-lease.js";
-import { cleanupJobRuntimeForSystemLease } from "./runtime/job-runtime.js";
+import { activeJobRuntimeForExecution, cleanupJobRuntimeForExecution, cleanupJobRuntimeForSystemLease } from "./runtime/job-runtime.js";
 import { getRepoRoot } from "./lib/path-security.js";
 import {
   clearAddinPairingsForSession,
@@ -664,6 +668,26 @@ export function createMcpServer(sessionKey: string): McpServer {
         "```",
       ];
       return lines.join("\n");
+    },
+    stopCurrentJob: async () => {
+      const executionId = activeExecutionForSession(sessionKey);
+      const context = executionId ? activeJobRuntimeForExecution(executionId) : null;
+      if (!executionId || !context) {
+        return { stopped: false, detail: "NO_ACTIVE_JOB: no Job runtime is active in this session." };
+      }
+      if (hasActiveToolLeaseForExecution(executionId)) {
+        throw new Error("JOB_BUSY: wait for the current tool call to complete before cg/jobstop.");
+      }
+      const lease = jobSystemLeaseForSession(context.job_id, sessionKey);
+      if (lease && jobSystemLeaseHasInFlightCall(lease.tool_id)) {
+        throw new Error("JOB_BUSY: SYSTEM tool is still running; stop is available after the call completes.");
+      }
+      if (lease) {
+        await cleanupJobRuntimeForSystemLease(lease.tool_id);
+        releaseJobSystemLease(lease.tool_id, sessionKey);
+      }
+      await cleanupJobRuntimeForExecution(executionId);
+      return { stopped: true, detail: `Stopped Job '${context.job_id}' without stopping Work or CAD MCP.` };
     },
     stopCurrentWork: async () => {
       markSessionWorkStopped(sessionKey);
