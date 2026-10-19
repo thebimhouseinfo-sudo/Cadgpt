@@ -8,7 +8,7 @@ import { ownedSourceRoot, assertOwnedSourceRootSafe, resolveOwnedSourceMutation,
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { assertBuilderTarget, currentBuilderTarget } from "../runtime/builder-target.js";
-import { publishManagedLibrary, refreshPublishedManagedLibrary } from "./user-assets.js";
+import { publishManagedLibrary } from "./user-assets.js";
 import { getJobLibrariesRoot, getLispLibrariesRoot } from "../lib/appdata.js";
 
 const digest = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
@@ -94,21 +94,12 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
         await fs.writeFile(checked, content, { flag: "wx" });
         return { path: checked, sha256: digest(content) };
       });
-      try {
-        const refreshed = await refreshPublishedManagedLibrary(kind === "reusable-job" ? "job" : "lisp", library_id);
-        return toolResult("v5_source_create", { ...result, source_created: true, registry_refreshed: refreshed !== null });
-      } catch (registryError) {
-        return toolResult("v5_source_create", {
-          ...result, source_created: true, registry_refreshed: false,
-          registry_refresh_error: String(registryError),
-          note: "Source was already written. Do NOT replay creation; repair Registry separately.",
-        });
-      }
+      return toolResult("v5_source_create", { ...result, source_created: true });
     } catch (e) { return toolError("v5_source_create", e); }
   });
   server.registerTool("v5_source_update", {
     title: "Update existing owned reusable Job/Lisp source",
-    description: "Builder-only exact SHA-256 compare and replace. Refreshes Registry automatically only if the library was already published; no new promotion stage.",
+    description: "Builder-only existing source edit. Source changes take effect on next run; use explicit Promote to update Registry discovery when wanted.",
     inputSchema: { ...schema, expected_sha256: z.string().regex(/^[0-9a-f]{64}$/i) },
   }, async ({ kind, library_id, folder, relative_file, content, expected_sha256 }) => {
     try {
@@ -129,16 +120,7 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
         } finally { await fs.rm(tmp, { force: true }).catch(() => {}); }
         return { path: resolved, sha256: digest(content) };
       });
-      try {
-        const refreshed = await refreshPublishedManagedLibrary(kind === "reusable-job" ? "job" : "lisp", library_id);
-        return toolResult("v5_source_update", { ...result, source_updated: true, registry_refreshed: refreshed !== null });
-      } catch (registryError) {
-        return toolResult("v5_source_update", {
-          ...result, source_updated: true, registry_refreshed: false,
-          registry_refresh_error: String(registryError),
-          note: "Source was already updated. Do NOT replay mutation; repair Registry separately.",
-        });
-      }
+      return toolResult("v5_source_update", { ...result, source_updated: true });
     } catch (e) { return toolError("v5_source_update", e); }
   });
 }
