@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
+import { beginRegistryPublication, endRegistryPublication, readRegistrySnapshot } from "../runtime/registry-publication-recovery.js";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -198,9 +199,11 @@ async function saveLibraryAndRegistry(record: LibraryRecord, entries: RegistryEn
   };
   const previousManifest = await readExisting(manifestPath);
   const previousCapabilities = await readExisting(capabilitiesPath);
+  await beginRegistryPublication(await readRegistrySnapshot());
   try {
     await atomicJson(manifestPath, { version: manifest.version || 1, libraries: nextLibraries });
     await atomicJson(capabilitiesPath, { version: registry.version || 1, entries: nextEntries });
+    await endRegistryPublication();
   } catch (error) {
     // Compensation for ordinary write failures. The multi-file registry still
     // cannot promise crash-atomic publication across power failure.
@@ -212,6 +215,7 @@ async function saveLibraryAndRegistry(record: LibraryRecord, entries: RegistryEn
     } catch (rollbackError) {
       throw new Error("LIBRARY_REGISTRY_PARTIAL_WRITE: publication and rollback failed: " + String(rollbackError));
     }
+    await endRegistryPublication();
     throw error;
   }
 }
