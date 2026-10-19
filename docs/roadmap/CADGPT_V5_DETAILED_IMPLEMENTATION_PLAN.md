@@ -422,3 +422,16 @@ Remaining V5 blockers include native CAD bound-host LOAD/RUN/Save, exhaustive le
 - Closed a publication scope gap: `v5_source_publish` previously required only a Builder role and could target an unrelated managed Library ID. Publication now requires an existing exact Builder-owned target beneath the requested managed Library's canonical root, with no cross-library publication. Regression test added.
 - **Source CI:** Windows and Ubuntu PASS at `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39226071919`, source commit `3aaab81b4ee3cc84947346eb4d6975e4fc11b2af`.
 - **Still NOT READY for human CAD gate:** Legacy Direct/SYSTEM retirement and registry crash consistency remain; native bound AutoCAD tests have not been performed. Do not infer complete V5 readiness from source CI.
+
+## X. V5 Native AutoCAD Human Gate — 2026-10-19
+
+**Gate status: READY FOR CONTROLLED NATIVE ACCEPTANCE (not production READY, not main merge).**
+
+On the existing `feature/core-function-v5` branch:
+- Direct Python COM/AutoCAD Job no longer reports DONE on process success alone. It performs an exact host-serialized `acad_save_bound_document`, verifies `saved=true` and matching `runtime_document_id`, and preserves Job runtime when Save fails; confirmed file-only Jobs avoid unnecessary Save. Existing CAD-queue regression was updated.
+- Builder and Temp ownership checks reject Work already closing.
+- Registry publication now journals both original JSON files before changes. `ensureAppDataLayout` recovers both files together on next startup after interrupted publication; tests simulate interruption and successful publication. This closes the recognized restart-recovery gap for writes through the V5 publication pathway, without claiming that unrelated legacy writers or power-loss filesystem behavior are fully transactional.
+- Native gate protocol: `docs/roadmap/CADGPT_V5_NATIVE_HUMAN_GATE.md`. It tests real binding, in-place Reusable Job Builder/RUN, pre-published Direct Python, Temp Lisp LOAD/RUN/publish, borrowed capabilities, exact Save, parallel cleanup, startup recovery and legacy Job compatibility.
+- GitHub Actions Windows + Ubuntu **SOURCE CI PASS** on `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39227506141` with feature HEAD `3808d2e4a1ac1430fd6775f159d89927a2495b9b`.
+
+**Scope of the human gate:** user runs a controlled, backed-up **nonproduction AutoCAD acceptance**, never an implicit request to promote/merge, never a new mandatory Job TEST workflow. Legacy public SYSTEM/draft tools remain for backward compatibility but are not required in V5 Builder/Operator paths. Any failed native case returns to the same V5 feature branch for repair + CI + rerun. Preserve stable installed CadGPT and production DWG.
