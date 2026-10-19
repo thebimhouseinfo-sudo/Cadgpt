@@ -67,7 +67,11 @@ test("V5 Builder direct create/update/publish works only within same owned packa
     });
     assert.notEqual(replaced.isError, true, JSON.stringify(replaced));
     assert.equal(await fs.readFile(savedPath, "utf8"), updated);
-    assert.equal(replaced.structuredContent?.data?.registry_refreshed, true);
+    assert.equal(replaced.structuredContent?.data?.registry_refreshed, undefined);
+    const promoted = await call("v5_source_publish", {
+      kind: "job", library_id: "v5builderlib", library_name: "Builder Integration",
+    });
+    assert.notEqual(promoted.isError, true, JSON.stringify(promoted));
   } finally {
     releaseSessionWork(session);
     revokeSessionAdmissions(session);
