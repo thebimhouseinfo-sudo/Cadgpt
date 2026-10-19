@@ -435,3 +435,32 @@ On the existing `feature/core-function-v5` branch:
 - GitHub Actions Windows + Ubuntu **SOURCE CI PASS** on `https://github.com/thebimhouseinfo-sudo/Cadgpt/actions/runs/39227506141` with feature HEAD `3808d2e4a1ac1430fd6775f159d89927a2495b9b`.
 
 **Scope of the human gate:** user runs a controlled, backed-up **nonproduction AutoCAD acceptance**, never an implicit request to promote/merge, never a new mandatory Job TEST workflow. Legacy public SYSTEM/draft tools remain for backward compatibility but are not required in V5 Builder/Operator paths. Any failed native case returns to the same V5 feature branch for repair + CI + rerun. Preserve stable installed CadGPT and production DWG.
+
+## Y. 2026-10-19 — Integrated handoff A–D: Registry, cg/jobupdate, runtime and Save As
+
+### GOAL
+Complete previously approved V5 goals **in the existing WP1–WP8 implementation plan**, not through a parallel execution plan. Registry provides AI-friendly capability discovery/location/invocation only; an explicit human `cg/jobupdate` command grants tightly scoped direct editing of one existing Job; Operator runs current on-disk source; Job runtime stays valid across CAD/SYSTEM boundaries; transient files are cleaned without harming Drawing Anchor results or document identity.
+
+**Migration provenance:** Human handoff 2026-10-19; reviewed scope GSA `J-B04B` planning revision 2, Reviewer PASS. That Job is historical requirements/review evidence, NOT an independent execution roadmap. This section updates WP1–WP8 criteria and outstanding tests without overwriting earlier completed checkpoint evidence. Main/production/AppData remain outside migration write scope.
+
+### WP1 / WP2 / WP3 / WP7 — Finding A: Registry and exact Builder activation
+- Registry fields each require a concrete consumer and purpose in discovery, canonical location or invocation. Retain IDs/types, library identity, paths, descriptions/classes/tags/command names where used. Remove stored `bundle_sha256`, `source_sha256`, `bundle_files`, old validation/test/promote evidence and similar historical state **from Registry authority**; clean legacy entries and migration paths safely. Do not delete source manifests needed for reviewed standalone Lisp export contracts or real collision checks.
+- Current `JOB.md`, Lisp and Python files are source-of-truth when called. Manual human overwrite in an owned source folder must not force draft/promote/re-register or block a valid next run. Regenerate optional discovery caches lazily or after authorized edits; exclude `runtime/` and `__pycache__/` from indexed source bundles. Distinguish obsolete Registry revision gate from transient per-write CAS/conflict checks and current-byte invocation validation, which remain legitimate integrity controls.
+- **Security:** only the exact user command `cg/jobupdate` may mint a server-side update authorization scoped to current chat session, work execution and selected existing Job. Natural-language variants (“hãy sửa job”, etc.), self-declared `owner_id=job-authoring`, Operator work or a tool call alone never mint it. Revoke on jobupdate completion, Work stop/replacement or other authorization expiry. Existing source writes use canonical owned Job folder only (`JOB.md`, `lisp/`, `tools/`); cross-Job mutations denied. Do not add password protection now.
+- Direct Builder changes need no checkout, draft validate or promotion; no generic write access to all managed libraries. Existing creation of new Job/independent Lisp/Temp routes retains its own explicit owner contract; no accidental new global gate.
+
+### WP5 — Finding B: Repeatable CAD ↔ SYSTEM authority lifecycle
+- Map `job_runtime_prepare` → `job_system_acquire` → Python helper → `job_system_release` → foreground Lisp/CAD → reacquire and finish. `job_system_release` releases just borrowed SYSTEM authority; it must not discard the owning Job execution context. Fix `JOB_RUNTIME_NOT_PREPARED` on reacquire and `JOB_RUNTIME_NOT_ACTIVE` on legitimate finish, without introducing whole-Job locking.
+- Job A → B must not inherit stale authority/lock; parallel jobs retain execution-owned scratch and serialized CAD host operations only where necessary.
+
+### WP6 — Finding C: Scratch versus persisted results
+- Job execution scratch and metadata snapshots are overwrite/reusable or cleaned on success, not timestamp-accumulated. Failed/incomplete runs preserve sufficient diagnostic evidence, and new runs never delete another active run's files. Cover `grille-tag-source.json`, `grille-tag-index.json`, metadata-route/finalize JSON, missing-handle and fill text, `grilles-metadata-ready.txt`, `prepare-current.json`, `peno-plan.txt`, `peno-plan-manifest.json`, and analysis artifacts. Runtime Python `__pycache__` is not Registry source.
+- Persistent `drawings/<anchor>/jobs/<job>-result` versions/timestamps follow Job contract and must not be deleted by runtime cleanup.
+
+### WP5 / WP6 — Finding D: Stable drawing identity after Save As
+- Preserve bound runtime document identity and Drawing Anchor when AutoCAD Save As changes FullName. Lisp handle queues and Python helpers use the **current** `ActiveDocument.FullName` of the matching runtime identity, never a stale bound drawing-name alias. Reject foreign/mismatched drawing identities safely, without rebinding to another drawing.
+
+### WP8 — Integrated regression and controlled native acceptance
+- Source tests: Registry field/consumer audit and index refresh on direct manual file changes; no historical SHA gate; verified command authorization spoof/denial/revocation and cross-Job isolation; repeated CAD→SYSTEM→CAD and Job A→B; scratch success/failure/concurrency; Save As queue identity; result preservation. Verify Windows and Ubuntu source CI with concrete run links.
+- Native acceptance must use a separate **copied test DWG**. Read the current installed CLG Peno assets as evidence, not assume source Git matches AppData. Avoid duplicate `CLGP_DRAW` on existing penos. Preserve 60/60 Grille Tag source provenance; sidewall (`GR-SW-` / `GRILLE_TYPE=SIDE WALL`) no text; merge touching/overlapping penos; text center of boundary and upright 0°/90°. Do not infer dimensions from nominal Face/Neck size, modify Grille Tag result, or call CI PASS native AutoCAD PASS.
+- **Acceptance state:** migrated requirements reviewed as plan scope only, all code/native outcomes remain UNVERIFIED until executed. No main merge, no production deployment and no obligatory artificial validation/promote stage.
