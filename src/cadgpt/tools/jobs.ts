@@ -670,6 +670,7 @@ export async function executeDirectJobScript(
   );
   };
 
+  let preserveForSaveRecovery = false;
   try {
     // Legacy Direct Python Jobs may perform CAD COM operations themselves.
     // Preserve their existing serialization until explicitly classified by
@@ -690,7 +691,37 @@ export async function executeDirectJobScript(
       result = await runScript();
     }
 
+    // A successful Direct Python process is not a verified DWG persistence.
+    // Legacy COM scripts can mutate outside the CAD proxy: Save must follow
+    // the final script call under the same host queue before reporting DONE.
+    let savedDocument: boolean | null = null;
+    if (drawing && !options.fileOnly) {
+      preserveForSaveRecovery = true;
+      await withCadHostLock(drawing.host, async () => {
+        await activateDrawingContext(drawing);
+        const response = await cadUpstream.callTool("acad_save_bound_document", {
+          runtime_document_id: drawing.runtime_document_identity,
+        }) as { isError?: boolean; structuredContent?: Record<string, unknown>; content?: unknown };
+        if (response.isError) throw new Error("DIRECT_JOB_SAVE_FAILED: CAD backend error");
+        let payload: unknown = response.structuredContent;
+        if (payload === undefined) {
+          const raw = (response.content as Array<{ type?: string; text?: string }> | undefined)
+            ?.find(item => item.type === "text")?.text;
+          if (raw) {
+            try { payload = JSON.parse(raw); } catch { payload = undefined; }
+          }
+        }
+        const proof = payload as { saved?: unknown; runtime_document_id?: unknown } | undefined;
+        if (proof?.saved !== true ||
+            proof.runtime_document_id !== drawing.runtime_document_identity) {
+          throw new Error("DIRECT_JOB_SAVE_UNVERIFIED: exact bound DWG save not confirmed");
+        }
+      });
+      savedDocument = true;
+      preserveForSaveRecovery = false;
+    }
     return {
+      saved_document: savedDocument,
       script,
       execution_mode: "direct",
       exit_code: 0,
@@ -710,9 +741,11 @@ export async function executeDirectJobScript(
         : null,
     };
   } finally {
-    await cleanupJobRuntimeForExecution(
-      lease.workId
-    );
+    // Retain the source inputs and result scratch for diagnosis/retry if the
+    // external COM script finished but the bound DWG Save was unverified.
+    if (!preserveForSaveRecovery) {
+      await cleanupJobRuntimeForExecution(lease.workId);
+    }
   }
 }
 
