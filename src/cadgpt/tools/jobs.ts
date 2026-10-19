@@ -1373,7 +1373,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
             executionId: lease.workId, sessionKey: lease.sessionKey,
           });
           const executed = await executeDirectJobScript(
-            source, args, "v5:" + path.relative(root, owner).replaceAll("\\\\", "/"),
+            source, args, "v5:" + path.relative(root, owner).split(path.sep).join("/"),
             { fileOnly: false },
           );
           return toolResult("job_run_direct", {
