@@ -1,7 +1,7 @@
 # CadGPT Core Function V5 — Detailed Implementation Plan and Self-Review
 
 **Date:** 2026-10-16  
-**Status:** PLANNING REVIEWED (RL-02 PASS — theory alignment and architecture feasibility only) · not implemented · no claim of live CAD success  
+**Status:** V5 implementation checkpoint + updated human requirements pending fresh RL; historical source CI is not native acceptance  
 **Implementation branch:** `feature/core-function-v5` **only**  
 **Human theory authority:** `docs/roadmap/CADGPT_CORE_FUNCTION_V5_BRANCH_PLAN.md` on this branch; informed by RevitGPT `docs/roadmap/P3_CORE_FUNCTION_THEORY_V5.md`.  
 **GSA binding:** `GSA-Projects/projects/01a0d70c-9683-7324-9d3d-a8231a93c63b/PROJECT.md` (Goal Drift fence).  
@@ -13,7 +13,7 @@
 **Goal:** ChatGPT plans and authors; CadGPT executes tools against the specifically bound AutoCAD DWG, manages canonical owned files, and advertises reusable capabilities. One Job definition, two execution roles, two lifecycles; no distinct TEST stage.
 
 1. **Operator:** run registered `JOB.md`/`JOB_STEPS` exactly: STEP PASS → NEXT; error → STOP/REPORT. No spontaneous fix, retry, step insertion or hidden fallback. A Job MAY contain reasoning steps explicitly specified by the user.
-2. **Builder:** create/edit Job and Lisp **in their owned final folder**; execute on real DWG immediately when requested; if an operation fails, inspect, fix and **re-run only if safe**. No draft/checkout/stage/promote requirement for live execution.
+2. **Builder:** create/edit Job and Lisp **in their owned final folder**; execute on real DWG immediately when requested; if an operation fails, inspect, fix and **re-run only if safe**. No draft/checkout/stage/copy intermediate. Keep the existing explicit Promote operation to publish Registry capabilities; it never copies an existing final source or gates ordinary source execution.
 3. **Reusable Job:** owns folder and optional `JOB.md`, `JOB_STEPS`, `lisp/`, `tools/`, `runtime/`, data. Canonical format is `JOB.md` with its declared steps. Registered `JOB.md` from current AppData remains valid; direct `.py` entries are adapted instead of abruptly broken.
 4. **Temp Job:** `%LOCALAPPDATA%/CadGPT/temp-jobs/<random-UUID>/`, one own folder, no mandatory `JOB.md`, no Job registration, no whole-Job promotion; Builder performs an explicit conversational step sequence.
 5. **Temp result:** **Only when output must persist outside temp folder**, ask the human to name the Drawing Anchor result folder. Enforce bound drawing, unique non-colliding name, canonical location, exact ownership. Don't ask for a name when only scratch files are needed; NEVER use the temp UUID as a default result folder name.
@@ -104,7 +104,7 @@
 
 ### WP7 — Remove obsolete surfaces without breaking existing consumers
 
-**Only after WPs 1–6 produce successful working behavior:** remove/retire obsolete mandatory checkout and promotion routes, draft directories, compatibility blockers, duplicate Direct/Reasoning type gates, old manual SYSTEM lease handoffs and language that demands simulated test/CI before live RUN. Compatibility tool aliases may remain but resolve to supported direct operations or clear migration guidance, not fake successful promotion. Update user-facing `cg/` help, Knowledge/skills/registry descriptions and existing tests. Do not change user-defined Job steps without human instruction.
+**Only after WPs 1–6 produce successful working behavior:** remove/retire obsolete mandatory checkout/draft-copy routes while retaining the explicit Registry Promote operation, compatibility blockers, duplicate Direct/Reasoning type gates, old manual SYSTEM lease handoffs and language that demands simulated test/CI before live RUN. Compatibility tool aliases may remain but resolve to supported direct operations or clear migration guidance, not fake successful promotion. Update user-facing `cg/` help, Knowledge/skills/registry descriptions and existing tests. Do not change user-defined Job steps without human instruction.
 
 **Exit:** supported paths don't mention mandatory draft gates; old Jobs and valid registered Lisp still work without source migration; no code path can silently broaden file permissions.
 
@@ -146,7 +146,7 @@ Before declaring any implementation slice ready, Reviewer checks:
 ## F. Explicit non-goals / deliberate omissions
 
 - No Job-level test environment, separate Test step, fake Revit/AutoCAD simulator, automatic run+test pipeline.
-- No Job approval/promote/checkout life cycle, no registry acting as a live-run prerequisite.
+- No mandatory Job approval/draft/checkout/copy lifecycle; retain explicit Promote as Registry publication, never a live-run prerequisite.
 - No second autonomous local agent/planner; no code-created business step modifications.
 - No wholesale cherry-pick/merge/rebase from main; no local dev runtime silently replacing production tray/startup/add-in.
 - No background cleanup TTL until human specifies one; explicit cleanup is sufficient.
@@ -175,7 +175,7 @@ Before declaring any implementation slice ready, Reviewer checks:
 - **PASS:** two roles are ChatGPT execution modes, not competing autonomous agents.
 - **PASS:** one canonical reusable Job format; legacy Direct Python is a compatibility adapter, not a second public Job taxonomy.
 - **PASS:** Temp Job uses random *workspace* ID and human-named *persistent result* only when needed.
-- **PASS:** edit/run in owned folder without draft/checkout/promote, and separately register a reusable Temp Lisp on user command.
+- **PASS:** edit/run in owned folder without draft/checkout/copy; preserve explicit Promote for Registry publication and independently register reusable Temp Lisp on user command.
 - **PASS:** owner-scoped files, bound DWG, actual CAD host ordering, actual Save outcome retained.
 - **PASS:** no separate test stage, artificial approval, compatibility lock or whole-Job queue.
 - **PASS:** V5 branch is the only development/build branch; main remains independent maintenance.
@@ -464,3 +464,30 @@ Complete previously approved V5 goals **in the existing WP1–WP8 implementation
 - Source tests: Registry field/consumer audit and index refresh on direct manual file changes; no historical SHA gate; verified command authorization spoof/denial/revocation and cross-Job isolation; repeated CAD→SYSTEM→CAD and Job A→B; scratch success/failure/concurrency; Save As queue identity; result preservation. Verify Windows and Ubuntu source CI with concrete run links.
 - Native acceptance must use a separate **copied test DWG**. Read the current installed CLG Peno assets as evidence, not assume source Git matches AppData. Avoid duplicate `CLGP_DRAW` on existing penos. Preserve 60/60 Grille Tag source provenance; sidewall (`GR-SW-` / `GRILLE_TYPE=SIDE WALL`) no text; merge touching/overlapping penos; text center of boundary and upright 0°/90°. Do not infer dimensions from nominal Face/Neck size, modify Grille Tag result, or call CI PASS native AutoCAD PASS.
 - **Acceptance state:** migrated requirements reviewed as plan scope only, all code/native outcomes remain UNVERIFIED until executed. No main merge, no production deployment and no obligatory artificial validation/promote stage.
+
+## Z. 2026-10-19 — Final human simplification, authoritative for open WP1–WP8 work
+
+### GOAL
+Honor the single-human AutoCAD workflow without an extra workflow engine, stale Registry gates, manual staging copies, or multi-execution concurrency framework. **This section supersedes any earlier *design direction* that conflicts with these decisions; historical completed implementation/CI checkpoints remain evidence, not automatically undone.**
+
+### WP1/WP2/WP3/WP7 — Builder and Promote (confirmed)
+- Builder creates Job and Lisp source **directly in the final Job/Lisp directory**. Editing an existing Job requires the user's exact `cg/jobupdate` command to authorize Builder for that Job; words such as “sửa Job” alone are not authorization. Source is edited and saved in place. Eliminate draft, checkout and intermediary copy as a normal workflow.
+- **Keep the existing Promote operation** for publication/Registry updates. Do not invent criteria to decide whether to Promote, add automatic watchers, or build a source-diff classification system. Promote is not an obligatory validation/test/re-run or a copy from a draft; it must not block executing an existing Job after ordinary source edits.
+- Registry remains a lean capability directory (ID, description, location, callable surface). Historic `bundle_sha256`/`source_sha256`, bundle snapshots and test history must not block current source; preserve canonical ownership, legitimate file integrity and bound-drawing checks. Do not remove useful, existing Promote itself.
+- Gate audit **KEEP**: exact owned paths, correct Job Builder authorization, active bound document identity, CAD host command ordering. **REMOVE**: obsolete draft/checkout/copy, source-history/promotion reapproval gates and redundant compatibility blockers. Do not weaken an unrelated integrity check merely because a single human operates the PC.
+
+### WP5 — One execution per Job; Job Stop distinct from session Stop (Findings B and E)
+- One human uses CadGPT. **Multiple different Jobs may be active**, but any particular Job ID has **at most one active execution**. Do not preserve/extend same-Job parallel runtime architecture as a V5 requirement; stop building complex CAS, locks and per-execution scratch infrastructure solely to support an impossible second simultaneous run of CLG Peno. A minimal per-Job active state is sufficient; a completed/stopped Job is runnable again.
+- CAD Lisp LOAD + autorun normally completes inside its individual tool call. `cg/jobstop` acts **between calls**, not by interrupting an active Lisp/Python command. It stops only the target Job workflow and releases its runtime/borrowed SYSTEM authority, leaving CAD MCP connection, Work session, drawing binding and other Jobs intact. Do not add asynchronous interrupt, cancellation polling or stop-the-host logic.
+- Legacy `job_system_release` must not cleanup/consume the foreground Job execution: CAD → SYSTEM → CAD → SYSTEM is valid; Job finish should not receive `JOB_RUNTIME_NOT_ACTIVE`. Retire optional manual handoffs from new V5 paths without breaking legacy callers. Job A → B must be possible without unnecessary stop/disconnect.
+
+### WP6 — One scratch set for one active Job (Finding C)
+- Job-owned runtime files can be overwritten on the next run or removed on successful completion; preserve failed diagnostics until safe replacement. Do not grow an immutable execution-hash collection of scratch for ordinary reruns. Never remove other active Job files or persistent versioned Drawing Anchor result.
+- Python `__pycache__`, temporary intermediates and logs must not be promoted as reusable Lisp/Job source.
+
+### WP5/WP6/WP8 — Save As and acceptance (Finding D)
+- Bound runtime document identity and Drawing Anchor remain stable across Save As; for file paths/handle queues use current matching `ActiveDocument.FullName`. Never switch to another drawing merely because its name matches.
+- Regression acceptance: (a) single Job second start rejected while RUNNING, accepted after DONE/STOP; (b) different Jobs can run without whole-system lock; (c) `cg/jobstop` keeps CAD MCP callable and binding intact; (d) legacy SYSTEM reacquire/finish works; (e) scratch overwritten/cleaned but result history retained; (f) Save As no stale queue; (g) existing Job source edit runs without re-Promote while manual Promote remains available. Native AutoCAD checks use only isolated copied DWG, no duplicate CLG Peno drawing.
+- No main/production changes. No additional password gate, file watchers, inferred Promote trigger logic, or artificial code/test/promote approval stages.
+
+**Review requirement:** RL must explicitly check that WP1–WP8 and earlier checkpoints cannot be misread as requiring deletion of Promote, automated Promote decisions, same-Job parallelism or a Job Stop that disconnects CAD MCP. Implementation is NOT accepted solely because this plan is reviewed.
