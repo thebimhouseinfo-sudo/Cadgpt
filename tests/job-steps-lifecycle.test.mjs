@@ -85,7 +85,7 @@ test("switching Job A -> B resets A and preserves A's pending raw data", async (
   await runtime.cleanupJobRuntimeForExecution(id);
 });
 
-test("SYSTEM cleanup and explicit failure/stop leave checklist reset but preserve raw", async () => {
+test("SYSTEM release preserves Job progress until actual finish", async () => {
   const f = await job("system-job");
   const id = "run-system-steps";
   const ctx = await runtime.prepareJobRuntimeForExecution(id, "system-job", f);
@@ -94,9 +94,13 @@ test("SYSTEM cleanup and explicit failure/stop leave checklist reset but preserv
   await fs.writeFile(steps, "- [✗] Failed external processor\n", "utf8");
   await fs.writeFile(raw, "pending,data\n", "utf8");
   runtime.detachJobRuntimeForSystemLease(id, "system-job");
-  const cleanup = await runtime.cleanupJobRuntimeForSystemLease("system-job");
-  assert.equal(cleanup.job_steps_reset, true);
-  assert.match(await fs.readFile(steps, "utf8"), /- \[ \] Failed external processor/);
+  const release = await runtime.cleanupJobRuntimeForSystemLease("system-job");
+  assert.equal(release.released, true);
+  assert.match(await fs.readFile(steps, "utf8"), /- \\[✗\\] Failed external processor/);
+  assert.equal(await fs.readFile(raw, "utf8"), "pending,data\n");
+  const finish = await runtime.cleanupJobRuntimeForExecution(id);
+  assert.equal(finish.job_steps_reset, true);
+  assert.match(await fs.readFile(steps, "utf8"), /- \\[ \\] Failed external processor/);
   assert.equal(await fs.readFile(raw, "utf8"), "pending,data\n");
 });
 
