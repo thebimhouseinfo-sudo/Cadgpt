@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createHash } from "node:crypto";
 
 import {
   getJobDraftRoot,
@@ -367,13 +366,10 @@ export async function prepareJobRuntimeForExecution(
 ): Promise<JobRuntimeContext> {
   const jobRoot =
     await managedJobRootForFile(jobFile);
-  // V5 Builder RUN uses an execution-isolated scratch subdirectory.
-  // Two executions can use the same immutable Job source without a Job-wide
-  // lock or cross-run JOB_STEPS overwrite. Legacy Job layouts are unchanged.
-  const v5OwnedRun = jobId.startsWith("v5:") || options.isolatedRun === true;
-  const runtimeRoot = v5OwnedRun
-    ? path.join(jobRoot, "runtime", "runs", createHash("sha256").update(executionId).digest("hex").slice(0, 24))
-    : path.join(jobRoot, "runtime");
+  // One active execution per Job; runtime scratch is reused between runs.
+  // Ignore the old isolatedRun compatibility option rather than spawning a
+  // second per-execution scratch tree.
+  const runtimeRoot = path.join(jobRoot, "runtime");
   const current =
     contextsByExecution.get(executionId);
 
@@ -394,7 +390,6 @@ export async function prepareJobRuntimeForExecution(
       const existingExecution =
         executionByJobRoot.get(rootKey);
       if (
-        !v5OwnedRun &&
         existingExecution &&
         existingExecution !== executionId
       ) {
@@ -420,10 +415,7 @@ export async function prepareJobRuntimeForExecution(
       // lock keeps another execution from observing an unclaimed gap while
       // runtime ownership changes. Reasoning Jobs preserve runtime bytes for
       // crash/relaunch recovery; Direct Jobs explicitly request a reset.
-      if (!v5OwnedRun) executionByJobRoot.set(
-        rootKey,
-        executionId
-      );
+      executionByJobRoot.set(rootKey, executionId);
       try {
         const resetRuntime =
           options.resetRuntime === true;
@@ -460,29 +452,6 @@ export async function prepareJobRuntimeForExecution(
           }
         }
 
-        // Registered legacy Jobs may keep the canonical checklist template at
-        // <Job>/runtime/JOB_STEPS.md. Seed a V5 execution-local copy, not a
-        // shared writable checklist. Previous checkmarks are reset below.
-        if (v5OwnedRun && (!current || jobRootKey(current.job_root) !== rootKey)) {
-          const template = path.join(jobRoot, "runtime", JOB_STEPS_FILENAME);
-          const targetSteps = jobStepsPath({ runtime_root: runtimeRoot } as JobRuntimeContext);
-          const exists = await fs.lstat(targetSteps).then(() => true, (error: NodeJS.ErrnoException) => {
-            if (error.code === "ENOENT") return false;
-            throw error;
-          });
-          if (!exists) {
-            const templateInfo = await fs.lstat(template).catch((error: NodeJS.ErrnoException) => {
-              if (error.code === "ENOENT") return null;
-              throw error;
-            });
-            if (templateInfo) {
-              if (!templateInfo.isFile() || templateInfo.isSymbolicLink()) {
-                throw new Error("V5_JOB_STEPS_UNSAFE_LEGACY_TEMPLATE");
-              }
-              await fs.writeFile(targetSteps, await fs.readFile(template), { flag: "wx" });
-            }
-          }
-        }
         // A freshly claimed run resets stale ✓/✗ marks (including after a
         // driver crash), but repeated prepare in the SAME active execution
         // keeps its progress; none of this touches actual raw/results.
