@@ -1,6 +1,7 @@
 import { runtimeStateSnapshot } from "../lib/runtime-state.js";
 import { clearBoundSaveForExecution } from "./bound-save-ledger.js";
 import { clearBuilderTarget } from "./builder-target.js";
+import { clearJobUpdateGrantForExecution } from "./job-update-grant.js";
 import {
   consumeHumanPowerCleanup,
   hasActiveCadWork,
@@ -45,6 +46,7 @@ export async function cleanupExecutionState(
   // Expire the exact-DWG Save witness with its originating Work generation.
   clearBoundSaveForExecution(executionId);
   clearBuilderTarget(executionId);
+  clearJobUpdateGrantForExecution(executionId);
 
   // A Work-scoped consent grant must not survive stop/rebind/renewal.
   const { clearTrustedResultPatchApproval } = await import("./result-patch-approval.js");
