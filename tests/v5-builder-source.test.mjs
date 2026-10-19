@@ -68,3 +68,11 @@ test("V5 Direct Job identity uses platform path segments (Windows and Linux)", (
   const direct = src.slice(src.indexOf('"job_run_direct"'), src.indexOf('"job_run_direct_draft"'));
   assert.match(direct, /path\.relative\(root, owner\)\.split\(path\.sep\)\.join\("\/"\)/);
 });
+
+test("V5 publisher requires exact Builder owner inside requested library", () => {
+  const src = fsSync.readFileSync(path.resolve(import.meta.dirname, "../src/cadgpt/tools/v5-builder-source.ts"), "utf8");
+  const segment = src.slice(src.indexOf('server.registerTool("v5_source_publish"'), src.indexOf('server.registerTool("v5_source_create"'));
+  assert.match(segment, /currentBuilderTarget\(currentToolLease\(\)\.workId\)/);
+  assert.match(segment, /V5_PUBLISH_BUILDER_TARGET_MISMATCH/);
+  assert.match(segment, /fs\.realpath\(libraryRoot\)/);
+});
