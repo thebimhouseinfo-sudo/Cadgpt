@@ -16,7 +16,7 @@ const extension = new Set([".md", ".txt", ".json", ".py", ".lsp", ".dcl", ".csv"
 function assertBuilder(): void {
   const lease = currentToolLease();
   const active = activeWorkForSession(lease.sessionKey);
-  if (!active || active.executionId !== lease.workId ||
+  if (!active || active.closing || active.executionId !== lease.workId ||
       active.ownerType === "job" || active.executionPath === "cad" ||
       (active.ownerId !== "job-authoring" && active.ownerId !== "lisp-authoring" &&
        active.ownerId !== "jobcreate" &&
