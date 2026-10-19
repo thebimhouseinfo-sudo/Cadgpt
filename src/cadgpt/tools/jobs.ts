@@ -1202,7 +1202,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
           // and safely complete after a verified save.
           throw new Error("JOB_SAVE_FAILED: " + String(autoSave.error ?? "bound DWG save not verified"));
         }
-        const cleanup = await cleanupJobRuntimeForExecution(lease.workId);
+        const cleanup = await cleanupJobRuntimeForExecution(lease.workId, {
+          clearRuntimeScratch: outcome === "done",
+        });
         return toolResult("job_runtime_finish", { outcome, cleanup, autosave: autoSave,
           status: outcome === "done" ? (dwg_changed ? "JOB_DONE_SAVED" : "JOB_DONE_READ_ONLY") : "JOB_FAILED" });
       } catch (error) {
