@@ -81,6 +81,9 @@ import {
 } from "./runtime/system-lease.js";
 import { activeJobRuntimeForExecution, cleanupJobRuntimeForExecution, cleanupJobRuntimeForSystemLease } from "./runtime/job-runtime.js";
 import { getRepoRoot } from "./lib/path-security.js";
+import { getJobLibrariesRoot } from "./lib/appdata.js";
+import { assertOwnedSourceRootSafe, ownedSourceRoot } from "./lib/owned-source.js";
+import { activateJobUpdateGrant, clearJobUpdateGrantForSession } from "./runtime/job-update-grant.js";
 import {
   clearAddinPairingsForSession,
   clearAddinSessionObserver,
@@ -669,6 +672,27 @@ export function createMcpServer(sessionKey: string): McpServer {
       ];
       return lines.join("\n");
     },
+    authorizeJobUpdate: async (libraryId, folder) => {
+      const workExecution = activeExecutionForSession(sessionKey);
+      const activeJob = workExecution ? activeJobRuntimeForExecution(workExecution) : null;
+      let target: string;
+      if (libraryId && folder) {
+        const owned = { kind: "reusable-job" as const, libraryId, relativeFolder: folder };
+        await assertOwnedSourceRootSafe(owned);
+        target = ownedSourceRoot(owned);
+      } else if (!libraryId && !folder && activeJob) {
+        target = activeJob.job_root;
+      } else {
+        const jobs = await import("./tools/jobs.js").then((module) => module.listRegisteredJobs());
+        return "Select the existing Job for cg/jobupdate by its library and folder. " +
+          (jobs.length ? "Registered Jobs: " + jobs.map(job => job.id).join(", ") : "No registered Jobs found.");
+      }
+      const stat = await fs.promises.stat(path.join(target, "JOB.md"));
+      if (!stat.isFile()) throw new Error("JOB_UPDATE_SOURCE_REQUIRED: target must contain an existing JOB.md.");
+      activateJobUpdateGrant(sessionKey, target);
+      return "cg/jobupdate authorized for one existing Job: " + target +
+        ". Edit that Job's source directly. This does not authorize another Job or alter CAD MCP.";
+    },
     stopCurrentJob: async () => {
       const executionId = activeExecutionForSession(sessionKey);
       const context = executionId ? activeJobRuntimeForExecution(executionId) : null;
@@ -687,9 +711,11 @@ export function createMcpServer(sessionKey: string): McpServer {
         releaseJobSystemLease(lease.tool_id, sessionKey);
       }
       await cleanupJobRuntimeForExecution(executionId);
+      clearJobUpdateGrantForSession(sessionKey);
       return { stopped: true, detail: `Stopped Job '${context.job_id}' without stopping Work or CAD MCP.` };
     },
     stopCurrentWork: async () => {
+      clearJobUpdateGrantForSession(sessionKey);
       markSessionWorkStopped(sessionKey);
       const activeExecution = activeExecutionForSession(sessionKey);
       if (!activeExecution) {
