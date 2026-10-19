@@ -91,6 +91,7 @@ export function registerCadGptControlTool(
     launchCadWorkspace: () => Promise<string>;
     listJobs: () => Promise<string>;
     stopCurrentWork: () => Promise<{ stopped: boolean; pending: boolean }>;
+    stopCurrentJob: () => Promise<{ stopped: boolean; detail: string }>;
   }
 ): void {
   server.registerTool(
@@ -118,6 +119,7 @@ export function registerCadGptControlTool(
           "help",
           "status",
           "stop",
+          "jobstop",
           "cleartempjob",
         ]),
         temp_job_id: z.string().uuid().optional(),
@@ -179,6 +181,9 @@ export function registerCadGptControlTool(
         surface === "ij" || surface === "ej"
       ) {
         text = assetPrompt(surface);
+      } else if (surface === "jobstop") {
+        const result = await options.stopCurrentJob();
+        text = result.detail;
       } else if (surface === "cleartempjob") {
         const result = await clearTempJobs(temp_job_id);
         text = `Temp Jobs: removed ${result.removed.length}, skipped ${result.skipped.length}.` +
