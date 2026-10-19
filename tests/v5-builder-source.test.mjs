@@ -62,3 +62,9 @@ test("V5 Direct Python runner allows only exact Builder-owned final managed sour
   assert.match(section, /V5_DIRECT_SOURCE_OUTSIDE_MANAGED_JOB/);
   assert.match(section, /executeDirectJobScript\(/);
 });
+
+test("V5 Direct Job identity uses platform path segments (Windows and Linux)", () => {
+  const src = fsSync.readFileSync(path.resolve(import.meta.dirname, "../src/cadgpt/tools/jobs.ts"), "utf8");
+  const direct = src.slice(src.indexOf('"job_run_direct"'), src.indexOf('"job_run_direct_draft"'));
+  assert.match(direct, /path\.relative\(root, owner\)\.split\(path\.sep\)\.join\("\/"\)/);
+});
