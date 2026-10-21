@@ -8,7 +8,7 @@ test("second chat joins verified Host Anchor without CAD host queue or upstream 
   assert.match(activation, /const bound = joinExistingHost/);
   assert.match(activation, /attachPrimaryDrawingForExecution\(work\.executionId\)/);
   assert.match(activation, /attachVerifiedDrawingMetadataReadOnly\(work\.executionId, bound\)/);
-  const join = activation.slice(activation.indexOf("const bound = joinExistingHost"), activation.indexOf("if (joinExistingHost) {", activation.indexOf("const bound = joinExistingHost")));
+  const join = activation.slice(activation.indexOf("const bound = joinExistingHost"), activation.indexOf(": await withCadHostLock", activation.indexOf("const bound = joinExistingHost")));
   assert.doesNotMatch(join, /validatePrimaryBoundDrawing|cadUpstream\.activate/);
   const admission = source.slice(source.indexOf("const launch = await prepareCadLaunch(sessionKey, {"), source.indexOf("registerWorkControlTools(server, {"));
   assert.doesNotMatch(admission, /validatePrimaryBoundDrawing\(/);
