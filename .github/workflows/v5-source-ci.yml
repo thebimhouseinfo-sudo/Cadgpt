@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - feature/core-function-v5
+      - integration/v5-main-20261021
+      - main
   workflow_dispatch:
 
 permissions:
