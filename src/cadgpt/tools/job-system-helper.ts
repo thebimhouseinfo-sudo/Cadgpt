@@ -9,12 +9,15 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getRepoRoot, isPathInside, toCadgptPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { currentJobSystemLease } from "../runtime/system-lease.js";
+import { activeJobRuntimeForExecution } from "../runtime/job-runtime.js";
+import { currentToolLease, activeWorkForSession } from "../lib/work-registration.js";
+import { currentBuilderTarget } from "../runtime/builder-target.js";
 
 const execFileAsync = promisify(execFile);
 const sha256 = (bytes: string | Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
 
-function pythonExecutable(): string {
+export function pythonExecutable(): string {
   const override = process.env.CAD_MCP_PYTHON?.trim();
   if (override) {
     if (path.isAbsolute(override)) return override;
@@ -40,7 +43,7 @@ export function registerJobSystemHelperTools(server: McpServer): void {
   server.registerTool(
     "job_system_run_helper",
     {
-      title: "Run hash-pinned Job Python helper under SYSTEM lease",
+      title: "Run hash-pinned Job Python helper under owned Job runtime",
       description:
         "Run an approved Python .py asset from the current Job tools/**. " +
         "Requires an exact source sha256 and a JSON input file in that Job runtime. " +
@@ -55,17 +58,52 @@ export function registerJobSystemHelperTools(server: McpServer): void {
       let snapshot: string | null = null;
       try {
         const lease = currentJobSystemLease();
-        if (!lease?.job_root) {
-          throw new Error("SYSTEM_HELPER_LEASE_REQUIRED");
+        let jobRoot: string;
+        let runtimeRoot: string;
+        let writableRoots: string[];
+        if (lease?.job_root) {
+          // Legacy SYSTEM caller continues to work while V5 migrations occur.
+          jobRoot = path.resolve(lease.job_root);
+          writableRoots = [...lease.writable_roots];
+          const legacyRuntime = writableRoots.find(root => {
+            const absolute = path.resolve(root);
+            const classic = path.basename(absolute).toLowerCase() === "runtime" &&
+              isPathInside(absolute, jobRoot);
+            const isolated = isPathInside(absolute, path.join(jobRoot, "runtime", "runs")) &&
+              /^[0-9a-f]{24}$/i.test(path.basename(absolute)) &&
+              path.dirname(absolute) === path.join(jobRoot, "runtime", "runs");
+            return classic || isolated;
+          });
+          if (!legacyRuntime) throw new Error("SYSTEM_HELPER_RUNTIME_REQUIRED");
+          runtimeRoot = legacyRuntime;
+        } else {
+          // V5: no manual Job-wide SYSTEM lease. The current execution's
+          // prepared Job context is the sole source of ownership authority.
+          const invoking = currentToolLease();
+          const work = activeWorkForSession(invoking.sessionKey);
+          if (!work || work.executionId !== invoking.workId) {
+            throw new Error("JOB_HELPER_ACTIVE_WORK_REQUIRED");
+          }
+          const owned = activeJobRuntimeForExecution(invoking.workId);
+          if (!owned || (work.jobId && work.jobId !== owned.job_id)) {
+            throw new Error("JOB_HELPER_PREPARED_RUNTIME_REQUIRED");
+          }
+          if (work.ownerType !== "job") {
+            const isBuilder = ["jobcreate", "job-authoring"].includes(work.ownerId) ||
+              work.capabilities.includes("job-authoring");
+            const target = currentBuilderTarget(invoking.workId);
+            const canonical = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
+            if (!isBuilder || !target ||
+                canonical(await fs.realpath(target)) !==
+                canonical(await fs.realpath(owned.job_root))) {
+              throw new Error("JOB_HELPER_BUILDER_TARGET_MISMATCH");
+            }
+          }
+          jobRoot = path.resolve(owned.job_root);
+          runtimeRoot = path.resolve(owned.runtime_root);
+          writableRoots = [runtimeRoot, ...owned.result_roots];
         }
-        const jobRoot = path.resolve(lease.job_root);
         const toolsRoot = path.join(jobRoot, "tools");
-        const runtimeRoot = lease.writable_roots.find(
-          (root) =>
-            path.basename(root).toLowerCase() === "runtime" &&
-            isPathInside(root, jobRoot)
-        );
-        if (!runtimeRoot) throw new Error("SYSTEM_HELPER_RUNTIME_REQUIRED");
 
         if (!path.isAbsolute(script_path) || !path.isAbsolute(input_json_path)) {
           throw new Error("ABSOLUTE_PATH_REQUIRED");
@@ -103,7 +141,7 @@ export function registerJobSystemHelperTools(server: McpServer): void {
         if (sha256(await fs.readFile(snapshot)) !== expected_sha256) {
           throw new Error("SYSTEM_HELPER_SNAPSHOT_CHANGED");
         }
-        const resultRoots = lease.writable_roots.filter(
+        const resultRoots = writableRoots.filter(
           (root) => path.resolve(root) !== path.resolve(runtimeRoot)
         );
         const resultRoot = resultRoots.length === 1 ? resultRoots[0] : "";

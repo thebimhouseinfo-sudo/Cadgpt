@@ -25,6 +25,7 @@ import {
   setWorkExpirationHandler,
   validateWorkHandle,
   isDevelopmentBuild,
+  hasActiveToolLeaseForExecution,
   type ExecutionPath,
 } from "./lib/work-registration.js";
 import {
@@ -53,7 +54,8 @@ import { registerDrawingPersistenceTools } from "./tools/drawing-persistence.js"
 import { registerJobResultAccessTools } from "./tools/job-result-access.js";
 import { registerJobResultPatchTools, registerJobResultBatchPatchTools } from "./tools/job-result-patch.js";
 import { registerTempLispTools } from "./tools/temp-lisp.js";
-import { registerTempJobTools } from "./tools/temp-jobs.js";
+import { registerTempJobV5Tools } from "./tools/temp-jobs-v5.js";
+import { registerV5BuilderSourceTools } from "./tools/v5-builder-source.js";
 import { registerHumanPowerTools } from "./tools/human-power.js";
 import {
   humanPowerErrorLogPath,
@@ -71,11 +73,17 @@ import { cleanupExecutionState } from "./runtime/execution-cleanup.js";
 import { withCadHostLock } from "./runtime/cad-scheduler.js";
 import {
   getJobSystemLease,
+  jobSystemLeaseForSession,
+  jobSystemLeaseHasInFlightCall,
+  releaseJobSystemLease,
   releaseJobSystemLeasesForSession,
   runWithJobSystemLease,
 } from "./runtime/system-lease.js";
-import { cleanupJobRuntimeForSystemLease } from "./runtime/job-runtime.js";
+import { activeJobRuntimeForExecution, cleanupJobRuntimeForExecution, cleanupJobRuntimeForSystemLease } from "./runtime/job-runtime.js";
 import { getRepoRoot } from "./lib/path-security.js";
+import { getJobLibrariesRoot } from "./lib/appdata.js";
+import { assertOwnedSourceRootSafe, ownedSourceRoot } from "./lib/owned-source.js";
+import { activateJobUpdateGrant, clearJobUpdateGrantForSession } from "./runtime/job-update-grant.js";
 import {
   clearAddinPairingsForSession,
   clearAddinSessionObserver,
@@ -298,7 +306,8 @@ function registerStableProductionSurface(server: McpServer): void {
   registerJobResultPatchTools(server);
   registerJobResultBatchPatchTools(server);
   registerTempLispTools(server);
-  registerTempJobTools(server);
+  registerTempJobV5Tools(server);
+  registerV5BuilderSourceTools(server);
   registerHumanPowerTools(server);
 
   if (isDevelopmentBuild()) {
@@ -425,7 +434,7 @@ export function createMcpServer(sessionKey: string): McpServer {
       capabilities: { logging: {}, tools: { listChanged: true } },
       instructions: [
         "CadGPT entry routing — highest priority: bare CadGPT plugin/icon invocation (including a connector renamed CG) or bare @cadgpt or @cg must call cadgpt_admission and return its welcome_text verbatim when present. Do not replace it with prose such as 'activated'.",
-        "Exact cg/ calls cadgpt_control(surface=commands); cg/list -> surface=list; cg/cl -> surface=cl; cg/cj -> surface=cj; cg/job -> surface=job; cg/rl -> register Lisp folder; cg/rj -> register Job folder; cg/il -> import Lisp; cg/el -> export Lisp; cg/ij -> import Job; cg/ej -> export Job; cg/mcp -> surface=mcp; cg/help -> surface=help; cg/stop -> surface=stop; cg/cleartempjob -> surface=cleartempjob (inactive owned Temp Jobs only). cg/list reads tray cache only and never wakes full CAD MCP.",
+        "Exact cg/ calls cadgpt_control(surface=commands); cg/list -> surface=list; cg/cl -> surface=cl; cg/cj -> surface=cj; cg/job -> surface=job; cg/rl -> register Lisp folder; cg/rj -> register Job folder; cg/il -> import Lisp; cg/el -> export Lisp; cg/ij -> import Job; cg/ej -> export Job; cg/mcp -> surface=mcp; cg/help -> surface=help; cg/stop -> surface=stop. cg/list reads tray cache only and never wakes full CAD MCP.",
         "CadGPT is explicit-launch, session-persistent.",
         "The user launches CadGPT once per ChatGPT conversation, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt or @cg. The connector may replace its underlying MCP transport/session without requiring the user to launch again.",
         "On a bare plugin/icon or bare @cadgpt or @cg launch, call cadgpt_admission once. If that launch also contains a real task, claim the session and continue directly instead of forcing the generic Welcome. After the session is claimed, do not call admission again on every turn.",
@@ -507,31 +516,31 @@ export function createMcpServer(sessionKey: string): McpServer {
         const {
           bindDrawingForExecution,
           attachPrimaryDrawingForExecution,
-          validatePrimaryBoundDrawing,
           selectPrimaryBoundDrawing,
         } = await import("./session/drawing-binding.js");
         const selector = drawing.full_name || drawing.name;
-        const bound = await withCadHostLock("autocad", async () => {
-          await cadUpstream.activate();
-          if (joinExistingHost) {
-            // Revalidate Native document lifetime, never infer a second binding.
-            await validatePrimaryBoundDrawing();
-            const attached = attachPrimaryDrawingForExecution(work.executionId);
-            if (!attached) throw new Error("PRIMARY_DRAWING_NOT_BOUND");
-            const { attachVerifiedDrawingMetadataReadOnly } =
-              await import("./runtime/drawing-persistence.js");
-            attachVerifiedDrawingMetadataReadOnly(work.executionId, attached);
-            return attached;
-          }
-          // Only the user's explicit workspace selection changes Host primary.
-          const binding = await bindDrawingForExecution(work.executionId, selector, { allowExplicitRebind: true });
-          const { ensureDrawingAnchorForBinding } = await import(
-            "./runtime/drawing-persistence.js"
-          );
-          await ensureDrawingAnchorForBinding(binding, { allowExplicitRebind: true });
-          selectPrimaryBoundDrawing(binding);
-          return binding;
-        });
+        // Joining an already Anchor-verified Host drawing is a local Work
+        // attachment, not a CAD operation. Do not queue behind another chat's
+        // active Lisp/COM call merely to open a new ChatGPT session.
+        const bound = joinExistingHost
+          ? (() => {
+              const attached = attachPrimaryDrawingForExecution(work.executionId);
+              if (!attached) throw new Error("PRIMARY_DRAWING_NOT_BOUND");
+              return attached;
+            })()
+          : await withCadHostLock("autocad", async () => {
+              await cadUpstream.activate();
+              const binding = await bindDrawingForExecution(work.executionId, selector, { allowExplicitRebind: true });
+              const { ensureDrawingAnchorForBinding } = await import("./runtime/drawing-persistence.js");
+              await ensureDrawingAnchorForBinding(binding, { allowExplicitRebind: true });
+              selectPrimaryBoundDrawing(binding);
+              return binding;
+            });
+        if (joinExistingHost) {
+          const { attachVerifiedDrawingMetadataReadOnly } =
+            await import("./runtime/drawing-persistence.js");
+          attachVerifiedDrawingMetadataReadOnly(work.executionId, bound);
+        }
 
         const { listRegisteredJobs } = await import("./tools/jobs.js");
         const jobs = await listRegisteredJobs();
@@ -663,7 +672,50 @@ export function createMcpServer(sessionKey: string): McpServer {
       ];
       return lines.join("\n");
     },
+    authorizeJobUpdate: async (libraryId, folder) => {
+      const workExecution = activeExecutionForSession(sessionKey);
+      const activeJob = workExecution ? activeJobRuntimeForExecution(workExecution) : null;
+      let target: string;
+      if (libraryId && folder) {
+        const owned = { kind: "reusable-job" as const, libraryId, relativeFolder: folder };
+        await assertOwnedSourceRootSafe(owned);
+        target = ownedSourceRoot(owned);
+      } else if (!libraryId && !folder && activeJob) {
+        target = activeJob.job_root;
+      } else {
+        const jobs = await import("./tools/jobs.js").then((module) => module.listRegisteredJobs());
+        return "Select the existing Job for cg/jobupdate by its library and folder. " +
+          (jobs.length ? "Registered Jobs: " + jobs.map(job => job.id).join(", ") : "No registered Jobs found.");
+      }
+      const stat = await fs.promises.stat(path.join(target, "JOB.md"));
+      if (!stat.isFile()) throw new Error("JOB_UPDATE_SOURCE_REQUIRED: target must contain an existing JOB.md.");
+      activateJobUpdateGrant(sessionKey, target);
+      return "cg/jobupdate authorized for one existing Job: " + target +
+        ". Edit that Job's source directly. This does not authorize another Job or alter CAD MCP.";
+    },
+    stopCurrentJob: async () => {
+      const executionId = activeExecutionForSession(sessionKey);
+      const context = executionId ? activeJobRuntimeForExecution(executionId) : null;
+      if (!executionId || !context) {
+        return { stopped: false, detail: "NO_ACTIVE_JOB: no Job runtime is active in this session." };
+      }
+      if (hasActiveToolLeaseForExecution(executionId)) {
+        throw new Error("JOB_BUSY: wait for the current tool call to complete before cg/jobstop.");
+      }
+      const lease = jobSystemLeaseForSession(context.job_id, sessionKey);
+      if (lease && jobSystemLeaseHasInFlightCall(lease.tool_id)) {
+        throw new Error("JOB_BUSY: SYSTEM tool is still running; stop is available after the call completes.");
+      }
+      if (lease) {
+        await cleanupJobRuntimeForSystemLease(lease.tool_id);
+        releaseJobSystemLease(lease.tool_id, sessionKey);
+      }
+      await cleanupJobRuntimeForExecution(executionId);
+      clearJobUpdateGrantForSession(sessionKey);
+      return { stopped: true, detail: `Stopped Job '${context.job_id}' without stopping Work or CAD MCP.` };
+    },
     stopCurrentWork: async () => {
+      clearJobUpdateGrantForSession(sessionKey);
       markSessionWorkStopped(sessionKey);
       const activeExecution = activeExecutionForSession(sessionKey);
       if (!activeExecution) {
@@ -846,32 +898,13 @@ export function createMcpServer(sessionKey: string): McpServer {
               ].join("\n")
             : "";
 
-      const launch = await prepareCadLaunch(sessionKey, {
-        autoBindSingle: true,
-      });
-      // A second ChatGPT session joins the existing Host-selected DWG even
-      // when several document tabs are open. No new drawing selection gate.
-      const { primaryBoundDrawing, validatePrimaryBoundDrawing } =
+      // Join is local bookkeeping: an already verified Drawing Anchor is
+      // shareable between chats without tray polling or waiting for CAD work.
+      // The first bind still uses the native CAD path below.
+      const { primaryBoundDrawing } =
         await import("./session/drawing-binding.js");
-      let primary = primaryBoundDrawing();
-      if (primary && launch.mode !== "offline" && launch.autocad_detected) {
-        try {
-          // A new @cg admission must not reuse an AutoCAD HWND from a crashed
-          // host. The existing binding validator clears only stale authority.
-          const { cadUpstream } = await import("./runtime/cad-upstream.js");
-          await withCadHostLock("autocad", async () => {
-            await cadUpstream.activate();
-            await validatePrimaryBoundDrawing();
-          });
-          primary = primaryBoundDrawing();
-        } catch (error) {
-          if (!(error instanceof Error) || !error.message.startsWith("BOUND_DRAWING_STALE:")) {
-            throw error;
-          }
-          primary = null;
-        }
-      }
-      if (primary && launch.mode !== "offline" && launch.autocad_detected) {
+      const primary = primaryBoundDrawing();
+      if (primary?.drawing_anchor && primary.anchor_verified_readback === true) {
         const activated = await activateCadWorkspace({
           key: "host-bound",
           name: primary.name,
@@ -889,6 +922,9 @@ export function createMcpServer(sessionKey: string): McpServer {
           cad_proxy_tools: activated.cad_proxy_tools,
         };
       }
+      const launch = await prepareCadLaunch(sessionKey, {
+        autoBindSingle: true,
+      });
       if (launch.mode === "auto_bind" && launch.auto_bind_drawing) {
         const activated = await activateCadWorkspace(
           launch.auto_bind_drawing

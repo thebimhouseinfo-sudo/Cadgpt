@@ -31,6 +31,7 @@ export interface PrepareJobRuntimeOptions {
    * Reasoning Jobs preserve runtime bytes so interrupted raw queues can resume.
    */
   resetRuntime?: boolean;
+  isolatedRun?: boolean;
 }
 
 const contextsByExecution =
@@ -220,9 +221,24 @@ async function cleanupJobRuntimeContext(
       // Job runtime/ is scratch, not persisted Job definition or result.
       // Remove only direct children of the canonical Job-owned runtime
       // directory, preserving the checklist and all sibling Job assets.
-      const expectedRuntime = path.join(context.job_root, "runtime");
-      if (path.resolve(context.runtime_root) !== path.resolve(expectedRuntime)) {
+      const expectedRuntime = path.resolve(context.job_root, "runtime");
+      const isolatedRuns = path.join(expectedRuntime, "runs");
+      const resolvedRuntime = path.resolve(context.runtime_root);
+      const isolated = path.dirname(resolvedRuntime) === isolatedRuns &&
+        /^[0-9a-f]{24}$/i.test(path.basename(resolvedRuntime));
+      if (resolvedRuntime !== expectedRuntime && !isolated) {
         throw new Error("JOB_RUNTIME_CLEANUP_SCOPE: unexpected runtime root.");
+      }
+      const realParent = await fs.realpath(path.dirname(resolvedRuntime));
+      const realExpectedParent = await fs.realpath(
+        isolated ? isolatedRuns : path.dirname(expectedRuntime)
+      );
+      if (realParent !== realExpectedParent) {
+        throw new Error("JOB_RUNTIME_CLEANUP_SCOPE: runtime parent identity changed.");
+      }
+      const runtimeStat = await fs.lstat(resolvedRuntime);
+      if (!runtimeStat.isDirectory() || runtimeStat.isSymbolicLink()) {
+        throw new Error("JOB_RUNTIME_CLEANUP_SCOPE: runtime directory is unsafe.");
       }
       await withFileMutationLocks([context.runtime_root], async () => {
         for (const entry of await fs.readdir(context.runtime_root)) {
@@ -290,15 +306,18 @@ export function detachJobRuntimeForSystemLease(
   }
 
   const rootKey = jobRootKey(context.job_root);
-  if (executionByJobRoot.get(rootKey) !== executionId) {
+  const isolatedRunsRoot = path.join(context.job_root, "runtime", "runs");
+  const isolated = path.dirname(context.runtime_root) === isolatedRunsRoot &&
+    /^[0-9a-f]{24}$/i.test(path.basename(context.runtime_root));
+  if (!isolated && executionByJobRoot.get(rootKey) !== executionId) {
     throw new Error(
       "JOB_RUNTIME_OWNERSHIP_LOST: foreground execution no longer owns this Job runtime."
     );
   }
 
-  contextsByExecution.delete(executionId);
+  // Borrow SYSTEM capability without moving Job ownership away from its execution.
+  // The Job may invoke CAD and then acquire SYSTEM again in the same workflow.
   contextsBySystemToolId.set(key, context);
-  executionByJobRoot.set(rootKey, `system:${key}`);
   return context;
 }
 
@@ -308,16 +327,13 @@ export async function cleanupJobRuntimeForSystemLease(
   const key = systemToolKey(toolId);
   const context = contextsBySystemToolId.get(key);
   contextsBySystemToolId.delete(key);
-  if (!context) {
-    return {
-      active: false,
-      removed_empty_result_roots: 0,
-    };
-  }
-  return cleanupJobRuntimeContext(
-    context,
-    `system:${key}`
-  );
+  // SYSTEM release ends only the borrowed capability. It must never
+  // cleanup runtime, Job Steps, results or the foreground Job execution.
+  return {
+    active: Boolean(context),
+    released: Boolean(context),
+    removed_empty_result_roots: 0,
+  };
 }
 
 export async function cleanupJobRuntimeForExecution(
@@ -326,14 +342,20 @@ export async function cleanupJobRuntimeForExecution(
 ): Promise<Record<string, unknown>> {
   const context =
     contextsByExecution.get(executionId);
-  contextsByExecution.delete(executionId);
   if (!context) {
     return {
       active: false,
       removed_empty_result_roots: 0,
     };
   }
-  return cleanupJobRuntimeContext(context, executionId, options);
+  // Keep the owner context until cleanup succeeds. If filesystem cleanup
+  // fails, callers may retry; losing the context would orphan scratch and
+  // leave a legacy same-Job execution lock unreachable.
+  const cleaned = await cleanupJobRuntimeContext(context, executionId, options);
+  if (contextsByExecution.get(executionId) === context) {
+    contextsByExecution.delete(executionId);
+  }
+  return cleaned;
 }
 
 export async function prepareJobRuntimeForExecution(
@@ -344,6 +366,9 @@ export async function prepareJobRuntimeForExecution(
 ): Promise<JobRuntimeContext> {
   const jobRoot =
     await managedJobRootForFile(jobFile);
+  // One active execution per Job; runtime scratch is reused between runs.
+  // Ignore the old isolatedRun compatibility option rather than spawning a
+  // second per-execution scratch tree.
   const runtimeRoot = path.join(jobRoot, "runtime");
   const current =
     contextsByExecution.get(executionId);
@@ -390,10 +415,7 @@ export async function prepareJobRuntimeForExecution(
       // lock keeps another execution from observing an unclaimed gap while
       // runtime ownership changes. Reasoning Jobs preserve runtime bytes for
       // crash/relaunch recovery; Direct Jobs explicitly request a reset.
-      executionByJobRoot.set(
-        rootKey,
-        executionId
-      );
+      executionByJobRoot.set(rootKey, executionId);
       try {
         const resetRuntime =
           options.resetRuntime === true;

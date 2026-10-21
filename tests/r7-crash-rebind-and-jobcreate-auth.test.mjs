@@ -6,11 +6,17 @@ import path from 'node:path';
 const root = path.resolve(import.meta.dirname, '..');
 const source = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
-test('R7 issue 63: stale Host lifetime is invalidated before auto-join', () => {
+test('R7 issue 63: chat join is local; stale Host lifetime is rejected before CAD mutation', () => {
   const admission = source('src/cadgpt/server-factory.ts');
   const bindings = source('src/cadgpt/session/drawing-binding.ts');
-  assert.match(admission, /await validatePrimaryBoundDrawing\(\)/);
-  assert.match(admission, /error\.message\.startsWith\("BOUND_DRAWING_STALE:"\)/);
+  const start = admission.indexOf('const activateCadWorkspace = async');
+  const end = admission.indexOf('const addinObserverId', start);
+  const setup = admission.slice(start, end);
+  assert.match(setup, /attachPrimaryDrawingForExecution\(work\.executionId\)/);
+  assert.match(bindings, /export async function activateDrawingContext/);
+  assert.match(bindings, /const available = docs\.some\(\(item\) => matchesBinding\(item, binding\)\)/);
+  assert.match(bindings, /if \(!available\) \{/);
+  assert.match(bindings, /BOUND_DRAWING_STALE/);
   assert.match(bindings, /const primaryStillOpen = docs\.some/);
   assert.match(bindings, /if \(!primaryStillOpen\) \{\s*primaryDrawing = null/);
   assert.match(bindings, /existingContexts\.delete\(id\)/);

@@ -13,9 +13,13 @@ test('Custom Job finish requires explicitly successful outcome for autosave', ()
   const end = jobs.indexOf('server.registerTool(', start + 1);
   const segment = jobs.slice(start, end);
   assert.match(segment, /outcome: z\.enum\(\["done", "failed"\]\)\.optional\(\)\.default\("failed"\)/);
-  assert.match(segment, /if \(outcome === "done"\)/);
-  assert.match(segment, /await cleanupJobRuntimeForExecution\(lease\.workId\)/);
-  assert.match(segment, /JOB_DONE_AUTOSAVE_FAILED/);
+  assert.match(segment, /if \(outcome === "done" && dwg_changed\)/);
+  assert.match(segment, /JOB_DONE_READ_ONLY/);
+  assert.match(segment, /await cleanupJobRuntimeForExecution\(lease\.workId,/);
+  assert.match(segment, /JOB_SAVE_FAILED/);
+  assert.match(segment, /autoSave\.saved !== true/);
+  assert.doesNotMatch(segment, /JOB_DONE_AUTOSAVE_FAILED/);
+  assert.ok(segment.indexOf("JOB_SAVE_FAILED") < segment.indexOf("await cleanupJobRuntimeForExecution(lease.workId,"));
   assert.match(segment, /withCadHostLock\(drawing\.host/);
   assert.match(segment, /activateDrawingContext\(drawing\)/);
   assert.match(segment, /acad_save_bound_document/);

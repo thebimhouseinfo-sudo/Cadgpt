@@ -31,13 +31,17 @@ export type ToolAuthority =
 
 export function toolAuthority(toolName: string): ToolAuthority {
   if (CONTROL_TOOLS.has(toolName)) return "control";
-  if (toolName === "job_system_release" || toolName === "job_system_run_helper") return "system";
+  if (toolName === "job_system_release") return "system";
+  if (toolName === "job_system_run_helper") return "work-or-system";
   if (DISCOVERY_TOOLS.has(toolName)) return "session";
   if (toolName.startsWith("file_")) return "work-or-system";
   return "work";
 }
 
 export function toolFamily(toolName: string): string {
+  if (toolName === "job_runtime_save_now") return "cad";
+  if (toolName === "temp_job_lisp_load") return "cad";
+  if (toolName.startsWith("temp_job_") || toolName.startsWith("v5_source_")) return "filesystem";
   if (toolName.startsWith("knowledge_")) return "knowledge";
   if (toolName.startsWith("file_")) return "filesystem";
   if (toolName.startsWith("lisp_")) return "lisp-authoring";

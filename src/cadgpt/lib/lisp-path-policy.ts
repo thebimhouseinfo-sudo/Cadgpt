@@ -5,8 +5,11 @@ import {
   getAppDataRoot,
   getJobDraftRoot,
   getJobLibrariesRoot,
+  getTempJobsRoot,
 } from "./appdata.js";
 import { getRepoRoot, isPathInside } from "./path-security.js";
+import { currentToolLease } from "./work-registration.js";
+import { getOwnedTempLisp } from "../runtime/temp-job-v5.js";
 
 interface LispRoot {
   root: string;
@@ -122,6 +125,26 @@ export async function resolveCadGptLispPath(
 
   const humanPower = options.humanPower === true;
   const approved = roots();
+  // Temp Job source is NOT a globally readable Lisp library. Only the owner
+  // work may extend the CAD loader policy to its exact validated Lisp file.
+  const tempRoot = path.resolve(getTempJobsRoot());
+  const candidateTemp = path.isAbsolute(raw) ? path.resolve(raw) : null;
+  if (candidateTemp && isPathInside(candidateTemp, tempRoot)) {
+    const rel = path.relative(tempRoot, candidateTemp).split(path.sep);
+    if (rel.length >= 2) {
+      try {
+        const lease = currentToolLease();
+        const verified = await getOwnedTempLisp(rel[0], lease.workId, lease.sessionKey, rel.slice(1).join(path.sep));
+        if (verified === await fs.realpath(candidateTemp)) {
+          approved.push({
+            root: path.dirname(verified),
+            virtualPrefix: "__owned-temp-lisp",
+            jobOwned: false,
+          });
+        }
+      } catch { /* no valid Temp owner: ordinary policy rejects the path */ }
+    }
+  }
   let candidate: string;
   if (path.isAbsolute(raw)) {
     candidate = path.resolve(raw);

@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { isSessionClaimed } from "../lib/admission.js";
-import { clearInactiveTempJobs } from "../runtime/temp-job-maintenance.js";
+import { clearTempJobs } from "../runtime/temp-job-v5.js";
 import {
   activeWorkForSession,
   clearSessionWorkStopBarrier,
@@ -21,7 +21,7 @@ function workflowPrompt(surface: "cl" | "cj" | "mcp" | "kug" | "kud"): string {
       "CG / Create Lisp",
       "────────────────────────────────",
       "Hãy mô tả Lisp bạn muốn tạo hoặc sửa.",
-      "Có drawing workspace thì CadGPT sẽ load/test; nếu chưa có vẫn có thể tạo hoặc sửa Lisp.",
+      "V5: Builder ghi source vào thư mục Lisp hoặc Temp Job đang sở hữu; LOAD/RUN trên drawing đã bind khi user yêu cầu. Không tạo bước TEST riêng hay bắt buộc checkout/promote.",
       "────────────────────────────────",
       "```",
     ].join("\n");
@@ -32,7 +32,7 @@ function workflowPrompt(surface: "cl" | "cj" | "mcp" | "kug" | "kud"): string {
       "CG / Create Job",
       "────────────────────────────────",
       "Hãy mô tả Job bạn muốn tạo hoặc sửa.",
-      "Job sẽ được author/validate theo Job workflow của CadGPT.",
+      "V5: Builder tạo/sửa Job trực tiếp trong thư mục sở hữu, RUN theo các bước thực tế, lỗi thì sửa và chạy lại bước an toàn. Không bắt buộc draft/checkout/promote.",
       "────────────────────────────────",
       "```",
     ].join("\n");
@@ -91,6 +91,8 @@ export function registerCadGptControlTool(
     launchCadWorkspace: () => Promise<string>;
     listJobs: () => Promise<string>;
     stopCurrentWork: () => Promise<{ stopped: boolean; pending: boolean }>;
+    stopCurrentJob: () => Promise<{ stopped: boolean; detail: string }>;
+    authorizeJobUpdate: (libraryId?: string, folder?: string) => Promise<string>;
   }
 ): void {
   server.registerTool(
@@ -118,8 +120,13 @@ export function registerCadGptControlTool(
           "help",
           "status",
           "stop",
+          "jobstop",
+          "jobupdate",
           "cleartempjob",
         ]),
+        temp_job_id: z.string().uuid().optional(),
+        job_library_id: z.string().optional(),
+        job_folder: z.string().optional(),
       },
       outputSchema: {
         text: z.string(),
@@ -145,7 +152,7 @@ export function registerCadGptControlTool(
           .optional(),
       },
     },
-    async ({ surface }) => {
+    async ({ surface, temp_job_id, job_library_id, job_folder }) => {
       let text: string;
 
       if (
@@ -178,13 +185,15 @@ export function registerCadGptControlTool(
         surface === "ij" || surface === "ej"
       ) {
         text = assetPrompt(surface);
+      } else if (surface === "jobupdate") {
+        text = await options.authorizeJobUpdate(job_library_id, job_folder);
+      } else if (surface === "jobstop") {
+        const result = await options.stopCurrentJob();
+        text = result.detail;
       } else if (surface === "cleartempjob") {
-        const cleaned = await clearInactiveTempJobs();
-        text = "CG Temp Job cleanup: removed=" + cleaned.removed.length +
-          ", skipped=" + cleaned.skipped.length +
-          ", errors=" + cleaned.errors.length +
-          (cleaned.skipped.length ? "\\nSkipped: " + cleaned.skipped.join(", ") : "") +
-          (cleaned.errors.length ? "\\nErrors: " + cleaned.errors.join("; ") : "");
+        const result = await clearTempJobs(temp_job_id);
+        text = `Temp Jobs: removed ${result.removed.length}, skipped ${result.skipped.length}.` +
+          (result.skipped.length ? "\n" + result.skipped.map(e => `${e.id}: ${e.reason}`).join("\n") : "");
       } else if (surface === "help") {
         text = CADGPT_HELP;
       } else if (surface === "status") {

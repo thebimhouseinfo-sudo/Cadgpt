@@ -1,10 +1,10 @@
 # Strict Custom Job Execution Harness
 
-This policy applies **only while executing a registered Custom Job with an established workflow**. It does not govern Custom Job authoring, Job Builder, Temp Job planning, or the creation of a new workflow.
+This policy applies **only while Operator executes a registered Custom Job with an established workflow**. V5 Builder may RUN an owned final managed JOB.md before publication; there is no separate TEST/promote gate. It does not govern Custom Job authoring, Job Builder, Temp Job planning, or the creation of a new workflow.
 
 ## Authoritative workflow
 
-- The current promoted Job workflow and the branch selected from its actual required entry condition define the **entire execution scope**. Follow the exact step order, conditions, user-choice points, and stopping point.
+- The current registered Job workflow and the branch selected from its actual required entry condition define the **entire execution scope**. Follow the exact step order, conditions, user-choice points, and stopping point.
 - **Execute; do not redesign.** Once a step or branch is determined, do not create additional stages, analysis, reviews, checks, recovery procedures, or alternate workflows to improve the result.
 - Reasoning is permitted only where the workflow explicitly leaves a technical choice unresolved, and then only to carry out that step with the least necessary tool calls. Do not reopen decisions already made by the workflow or the user.
 - Do not independently inspect unrelated data, older work, drawing history, or possible side effects. Do not scan CAD or other metadata beyond what the selected step requires.
