@@ -14,6 +14,7 @@ test("four new chat bindings do not wait for a running CAD Job or change its run
     const binding = await import("../dist/cadgpt/session/drawing-binding.js");
     const runtime = await import("../dist/cadgpt/runtime/job-runtime.js");
     const work = await import("../dist/cadgpt/lib/work-registration.js");
+    const admission = await import("../dist/cadgpt/lib/admission.js");
     const original = {
       drawing_id: "dwg_owner",
       drawing_anchor: "stable-anchor",
@@ -44,6 +45,7 @@ test("four new chat bindings do not wait for a running CAD Job or change its run
       // The CAD host queue remains occupied until AFTER all four joins finish.
       // Any accidental host-lock use during join would deadlock this test.
       const sessions = ["chat-2", "chat-3", "chat-4", "chat-5"];
+      for (const sessionKey of sessions) admission.checkAdmission(sessionKey, "@cg", "mention");
       const registrations = sessions.map(sessionKey => work.createWorkRegistration({
         sessionKey, ownerType: "direct-cad", ownerId: "drawing-workspace", executionPath: "hybrid",
       }));
@@ -62,6 +64,7 @@ test("four new chat bindings do not wait for a running CAD Job or change its run
       for (const item of registrations) {
         binding.clearExecutionDrawingContexts(item.executionId);
         work.releaseSessionWork(item.sessionKey);
+        admission.revokeSessionAdmissions(item.sessionKey);
       }
       assert.equal(runtime.activeJobRuntimeForExecution("job-chat-1"), running);
     } finally {
