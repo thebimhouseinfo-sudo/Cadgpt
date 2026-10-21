@@ -27,8 +27,8 @@ test('Local host drawing bind uses authenticated Add-in endpoint and verified An
   assert.match(client, /\/addin-control\/drawing\/connect\?document=/);
 });
 
-test('Custom Job finish does not mandate scratch deletion', () => {
+test('Custom Job DONE cleans scratch while failures retain data', () => {
   const jobs = read('src/cadgpt/tools/jobs.ts');
   const segment = jobs.slice(jobs.indexOf('"job_runtime_finish"'), jobs.indexOf('server.registerTool(', jobs.indexOf('"job_runtime_finish"') + 1));
-  assert.doesNotMatch(segment, /clearRuntimeScratch:\s*outcome\s*===\s*"done"/);
+  assert.match(segment, /clearRuntimeScratch:\s*outcome\s*===\s*"done"/);
 });

@@ -15,7 +15,8 @@ export type AppDataArea =
   | "drawings"
   | "knowledge"
   | "state"
-  | "logs";
+  | "logs"
+  | "temp-jobs";
 
 /**
  * CadGPT user/runtime data root.
@@ -101,7 +102,7 @@ export function getDynamicLispRoot(): string {
 }
 
 export function getTempJobsRoot(): string {
-  return path.join(getAppDataRoot(), "temp-jobs");
+  return getAppDataPath("temp-jobs");
 }
 
 export function getRunDataRoot(): string {
@@ -129,6 +130,13 @@ export async function ensureAppDataLayout(): Promise<void> {
     getAppDataPath("logs"),
   ];
   await Promise.all(directories.map((dir) => fs.mkdir(dir, { recursive: true })));
+  // Publication of two legacy Registry JSON files cannot be made atomic by
+  // rename alone. Recover an interrupted transaction BEFORE serving work.
+  // Dynamic import avoids a module initialization cycle with AppData paths.
+  const { recoverInterruptedRegistryPublication } = await import(
+    "../runtime/registry-publication-recovery.js"
+  );
+  await recoverInterruptedRegistryPublication();
 }
 
 export function getTrayStatePath(): string {

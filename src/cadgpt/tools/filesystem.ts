@@ -20,7 +20,6 @@ import {
   reasoningJobStorageScopeWasEntered,
 } from "../runtime/job-runtime.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
-import { tempJobWritableRootForExecution } from "../runtime/temp-job-maintenance.js";
 
 const TEXT_EXTENSIONS = new Set([".lsp", ".dcl", ".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".py"]);
 
@@ -87,10 +86,22 @@ function currentWritableRoots(): string[] {
   const reasoningScope = reasoningJobStorageScopeWasEntered(
     currentToolLease().workId
   );
-  // Explicit jobcreate authoring may edit only managed job drafts even when
-  // the prior reasoning Job has left its narrower runtime scope in this Work.
+  // Legacy jobcreate drafts remain a compatibility path. V5 authoring
+  // must use v5_source_create/update with an exact managed library owner.
   const lease = currentToolLease();
   const currentWork = activeWorkForSession(lease.sessionKey);
+  // V5: never recover generic writable roots when the current execution was
+  // revoked, replaced or is closing. The per-call lease must still match.
+  if (!currentWork || currentWork.executionId !== lease.workId || currentWork.closing) {
+    return [];
+  }
+  // V5: a Job Work must never regain generic data/workspace WRITE when
+  // its prepared runtime has finished or its ownership was released.
+  // A prior reasoning-scope marker alone is insufficient for legacy Direct
+  // Jobs, so deny generic fallback for every active Job Work.
+  if (currentWork?.executionId === lease.workId && currentWork.ownerType === "job") {
+    return [...new Set(jobRoots)];
+  }
   const jobAuthoring = currentWork?.executionId === lease.workId &&
     (currentWork.ownerType === "skill" && currentWork.ownerId === "jobcreate" ||
      currentWork.capabilities.includes("job-authoring"));
@@ -99,10 +110,9 @@ function currentWritableRoots(): string[] {
   // reasoning Job scratch scope; managed libraries remain excluded.
   const draftRoots = jobAuthoring ? [getJobDraftRoot()] : [];
   if (reasoningScope) return [...new Set([...jobRoots, ...draftRoots])];
+  // Legacy compatibility Work with an active runtime also stays scoped to
+  // that exact runtime; never inherit broad data/workspace writes.
   if (jobRoots.length) return [...new Set([...jobRoots, ...draftRoots])];
-  const tempRoot = tempJobWritableRootForExecution(currentToolLease().workId);
-  // Temp Jobs write only to their own owned folder, never generic workspace/data.
-  if (tempRoot) return [tempRoot];
   return [
     ...new Set([
       ...getWritableRoots(),
@@ -123,8 +133,10 @@ export function assertNotGenericJobResultMutation(target: string): void {
   const rel = path.relative(root, path.resolve(target));
   if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return;
   const parts = rel.split(path.sep);
-  if (parts.length < 4 || parts[1] !== "jobs" ||
-      !parts[2].toLowerCase().endsWith("-result")) return;
+  // V5 result directories are user-named and need not end with -result.
+  // No generic FILE operation can edit ANY Job's persisted result without
+  // that execution owning the exact result root.
+  if (parts.length < 3 || parts[1].toLowerCase() !== "jobs") return;
   const allowedOwnedRoots = jobRuntimeWritableRootsForExecution(currentToolLease().workId);
   if (allowedOwnedRoots.some(base => {
     const relative = path.relative(path.resolve(base), path.resolve(target));
@@ -208,7 +220,7 @@ export function registerFilesystemTools(server: McpServer): void {
       absolute_roots: currentReadableRoots(),
       writable_roots: currentWritableRoots().map(toCadgptPath),
       absolute_writable_roots: currentWritableRoots(),
-      managed_libraries_write_policy: "read-only to generic file tools; mutate through library_import/lisp_promote_draft/job_promote_draft",
+      managed_libraries_write_policy: "Generic FILE tools remain read-only for reusable libraries. V5 Builder uses v5_source_create/v5_source_update with exact owner-scoped final folder; registration is independent via v5_source_publish.",
     })
   );
 
@@ -345,7 +357,7 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_create",
     {
       title: "Create CadGPT Managed Text File",
-      description: "Create a new text asset inside generic writable AppData roots (workspace/data plus the execution-authorized drawing metadata root). path MUST be an absolute filesystem path. Permanent managed libraries are not writable through this tool.",
+      description: "Create a new text asset inside generic writable AppData roots (workspace/data plus the execution-authorized drawing metadata root). path MUST be an absolute filesystem path. Use v5_source_create for managed final Job/Lisp source; generic FILE never gains broad library-write permission.",
       inputSchema: {
         path: z.string(),
         content: z.string(),
@@ -432,7 +444,7 @@ export function registerFilesystemTools(server: McpServer): void {
     "file_edit",
     {
       title: "Edit CadGPT Managed Text File",
-      description: "Apply an exact text replacement inside generic writable AppData roots (workspace/data plus the execution-authorized drawing metadata root). path MUST be an absolute filesystem path. Permanent managed libraries must use controlled promotion/import tools.",
+      description: "Apply an exact text replacement inside generic writable AppData roots (workspace/data plus the execution-authorized drawing metadata root). path MUST be an absolute filesystem path. Use v5_source_update for managed final Job/Lisp source with exact owner authorization; no mandatory promotion.",
       inputSchema: {
         path: z.string(),
         expected_sha256: z.string().length(64).describe("sha256 returned by file_read; prevents silent overwrite if another execution changed the file"),

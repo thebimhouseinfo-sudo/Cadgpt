@@ -153,7 +153,7 @@ test("generic file mutations can use an execution-authorized drawing metadata ro
 
     const work = createWorkRegistration({
       sessionKey,
-      ownerType: "job",
+      ownerType: "file",
       ownerId: "metadata-test",
       executionPath: "hybrid",
     });

@@ -13,7 +13,7 @@ import {
   getUserLibrariesManifestPath,
 } from "../lib/appdata.js";
 import { getRepoRoot, isPathInside, resolveAbsoluteMutationPath, resolveAllowedPath, toCadgptPath } from "../lib/path-security.js";
-import { currentToolLease } from "../lib/work-registration.js";
+import { currentToolLease, activeWorkForSession } from "../lib/work-registration.js";
 import {
   getJobLocalCompatStatus,
   markJobLocalCompatChecked,
@@ -22,6 +22,8 @@ import { getBoundDrawingsForExecution } from "../session/drawing-binding.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
+import { hasVerifiedBoundSave, noteVerifiedBoundSave, invalidateBoundSave, notePotentialCadMutation, hasPotentialCadMutation, resetCadMutationTracking } from "../runtime/bound-save-ledger.js";
+import { assertBuilderTarget, currentBuilderTarget } from "../runtime/builder-target.js";
 import {
   drawingMetadataRootsForExecution,
   drawingMetadataWritableRootsForExecution,
@@ -373,7 +375,7 @@ export function registerJobDiscoveryTools(server: McpServer): void {
     {
       title: "Check Local Job Compatibility Signal",
       description:
-        "Lightweight O(1) compatibility check for local Custom Jobs. It reads only the small state marker and never scans User Registry Job packages. If update_required=true, jobcreate CONTRACT UPDATE is recommended; normal User Job create/run/update and testing remain available with a visible warning.",
+        "Diagnostics only for legacy Job contract epochs. V5 does not require CONTRACT UPDATE or any compat scan to create, edit or RUN a Job.",
       inputSchema: {},
     },
     async () => {
@@ -651,7 +653,11 @@ export async function executeDirectJobScript(
       env.CADGPT_JOB_RESULT_ROOT = jobResultRoot;
     }
   };
-  const runScript = () => execFileAsync(
+  const runScript = () => {
+    // Legacy Direct Python can mutate AutoCAD through COM outside the CAD
+    // proxy. Never reuse a Save witness across such an opaque invocation.
+    if (!options.fileOnly) notePotentialCadMutation(lease.workId);
+    return execFileAsync(
     python,
     [script, ...args],
     {
@@ -662,7 +668,9 @@ export async function executeDirectJobScript(
       maxBuffer: 4 * 1024 * 1024,
     }
   );
+  };
 
+  let preserveForSaveRecovery = false;
   try {
     // Legacy Direct Python Jobs may perform CAD COM operations themselves.
     // Preserve their existing serialization until explicitly classified by
@@ -683,7 +691,37 @@ export async function executeDirectJobScript(
       result = await runScript();
     }
 
+    // A successful Direct Python process is not a verified DWG persistence.
+    // Legacy COM scripts can mutate outside the CAD proxy: Save must follow
+    // the final script call under the same host queue before reporting DONE.
+    let savedDocument: boolean | null = null;
+    if (drawing && !options.fileOnly) {
+      preserveForSaveRecovery = true;
+      await withCadHostLock(drawing.host, async () => {
+        await activateDrawingContext(drawing);
+        const response = await cadUpstream.callTool("acad_save_bound_document", {
+          runtime_document_id: drawing.runtime_document_identity,
+        }) as { isError?: boolean; structuredContent?: Record<string, unknown>; content?: unknown };
+        if (response.isError) throw new Error("DIRECT_JOB_SAVE_FAILED: CAD backend error");
+        let payload: unknown = response.structuredContent;
+        if (payload === undefined) {
+          const raw = (response.content as Array<{ type?: string; text?: string }> | undefined)
+            ?.find(item => item.type === "text")?.text;
+          if (raw) {
+            try { payload = JSON.parse(raw); } catch { payload = undefined; }
+          }
+        }
+        const proof = payload as { saved?: unknown; runtime_document_id?: unknown } | undefined;
+        if (proof?.saved !== true ||
+            proof.runtime_document_id !== drawing.runtime_document_identity) {
+          throw new Error("DIRECT_JOB_SAVE_UNVERIFIED: exact bound DWG save not confirmed");
+        }
+      });
+      savedDocument = true;
+      preserveForSaveRecovery = false;
+    }
     return {
+      saved_document: savedDocument,
       script,
       execution_mode: "direct",
       exit_code: 0,
@@ -703,9 +741,11 @@ export async function executeDirectJobScript(
         : null,
     };
   } finally {
-    await cleanupJobRuntimeForExecution(
-      lease.workId
-    );
+    // Retain the source inputs and result scratch for diagnosis/retry if the
+    // external COM script finished but the bound DWG Save was unverified.
+    if (!preserveForSaveRecovery) {
+      await cleanupJobRuntimeForExecution(lease.workId);
+    }
   }
 }
 
@@ -866,20 +906,19 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Prepare Job Runtime",
       description:
-        "Authorize a Reasoning Job runtime and return a FRESH copy of its active JOB.md so the model can follow current branching rules on EVERY invocation. Re-evaluate read-only start conditions (raw/result existence) in the order specified by that JOB.md, then ask only its actual conditional user choices. Do not reuse previous-run route decisions or instructions merely discussed in chat. Starting Job B releases stale Job A authority without deleting files. Supply registered User Job id or managed draft path.",
+        "V5 Operator/Builder: prepare a Job from a registered id or Builder-owned final managed JOB.md source_path (without registration/draft/promote). Return FRESH authoritative workflow, follow only declared steps, STOP/REPORT on error, and Save exact bound DWG immediately after the last actual CAD mutation. Legacy draft_path remains compatibility only; starting Job B releases stale Job A authority without deleting another Job's files.",
       inputSchema: {
         id: z.string().min(1).optional(),
-        draft_path: z
-          .string()
-          .min(1)
-          .optional(),
+        draft_path: z.string().min(1).optional(),
+        source_path: z.string().min(1).optional()
+          .describe("V5 direct Builder RUN of an existing final managed library JOB.md, without registry publication or draft."),
       },
     },
-    async ({ id, draft_path }) => {
+    async ({ id, draft_path, source_path }) => {
       try {
-        if (Boolean(id) === Boolean(draft_path)) {
+        if ([id, draft_path, source_path].filter(Boolean).length !== 1) {
           throw new Error(
-            "JOB_RUNTIME_TARGET_REQUIRED: provide exactly one of id or draft_path."
+            "JOB_RUNTIME_TARGET_REQUIRED: provide exactly one of id, source_path or legacy draft_path."
           );
         }
 
@@ -910,6 +949,28 @@ export function registerJobAuthoringTools(server: McpServer): void {
                 entry.relative_path
               )
             );
+        } else if (source_path) {
+          if (!path.isAbsolute(source_path) || path.win32.isAbsolute(source_path) !== (process.platform === "win32") ||
+              path.basename(source_path).toLowerCase() !== "job.md") {
+            throw new Error("V5_JOB_SOURCE_ABSOLUTE_JOB_MD_REQUIRED");
+          }
+          const sourceRoot = await fs.realpath(getJobLibrariesRoot());
+          const realSource = await fs.realpath(source_path);
+          if (!isPathInside(realSource, sourceRoot)) throw new Error("V5_JOB_SOURCE_OUTSIDE_MANAGED_LIBRARY");
+          const actual = await fs.realpath(path.dirname(realSource));
+          // Alias under the library is acceptable only when it maps to the same
+          // canonical directory (Windows DOS aliases are normalized by realpath).
+          if (!isPathInside(actual, sourceRoot)) throw new Error("V5_JOB_SOURCE_OWNER_ESCAPE");
+          const currentWork = activeWorkForSession(currentToolLease().sessionKey);
+          if (!currentWork || currentWork.executionId !== currentToolLease().workId ||
+              currentWork.ownerType === "job" ||
+              !["jobcreate", "job-authoring"].includes(currentWork.ownerId) &&
+              !currentWork.capabilities.includes("job-authoring")) {
+            throw new Error("V5_JOB_SOURCE_BUILDER_WORK_REQUIRED");
+          }
+          jobFile = realSource;
+          assertBuilderTarget(currentToolLease().workId, path.dirname(realSource));
+          jobId = "v5:" + path.relative(sourceRoot, path.dirname(jobFile)).replaceAll("\\", "/");
         } else {
           if (!path.isAbsolute(draft_path!)) {
             throw new Error(
@@ -968,6 +1029,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
             jobFile,
             { resetRuntime: false }
           );
+        if (!sameActiveJob) resetCadMutationTracking(lease.workId);
         // A FILE-only Job B can resume on a drawing root already verified
         // during Job A, with no second CAD bind or invented AppData path.
         // Only B's own result namespace becomes writable; other Job results
@@ -994,7 +1056,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
               source_path: jobFile,
               source_sha256: workflowSha256,
               content: workflowSource,
-              instruction: "This is the current promoted JOB.md, freshly read for this run. Follow its exact entry conditions and user choice branches. Do not follow previous chat decisions if the file differs. Inspect the actual raw/result folders as required before choosing any route.",
+              instruction: "This is the current registered JOB.md, freshly read for this run. Follow its exact entry conditions and user choices. Do not invent business steps. After the final DWG mutation call job_runtime_save_now immediately; STOP/REPORT if Save fails. If no later CAD call occurs, job_runtime_finish reuses the verified Save and will not save twice. For a file-only Job, do not invent a CAD mutation or Save requirement.",
             },
             runtime_root:
               runtime.runtime_root,
@@ -1031,26 +1093,82 @@ export function registerJobAuthoringTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "job_runtime_save_now",
+    {
+      title: "Save exact bound DWG after final CAD mutation",
+      description: "Operator/Builder calls immediately after the last DWG mutation. Save is verified on the exact bound runtime document identity; subsequent CAD operations invalidate this proof, preventing false Job DONE.",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const lease = currentToolLease();
+        if (!activeJobRuntimeForExecution(lease.workId)) {
+          throw new Error("JOB_RUNTIME_NOT_ACTIVE");
+        }
+        const drawing = resolveDrawingContext();
+        return await withCadHostLock(drawing.host, async () => {
+          await activateDrawingContext(drawing);
+          invalidateBoundSave(lease.workId);
+          const response = await cadUpstream.callTool("acad_save_bound_document", {
+            runtime_document_id: drawing.runtime_document_identity,
+          }) as { isError?: boolean; structuredContent?: Record<string, unknown>; content?: unknown };
+          if (response.isError) throw new Error("JOB_BOUND_SAVE_UPSTREAM_ERROR");
+          let saved: unknown = response.structuredContent;
+          if (saved === undefined) {
+            const rawText = (response.content as Array<{ type?: string; text?: string }> | undefined)
+              ?.find(item => item.type === "text")?.text;
+            if (rawText) {
+              try { saved = JSON.parse(rawText); } catch { saved = undefined; }
+            }
+          }
+          const evidence = saved as { saved?: unknown; runtime_document_id?: unknown } | undefined;
+          if (!evidence || evidence.saved !== true ||
+              evidence.runtime_document_id !== drawing.runtime_document_identity) {
+            throw new Error("JOB_BOUND_SAVE_UNVERIFIED");
+          }
+          noteVerifiedBoundSave(lease.workId, drawing.runtime_document_identity);
+          return toolResult("job_runtime_save_now", {
+            saved: true,
+            drawing_id: drawing.drawing_id,
+            runtime_document_identity: drawing.runtime_document_identity,
+            final_save_verified: true,
+          });
+        });
+      } catch (error) {
+        return toolError("job_runtime_save_now", error);
+      }
+    }
+  );
+
+  server.registerTool(
     "job_runtime_finish",
     {
       title: "Finish Job Runtime",
       description:
-        "Finish the current Custom Job. Set outcome=done ONLY after all workflow and validation steps succeeded; this automatically saves the bound DWG using Python CAD MCP. On failure, stop, or interruption use outcome=failed (default), with no save. This is runtime behavior, not a JOB.md step.",
+        "Finish the current Custom Job. Set outcome=done only after actual Job steps succeed. If the exact bound DWG was already verified saved after the last CAD change, do not save twice; otherwise run verified bound-DWG Save before DONE. Save failure is a real tool error and preserves runtime for repair. On failure use outcome=failed. This does not add a TEST or promotion stage.",
       inputSchema: {
         outcome: z.enum(["done", "failed"]).optional().default("failed"),
+        dwg_changed: z.boolean().optional().default(true)
+          .describe("Set false ONLY for a genuinely read-only/file-only Job; never skip Save after changing the DWG."),
       },
     },
-    async ({ outcome }) => {
+    async ({ outcome, dwg_changed }) => {
       try {
         const lease = currentToolLease();
         const runtime = activeJobRuntimeForExecution(lease.workId);
         if (!runtime) throw new Error("JOB_RUNTIME_NOT_ACTIVE: no Custom Job to finish.");
         let autoSave: Record<string, unknown> = { attempted: false };
-        if (outcome === "done") {
+        if (outcome === "done" && !dwg_changed && hasPotentialCadMutation(lease.workId)) {
+          throw new Error("JOB_READ_ONLY_CONFLICT: this execution issued a CAD mutation; verified Save is required.");
+        }
+        if (outcome === "done" && dwg_changed) {
           // Save before releasing the Work's drawing authority. Cad host FIFO
           // prevents overlap with other chats' CAD calls; no new manager.
           try {
             const drawing = resolveDrawingContext();
+            if (hasVerifiedBoundSave(lease.workId, drawing.runtime_document_identity)) {
+              autoSave = { attempted: false, saved: true, drawing: drawing.full_name, early_save_verified: true };
+            } else {
             await withCadHostLock(drawing.host, async () => {
               await activateDrawingContext(drawing);
               const response = await cadUpstream.callTool("acad_save_bound_document", {
@@ -1072,14 +1190,23 @@ export function registerJobAuthoringTools(server: McpServer): void {
               }
               autoSave = { attempted: true, saved: true, drawing: drawing.full_name };
             });
+            }
           } catch (error) {
             autoSave = { attempted: true, saved: false,
               error: error instanceof Error ? error.message : String(error) };
           }
         }
-        const cleanup = await cleanupJobRuntimeForExecution(lease.workId);
+        if (outcome === "done" && dwg_changed && autoSave.saved !== true) {
+          // Save failure is a real Job failure, not an ok tool payload.
+          // Retain the prepared runtime and raw/result so Builder can repair
+          // and safely complete after a verified save.
+          throw new Error("JOB_SAVE_FAILED: " + String(autoSave.error ?? "bound DWG save not verified"));
+        }
+        const cleanup = await cleanupJobRuntimeForExecution(lease.workId, {
+          clearRuntimeScratch: outcome === "done",
+        });
         return toolResult("job_runtime_finish", { outcome, cleanup, autosave: autoSave,
-          status: outcome === "done" ? (autoSave.saved === true ? "JOB_DONE_SAVED" : "JOB_DONE_AUTOSAVE_FAILED") : "JOB_FAILED" });
+          status: outcome === "done" ? (dwg_changed ? "JOB_DONE_SAVED" : "JOB_DONE_READ_ONLY") : "JOB_FAILED" });
       } catch (error) {
         return toolError(
           "job_runtime_finish",
@@ -1093,9 +1220,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
   server.registerTool(
     "job_system_acquire",
     {
-      title: "Acquire Job SYSTEM Lease",
+      title: "Legacy Job SYSTEM Lease Acquire",
       description:
-        "Hand off the current prepared User Reasoning Job runtime from foreground work to a detached SYSTEM lease. Use only after all CAD-dependent input and any final Job result location have already been resolved. The SYSTEM tool_id is exactly the canonical Job id.",
+        "Legacy compatibility only. V5 Job helper runs from the execution-owned prepared Job runtime without manual SYSTEM lease acquire/release; new Jobs must not require this transition.",
       inputSchema: {
         id: z.string().min(1),
       },
@@ -1191,9 +1318,9 @@ export function registerJobAuthoringTools(server: McpServer): void {
   server.registerTool(
     "job_system_release",
     {
-      title: "Release Job SYSTEM Lease",
+      title: "Legacy Job SYSTEM Lease Release",
       description:
-        "Release the active detached Job SYSTEM lease after its independent data-processing tail is complete. Pass tool_id=<job_id>. Release is limited to the logical CadGPT session that owns the lease.",
+        "Legacy compatibility only for already-detached jobs; V5 owned helper calls do not require a release step.",
       inputSchema: {},
     },
     async () => {
@@ -1243,13 +1370,52 @@ export function registerJobAuthoringTools(server: McpServer): void {
       description:
         "Run one direct Job without model planning. Official Internal Jobs use bounded built-in CadGPT executors; User Registry .py Jobs use CadGPT's fixed Python runtime. User .md Jobs are rejected and must use the reasoning Job harness.",
       inputSchema: {
-        id: z.string().min(1),
+        id: z.string().min(1).optional(),
+        source_path: z.string().min(1).optional()
+          .describe("V5 Builder: absolute existing .py source inside exact managed Job owner; registration is not required."),
         args: z.array(z.string()).max(50).optional().default([]),
       },
     },
-    async ({ id, args }) => {
+    async ({ id, source_path, args }) => {
       try {
-        const internal = getInternalJob(id);
+        if (Boolean(id) === Boolean(source_path)) {
+          throw new Error("DIRECT_JOB_TARGET_REQUIRED: specify registered id OR Builder source_path.");
+        }
+        if (source_path) {
+          if (!path.isAbsolute(source_path) || path.extname(source_path).toLowerCase() !== ".py") {
+            throw new Error("V5_DIRECT_SOURCE_ABSOLUTE_PY_REQUIRED");
+          }
+          const lease = currentToolLease();
+          const work = activeWorkForSession(lease.sessionKey);
+          const isBuilder = work?.executionId === lease.workId &&
+            work.ownerType !== "job" && !work.closing &&
+            (["jobcreate", "job-authoring"].includes(work.ownerId) ||
+             work.capabilities.includes("job-authoring"));
+          if (!isBuilder) throw new Error("V5_DIRECT_BUILDER_WORK_REQUIRED");
+          const root = await fs.realpath(getJobLibrariesRoot());
+          const source = await fs.realpath(source_path);
+          const owner = await fs.realpath(path.dirname(source));
+          if (!isPathInside(owner, root) || !isPathInside(source, owner)) {
+            throw new Error("V5_DIRECT_SOURCE_OUTSIDE_MANAGED_JOB");
+          }
+          const targetOwner = currentBuilderTarget(lease.workId);
+          const equal = (a: string, b: string) => process.platform === "win32"
+            ? a.toLowerCase() === b.toLowerCase() : a === b;
+          if (!targetOwner || !equal(await fs.realpath(targetOwner), owner)) {
+            throw new Error("V5_DIRECT_BUILDER_TARGET_MISMATCH");
+          }
+          await releasePriorJobAuthorityForStart({
+            executionId: lease.workId, sessionKey: lease.sessionKey,
+          });
+          const executed = await executeDirectJobScript(
+            source, args, "v5:" + path.relative(root, owner).split(path.sep).join("/"),
+            { fileOnly: false },
+          );
+          return toolResult("job_run_direct", {
+            registry: "unregistered-v5", source_path: source, ...executed,
+          });
+        }
+        const internal = getInternalJob(id!);
         if (internal) {
           const callLease =
             currentToolLease();
@@ -1269,11 +1435,11 @@ export function registerJobAuthoringTools(server: McpServer): void {
 
         await assertJobLocalCompatReady(
           "running a User Job",
-          id
+          id!
         );
         const jobs = await loadJobs();
         const entry = jobs.find(
-          (job) => job.id.toLowerCase() === id.trim().toLowerCase()
+          (job) => job.id.toLowerCase() === id!.trim().toLowerCase()
         );
         if (!entry) throw new Error(`Job not found: ${id}`);
         const relative = safeRelativeRegisteredJob(entry.relative_path);
@@ -1390,7 +1556,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Create New Job Draft",
       description:
-        "Create a new blank Job draft file (.py for direct Jobs, JOB.md for reasoning Jobs) under the Job draft root. Use this when authoring a brand-new Job from scratch. For editing an existing registered Job use job_checkout instead.",
+        "Legacy migration utility only. V5 Builder must author directly in the owned final Job folder using v5_source_create/v5_source_update; no Job draft, checkout or promotion is required to RUN. This tool is retained only for older package workflows.",
       inputSchema: {
         draft_path: z
           .string()
@@ -1486,7 +1652,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Checkout Managed Job for jobcreate",
       description:
-        "Checkout one registered managed Job package into an explicit draft path. The primary JOB.md/.py plus Job-owned lisp/**, dynamic-lisp/** and tools/** assets move together. runtime/** is execution scratch and is never checked out. Existing draft bundles require hash-confirmed overwrite.",
+        "Legacy compatibility utility. V5 direct Builder editing uses v5_source_update in the exact owned managed Job folder; never require checkout before editing/running. This tool preserves old package workflows only.",
       inputSchema: {
         registry_id: z.string().min(1),
         draft_path: z
@@ -1720,7 +1886,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
     {
       title: "Promote Tested Job Draft to Managed Library",
       description:
-        "Promote one validated Job draft package into an explicit managed Job target and synchronize User Registry rollback-safely. JOB.md/.py, lisp/**, dynamic-lisp/** and tools/** are promoted as one bundle. runtime/** is never promoted.",
+        "Legacy package migration utility only. V5 execution and in-place authoring never require this promotion; registered publication is separate and explicit when reusable capability discovery is requested.",
       inputSchema: {
         draft_path: z.string().min(1),
         registry_id: z.string().min(1).optional(),

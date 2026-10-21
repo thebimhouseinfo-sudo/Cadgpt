@@ -41,6 +41,9 @@ test("declared file-only Direct Python runs outside CAD Host lock; unknown legac
       if (name === "acad_set_active_document") {
         return {structuredContent:{runtime_document_id:"life-fifo"}};
       }
+      if (name === "acad_save_bound_document") {
+        return {structuredContent:{saved:true,runtime_document_id:"life-fifo"}};
+      }
       if (name === "cad_ensure_drawing_anchor") {
         return {structuredContent:{drawing_anchor:"FIFO-verified",schema_version:1,state:"existing",verified_readback:true}};
       }
@@ -85,7 +88,8 @@ test("declared file-only Direct Python runs outside CAD Host lock; unknown legac
     const waiting=withCadHostLock("autocad",async()=>{entered=true;});
     await new Promise(resolve=>setTimeout(resolve,80));
     assert.equal(entered,false,"unknown legacy Python must keep existing CAD protection");
-    await legacyRun;
+    const legacyResult=await legacyRun;
+    assert.equal(legacyResult.saved_document,true);
     await waiting;
     assert.equal(entered,true);
   } finally {

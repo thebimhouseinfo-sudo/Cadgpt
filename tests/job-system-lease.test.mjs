@@ -65,121 +65,34 @@ test("Job SYSTEM leases are shared across different Jobs but session-owned", asy
   }
 });
 
-test("detached Job runtime survives foreground cleanup and keeps same Job busy", async () => {
-  const tempRoot = await fs.mkdtemp(
-    path.join(os.tmpdir(), "cadgpt-system-runtime-")
-  );
-  const previous =
-    process.env.CADGPT_APPDATA_ROOT;
-  process.env.CADGPT_APPDATA_ROOT = tempRoot;
-
+test("SYSTEM acquire/release preserves foreground Job and supports reacquire", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-system-runtime-"));
+  const previous = process.env.CADGPT_APPDATA_ROOT;
+  process.env.CADGPT_APPDATA_ROOT = root;
   try {
-    const runtime = await import(
-      "../dist/cadgpt/runtime/job-runtime.js"
-    );
-
-    const jobA = path.join(
-      tempRoot,
-      "libraries",
-      "jobs",
-      "fixture",
-      "job-a",
-      "JOB.md"
-    );
-    const jobB = path.join(
-      tempRoot,
-      "libraries",
-      "jobs",
-      "fixture",
-      "job-b",
-      "JOB.md"
-    );
-    await fs.mkdir(path.dirname(jobA), {
-      recursive: true,
-    });
-    await fs.mkdir(path.dirname(jobB), {
-      recursive: true,
-    });
-    await fs.writeFile(jobA, "# Job: A\n", "utf8");
-    await fs.writeFile(jobB, "# Job: B\n", "utf8");
-
+    const runtime = await import("../dist/cadgpt/runtime/job-runtime.js");
+    const jobA = path.join(root, "libraries", "jobs", "fixture", "job-a", "JOB.md");
+    await fs.mkdir(path.dirname(jobA), { recursive: true });
+    await fs.writeFile(jobA, "# Job: A\n");
     const execution = "exec-shared";
-    const preparedA =
-      await runtime.prepareJobRuntimeForExecution(
-        execution,
-        "job-a",
-        jobA
-      );
-    await fs.writeFile(
-      path.join(preparedA.runtime_root, "raw.json"),
-      "{}\n",
-      "utf8"
-    );
-
-    runtime.detachJobRuntimeForSystemLease(
-      execution,
-      "job-a"
-    );
-
-    const foregroundCleanup =
-      await runtime.cleanupJobRuntimeForExecution(
-        execution
-      );
-    assert.equal(foregroundCleanup.active, false);
-    assert.equal(
-      await fs.readFile(
-        path.join(
-          preparedA.runtime_root,
-          "raw.json"
-        ),
-        "utf8"
-      ),
-      "{}\n"
-    );
-
-    await runtime.prepareJobRuntimeForExecution(
-      execution,
-      "job-b",
-      jobB
-    );
-
-    await assert.rejects(
-      () =>
-        runtime.prepareJobRuntimeForExecution(
-          "exec-another",
-          "job-a",
-          jobA
-        ),
-      /JOB_RUNTIME_BUSY/
-    );
-
-    await runtime.cleanupJobRuntimeForExecution(
-      execution
-    );
-    await runtime.cleanupJobRuntimeForSystemLease(
-      "job-a"
-    );
-
-    const restarted =
-      await runtime.prepareJobRuntimeForExecution(
-        "exec-restart",
-        "job-a",
-        jobA
-      );
-    assert.equal(restarted.job_id, "job-a");
-    await runtime.cleanupJobRuntimeForExecution(
-      "exec-restart"
-    );
-  } finally {
-    if (previous === undefined) {
-      delete process.env.CADGPT_APPDATA_ROOT;
-    } else {
-      process.env.CADGPT_APPDATA_ROOT = previous;
+    const prepared = await runtime.prepareJobRuntimeForExecution(execution, "job-a", jobA);
+    await fs.writeFile(path.join(prepared.runtime_root, "raw.json"), "{}\n");
+    for (let i = 0; i < 2; i += 1) {
+      runtime.detachJobRuntimeForSystemLease(execution, "job-a");
+      assert.equal(runtime.activeJobRuntimeForExecution(execution)?.job_id, "job-a");
+      const released = await runtime.cleanupJobRuntimeForSystemLease("job-a");
+      assert.equal(released.released, true);
+      assert.equal(await fs.readFile(path.join(prepared.runtime_root, "raw.json"), "utf8"), "{}\n");
     }
-    await fs.rm(tempRoot, {
-      recursive: true,
-      force: true,
-    });
+    await assert.rejects(() => runtime.prepareJobRuntimeForExecution("other", "job-a", jobA), /JOB_RUNTIME_BUSY/);
+    await runtime.cleanupJobRuntimeForExecution(execution);
+    const restarted = await runtime.prepareJobRuntimeForExecution("other", "job-a", jobA);
+    assert.equal(restarted.job_id, "job-a");
+    await runtime.cleanupJobRuntimeForExecution("other");
+  } finally {
+    if (previous === undefined) delete process.env.CADGPT_APPDATA_ROOT;
+    else process.env.CADGPT_APPDATA_ROOT = previous;
+    await fs.rm(root, { recursive: true, force: true });
   }
 });
 

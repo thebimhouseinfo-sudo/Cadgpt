@@ -5,6 +5,7 @@ import { checkAdmission } from "../lib/admission.js";
 import { toolResult } from "../lib/tool-result.js";
 import { isBareCadGptLaunch } from "../lib/quickstart.js";
 import { completePendingAddinPair } from "../lib/addin-control.js";
+import { observeExplicitJobUpdateCommand } from "../runtime/job-update-grant.js";
 
 export type HumanPowerControlAction =
   | "start"
@@ -76,6 +77,9 @@ export function registerAdmissionTool(
     },
     async ({ user_turn, invocation_source }) => {
       const decision = checkAdmission(options.sessionKey, user_turn, invocation_source);
+      if (decision.mode === "control") {
+        observeExplicitJobUpdateCommand(options.sessionKey, user_turn);
+      }
       const bareLaunch = isBareCadGptLaunch(
         user_turn,
         invocation_source
