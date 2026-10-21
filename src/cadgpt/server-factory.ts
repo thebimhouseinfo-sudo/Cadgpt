@@ -521,7 +521,9 @@ export function createMcpServer(sessionKey: string): McpServer {
         } = await import("./session/drawing-binding.js");
         const selector = drawing.full_name || drawing.name;
         const bound = await withCadHostLock("autocad", async () => {
-          await cadUpstream.activate();
+          if (!joinExistingHost || !cadUpstream.status().connected) {
+            await cadUpstream.activate();
+          }
           if (joinExistingHost) {
             // Revalidate Native document lifetime, never infer a second binding.
             await validatePrimaryBoundDrawing();
@@ -912,7 +914,9 @@ export function createMcpServer(sessionKey: string): McpServer {
           // host. The existing binding validator clears only stale authority.
           const { cadUpstream } = await import("./runtime/cad-upstream.js");
           await withCadHostLock("autocad", async () => {
-            await cadUpstream.activate();
+            if (!cadUpstream.status().connected) {
+              await cadUpstream.activate();
+            }
             await validatePrimaryBoundDrawing();
           });
           primary = primaryBoundDrawing();
