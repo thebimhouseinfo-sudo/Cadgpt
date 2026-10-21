@@ -898,15 +898,13 @@ export function createMcpServer(sessionKey: string): McpServer {
               ].join("\n")
             : "";
 
-      const launch = await prepareCadLaunch(sessionKey, {
-        autoBindSingle: true,
-      });
-      // A second ChatGPT session joins the existing Host-selected DWG even
-      // when several document tabs are open. No new drawing selection gate.
+      // Join is local bookkeeping: an already verified Drawing Anchor is
+      // shareable between chats without tray polling or waiting for CAD work.
+      // The first bind still uses the native CAD path below.
       const { primaryBoundDrawing } =
         await import("./session/drawing-binding.js");
-      let primary = primaryBoundDrawing();
-      if (primary && launch.mode !== "offline" && launch.autocad_detected) {
+      const primary = primaryBoundDrawing();
+      if (primary?.drawing_anchor && primary.anchor_verified_readback === true) {
         const activated = await activateCadWorkspace({
           key: "host-bound",
           name: primary.name,
@@ -924,6 +922,9 @@ export function createMcpServer(sessionKey: string): McpServer {
           cad_proxy_tools: activated.cad_proxy_tools,
         };
       }
+      const launch = await prepareCadLaunch(sessionKey, {
+        autoBindSingle: true,
+      });
       if (launch.mode === "auto_bind" && launch.auto_bind_drawing) {
         const activated = await activateCadWorkspace(
           launch.auto_bind_drawing
