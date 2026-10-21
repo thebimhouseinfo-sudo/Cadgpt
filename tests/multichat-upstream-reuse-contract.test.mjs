@@ -10,7 +10,9 @@ test("second chat joins verified Host Anchor without CAD host queue or upstream 
   assert.match(activation, /attachVerifiedDrawingMetadataReadOnly\(work\.executionId, bound\)/);
   const join = activation.slice(activation.indexOf("const bound = joinExistingHost"), activation.indexOf(": await withCadHostLock", activation.indexOf("const bound = joinExistingHost")));
   assert.doesNotMatch(join, /validatePrimaryBoundDrawing|cadUpstream\.activate/);
-  const admission = source.slice(source.indexOf("const launch = await prepareCadLaunch(sessionKey, {"), source.indexOf("registerWorkControlTools(server, {"));
-  assert.doesNotMatch(admission, /validatePrimaryBoundDrawing\(/);
+  const admission = source.slice(source.indexOf("const { primaryBoundDrawing } =", source.indexOf("registerAdmissionTool(server")), source.indexOf("registerWorkControlTools(server, {"));
   assert.match(admission, /primaryBoundDrawing\(\)/);
+  assert.match(admission, /primary\?\.drawing_anchor && primary\.anchor_verified_readback === true/);
+  assert.ok(admission.indexOf("const primary = primaryBoundDrawing()") < admission.indexOf("await prepareCadLaunch(sessionKey, {"), "verified join must precede tray probing");
+  assert.doesNotMatch(admission, /validatePrimaryBoundDrawing\(/);
 });
