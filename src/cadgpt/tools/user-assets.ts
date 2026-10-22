@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
+import { finishSourceAuthoringInLibrary, withSourcePublication } from "../runtime/job-update-grant.js";
 import { beginRegistryPublication, endRegistryPublication, readRegistrySnapshot } from "../runtime/registry-publication-recovery.js";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -218,6 +219,7 @@ async function saveLibraryAndRegistry(record: LibraryRecord, entries: RegistryEn
     await endRegistryPublication();
     throw error;
   }
+  finishSourceAuthoringInLibrary(libraryRoot(record, record.kind, record.id), entries.map(entry => entry.relative_path));
 }
 
 function managedRoot(kind: AssetKind, libraryId: string): string {
@@ -274,72 +276,74 @@ export async function resolveRegisteredAssetPath(
 }
 
 export async function importLibrary(kind: AssetKind, libraryId: string, name: string, folderPath: string, replaceExisting: boolean) {
-  assertUserLibraryId(libraryId);
-  if (!LIBRARY_ID.test(libraryId)) throw new Error("LIBRARY_ID_INVALID");
-  const source = await assertSourceFolder(folderPath);
-  const entries = await indexLibrary(kind, libraryId, source);
-  const targetParent = kind === "lisp" ? getLispLibrariesRoot() : getJobLibrariesRoot();
-  await fs.mkdir(targetParent, { recursive: true });
-  const target = await resolveAbsoluteMutationPath(path.join(targetParent, libraryId), {
-    allowedRoots: [targetParent], forCreate: true, label: "CadGPT user library",
-  });
-  // Registry publication is serialized with other imports in THIS process.
-  // No job-level lock, test gate or approval phase is added.
-  return withFileMutationLocks([
-    getUserLibrariesManifestPath(), getUserCapabilitiesPath(), target,
-  ], async () => {
-    const manifest = await readJson<{ version: number; libraries: LibraryRecord[] }>(
-      getUserLibrariesManifestPath(), { version: 1, libraries: [] }
-    );
-    const registry = await readJson<UserRegistry>(
-      getUserCapabilitiesPath(), { version: 1, entries: [] }
-    );
-    const exists = await fs.lstat(target).then(() => true, error => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-      throw error;
+  return withSourcePublication(async () => {
+    assertUserLibraryId(libraryId);
+    if (!LIBRARY_ID.test(libraryId)) throw new Error("LIBRARY_ID_INVALID");
+    const source = await assertSourceFolder(folderPath);
+    const entries = await indexLibrary(kind, libraryId, source);
+    const targetParent = kind === "lisp" ? getLispLibrariesRoot() : getJobLibrariesRoot();
+    await fs.mkdir(targetParent, { recursive: true });
+    const target = await resolveAbsoluteMutationPath(path.join(targetParent, libraryId), {
+      allowedRoots: [targetParent], forCreate: true, label: "CadGPT user library",
     });
-    if (!replaceExisting) {
-      if (exists || manifest.libraries.some(item =>
-          item.id.toLowerCase() === libraryId.toLowerCase() && item.kind === kind)) {
-        throw new Error("LIBRARY_ID_ALREADY_REGISTERED");
-      }
-      const used = new Set(registry.entries.filter(item => item.kind === "lisp")
-        .flatMap(item => (item.commands ?? []).map(cmd => cmd.toLowerCase())));
-      if (kind === "lisp" && entries.some(entry =>
-          entry.commands.some(cmd => used.has(cmd.toLowerCase())))) {
-        throw new Error("LISP_LIBRARY_COMMAND_OR_ID_COLLISION");
-      }
-      if (registry.entries.some(item =>
-          entries.some(entry => item.id.toLowerCase() === entry.id.toLowerCase()))) {
-        throw new Error("LIBRARY_REGISTRY_ID_COLLISION");
-      }
-    }
-    // Exclusive staging. Never remove another import's staging directory.
-    const staging = path.join(targetParent, "." + libraryId + "-" + randomUUID() + ".importing");
-    try {
-      await fs.cp(source, staging, {
-        recursive: true, errorOnExist: true, force: false,
-        filter: item => ![".git", ".svn"].includes(path.basename(item)),
-      });
-      if (exists && replaceExisting) {
-        // Legacy replacement remains explicitly requested, not used by V5 Temp publishing.
-        await fs.rm(target, { recursive: true, force: false });
-      }
-      await fs.rename(staging, target);
-      try {
-        await saveLibraryAndRegistry({
-          id: libraryId, kind, name, mode: "managed",
-          root_path: target, enabled: true,
-        }, entries);
-      } catch (error) {
-        // Do not leave an unregistered published library after a failed registry update.
-        if (!exists) await fs.rm(target, { recursive: true, force: true });
+    // Registry publication is serialized with other imports in THIS process.
+    // No job-level lock, test gate or approval phase is added.
+    return withFileMutationLocks([
+      getUserLibrariesManifestPath(), getUserCapabilitiesPath(), target,
+    ], async () => {
+      const manifest = await readJson<{ version: number; libraries: LibraryRecord[] }>(
+        getUserLibrariesManifestPath(), { version: 1, libraries: [] }
+      );
+      const registry = await readJson<UserRegistry>(
+        getUserCapabilitiesPath(), { version: 1, entries: [] }
+      );
+      const exists = await fs.lstat(target).then(() => true, error => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
         throw error;
+      });
+      if (!replaceExisting) {
+        if (exists || manifest.libraries.some(item =>
+            item.id.toLowerCase() === libraryId.toLowerCase() && item.kind === kind)) {
+          throw new Error("LIBRARY_ID_ALREADY_REGISTERED");
+        }
+        const used = new Set(registry.entries.filter(item => item.kind === "lisp")
+          .flatMap(item => (item.commands ?? []).map(cmd => cmd.toLowerCase())));
+        if (kind === "lisp" && entries.some(entry =>
+            entry.commands.some(cmd => used.has(cmd.toLowerCase())))) {
+          throw new Error("LISP_LIBRARY_COMMAND_OR_ID_COLLISION");
+        }
+        if (registry.entries.some(item =>
+            entries.some(entry => item.id.toLowerCase() === entry.id.toLowerCase()))) {
+          throw new Error("LIBRARY_REGISTRY_ID_COLLISION");
+        }
       }
-    } finally {
-      await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined);
-    }
-    return { library_id: libraryId, kind, folder_path: target, registered: entries.length, entries };
+      // Exclusive staging. Never remove another import's staging directory.
+      const staging = path.join(targetParent, "." + libraryId + "-" + randomUUID() + ".importing");
+      try {
+        await fs.cp(source, staging, {
+          recursive: true, errorOnExist: true, force: false,
+          filter: item => ![".git", ".svn"].includes(path.basename(item)),
+        });
+        if (exists && replaceExisting) {
+          // Legacy replacement remains explicitly requested, not used by V5 Temp publishing.
+          await fs.rm(target, { recursive: true, force: false });
+        }
+        await fs.rename(staging, target);
+        try {
+          await saveLibraryAndRegistry({
+            id: libraryId, kind, name, mode: "managed",
+            root_path: target, enabled: true,
+          }, entries);
+        } catch (error) {
+          // Do not leave an unregistered published library after a failed registry update.
+          if (!exists) await fs.rm(target, { recursive: true, force: true });
+          throw error;
+        }
+      } finally {
+        await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined);
+      }
+      return { library_id: libraryId, kind, folder_path: target, registered: entries.length, entries };
+    });
   });
 }
 
@@ -353,40 +357,44 @@ export async function publishManagedLibrary(
   if (!LIBRARY_ID.test(libraryId)) throw new Error("V5_LIBRARY_ID_INVALID");
   assertUserLibraryId(libraryId);
   const root = managedRoot(kind, libraryId);
-  const parent = kind === "lisp" ? getLispLibrariesRoot() : getJobLibrariesRoot();
-  const canonicalParent = await fs.realpath(parent);
-  const canonicalRoot = await fs.realpath(root);
-  if (path.dirname(canonicalRoot) !== canonicalParent) throw new Error("V5_LIBRARY_OWNER_ROOT_ALIAS");
-  const stat = await fs.lstat(root);
-  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("V5_LIBRARY_UNSAFE_ROOT");
-  const entries = await indexLibrary(kind, libraryId, root);
-  if (!entries.length) throw new Error("V5_LIBRARY_NO_REUSABLE_ASSETS");
-  const manifestFile = getUserLibrariesManifestPath();
-  const registryFile = getUserCapabilitiesPath();
-  return withFileMutationLocks([manifestFile, registryFile], async () => {
-    const manifest = await readJson<{ libraries: LibraryRecord[] }>(
-      manifestFile, { libraries: [] }
-    );
-    const existing = manifest.libraries.find(item =>
-      item.id.toLowerCase() === libraryId.toLowerCase() && item.kind === kind);
-    if (existing && libraryMode(existing) !== "managed") {
-      throw new Error("V5_LIBRARY_EXISTING_EXTERNAL_OWNERSHIP");
-    }
-    const registry = await readJson<UserRegistry>(registryFile, { version: 1, entries: [] });
-    const otherEntries = registry.entries.filter(item =>
-      !(item.kind === kind && item.library_id.toLowerCase() === libraryId.toLowerCase()));
-    if (entries.some(incoming => otherEntries.some(item =>
-      item.id.toLowerCase() === incoming.id.toLowerCase() ||
-      (kind === "lisp" && incoming.commands.some(cmd =>
-        item.kind === "lisp" &&
-        (item.commands ?? []).some(existingCmd => existingCmd.toLowerCase() === cmd.toLowerCase())))))) {
-      throw new Error("V5_LIBRARY_CAPABILITY_COLLISION");
-    }
-    await saveLibraryAndRegistry({
-      id: libraryId, kind, name, mode: "managed", root_path: root, enabled: true,
-    }, entries);
-    return { library_id: libraryId, kind, folder_path: root, registered: entries.length };
-  });
+  // Fence only source mutations while indexing and publishing their metadata;
+  // runtime/data work is independent and does not acquire this barrier.
+  return withSourcePublication(() => withFileMutationLocks([root], async () => {
+    const parent = kind === "lisp" ? getLispLibrariesRoot() : getJobLibrariesRoot();
+    const canonicalParent = await fs.realpath(parent);
+    const canonicalRoot = await fs.realpath(root);
+    if (path.dirname(canonicalRoot) !== canonicalParent) throw new Error("V5_LIBRARY_OWNER_ROOT_ALIAS");
+    const stat = await fs.lstat(root);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("V5_LIBRARY_UNSAFE_ROOT");
+    const entries = await indexLibrary(kind, libraryId, root);
+    if (!entries.length) throw new Error("V5_LIBRARY_NO_REUSABLE_ASSETS");
+    const manifestFile = getUserLibrariesManifestPath();
+    const registryFile = getUserCapabilitiesPath();
+    return withFileMutationLocks([manifestFile, registryFile], async () => {
+      const manifest = await readJson<{ libraries: LibraryRecord[] }>(
+        manifestFile, { libraries: [] }
+      );
+      const existing = manifest.libraries.find(item =>
+        item.id.toLowerCase() === libraryId.toLowerCase() && item.kind === kind);
+      if (existing && libraryMode(existing) !== "managed") {
+        throw new Error("V5_LIBRARY_EXISTING_EXTERNAL_OWNERSHIP");
+      }
+      const registry = await readJson<UserRegistry>(registryFile, { version: 1, entries: [] });
+      const otherEntries = registry.entries.filter(item =>
+        !(item.kind === kind && item.library_id.toLowerCase() === libraryId.toLowerCase()));
+      if (entries.some(incoming => otherEntries.some(item =>
+        item.id.toLowerCase() === incoming.id.toLowerCase() ||
+        (kind === "lisp" && incoming.commands.some(cmd =>
+          item.kind === "lisp" &&
+          (item.commands ?? []).some(existingCmd => existingCmd.toLowerCase() === cmd.toLowerCase())))))) {
+        throw new Error("V5_LIBRARY_CAPABILITY_COLLISION");
+      }
+      await saveLibraryAndRegistry({
+        id: libraryId, kind, name, mode: "managed", root_path: root, enabled: true,
+      }, entries);
+      return { library_id: libraryId, kind, folder_path: root, registered: entries.length };
+    });
+  }));
 }
 
 /** Refresh an already-published managed library after an in-place Builder edit.
@@ -405,18 +413,22 @@ export async function refreshPublishedManagedLibrary(kind: AssetKind, libraryId:
 }
 
 async function registerExternalLibrary(kind: AssetKind, libraryId: string, name: string, folderPath: string) {
-  assertUserLibraryId(libraryId);
-  const root = await assertSourceFolder(folderPath);
-  const entries = await indexLibrary(kind, libraryId, root);
-  await saveLibraryAndRegistry({
-    id: libraryId,
-    kind,
-    name,
-    mode: "external",
-    root_path: root,
-    enabled: true,
-  }, entries);
-  return { library_id: libraryId, kind, folder_path: root, registered: entries.length, entries };
+  return withSourcePublication(async () => {
+    assertUserLibraryId(libraryId);
+    const root = await assertSourceFolder(folderPath);
+    return withFileMutationLocks([root, getUserLibrariesManifestPath(), getUserCapabilitiesPath()], async () => {
+      const entries = await indexLibrary(kind, libraryId, root);
+      await saveLibraryAndRegistry({
+        id: libraryId,
+        kind,
+        name,
+        mode: "external",
+        root_path: root,
+        enabled: true,
+      }, entries);
+      return { library_id: libraryId, kind, folder_path: root, registered: entries.length, entries };
+    });
+  });
 }
 
 async function exportLibrary(kind: AssetKind, libraryId: string, folderPath: string, overwrite: boolean) {

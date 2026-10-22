@@ -34,14 +34,6 @@ export interface LispValidationResult {
   };
 }
 
-async function readJson<T>(target: string, fallback: T): Promise<T> {
-  try {
-    return JSON.parse(await fs.readFile(target, "utf8")) as T;
-  } catch {
-    return fallback;
-  }
-}
-
 const COMMON_LISP_ONLY_FORMS = [
   "let", "let*", "flet", "labels", "macrolet", "defmacro", "defpackage", "in-package",
   "defclass", "defgeneric", "defmethod", "loop", "dolist", "dotimes", "do", "do*", "setf",
@@ -339,7 +331,7 @@ export function registerLispHarnessTools(server: McpServer): void {
     "lisp_scaffold",
     {
       title: "Create Canonical AutoLISP Scaffold",
-      description: "Create a canonical user-owned AutoLISP scaffold. Internal tbh-toolkit is reserved and cannot be used as a User Library target. Returns content AND a namespaced ready-to-use suggested_draft_path; pass that path directly to file_create.",
+      description: "Generate canonical AutoLISP source content and an optional owned V5 source target. Does not write, require an existing library, create a draft or publish. Internal tbh-toolkit remains reserved.",
       inputSchema: {
         file_name: z.string().regex(/^[^\\/]+\.lsp$/i),
         module: z.string().min(1).max(120),
@@ -352,7 +344,6 @@ export function registerLispHarnessTools(server: McpServer): void {
     },
     async ({ file_name, module, command, description, target_library_id, mutating, uses_com }) => {
       try {
-        const { getLispDraftRoot } = await import("../lib/appdata.js");
         if (target_library_id?.trim().toLowerCase() === "tbh-toolkit") {
           throw new Error(
             "INTERNAL_LIBRARY_RESERVED: tbh-toolkit is repo-bundled Internal Registry content, not a User AppData promotion target."
@@ -360,37 +351,14 @@ export function registerLispHarnessTools(server: McpServer): void {
         }
         const profile = profileForLibrary(target_library_id);
         const content = makeScaffold({ profile, fileName: file_name, module, command, description, mutating, usesCom: uses_com });
-        const draftRoot = getLispDraftRoot();
-        const draftNamespace = target_library_id?.trim() || "unassigned";
-        const suggestedDraftPath = path.join(
-          draftRoot,
-          draftNamespace,
-          file_name
-        );
-
-        let libraryStatus: { registered: boolean; library_id: string; note: string } | undefined;
-        if (target_library_id) {
-          const { getUserLibrariesManifestPath } = await import("../lib/appdata.js");
-          const manifest = await readJson<{ libraries?: Array<Record<string, unknown>> }>(getUserLibrariesManifestPath(), { libraries: [] });
-          const found = (manifest.libraries ?? []).some((item: Record<string, unknown>) => item.kind === "lisp" && item.id === target_library_id && item.enabled !== false);
-          libraryStatus = {
-            registered: found,
-            library_id: target_library_id,
-            note: found
-              ? `Target library '${target_library_id}' exists and is ready for promotion.`
-              : `Target library '${target_library_id}' is not yet in libraries.json. Create it with library_create or import it with library_import before calling lisp_promote_draft.`,
-          };
-        }
 
         return toolResult("lisp_scaffold", {
           file_name,
           command: command.toUpperCase(),
           authoring_profile: profile,
           content,
-          draft_root: draftRoot,
-          suggested_draft_path: suggestedDraftPath,
-          ...(libraryStatus ? { library_status: libraryStatus } : {}),
-          next: "Call file_create with path=suggested_draft_path and the content above. Then implement, run lisp_draft_validate, and test with CAD tools.",
+          ...(target_library_id ? { source_target: { kind: "reusable-lisp", library_id: target_library_id.trim(), folder: command.toLowerCase(), relative_file: file_name } } : {}),
+          next: "For explicitly requested permanent Lisp use v5_source_create in the selected owned source folder; existing source requires exact cg/update. For one-off CAD execution use owned Temp source. Validate source with lisp_validate(source=...) when useful, then run the requested real operation; no draft/test/promote ceremony.",
         });
       } catch (error) {
         return toolError("lisp_scaffold", error);
@@ -402,16 +370,22 @@ export function registerLispHarnessTools(server: McpServer): void {
     "lisp_validate",
     {
       title: "Validate Managed AutoLISP Source",
-      description: "Validate AutoLISP correctness/safety for a managed Lisp Library file. Header/style enforcement is opt-in via profile; imported Lisp is normally validated with profile=syntax and remains unmodified.",
+      description: "Validate supplied AutoLISP text or one managed Lisp source file without mutation. Select exactly one of source or path. No draft or Registry prerequisite; validation is diagnostics, not a separate execution stage.",
       inputSchema: {
-        path: z.string().min(1),
+        path: z.string().min(1).optional(),
+        source: z.string().min(1).optional(),
         expected_commands: z.array(z.string().min(1)).max(50).optional().default([]),
         profile: z.enum(["syntax", "cadgpt", "tbh"]).optional().default("syntax"),
       },
     },
-    async ({ path: input, expected_commands, profile }) => {
+    async ({ path: input, source: supplied, expected_commands, profile }) => {
       try {
-        const target = await resolveAllowedPath(input);
+        if ((input !== undefined) === (supplied !== undefined)) throw new Error("LISP_VALIDATION_INPUT_REQUIRED: supply exactly one of path or source.");
+        if (supplied !== undefined) {
+          const result = validateLispSource(supplied, expected_commands, { profile });
+          return toolResult("lisp_validate", { dialect: "AutoLISP/Visual LISP", authoring_profile: profile, ...result });
+        }
+        const target = await resolveAllowedPath(input!);
         const virtual = toCadgptPath(target).replaceAll("\\", "/");
         if (!virtual.toLowerCase().startsWith("appdata/libraries/lisp/") || path.extname(target).toLowerCase() !== ".lsp") {
           throw new Error("lisp_validate accepts only managed .lsp files under appdata/libraries/lisp/**");

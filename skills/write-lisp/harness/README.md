@@ -1,78 +1,9 @@
-# write-lisp Harness
+# AutoLISP harness — V5
 
-The harness is intentionally small and AutoLISP-specific. It is not a generic build/test framework.
+Use `../SKILL.md`. Work directly on the explicit reusable owner's source or session-owned Temp source. Do not impose numbered lifecycle gates or checkout/promotion stages.
 
-## Gate 0 — Ready-made syntax preflight
+Validate the exact text/path with the shared Lisp validator, diagnose concrete errors, then use verified load/run against the intended bound drawing. A static PASS, queued command or successful transport response is not evidence that AutoCAD loaded or executed the command. Inspect `loaded`, command evidence and the relevant postcondition.
 
-Source/dev script:
+Use the task's authorized drawing. If a separate destructive test has no authorized target, clarify that decision; do not require a new drawing choice for every edit. If a requested disposable test drawing cannot be created, report the failure rather than switching to a live drawing.
 
-```text
-npm run test:lisp-syntax -- "<file.lsp>" --profile=cadgpt [--expect=COMMAND]
-```
-
-The script is `scripts/test-lisp-syntax.ts`. It reads one or more explicit `.lsp` paths, calls the same exported `validateLispSource` function as CadGPT's MCP tools, prints diagnostics with locations, and exits non-zero on any blocking syntax/dialect error.
-
-Use it immediately after editing when a local repo shell is available. It is intentionally not a second parser.
-
-## Gate 1 — Static source validation
-
-Tools: `lisp_validate` / `lisp_draft_validate`
-
-Checks currently include:
-
-- comment/string-aware parenthesis structure;
-- unclosed strings;
-- unmatched opening/closing parentheses with source locations;
-- public `c:` command extraction;
-- function extraction;
-- optional expected-command contract;
-- duplicate public command definitions;
-- warning when COM/VLA/VLAX APIs appear without `(vl-load-com)`;
-- warning when `setvar` is used without a local `*error*` handler;
-- warning when `(command)` / `(command-s)` is used so the caller verifies that a direct DXF/VLA API is not more appropriate.
-
-The result includes a SHA-256 fingerprint of the validated source so the caller can identify exactly which text passed the static gate.
-
-The CLI preflight and MCP validation tools share this validator. This validator is a structural reader-aware gate, not a full AutoLISP evaluator. A verified AutoCAD load remains mandatory for changed production Lisp.
-
-## Gate 2 — AutoCAD load
-
-Tool: `cad__cad_load_lisp_file`
-
-Only repository `.lsp` files under `lisp/**` can be loaded. Passing Gate 1 is required before load.
-
-A successful queue/send is not sufficient proof that the file behaves correctly.
-
-## Gate 3 — Runtime command execution
-
-Tool: `cad__cad_run_lisp_command`
-
-Run only when the command has a deterministic, safe invocation path. Interactive or destructive legacy commands may require a workflow-specific test strategy.
-
-Do not auto-replay after uncertain transport failure.
-
-## Gate 4 — Drawing postcondition
-
-Use structured CAD MCP inspection to verify the real result in the explicitly bound drawing.
-
-Examples:
-
-- layer/object-type inventory;
-- entity handles and properties;
-- nested block/internal entity layers;
-- block attributes;
-- remaining source/review/detail entities;
-- target layer existence and counts.
-
-This is the true completion gate. Source validation and command dispatch are only intermediate evidence.
-
-## Debug cycle
-
-```text
-static fail  -> inspect source -> patch -> static gate again
-load fail    -> inspect load/path/dependency -> patch -> static -> reload
-runtime fail -> classify AutoLISP/DXF/COM/drawing-state error -> patch narrowly
-result fail  -> inspect actual CAD state/rule/data -> patch only the responsible logic
-```
-
-The harness does not provide generic unit-test, package, dependency, release, or Git gates because those do not fit CadGPT's AutoLISP specialization.
+Stop/report failures with the exact file, command, document identity and available error/log evidence. Preserve repairable source and report when native verification remains unavailable. Source publication is optional and explicit.

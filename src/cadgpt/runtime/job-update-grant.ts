@@ -1,11 +1,30 @@
 import path from "node:path";
 
-// Explicit user command authorizes editing one existing Job source package.
+// Explicit user command authorizes editing one existing Job/Lisp source package.
 // The command is observed through the CadGPT admission/control flow, not
 // inferred from a Builder owner_id supplied by a tool caller.
 const pendingCommands = new Set<string>();
 const grants = new Map<string, { target: string; executionId: string | null }>();
-const newPackagesByExecution = new Map<string, Set<string>>();
+// Positive evidence of creation by this logical session, not an inference from
+// missing Registry entries. Work cleanup must not discard unfinished authoring.
+const newPackagesBySession = new Map<string, Set<string>>();
+let publicationBarrier: Promise<void> = Promise.resolve();
+const sourceMutations = new Set<Promise<void>>();
+
+/** Independent source edits stay concurrent; publication fences only source I/O. */
+export async function withSourceMutation<T>(callback: () => Promise<T>): Promise<T> {
+  const operation = publicationBarrier.then(callback);
+  const settled = operation.then(() => undefined, () => undefined);
+  sourceMutations.add(settled);
+  try { return await operation; }
+  finally { sourceMutations.delete(settled); }
+}
+
+export function withSourcePublication<T>(callback: () => Promise<T>): Promise<T> {
+  const operation = Promise.all([publicationBarrier, ...sourceMutations]).then(callback);
+  publicationBarrier = operation.then(() => undefined, () => undefined);
+  return operation;
+}
 
 function key(root: string): string {
   const resolved = path.resolve(root);
@@ -13,14 +32,15 @@ function key(root: string): string {
 }
 
 export function observeExplicitJobUpdateCommand(sessionKey: string, userTurn: string): boolean {
-  if (!/^cg\/jobupdate$/i.test(userTurn.trim())) return false;
+  if (!/^cg\/update$/i.test(userTurn.trim())) return false;
+  grants.delete(sessionKey);
   pendingCommands.add(sessionKey);
   return true;
 }
 
 export function activateJobUpdateGrant(sessionKey: string, targetRoot: string): void {
   if (!pendingCommands.delete(sessionKey)) {
-    throw new Error("JOB_UPDATE_EXPLICIT_COMMAND_REQUIRED: issue cg/jobupdate before selecting a Job.");
+    throw new Error("JOB_UPDATE_EXPLICIT_COMMAND_REQUIRED: issue cg/update before selecting a Job or Lisp.");
   }
   grants.set(sessionKey, { target: key(targetRoot), executionId: null });
 }
@@ -34,22 +54,38 @@ export function assertJobUpdateGrant(sessionKey: string, executionId: string, ro
   const grant = grants.get(sessionKey);
   if (!grant || grant.target !== key(root) ||
       (grant.executionId && grant.executionId !== executionId)) {
-    throw new Error("JOB_UPDATE_EXPLICIT_COMMAND_REQUIRED: cg/jobupdate must authorize this exact existing Job.");
+    throw new Error("JOB_UPDATE_EXPLICIT_COMMAND_REQUIRED: cg/update must authorize this exact existing Job or Lisp.");
   }
   if (!grant.executionId) grant.executionId = executionId;
 }
 
-export function recordNewJobPackage(executionId: string, root: string): void {
-  let roots = newPackagesByExecution.get(executionId);
+export function recordNewSourcePackage(sessionKey: string, root: string): void {
+  let roots = newPackagesBySession.get(sessionKey);
   if (!roots) {
     roots = new Set<string>();
-    newPackagesByExecution.set(executionId, roots);
+    newPackagesBySession.set(sessionKey, roots);
   }
   roots.add(key(root));
 }
 
-export function isNewJobPackageForExecution(executionId: string, root: string): boolean {
-  return newPackagesByExecution.get(executionId)?.has(key(root)) ?? false;
+export function isNewSourcePackageForSession(sessionKey: string, root: string): boolean {
+  return newPackagesBySession.get(sessionKey)?.has(key(root)) ?? false;
+}
+
+/** Called only after successful shared Registry publication, never on failure. */
+export function finishSourceAuthoringInLibrary(libraryRoot: string, relativePaths: string[]): void {
+  const published = relativePaths.map(relative => key(path.resolve(libraryRoot, relative.replaceAll("\\", "/"))));
+  for (const [session, roots] of newPackagesBySession) {
+    for (const root of roots) {
+      if (published.some(file => file.startsWith(root + path.sep))) roots.delete(root);
+    }
+    if (!roots.size) newPackagesBySession.delete(session);
+  }
+}
+
+export function clearSourceAuthoringForSession(sessionKey: string): void {
+  newPackagesBySession.delete(sessionKey);
+  clearJobUpdateGrantForSession(sessionKey);
 }
 
 export function clearJobUpdateGrantForSession(sessionKey: string): void {
@@ -61,5 +97,4 @@ export function clearJobUpdateGrantForExecution(executionId: string): void {
   for (const [sessionKey, grant] of grants) {
     if (grant.executionId === executionId) grants.delete(sessionKey);
   }
-  newPackagesByExecution.delete(executionId);
 }

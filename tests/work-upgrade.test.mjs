@@ -194,7 +194,7 @@ test("job draft creation and promotion validate library prerequisites clearly", 
 });
 
 
-test("user library creation reserves internal ids and Lisp scaffold paths are namespaced", async () => {
+test("user library creation reserves internal ids and Lisp scaffold suggests the final owner", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-library-create-test-"));
   const previousRoot = process.env.CADGPT_APPDATA_ROOT;
   process.env.CADGPT_APPDATA_ROOT = tempRoot;
@@ -253,16 +253,10 @@ test("user library creation reserves internal ids and Lisp scaffold paths are na
       uses_com: false,
     });
     assert.equal(scaffolded.structuredContent?.ok, true);
-    assert.equal(
-      path.resolve(scaffolded.structuredContent.data.suggested_draft_path),
-      path.resolve(
-        tempRoot,
-        "workspace",
-        "lisp-draft",
-        "my-lisp",
-        "same-name.lsp"
-      )
-    );
+    assert.deepEqual(scaffolded.structuredContent.data.source_target, {
+      kind: "reusable-lisp", library_id: "my-lisp", folder: "mycmd", relative_file: "same-name.lsp",
+    });
+    assert.equal(scaffolded.structuredContent.data.suggested_draft_path, undefined);
 
     const reservedScaffold = await scaffold({
       file_name: "bad.lsp",

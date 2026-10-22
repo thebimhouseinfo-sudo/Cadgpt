@@ -10,7 +10,7 @@ import { toolError, toolResult } from "../lib/tool-result.js";
 import { assertBuilderTarget, currentBuilderTarget } from "../runtime/builder-target.js";
 import { publishManagedLibrary } from "./user-assets.js";
 import { getJobLibrariesRoot, getLispLibrariesRoot } from "../lib/appdata.js";
-import { assertJobUpdateGrant, hasJobUpdateGrantForWork, isNewJobPackageForExecution, recordNewJobPackage } from "../runtime/job-update-grant.js";
+import { assertJobUpdateGrant, hasJobUpdateGrantForWork, isNewSourcePackageForSession, recordNewSourcePackage, withSourceMutation } from "../runtime/job-update-grant.js";
 
 const digest = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
 const extension = new Set([".md", ".txt", ".json", ".py", ".lsp", ".dcl", ".csv", ".yaml", ".yml"]);
@@ -21,18 +21,16 @@ function assertBuilder(kind: "reusable-job" | "reusable-lisp"): void {
     (active.ownerId === "job-authoring" || active.ownerId === "lisp-authoring" ||
      active.ownerId === "jobcreate" || active.capabilities.includes("job-authoring") ||
      active.capabilities.includes("lisp-authoring"));
-  const explicitlyGrantedJob = kind === "reusable-job" &&
-    hasJobUpdateGrantForWork(lease.sessionKey, lease.workId);
+  const explicitlyGrantedSource = hasJobUpdateGrantForWork(lease.sessionKey, lease.workId);
   if (!active || active.closing || active.executionId !== lease.workId ||
-      active.executionPath === "cad" || (!conventionalBuilder && !explicitlyGrantedJob)) {
+      active.executionPath === "cad" || (!conventionalBuilder && !explicitlyGrantedSource)) {
     throw new Error("V5_EXPLICIT_BUILDER_WORK_REQUIRED");
   }
 }
 
-function assertExistingJobEdit(kind: "reusable-job" | "reusable-lisp", root: string): void {
-  if (kind !== "reusable-job") return;
+function assertExistingSourceEdit(root: string): void {
   const lease = currentToolLease();
-  if (!isNewJobPackageForExecution(lease.workId, root)) {
+  if (!isNewSourcePackageForSession(lease.sessionKey, root)) {
     assertJobUpdateGrant(lease.sessionKey, lease.workId, root);
   }
 }
@@ -96,22 +94,23 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
       const o = owner(kind, library_id, folder);
       const target = targetFor(o, relative_file);
       const directory = ownedSourceRoot(o);
-      const existingPackage = await fs.stat(directory).then(() => true, (error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") return false;
-        throw error;
-      });
-      if (existingPackage) assertExistingJobEdit(kind, directory);
-      await assertOwnedSourceRootSafe(o);
-      assertBuilderTarget(currentToolLease().workId, directory);
-      await fs.mkdir(directory, { recursive: true });
-      const result = await withFileMutationLocks([target], async () => {
+      const result = await withSourceMutation(() => withFileMutationLocks([directory, target], async () => {
+        assertBuilder(kind);
+        const existingPackage = await fs.stat(directory).then(() => true, (error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return false;
+          throw error;
+        });
+        if (existingPackage) assertExistingSourceEdit(directory);
+        await assertOwnedSourceRootSafe(o);
+        assertBuilderTarget(currentToolLease().workId, directory);
+        await fs.mkdir(directory, { recursive: true });
         const resolved = await resolveOwnedSourceMutation(target, o, { forCreate: true });
         await fs.mkdir(path.dirname(resolved), { recursive: true });
         const checked = await resolveOwnedSourceMutation(target, o, { forCreate: true });
         await fs.writeFile(checked, content, { flag: "wx" });
+        if (!existingPackage) recordNewSourcePackage(currentToolLease().sessionKey, directory);
         return { path: checked, sha256: digest(content) };
-      });
-      if (kind === "reusable-job" && !existingPackage) recordNewJobPackage(currentToolLease().workId, directory);
+      }));
       return toolResult("v5_source_create", { ...result, source_created: true });
     } catch (e) { return toolError("v5_source_create", e); }
   });
@@ -124,10 +123,12 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
       assertBuilder(kind);
       const o = owner(kind, library_id, folder);
       const target = targetFor(o, relative_file);
-      assertExistingJobEdit(kind, ownedSourceRoot(o));
-      await assertOwnedSourceRootSafe(o);
-      assertBuilderTarget(currentToolLease().workId, ownedSourceRoot(o));
-      const result = await withFileMutationLocks([target], async () => {
+      const directory = ownedSourceRoot(o);
+      const result = await withSourceMutation(() => withFileMutationLocks([directory, target], async () => {
+        assertBuilder(kind);
+        assertExistingSourceEdit(directory);
+        await assertOwnedSourceRootSafe(o);
+        assertBuilderTarget(currentToolLease().workId, directory);
         const resolved = await resolveOwnedSourceMutation(target, o);
         const before = await fs.readFile(resolved);
         if (digest(before) !== expected_sha256.toLowerCase()) throw new Error("V5_SOURCE_REVISION_CONFLICT");
@@ -138,7 +139,7 @@ export function registerV5BuilderSourceTools(server: McpServer): void {
           await fs.rename(tmp, resolved);
         } finally { await fs.rm(tmp, { force: true }).catch(() => {}); }
         return { path: resolved, sha256: digest(content) };
-      });
+      }));
       return toolResult("v5_source_update", { ...result, source_updated: true });
     } catch (e) { return toolError("v5_source_update", e); }
   });

@@ -17,3 +17,23 @@ __pycache__/
 packages.lock.json
 *.dwl
 *.dwl2
+# BEGIN bootstrap local agent setup
+# mode: local
+# Local agent configuration/state; product source and docs remain trackable.
+/.agents/
+/.antigravity/
+/.codex/
+/.claude/
+/.continue/
+/.generic/
+/harness/
+/lessons/
+/AGENTS.md
+/AGENTS.bootstrap.md
+/CLAUDE.md
+/TASKS.md
+/docs/PROJECT_PROFILE.md
+/docs/TRACE.md
+/docs/reports/_TEMPLATE.md
+/docs/reports/_REVIEW_TEMPLATE.md
+# END bootstrap local agent setup

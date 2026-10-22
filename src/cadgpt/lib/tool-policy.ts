@@ -1,5 +1,12 @@
 import { isInternalJobId } from "./internal-jobs.js";
 
+// Kept as internal compatibility implementations, not competing V5 MCP routes.
+export const RETIRED_AUTHORING_TOOLS = new Set([
+  "job_draft_new", "job_checkout", "job_draft_validate", "job_promote_draft", "job_run_direct_draft",
+  "lisp_checkout", "lisp_draft_validate", "lisp_promote_draft",
+  "file_temp_lisp_create", "file_temp_lisp_cleanup",
+]);
+
 const CONTROL_TOOLS = new Set([
   "cadgpt_control",
   "cadgpt_admission",

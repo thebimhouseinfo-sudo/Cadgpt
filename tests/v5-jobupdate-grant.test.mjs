@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 
-test("Existing Job editing requires exact cg/jobupdate and cannot target another Job", async () => {
+test("Existing Job editing requires exact cg/update and cannot target another Job", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "cadgpt-jobupdate-"));
   const previous = process.env.CADGPT_APPDATA_ROOT;
   process.env.CADGPT_APPDATA_ROOT = root;
@@ -66,9 +66,9 @@ test("Existing Job editing requires exact cg/jobupdate and cannot target another
     assert.equal(grants.observeExplicitJobUpdateCommand(session, "hãy sửa job"), false);
     assert.throws(() => grants.activateJobUpdateGrant(session, folder), /JOB_UPDATE_EXPLICIT_COMMAND_REQUIRED/);
 
-    await handlers.get("cadgpt_admission")({ user_turn: "cg/jobupdate", invocation_source: "plugin" });
+    await handlers.get("cadgpt_admission")({ user_turn: "cg/update", invocation_source: "plugin" });
     const activated = await handlers.get("cadgpt_control")({
-      surface: "jobupdate", job_library_id: "existing", job_folder: "job-a",
+      surface: "update", source_kind: "job", job_library_id: "existing", job_folder: "job-a",
     });
     assert.equal(activated.structuredContent.text, "AUTHORIZED");
     const wrong = await request("job-b", "# Wrong Job\n");

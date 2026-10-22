@@ -667,6 +667,10 @@ export function hasActiveToolLeaseForExecution(executionId: string): boolean {
   return hasActiveLeaseForWork(executionId);
 }
 
+export function hasActiveToolLeaseForSession(sessionKey: string): boolean {
+  return [...activeLeases.values()].some(lease => lease.sessionKey === sessionKey);
+}
+
 export function activeJobWorkExecutionIds(): string[] {
   return [...registrations.values()]
     .filter((work) => work.ownerType === "job" && !work.closing)
