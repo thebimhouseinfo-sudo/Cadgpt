@@ -20,3 +20,9 @@ export function currentBuilderTarget(executionId: string): string | null {
 export function clearBuilderTarget(executionId: string): void {
   targets.delete(executionId);
 }
+
+/** Selection context follows a validated source operation; it is not a Work lock. */
+export function selectBuilderTarget(executionId: string, ownedRoot: string): void {
+  if (!executionId || !path.isAbsolute(ownedRoot)) throw new Error("V5_BUILDER_TARGET_INVALID");
+  targets.set(executionId, normalized(ownedRoot));
+}

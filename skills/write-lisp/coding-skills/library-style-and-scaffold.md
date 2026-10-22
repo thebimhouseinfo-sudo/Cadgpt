@@ -43,7 +43,7 @@ The TBH profile preserves the user's company convention; it is not CadGPT's defa
 
 `lisp_scaffold` returns content and an optional final owned `source_target`, without filesystem mutation. Use `v5_source_create` for explicitly requested reusable source, or Temp source tools for one-off helpers. The reserved bundled `tbh-toolkit` is not a user authoring target.
 
-For existing managed source, read the exact file and latest SHA, obtain exact `cg/update <target>` authorization for saved source, then use `v5_source_update`. Preserve public commands, behavior and implementation style unless the requested change requires otherwise. Do not cosmetically rewrite the full file. The original external import location is never modified. Publish only when requested, through `v5_source_publish`; no checkout/draft/promote stage is required.
+For existing managed source, read the exact file, obtain exact `cg/update <target>` authorization for saved source, then use `v5_source_update`. Preserve public commands, behavior and implementation style unless the requested change requires otherwise. Do not cosmetically rewrite the full file. The original external import location is never modified. Publish only when requested, through `v5_source_publish`; no checkout/draft/promote stage is required.
 
 ## Canonical order
 

@@ -1,3 +1,6 @@
+import { selectBuilderTarget } from "../runtime/builder-target.js";
+import { clearJobUpdateGrantForSession, rememberSourceForSession } from "../runtime/job-update-grant.js";
+import { clearWorkSourceAuthoringIntent } from "../lib/work-registration.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -23,7 +26,6 @@ import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { withCadHostLock } from "../runtime/cad-scheduler.js";
 import { hasVerifiedBoundSave, noteVerifiedBoundSave, invalidateBoundSave, notePotentialCadMutation, hasPotentialCadMutation, resetCadMutationTracking } from "../runtime/bound-save-ledger.js";
-import { assertBuilderTarget, currentBuilderTarget } from "../runtime/builder-target.js";
 import {
   drawingMetadataRootsForExecution,
   drawingMetadataWritableRootsForExecution,
@@ -950,7 +952,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
               )
             );
         } else if (source_path) {
-          if (!path.isAbsolute(source_path) || path.win32.isAbsolute(source_path) !== (process.platform === "win32") ||
+          if (!path.isAbsolute(source_path) ||
               path.basename(source_path).toLowerCase() !== "job.md") {
             throw new Error("V5_JOB_SOURCE_ABSOLUTE_JOB_MD_REQUIRED");
           }
@@ -961,15 +963,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
           // Alias under the library is acceptable only when it maps to the same
           // canonical directory (Windows DOS aliases are normalized by realpath).
           if (!isPathInside(actual, sourceRoot)) throw new Error("V5_JOB_SOURCE_OWNER_ESCAPE");
-          const currentWork = activeWorkForSession(currentToolLease().sessionKey);
-          if (!currentWork || currentWork.executionId !== currentToolLease().workId ||
-              currentWork.ownerType === "job" ||
-              !["jobcreate", "job-authoring"].includes(currentWork.ownerId) &&
-              !currentWork.capabilities.includes("job-authoring")) {
-            throw new Error("V5_JOB_SOURCE_BUILDER_WORK_REQUIRED");
-          }
           jobFile = realSource;
-          assertBuilderTarget(currentToolLease().workId, path.dirname(realSource));
           jobId = "v5:" + path.relative(sourceRoot, path.dirname(jobFile)).replaceAll("\\", "/");
         } else {
           if (!path.isAbsolute(draft_path!)) {
@@ -1029,6 +1023,12 @@ export function registerJobAuthoringTools(server: McpServer): void {
             jobFile,
             { resetRuntime: false }
           );
+        if (id) {
+          clearJobUpdateGrantForSession(lease.sessionKey);
+          clearWorkSourceAuthoringIntent(lease.workId);
+        }
+        selectBuilderTarget(lease.workId, runtime.job_root);
+        rememberSourceForSession(lease.sessionKey, runtime.job_root);
         if (!sameActiveJob) resetCadMutationTracking(lease.workId);
         // A FILE-only Job B can resume on a drawing root already verified
         // during Job A, with no second CAD bind or invented AppData path.
@@ -1205,6 +1205,7 @@ export function registerJobAuthoringTools(server: McpServer): void {
         const cleanup = await cleanupJobRuntimeForExecution(lease.workId, {
           clearRuntimeScratch: outcome === "done",
         });
+        if (outcome === "done") clearJobUpdateGrantForSession(lease.sessionKey);
         return toolResult("job_runtime_finish", { outcome, cleanup, autosave: autoSave,
           status: outcome === "done" ? (dwg_changed ? "JOB_DONE_SAVED" : "JOB_DONE_READ_ONLY") : "JOB_FAILED" });
       } catch (error) {
@@ -1386,31 +1387,22 @@ export function registerJobAuthoringTools(server: McpServer): void {
             throw new Error("V5_DIRECT_SOURCE_ABSOLUTE_PY_REQUIRED");
           }
           const lease = currentToolLease();
-          const work = activeWorkForSession(lease.sessionKey);
-          const isBuilder = work?.executionId === lease.workId &&
-            work.ownerType !== "job" && !work.closing &&
-            (["jobcreate", "job-authoring"].includes(work.ownerId) ||
-             work.capabilities.includes("job-authoring"));
-          if (!isBuilder) throw new Error("V5_DIRECT_BUILDER_WORK_REQUIRED");
           const root = await fs.realpath(getJobLibrariesRoot());
           const source = await fs.realpath(source_path);
           const owner = await fs.realpath(path.dirname(source));
           if (!isPathInside(owner, root) || !isPathInside(source, owner)) {
             throw new Error("V5_DIRECT_SOURCE_OUTSIDE_MANAGED_JOB");
           }
-          const targetOwner = currentBuilderTarget(lease.workId);
-          const equal = (a: string, b: string) => process.platform === "win32"
-            ? a.toLowerCase() === b.toLowerCase() : a === b;
-          if (!targetOwner || !equal(await fs.realpath(targetOwner), owner)) {
-            throw new Error("V5_DIRECT_BUILDER_TARGET_MISMATCH");
-          }
           await releasePriorJobAuthorityForStart({
             executionId: lease.workId, sessionKey: lease.sessionKey,
           });
+          selectBuilderTarget(lease.workId, owner);
+          rememberSourceForSession(lease.sessionKey, owner);
           const executed = await executeDirectJobScript(
             source, args, "v5:" + path.relative(root, owner).split(path.sep).join("/"),
             { fileOnly: false },
           );
+          clearJobUpdateGrantForSession(lease.sessionKey);
           return toolResult("job_run_direct", {
             registry: "unregistered-v5", source_path: source, ...executed,
           });
@@ -1425,6 +1417,8 @@ export function registerJobAuthoringTools(server: McpServer): void {
             sessionKey:
               callLease.sessionKey,
           });
+          clearJobUpdateGrantForSession(callLease.sessionKey);
+          clearWorkSourceAuthoringIntent(callLease.workId);
           const executed = await executeInternalDirectJob(internal, args);
           return toolResult("job_run_direct", {
             id: internal.id,
@@ -1464,6 +1458,10 @@ export function registerJobAuthoringTools(server: McpServer): void {
           sessionKey:
             callLease.sessionKey,
         });
+        clearJobUpdateGrantForSession(callLease.sessionKey);
+        clearWorkSourceAuthoringIntent(callLease.workId);
+        selectBuilderTarget(callLease.workId, path.dirname(script));
+        rememberSourceForSession(callLease.sessionKey, path.dirname(script));
         const executed = await executeDirectJobScript(script, args, entry.id, {
           fileOnly: entry.tags?.some((tag) => tag.toLowerCase() === "file-only") === true,
         });

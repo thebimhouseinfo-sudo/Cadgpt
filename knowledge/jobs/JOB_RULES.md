@@ -23,7 +23,7 @@ Existing saved/imported reusable source needs exact user `cg/update <target>` au
 ## Temp Job
 
 - Allocate `%LOCALAPPDATA%/CadGPT/temp-jobs/<UUID>/` using `temp_job_create`. UUID belongs to temporary scratch **only**.
-- Read owned source with `temp_job_source_read` before SHA-checked corrections. Session ownership survives Work changes; stale execution IDs and other sessions remain denied.
+- Read owned source with `temp_job_source_read` before internally revision-checked corrections. Session ownership survives Work changes; stale execution IDs and other sessions remain denied.
 - A Temp Job needs no `JOB.md`, Job Registry entry, draft or whole-Job promotion.
 - Builder uses `temp_job_source_create`, `temp_job_source_update`, optional `temp_job_lisp_load`, then the normal bound CAD execution tools. Loaded Lisp success requires `loaded=true`; run command success is separate.
 - A Temp Job may run its own trusted, hash-pinned **file-only** Python helper using `temp_job_python_run` and JSON input. This is not an OS sandbox and is never an alternative path for AutoCAD mutations; CAD execution still goes through the verified host and drawing tools.
@@ -57,3 +57,15 @@ Immediately after the **last DWG mutation of each completed CAD phase**, and bef
 - Keep actual user-provided Job business logic. Repair platform defects without rewriting accepted business steps. User-requested changes to Job behavior are authored in the original managed package, not as parallel competing JOB.md copies.
 - STOP/REPORT failures truthfully, leave necessary raw/result data intact, and do not automatically repeat an operation when mutation success is uncertain.
 - Report DONE only when the declared work and required bound Save genuinely succeeded. Publication of reusable assets is a separate user-requested operation.
+
+## Repair continuity and operation boundaries
+
+One exact Human `cg/update` selects one saved source package and enters Builder repair on the current compatible Work. Retry of the same control/admission is idempotent. Work renewal during that repair retains only the same target grant; stale/foreign Work credentials remain invalid. Failed runtime cleanup retains the most recently selected source for repair, not global write permission.
+
+Starting a registered Operator Job (including Internal Jobs), explicit stop, successful Job completion, explicit publication or switching to a different source operation ends the saved-source grant. Re-enter repair only when needed through the Human command. An original Builder Work may resume new authoring after a Job finishes; it never regains expired saved-source write authority from its owner label.
+
+Prepared Job runtime is helper ownership authority; stale Work owner/job labels cannot block that runtime's own helper. RUN by managed source path is not source editing and requires neither an edit grant nor prior publication. Source hashes and CAS are internal; an optional caller revision still rejects stale updates.
+
+New package creation is not locked to the first package selected in a Work. Explicit `v5_source_publish` only updates the selected package's capabilities and does not reindex sibling packages or expose owned runtime/helpers as Jobs. A completed Temp can be explicitly cleared while Work continues, provided its own runner/LOAD is no longer using it; active Temp and durable results remain protected.
+
+Legacy Dynamic Lisp adapters may read an existing Job-owned Engine without an unlock. Creating or patching persistent Engine code is source maintenance and requires exact `cg/update`; it cannot be used to write another Job's Engine or replace per-run runtime Data generation. Data format follows the Engine contract, not a platform-wide extension gate.

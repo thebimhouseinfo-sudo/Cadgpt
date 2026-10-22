@@ -23,9 +23,9 @@ This is **internal Lisp authoring guidance**, not KUG/KUD HVAC domain knowledge.
 
 Bundled `resources/cad/internal-lisp/**` (including TBH Tool Kit) is read-only Internal Registry content. User reusable source lives in `appdata/libraries/lisp/<library-id>/<folder>/**`. External user folders are import sources only; import/index must not rewrite their source or headers. Custom variants use a distinct User Library id.
 
-Discover existing capabilities through Registry when reuse is relevant. For explicit new authoring, `lisp_scaffold` returns content and an optional final `source_target`; it does not write a file or require an existing library. Create/update final owned source with `v5_source_create` / `v5_source_update` in Builder Work, using the latest SHA for updates. Same-session new unpublished source can continue across Work cleanup. Existing saved/imported source needs exact user `cg/update <target>` authorization. Do not infer newness from missing Registry entries.
+Discover existing capabilities through Registry when reuse is relevant. For explicit new authoring, `lisp_scaffold` returns content and an optional final `source_target`; it does not write a file or require an existing library. Create/update final owned source with `v5_source_create` / `v5_source_update` in Builder Work, with internal revision checks and an optional earlier-read SHA. Same-session new unpublished source can continue across Work cleanup. Existing saved/imported source needs exact user `cg/update <target>` authorization. Do not infer newness from missing Registry entries.
 
-Use `temp_job_create`, `temp_job_source_create`, `temp_job_source_read` and `temp_job_source_update` for one-off source; updates use the read SHA. Temp ownership follows the logical session across Work changes. Never create reusable libraries as an implicit side effect of one-off execution.
+Use `temp_job_create`, `temp_job_source_create`, `temp_job_source_read` and `temp_job_source_update` for one-off source; updates may use the read SHA or let the server compare internally. Temp ownership follows the logical session across Work changes. Never create reusable libraries as an implicit side effect of one-off execution.
 
 ## Validation and execution
 

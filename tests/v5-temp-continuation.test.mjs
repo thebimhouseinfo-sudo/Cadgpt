@@ -132,3 +132,29 @@ test("cleanup preserves Temp while a closing session still has an in-flight tool
   } finally { finish(); await pending; }
   assert.deepEqual((await temp.clearTempJobs(made.id)).removed, [made.id]);
 });
+
+test("completed Temp cleanup waits only for its own in-flight runner", async () => {
+  const session = "temp-completed-runner"; const work = start(session);
+  const a = await temp.createTempJob(work.executionId, session);
+  const b = await temp.createTempJob(work.executionId, session);
+  let release, entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const held = new Promise(resolve => { release = resolve; });
+  const lease = workApi.acquireToolLease({ sessionKey: session, executionId: work.executionId,
+    authorityToken: work.authorityToken, tool: "temp_job_python_run", targetId: a.id, family: "filesystem" });
+  const runner = workApi.runWithToolLease(lease, async () => { entered(); await held; });
+  await started;
+  try {
+    await temp.finishTempJob(a.id, work.executionId, session);
+    assert.deepEqual((await temp.clearTempJobs(a.id)).removed, []);
+    await temp.finishTempJob(b.id, work.executionId, session);
+    assert.deepEqual((await temp.clearTempJobs(b.id)).removed, [b.id], "runner A must not block completed B");
+  } finally { release(); await runner; }
+  assert.deepEqual((await temp.clearTempJobs(a.id)).removed, [a.id]);
+});
+
+test("Temp CAD lease tracks Temp identity even when a drawing is specified", async () => {
+  const { toolTargetId } = await import("../dist/cadgpt/lib/tool-policy.js");
+  assert.equal(toolTargetId({ id: "owned-temp", drawing_id: "bound-drawing" }, "cad", "temp_job_lisp_load"), "owned-temp");
+  assert.equal(toolTargetId({ drawing_id: "bound-drawing" }, "cad", "cad__cad_list_layers"), "bound-drawing");
+});

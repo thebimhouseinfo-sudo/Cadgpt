@@ -48,17 +48,19 @@ test("V5 Temp job Builder creates, fixes, finishes, then safely cleans", async (
     await updateTempSource(a.id, work.executionId, session, "lisp/foo.lsp", "(princ 2)", sha);
     assert.equal(await fs.readFile(path.join(a.root, "lisp", "foo.lsp"), "utf8"), "(princ 2)");
     await finishTempJob(a.id, work.executionId, session);
-    const premature = await clearTempJobs(a.id);
-    assert.deepEqual(premature.removed, []);
-    assert.equal(premature.skipped.length, 1);
     await assert.rejects(writeTempSource(a.id, work.executionId, session, "next.lsp", "x"), /TEMP_JOB_ALREADY_DONE/);
     await assert.rejects(writeTempSource(b.id, "other-work", session, "wrong.lsp", "x"), /TEMP_JOB_NOT_OWNED/);
+    const completed = await clearTempJobs(a.id);
+    assert.deepEqual(completed.removed, [a.id]);
+    const stillActive = await clearTempJobs(b.id);
+    assert.deepEqual(stillActive.removed, []);
+    assert.equal(stillActive.skipped.length, 1);
   } finally {
     releaseSessionWork(session);
     revokeSessionAdmissions(session);
   }
   const clean = await clearTempJobs();
-  assert.equal(clean.removed.length, 2); // completed A and now-inactive B are both owned scratch
+  assert.equal(clean.removed.length, 1); // A already cleared; inactive B is now reclaimable
   assert.equal(clean.skipped.length, 0);
 });
 

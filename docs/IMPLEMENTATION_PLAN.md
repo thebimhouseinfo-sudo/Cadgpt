@@ -1,3 +1,5 @@
+> Current Human-requested Criteria repair: [2026-10-23 plan](plans/CADGPT_CRITERIA_REPAIR_2026-10-23.md). The imported R3 below is retained as historical planning context; it is not a new execution grant or current verification result.
+
 # CadGPT V5 — Implementation Plan R3 (2026-10-21)
 **Status:** PLANNER R3 / CRL R2 FAIL; awaiting GSA replacement Job and current Reviewer. **Criteria:** APPROVED unchanged (`CRITERIA.md`, SHA d43f32b179a46007efb663591d260925f3cbbe06). **CadGPT target:** `thebimhouseinfo-sudo/Cadgpt` branch `feature/core-function-v5`; baseline `eadc45b5f0c993c0977c9047c84c49732688d9b2`. **Job:** J-0E2C. No main/merge/deploy or production-DWG edits. Predecessor plan is preserved in Git history. P0 source investigation COMPLETE, native still UNVERIFIED.
 

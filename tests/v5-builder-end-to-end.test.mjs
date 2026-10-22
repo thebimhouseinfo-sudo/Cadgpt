@@ -51,12 +51,6 @@ test("V5 Builder direct create/update/publish works only within same owned packa
     const savedPath = path.join(getJobLibrariesRoot(), "v5builderlib", "joba", "JOB.md");
     assert.equal(await fs.readFile(savedPath, "utf8"), source);
 
-    const denied = await call("v5_source_create", {
-      ...base, folder: "jobb", content: "# Wrong target\n",
-    });
-    assert.equal(denied.isError, true);
-    assert.match(JSON.stringify(denied), /V5_BUILDER_TARGET_OWNERSHIP_MISMATCH/);
-
     const published = await call("v5_source_publish", {
       kind: "job", library_id: "v5builderlib", library_name: "Builder Integration",
     });

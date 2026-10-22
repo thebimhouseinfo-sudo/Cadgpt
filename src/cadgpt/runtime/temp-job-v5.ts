@@ -5,7 +5,7 @@ import { getTempJobsRoot, getDrawingStorageRoot } from "../lib/appdata.js";
 import { getBoundDrawingsForExecution } from "../session/drawing-binding.js";
 import { newTempJobId, ownedSourceRoot, resolveOwnedSourceMutation } from "../lib/owned-source.js";
 import { resolveAbsoluteMutationPath } from "../lib/path-security.js";
-import { activeWorkForSession, hasActiveToolLeaseForSession } from "../lib/work-registration.js";
+import { activeWorkForSession, hasActiveToolLeaseForSession, hasActiveTempJobToolLease } from "../lib/work-registration.js";
 import { withFileMutationLocks } from "./file-scheduler.js";
 
 const META = ".temp-job.json";
@@ -135,8 +135,9 @@ export async function readTempSource(
 /** Safe FIX → RE-RUN source replacement, never a blind overwrite. */
 export async function updateTempSource(
   id: string, execution: string, session: string, relative: string,
-  content: string, expectedSha256: string,
+  content: string, expectedSha256?: string,
 ) {
+  const revision = expectedSha256 ?? (await readTempSource(id, execution, session, relative)).sha256;
   return withTempJobLock(id, async () => {
     const meta = await assertOwned(id, execution, session);
     if (meta.state !== "active") throw new Error("TEMP_JOB_ALREADY_DONE");
@@ -152,7 +153,7 @@ export async function updateTempSource(
     return withFileMutationLocks([resolved], async () => {
     const old = await fs.readFile(resolved);
     const sha = createHash("sha256").update(old).digest("hex");
-    if (!/^[a-f0-9]{64}$/i.test(expectedSha256) || sha !== expectedSha256.toLowerCase()) {
+    if (!/^[a-f0-9]{64}$/i.test(revision) || sha !== revision.toLowerCase()) {
       throw new Error("TEMP_JOB_SOURCE_CONFLICT");
     }
     const tmp = path.join(path.dirname(resolved), "." + randomUUID() + ".tmp");
@@ -333,7 +334,9 @@ export async function clearTempJobs(id?: string) {
         const ownerInThisRuntime = meta.owner_pid === process.pid;
         const abandoned = meta.state === "active" && !activeOwner &&
           (ownerProcessGone || ownerInThisRuntime);
-        if ((meta.state !== "done" && !abandoned) || activeOwner) {
+        if ((meta.state !== "done" && !abandoned) ||
+            (meta.state === "active" && activeOwner) ||
+            hasActiveTempJobToolLease(meta.owner_session, item)) {
           skipped.push({ id: item, reason: "active_or_unverified_owner" }); return;
         }
         const root = ownedSourceRoot({ kind: "temp-job", id: item });

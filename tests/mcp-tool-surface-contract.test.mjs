@@ -22,9 +22,6 @@ test("production MCP stable surface registers all Job/runtime helper capabilitie
     const required = [
       "drawing_job_result_location",
       "drawing_metadata_location",
-      "human_power_start",
-      "human_power_status",
-      "human_power_stop",
       "file_delete",
       "job_dynamic_lisp_patch",
       "job_dynamic_lisp_prepare",
