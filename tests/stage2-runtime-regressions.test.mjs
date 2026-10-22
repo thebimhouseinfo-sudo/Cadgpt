@@ -52,7 +52,7 @@ test("cg/stop barrier blocks silent new work until an explicit workflow clears i
   }
 });
 
-test("drawing-workspace cannot implicitly bind a replacement drawing", async () => {
+test("explicit drawing selection reports offline CAD without a synthetic rebind gate", async (t) => {
   const {
     acquireToolLease,
     createWorkRegistration,
@@ -65,6 +65,15 @@ test("drawing-workspace cannot implicitly bind a replacement drawing", async () 
   const { registerCadProxyTools } = await import(
     "../dist/cadgpt/tools/cad-proxy.js"
   );
+
+  const { cadUpstream } = await import("../dist/cadgpt/runtime/cad-upstream.js");
+  // Unit/setup tests must never launch the installed Windows CAD subprocess.
+  // Exercise a deterministic offline boundary, even when .venv-cad exists.
+  const offline = "STAGE2_FIXTURE_CAD_OFFLINE";
+  t.mock.method(cadUpstream, "status", () => ({ enabled: false, connected: false }));
+  const activation = t.mock.method(cadUpstream, "activate", async () => {
+    throw new Error(offline);
+  });
 
   const sessionKey = "stage2-no-implicit-rebind";
   checkAdmission(sessionKey, "@cg", "mention");
@@ -101,11 +110,13 @@ test("drawing-workspace cannot implicitly bind a replacement drawing", async () 
       drawingBind({ document: "Drawing3.dwg" })
     );
     assert.equal(result.isError, true);
+    assert.match(JSON.stringify(result), /STAGE2_FIXTURE_CAD_OFFLINE/);
+    assert.equal(activation.mock.callCount(), 1);
     // Explicit document selection is allowed to recover a stale Host
     // binding after AutoCAD relaunch. Offline CAD may still fail normally.
     assert.doesNotMatch(JSON.stringify(result), /DRAWING_REBIND_REQUIRES_SELECTION/);
-    releaseSessionWork(sessionKey);
   } finally {
+    releaseSessionWork(sessionKey);
     revokeSessionAdmissions(sessionKey);
   }
 });
