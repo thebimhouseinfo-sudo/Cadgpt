@@ -39,16 +39,11 @@ Do not invent tool names, Lisp commands or Skills.
 
 ## Selection guidance
 
-Prefer:
+Choose by suitability and total end-to-end cost, not a mandatory hierarchy. Reuse an existing matching capability; use Direct Tools/Macro for small operations, or CAD-local Lisp/Engine bulk processing when that reduces round trips. Do not create permanent source unless reusable authoring was requested.
 
-1. an existing registered capability that already matches the step;
-2. when an existing working Lisp has variable data/sections, a **Job-owned dynamic derivative** seeded once from that real source and patched in place with `job_dynamic_lisp_prepare` / `job_dynamic_lisp_patch`;
-3. a direct CAD MCP tool for small explicit CAD operations;
-4. structured reasoning over retrieved CAD/file data when the step is a decision;
-5. `write-lisp` when reusable/shared AutoLISP logic itself must be created or repaired;
-6. file tools for managed AppData data/output work.
+Dynamic Lisp uses stable Engine plus per-run Data. The Job may generate Lisp, JSON or another format its Engine actually consumes inside the owning runtime. Do not rewrite Engine sections or seed/patch persisted source as ordinary per-drawing input. `job_dynamic_lisp_prepare` / `job_dynamic_lisp_patch` are legacy source-maintenance adapters; actual source writes require exact Human `cg/update` for the selected Job. Normal Data creation does not require that command.
 
-Do not create an adapter/wrapper merely to inject changing values into a working Lisp if the Job can safely replace the declared data/section in its persisted derivative while preserving the rest of the source.
+Builder may nominate a new method when authoring; Operator chooses only among the real Job's permitted executors and decisions. Preserve its business meaning.
 
 The Job defines the required result; the executor is replaceable only when the alternative preserves that result and validation contract.
 
@@ -91,14 +86,4 @@ This informs the implementation test and approval boundary.
 
 ## Independent post-CAD processing tail
 
-Do not add Registry metadata for a background/backend Job and do not make CadGPT infer one.
-
-When the agreed Job workflow has a tail that can continue only after all CAD-dependent data has already been collected:
-
-1. keep the CAD-dependent work in the normal foreground Job flow;
-2. resolve any required final `drawing_job_result_location` before handoff;
-3. insert `job_system_acquire(id=<job-id>)` at the exact boundary where the remaining work is independent of CAD;
-4. use the returned canonical `tool_id` (the Job id itself) for detached `file_*` processing;
-5. guarantee `job_system_release(tool_id=<job-id>)` in the tail's completion/failure cleanup path.
-
-Jobs without such an independent tail are unchanged. Do not add SYSTEM leasing merely because a Job uses file tools during its ordinary foreground execution.
+File analysis and output processing may proceed independently once required CAD data has been collected. Ordinary foreground `file_*` and `job_system_run_helper` use the prepared Job Work; do not add manual SYSTEM acquire/release merely because a Job processes files. Retain legacy detached leases only where an existing explicitly designed detached tail needs them, including its real completion/failure cleanup. Resolve any persistent result location against the verified Drawing Anchor before use; never invent a drawing owner.

@@ -17,10 +17,18 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
   const { registerJobDynamicLispTools } = await import(
     "../dist/cadgpt/tools/job-dynamic-lisp.js"
   );
+  const workApi = await import("../dist/cadgpt/lib/work-registration.js");
+  const admission = await import("../dist/cadgpt/lib/admission.js");
+  const grants = await import("../dist/cadgpt/runtime/job-update-grant.js");
+  const session = "legacy-dynamic-maintenance";
+  admission.checkAdmission(session, "@cg", "mention");
+  const work = workApi.createWorkRegistration({sessionKey:session, ownerType:"skill",ownerId:"job-authoring",executionPath:"file"});
   const callbacks = new Map();
   registerJobDynamicLispTools({
     registerTool(name, _config, callback) {
-      callbacks.set(name, callback);
+      callbacks.set(name, args => workApi.runWithToolLease(workApi.acquireToolLease({
+        sessionKey:session,executionId:work.executionId,authorityToken:work.authorityToken,tool:name,family:"job-authoring",
+      }), () => callback(args)));
     },
   });
 
@@ -34,6 +42,8 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
       "project-jobs",
       "fdt-update"
     );
+    grants.observeExplicitJobUpdateCommand(session, "cg/update");
+    grants.activateJobUpdateGrant(session, jobRoot);
     await fs.mkdir(registryRoot, { recursive: true });
     await fs.mkdir(lispRoot, { recursive: true });
     await fs.mkdir(jobRoot, { recursive: true });
@@ -251,6 +261,9 @@ test("Job dynamic Lisp seeds once, patches exact sections, and reuses persisted 
       /Job-owned LISP is loadable only from a Job lisp\/\*\* or dynamic-lisp\/\*\* folder/
     );
   } finally {
+    workApi.releaseSessionWork(session);
+    admission.revokeSessionAdmissions(session);
+    grants.clearSourceAuthoringForSession(session);
     if (previousRoot === undefined) delete process.env.CADGPT_APPDATA_ROOT;
     else process.env.CADGPT_APPDATA_ROOT = previousRoot;
     await fs.rm(tempRoot, { recursive: true, force: true });

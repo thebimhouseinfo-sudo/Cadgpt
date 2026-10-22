@@ -164,6 +164,8 @@ test("outer Lisp policy accepts Job-owned static/dynamic helpers and rejects unr
       await runWithToolLease(
         lease,
         async () => {
+          const oldProfile = process.env.CADGPT_BUILD_PROFILE;
+          process.env.CADGPT_BUILD_PROFILE = "development";
           activateHumanPower({
             task: "test outer Lisp scope",
             reason:
@@ -179,6 +181,8 @@ test("outer Lisp policy accepts Job-owned static/dynamic helpers and rejects unr
             );
           } finally {
             deactivateHumanPower();
+            if (oldProfile === undefined) delete process.env.CADGPT_BUILD_PROFILE;
+            else process.env.CADGPT_BUILD_PROFILE = oldProfile;
           }
         }
       );

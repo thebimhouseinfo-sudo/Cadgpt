@@ -14,7 +14,7 @@ For an existing Job, read its current managed source and diagnose the relevant f
 
 Reusable Job source lives directly in `appdata/libraries/jobs/<library-id>/<folder>/**`. `runtime/**` is working/recovery state, not published source. Persistent drawing results belong under the verified Drawing Anchor and the Job's own result folder. External import locations and bundled Internal Jobs remain read-only.
 
-Use `v5_source_create` and `v5_source_update` in explicit Builder Work. Updates require the latest SHA-256. The same logical session may continue its newly created, unpublished package after a Work ends. Saved/imported source needs the user's exact `cg/update <target>` authorization. A missing Registry entry does not prove that source is new. Do not use generic file writes to bypass source guards.
+Use `v5_source_create` and `v5_source_update` in explicit Builder Work. Revision checks are internal; an earlier-read SHA may be supplied, but never ask the Human for one. The same logical session may continue its newly created, unpublished package after a Work ends. Saved/imported source needs the user's exact `cg/update <target>` authorization. A missing Registry entry does not prove that source is new. Do not use generic file writes to bypass source guards.
 
 A canonical reusable package contains `JOB.md` and optional owned `lisp/`, `tools/`, data and runtime assets. Read the current Job contract for metadata, step and runtime requirements. Execute source through its supported source-path entrypoint without requiring registration first. Publish only when requested using `v5_source_publish`; publication is distinct from source edits and ends new-source continuation for the indexed packages.
 

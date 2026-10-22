@@ -389,6 +389,7 @@ function activateHumanPowerOnWork(
     expectedBehavior: string;
   }
 ): HumanPowerGrant {
+  if (!isDevelopmentBuild()) throw new Error("DEVELOPMENT_ONLY: Human Power source-policy bypass is not available in production.");
   if (work.closing) {
     throw new Error(
       "NO_ACTIVE_WORK: Human Power requires the current active work execution."
@@ -669,6 +670,18 @@ export function hasActiveToolLeaseForExecution(executionId: string): boolean {
 
 export function hasActiveToolLeaseForSession(sessionKey: string): boolean {
   return [...activeLeases.values()].some(lease => lease.sessionKey === sessionKey);
+}
+
+/** Retain completed Temp source only while that exact Temp is still in use. */
+export function hasActiveTempJobToolLease(sessionKey: string, tempId: string): boolean {
+  return [...activeLeases.values()].some(lease => lease.sessionKey === sessionKey &&
+    lease.targetId === tempId && lease.tool.startsWith("temp_job_") && lease.tool !== "temp_job_clear");
+}
+
+/** Operator dispatch ends temporary Builder intent, without replacing Work. */
+export function clearWorkSourceAuthoringIntent(executionId: string): void {
+  const work = registrations.get(executionId);
+  if (work) work.capabilities = work.capabilities.filter(c => c !== "job-authoring" && c !== "lisp-authoring");
 }
 
 export function activeJobWorkExecutionIds(): string[] {

@@ -4,7 +4,21 @@ import path from "node:path";
 // The command is observed through the CadGPT admission/control flow, not
 // inferred from a Builder owner_id supplied by a tool caller.
 const pendingCommands = new Set<string>();
-const grants = new Map<string, { target: string; executionId: string | null }>();
+const grants = new Map<string, { target: string }>();
+const recentSources = new Map<string, string>();
+
+export function rememberSourceForSession(sessionKey: string, root: string): void {
+  if (grants.has(sessionKey) && grants.get(sessionKey)!.target !== key(root)) {
+    clearJobUpdateGrantForSession(sessionKey);
+  }
+  recentSources.set(sessionKey, path.resolve(root));
+}
+export function recentSourceForSession(sessionKey: string): string | null {
+  return recentSources.get(sessionKey) ?? null;
+}
+export function jobUpdateTargetForSession(sessionKey: string): string | null {
+  return grants.get(sessionKey)?.target ?? null;
+}
 // Positive evidence of creation by this logical session, not an inference from
 // missing Registry entries. Work cleanup must not discard unfinished authoring.
 const newPackagesBySession = new Map<string, Set<string>>();
@@ -33,30 +47,27 @@ function key(root: string): string {
 
 export function observeExplicitJobUpdateCommand(sessionKey: string, userTurn: string): boolean {
   if (!/^cg\/update$/i.test(userTurn.trim())) return false;
-  grants.delete(sessionKey);
   pendingCommands.add(sessionKey);
   return true;
 }
 
 export function activateJobUpdateGrant(sessionKey: string, targetRoot: string): void {
-  if (!pendingCommands.delete(sessionKey)) {
+  if (!pendingCommands.delete(sessionKey) && grants.get(sessionKey)?.target !== key(targetRoot)) {
     throw new Error("JOB_UPDATE_EXPLICIT_COMMAND_REQUIRED: issue cg/update before selecting a Job or Lisp.");
   }
-  grants.set(sessionKey, { target: key(targetRoot), executionId: null });
+  grants.set(sessionKey, { target: key(targetRoot) });
 }
 
-export function hasJobUpdateGrantForWork(sessionKey: string, executionId: string): boolean {
+export function hasJobUpdateGrantForWork(sessionKey: string, _executionId: string): boolean {
   const grant = grants.get(sessionKey);
-  return Boolean(grant && (!grant.executionId || grant.executionId === executionId));
+  return Boolean(grant);
 }
 
-export function assertJobUpdateGrant(sessionKey: string, executionId: string, root: string): void {
+export function assertJobUpdateGrant(sessionKey: string, _executionId: string, root: string): void {
   const grant = grants.get(sessionKey);
-  if (!grant || grant.target !== key(root) ||
-      (grant.executionId && grant.executionId !== executionId)) {
+  if (!grant || grant.target !== key(root)) {
     throw new Error("JOB_UPDATE_EXPLICIT_COMMAND_REQUIRED: cg/update must authorize this exact existing Job or Lisp.");
   }
-  if (!grant.executionId) grant.executionId = executionId;
 }
 
 export function recordNewSourcePackage(sessionKey: string, root: string): void {
@@ -85,16 +96,11 @@ export function finishSourceAuthoringInLibrary(libraryRoot: string, relativePath
 
 export function clearSourceAuthoringForSession(sessionKey: string): void {
   newPackagesBySession.delete(sessionKey);
+  recentSources.delete(sessionKey);
   clearJobUpdateGrantForSession(sessionKey);
 }
 
 export function clearJobUpdateGrantForSession(sessionKey: string): void {
   pendingCommands.delete(sessionKey);
   grants.delete(sessionKey);
-}
-
-export function clearJobUpdateGrantForExecution(executionId: string): void {
-  for (const [sessionKey, grant] of grants) {
-    if (grant.executionId === executionId) grants.delete(sessionKey);
-  }
 }

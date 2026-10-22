@@ -141,8 +141,19 @@ function titleFromJob(source: string, file: string): string {
   return path.basename(file, path.extname(file));
 }
 
-async function indexLibrary(kind: AssetKind, libraryId: string, root: string): Promise<RegistryEntry[]> {
-  const files = (await walk(root, kind)).sort((a, b) => a.localeCompare(b));
+async function indexLibrary(kind: AssetKind, libraryId: string, root: string, selectedRoot?: string): Promise<RegistryEntry[]> {
+  let files: string[];
+  if (selectedRoot && kind === "job") {
+    const children = await fs.readdir(selectedRoot, { withFileTypes: true });
+    const definition = children.find(e => e.name.toLowerCase() === "job.md" && e.isFile());
+    // JOB.md owns its helper/data files; those are not separate executable Jobs.
+    files = definition ? [path.join(selectedRoot, definition.name)] :
+      children.filter(e => e.isFile() && path.extname(e.name).toLowerCase() === ".py")
+        .map(e => path.join(selectedRoot, e.name));
+  } else {
+    files = await walk(selectedRoot ?? root, kind);
+  }
+  files.sort((a, b) => a.localeCompare(b));
   const result: RegistryEntry[] = [];
   let bytes = 0;
 
@@ -167,7 +178,14 @@ async function indexLibrary(kind: AssetKind, libraryId: string, root: string): P
   return result;
 }
 
-async function saveLibraryAndRegistry(record: LibraryRecord, entries: RegistryEntry[]): Promise<void> {
+function inPublicationScope(item: RegistryEntry, kind: AssetKind, libraryId: string, prefix?: string): boolean {
+  if (item.kind !== kind || item.library_id.toLowerCase() !== libraryId.toLowerCase()) return false;
+  if (prefix === undefined) return true;
+  const normalized = (v: string) => process.platform === "win32" ? v.replaceAll("\\", "/").toLowerCase() : v.replaceAll("\\", "/");
+  return normalized(item.relative_path).startsWith(normalized(prefix) + "/");
+}
+
+async function saveLibraryAndRegistry(record: LibraryRecord, entries: RegistryEntry[], prefix?: string): Promise<void> {
   await fs.mkdir(getUserRegistryRoot(), { recursive: true });
   const manifest = await readJson<{ version: number; libraries: LibraryRecord[] }>(
     getUserLibrariesManifestPath(),
@@ -184,7 +202,7 @@ async function saveLibraryAndRegistry(record: LibraryRecord, entries: RegistryEn
     { version: 1, entries: [] }
   );
   const nextEntries = registry.entries.filter(
-    (item) => !(item.kind === record.kind && item.library_id.toLowerCase() === record.id.toLowerCase())
+    (item) => !inPublicationScope(item, record.kind, record.id, prefix)
   );
   nextEntries.push(...entries);
   nextEntries.sort((a, b) => a.id.localeCompare(b.id));
@@ -352,7 +370,7 @@ export async function importLibrary(kind: AssetKind, libraryId: string, name: st
  * library location. No copy, checkout, promotion, preflight TEST or source edit.
  */
 export async function publishManagedLibrary(
-  kind: AssetKind, libraryId: string, name: string
+  kind: AssetKind, libraryId: string, name: string, selectedRoot?: string
 ) {
   if (!LIBRARY_ID.test(libraryId)) throw new Error("V5_LIBRARY_ID_INVALID");
   assertUserLibraryId(libraryId);
@@ -366,7 +384,18 @@ export async function publishManagedLibrary(
     if (path.dirname(canonicalRoot) !== canonicalParent) throw new Error("V5_LIBRARY_OWNER_ROOT_ALIAS");
     const stat = await fs.lstat(root);
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("V5_LIBRARY_UNSAFE_ROOT");
-    const entries = await indexLibrary(kind, libraryId, root);
+    let prefix: string | undefined;
+    if (selectedRoot) {
+      const canonicalSelected = await fs.realpath(selectedRoot);
+      if (!isPathInside(canonicalSelected, canonicalRoot) || canonicalSelected === canonicalRoot) {
+        throw new Error("V5_PUBLISH_SOURCE_OUTSIDE_LIBRARY");
+      }
+      const selectedStat = await fs.lstat(selectedRoot);
+      if (!selectedStat.isDirectory() || selectedStat.isSymbolicLink()) throw new Error("V5_PUBLISH_UNSAFE_SOURCE");
+      prefix = path.relative(canonicalRoot, canonicalSelected).replaceAll("\\", "/");
+      selectedRoot = canonicalSelected;
+    }
+    const entries = await indexLibrary(kind, libraryId, root, selectedRoot);
     if (!entries.length) throw new Error("V5_LIBRARY_NO_REUSABLE_ASSETS");
     const manifestFile = getUserLibrariesManifestPath();
     const registryFile = getUserCapabilitiesPath();
@@ -381,7 +410,7 @@ export async function publishManagedLibrary(
       }
       const registry = await readJson<UserRegistry>(registryFile, { version: 1, entries: [] });
       const otherEntries = registry.entries.filter(item =>
-        !(item.kind === kind && item.library_id.toLowerCase() === libraryId.toLowerCase()));
+        !inPublicationScope(item, kind, libraryId, prefix));
       if (entries.some(incoming => otherEntries.some(item =>
         item.id.toLowerCase() === incoming.id.toLowerCase() ||
         (kind === "lisp" && incoming.commands.some(cmd =>
@@ -391,8 +420,8 @@ export async function publishManagedLibrary(
       }
       await saveLibraryAndRegistry({
         id: libraryId, kind, name, mode: "managed", root_path: root, enabled: true,
-      }, entries);
-      return { library_id: libraryId, kind, folder_path: root, registered: entries.length };
+      }, entries, prefix);
+      return { library_id: libraryId, kind, folder_path: selectedRoot ?? root, registered: entries.length };
     });
   }));
 }

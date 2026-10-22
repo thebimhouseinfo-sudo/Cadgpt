@@ -1,65 +1,9 @@
-# JobCreate — Implementation and Testing
+# JobCreate — implementation and verification
 
-Purpose: ensure a Job is proven by actual execution before permanent promotion.
+Use the V5 contract in `knowledge/jobs/JOB_RULES.md` and `../SKILL.md`. Implement directly in the intended owned source folder. No draft, checkout, mandatory simulated TEST or promotion stage is required before a legitimate first RUN.
 
-## Principle
+Verify the behavior actually changed: read the current Job definition, prepare owned runtime, execute the relevant safe step and inspect its declared result. Retain real partial output/error diagnostics for repair. Do not replay a non-idempotent CAD mutation whose completion is unknown.
 
-A Job definition is not complete because its Markdown looks correct. If the Job has not been exercised against a real approved test context, it remains a draft.
+Static validation and a Python/MCP regression demonstrate source behavior only. Actual AutoCAD LOAD/run, geometry changes and Save need native evidence. If unavailable, report exactly what was checked and mark native outcomes unverified; do not pretend success or demand a new ceremony before source repair.
 
-## Test preparation
-
-Use an explicitly approved context:
-
-- dedicated test drawing; or
-- explicitly approved bound drawing when appropriate.
-
-Never silently choose a project drawing for destructive testing.
-
-## Test execution
-
-Run the Job step by step using the mapped executors.
-
-For each step capture:
-
-```text
-actual input
-executor used
-actual output
-postcondition/evidence
-PASS / FAIL / BLOCKED
-```
-
-Do not treat successful command dispatch as proof of success.
-
-## Interactive steps
-
-When a step requires user selection, points, keywords or dialogs:
-
-- allow the user to perform the interaction;
-- resume from the resulting CAD state;
-- verify the step's success criteria afterward.
-
-## Failure loop
-
-```text
-failure evidence
-→ identify failing step
-→ decide whether failure is implementation or semantics
-→ if semantics change, discuss with user
-→ patch draft narrowly
-→ rerun affected path
-→ rerun final validation
-```
-
-Do not silently change business logic to make a test pass.
-
-## Promotion readiness
-
-Promotion is allowed only when:
-
-- all required steps have passed or explicitly accepted non-applicable paths;
-- the final Job result matches the approved plan;
-- known failures are not hidden in notes;
-- the user accepts the tested workflow for permanent reuse.
-
-A Job with a known untested required path remains draft status.
+Preserve business rules and entity/data scope. Test the relevant failure path, foreign-owner denial and any concurrency affected by the change. Do not invent a global drawing scan or exhaustive validation outside the Job's real success contract. Publication is explicit metadata discovery, not a substitute for runtime evidence and not a prerequisite for execution.

@@ -6,6 +6,7 @@ import { clearTempJobs } from "../runtime/temp-job-v5.js";
 import {
   activeWorkForSession,
   clearSessionWorkStopBarrier,
+  enableWorkCapability,
   isDevelopmentBuild,
   workStatus,
 } from "../lib/work-registration.js";
@@ -158,6 +159,7 @@ export function registerCadGptControlTool(
       let text: string;
 
       if (
+        surface === "update" ||
         surface === "cl" ||
         surface === "cj" ||
         surface === "kug" ||
@@ -257,6 +259,8 @@ export function registerCadGptControlTool(
 
       if (surface === "cl" || surface === "cj") {
         if (activeWork && (activeWork.executionPath === "file" || activeWork.executionPath === "hybrid")) {
+          // Explicit Create Job/Lisp intent enters Builder without replacing Work.
+          enableWorkCapability(activeWork.executionId, activeWork.authorityToken, options.sessionKey, "job-authoring");
           continuationPolicy = {
             existing_work_action:
               "Reuse the current work_handle: compatible work is already active. Use the active_work_handle credentials (execution_id + authority_token) directly for all file/job/lisp tool calls. Do not call cadgpt_work_start again. Do not replace an existing HYBRID drawing workspace for Lisp/Job authoring.",

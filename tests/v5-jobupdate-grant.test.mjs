@@ -78,7 +78,7 @@ test("Existing Job editing requires exact cg/update and cannot target another Jo
     assert.notEqual(accepted.isError, true, JSON.stringify(accepted));
     assert.equal(await fs.readFile(path.join(folder, "JOB.md"), "utf8"), "# Updated Job\n");
     assert.equal(await fs.readFile(path.join(other, "JOB.md"), "utf8"), source);
-    grants.clearJobUpdateGrantForExecution(work.executionId);
+    grants.clearJobUpdateGrantForSession(session);
     assert.equal(grants.hasJobUpdateGrantForWork(session, work.executionId), false);
     workApi.releaseSessionWork(session);
     revokeSessionAdmissions(session);

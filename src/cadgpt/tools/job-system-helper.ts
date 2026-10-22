@@ -11,7 +11,6 @@ import { toolError, toolResult } from "../lib/tool-result.js";
 import { currentJobSystemLease } from "../runtime/system-lease.js";
 import { activeJobRuntimeForExecution } from "../runtime/job-runtime.js";
 import { currentToolLease, activeWorkForSession } from "../lib/work-registration.js";
-import { currentBuilderTarget } from "../runtime/builder-target.js";
 
 const execFileAsync = promisify(execFile);
 const sha256 = (bytes: string | Buffer) =>
@@ -85,20 +84,9 @@ export function registerJobSystemHelperTools(server: McpServer): void {
             throw new Error("JOB_HELPER_ACTIVE_WORK_REQUIRED");
           }
           const owned = activeJobRuntimeForExecution(invoking.workId);
-          if (!owned || (work.jobId && work.jobId !== owned.job_id)) {
-            throw new Error("JOB_HELPER_PREPARED_RUNTIME_REQUIRED");
-          }
-          if (work.ownerType !== "job") {
-            const isBuilder = ["jobcreate", "job-authoring"].includes(work.ownerId) ||
-              work.capabilities.includes("job-authoring");
-            const target = currentBuilderTarget(invoking.workId);
-            const canonical = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
-            if (!isBuilder || !target ||
-                canonical(await fs.realpath(target)) !==
-                canonical(await fs.realpath(owned.job_root))) {
-              throw new Error("JOB_HELPER_BUILDER_TARGET_MISMATCH");
-            }
-          }
+          if (!owned) throw new Error("JOB_HELPER_PREPARED_RUNTIME_REQUIRED");
+          // The prepared runtime is current authority. A Work's original label
+          // or earlier Builder selection must not block this Job's own helper.
           jobRoot = path.resolve(owned.job_root);
           runtimeRoot = path.resolve(owned.runtime_root);
           writableRoots = [runtimeRoot, ...owned.result_roots];

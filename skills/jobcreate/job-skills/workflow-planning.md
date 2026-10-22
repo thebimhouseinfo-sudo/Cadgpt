@@ -63,7 +63,7 @@ UNRESOLVED
 - company rule for target Xref layer
 ```
 
-An unresolved item may remain during early planning. It must be resolved or explicitly excluded before promotion if it affects required behavior.
+An unresolved item may remain during early planning. It must be resolved or explicitly excluded before the affected step can succeed if it changes required behavior.
 
 ## Skeleton quality
 

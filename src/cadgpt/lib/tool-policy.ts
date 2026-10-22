@@ -84,8 +84,9 @@ export function toolFamilyForInvocation(
   return toolFamily(toolName);
 }
 
-export function toolTargetId(args: Record<string, unknown>, family: string): string {
-  for (const key of ["drawing_id", "path", "draft_path", "source_path", "library_id", "registry_id"]) {
+export function toolTargetId(args: Record<string, unknown>, family: string, toolName?: string): string {
+  if (toolName?.startsWith("temp_job_") && typeof args.id === "string" && args.id.trim()) return args.id.trim();
+  for (const key of ["drawing_id", "path", "draft_path", "source_path", "library_id", "registry_id", "id"]) {
     const value = args[key];
     if (typeof value === "string" && value.trim()) return value.trim();
   }

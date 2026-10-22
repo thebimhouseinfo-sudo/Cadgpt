@@ -1,6 +1,6 @@
-# CadGPT Human Power
+# CadGPT Human Power — internal development only
 
-Human Power is an explicit human-authorized, one-task execution privilege.
+Human Power is an explicit human-authorized, one-task development privilege. Production builds do not advertise/register these tools or allow activation through admission; ordinary customer sessions cannot use it to repair MCP source.
 
 ## Purpose
 

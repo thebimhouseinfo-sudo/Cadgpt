@@ -90,12 +90,12 @@ export function registerTempJobV5Tools(server: McpServer): void {
   });
   server.registerTool("temp_job_source_update", {
     title: "Fix one owned Temp Job source file",
-    description: "Replace source after an error with exact SHA-256 expected content, then user can re-run real CAD operation.",
+    description: "Correct owned source after an error. Revision checks are internal; an earlier-read SHA is optional. Re-run only the safe intended operation.",
     inputSchema: {
       id: z.string().uuid(),
       relative_path: z.string().min(1),
       content: z.string(),
-      expected_sha256: z.string().regex(/^[a-f0-9]{64}$/i),
+      expected_sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
     },
   }, async ({ id, relative_path, content, expected_sha256 }) => {
     try {

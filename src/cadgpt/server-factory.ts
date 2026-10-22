@@ -83,9 +83,9 @@ import {
 import { activeJobRuntimeForExecution, cleanupJobRuntimeForExecution, cleanupJobRuntimeForSystemLease } from "./runtime/job-runtime.js";
 import { getRepoRoot, isPathInside } from "./lib/path-security.js";
 import { getJobLibrariesRoot, getLispLibrariesRoot } from "./lib/appdata.js";
-import { currentBuilderTarget } from "./runtime/builder-target.js";
+import { assertBuilderTarget, clearBuilderTarget, currentBuilderTarget } from "./runtime/builder-target.js";
 import { assertOwnedSourceRootSafe, ownedSourceRoot } from "./lib/owned-source.js";
-import { activateJobUpdateGrant, clearJobUpdateGrantForSession, clearSourceAuthoringForSession } from "./runtime/job-update-grant.js";
+import { activateJobUpdateGrant, clearJobUpdateGrantForSession, clearSourceAuthoringForSession, rememberSourceForSession, recentSourceForSession, jobUpdateTargetForSession } from "./runtime/job-update-grant.js";
 import {
   clearAddinPairingsForSession,
   clearAddinSessionObserver,
@@ -260,7 +260,7 @@ function configureToolRegistration(server: McpServer, sessionKey: string): void 
       const lease = acquireToolLease({
         tool: name,
         family,
-        targetId: toolTargetId(args, family),
+        targetId: toolTargetId(args, family, name),
         executionId,
         authorityToken,
         sessionKey,
@@ -312,9 +312,8 @@ function registerStableProductionSurface(server: McpServer): void {
   registerTempLispTools(server);
   registerTempJobV5Tools(server);
   registerV5BuilderSourceTools(server);
-  registerHumanPowerTools(server);
-
   if (isDevelopmentBuild()) {
+    registerHumanPowerTools(server);
     registerCadMcpDevTools(server);
     registered.add("cad-mcp-dev");
   }
@@ -471,13 +470,15 @@ export function createMcpServer(sessionKey: string): McpServer {
         "CadGPT has FILE, CAD and HYBRID execution paths; HYBRID is the DEFAULT for every Work owner. FILE-only and CAD-only are explicit narrow exceptions, never inferred from the first requested operation. Hybrid authoring/data can proceed without activating CAD MCP until needed. CAD MCP activates only on actual CAD demand. User-created/imported Lisp/Job lives in real per-user AppData. Repo-bundled TBH Tool Kit is Internal Registry/install content under resources/cad/internal-lisp/** and is never resolved through user AppData.",
         "Job behavior is execution-mode driven. Official Internal Registry direct Jobs (for example id=tbh) must be dispatched with job_run_direct on the BOUND CAD drawing, including a CAD-only drawing Work; they do NOT require FILE/HYBRID or Custom Job epoch compatibility. If job_run_direct returns an error, preserve and report the EXACT error code/message instead of a generic 'safety blocked' summary. Internal Jobs use bounded built-in CadGPT executors with no model planning. The Internal Direct Job path is authoritative: if job_run_direct fails or times out, do NOT bypass it by manually calling lower-level Lisp/CAD tools such as cad__cad_load_lisp_file; surface the Job failure so the implementation can be fixed. User Registry .py Jobs are also direct and use job_run_direct with CadGPT's fixed Python runtime. User .md Jobs are reasoning Jobs. For .md Jobs follow knowledge/jobs/REASONING_HARNESS.md for required workflow steps, entry conditions, branch decisions and error handling. Once the workflow branch is established, STRICT CUSTOM JOB EXECUTION has precedence: execute those steps without inventing planning, reviews, CAD audits or post-action checks not required by the selected workflow.",
         "JOB STEPS STATUS REPORTING — For User Reasoning Jobs, report each verified meaningful Job Step to the user with its step name and PASS result. For every step failure, immediately report the original tool code/message and log evidence, identify whether the failure is in CadGPT source/runtime/bridge versus Job data only when grounded, list steps not executed, and then stop. A Lisp load with loaded=false or missing confirmation is NEVER success, even if the MCP transport call itself succeeded. Do not silently re-route, bypass or mark Job Steps ✓. Before resetting Job Steps on terminal error, send the user-facing failure report.",
-        "LOCAL JOB COMPATIBILITY — before normal User Job create/run/refine, call job_local_compat_status (small epoch+contract fingerprint check). If update_required, warn the user that Custom Job behavior changed and recommend jobcreate CONTRACT UPDATE; allow normal execution and testing without waiting for the scan. Read knowledge/jobs/LOCAL_COMPAT_UPDATE.md, inspect installed Job.md sources, report affected/unchanged/blocked, ask user permission for business-flow changes, validate/test/promote affected Jobs, then mark checked. Do not treat updating the CadGPT runtime as updating the User's AppData JOB.md. Surface pending_actions even after an earlier scan was marked checked. A Reasoning Job must read current JOB.md and verify the named raw/entry condition BEFORE branch-specific LISP/CAD execution; never re-use older chat choices.",
+        "LOCAL JOB COMPATIBILITY — diagnostic only. Normal Job reading, authoring and execution need no compatibility scan. On a user-requested compatibility analysis inspect only relevant real packages; do not impose CONTRACT UPDATE, validation/test/promote or approval ceremonies before RUN. Existing-source changes still require exact cg/update. Read the current JOB.md and actual entry state, not prior chat choices.",
         "Never assume AutoCAD ActiveDocument is the target; use explicit drawing contexts.",
         "All file mutations require absolute canonical target paths and allowed-root verification. Relative/CWD-authorized mutation is forbidden.",
-        "Human Power is an explicit human-only emergency capability for the CURRENT active work execution. Never self-activate it. Use it only after the human explicitly authorizes Human Power for the current task. It expires with work stop/release/expiry/replacement or human_power_stop. It is platform recovery state, never Job metadata.",
-        "HUMAN POWER CONTROL ROUTING — stable fallback: if an already-admitted CadGPT user explicitly says 'human power on', 'human power off', 'human power status' (or clear Vietnamese equivalents bật/tắt/trạng thái Human Power), call cadgpt_admission again with the EXACT current user turn. Use invocation_source=mention only when the current turn literally contains @cadgpt/@cg; otherwise use plugin for the active CadGPT connector. This is the stable control path even when the connector tool catalog has not refreshed to expose human_power_start/status/stop. Do not search the tool namespace and give up first.",
-        "When Human Power edits CadGPT repository source, file_create/file_edit must include human_power_fix explaining how the patch fixes the recorded activation error. The managed Human Power error log is mandatory. CAD-MCP Python source changes reload only the CAD-MCP child; outer TypeScript core changes still require the normal build/runtime replacement before they take effect.",
-        "cad-mcp-dev remains development-only; ordinary Human Power source repair uses the audited generic file tools and does not turn the user's Job into a development workflow.",
+        ...(isDevelopmentBuild() ? [
+          "Human Power is an explicit human-only emergency capability for the CURRENT active work execution. Never self-activate it. Use it only after the human explicitly authorizes Human Power for the current task. It expires with work stop/release/expiry/replacement or human_power_stop. It is platform recovery state, never Job metadata.",
+          "HUMAN POWER CONTROL ROUTING — stable fallback: if an already-admitted CadGPT user explicitly says 'human power on', 'human power off', 'human power status' (or clear Vietnamese equivalents bật/tắt/trạng thái Human Power), call cadgpt_admission again with the EXACT current user turn. Use invocation_source=mention only when the current turn literally contains @cadgpt/@cg; otherwise use plugin for the active CadGPT connector. This is the stable control path even when the connector tool catalog has not refreshed to expose human_power_start/status/stop. Do not search the tool namespace and give up first.",
+          "When Human Power edits CadGPT repository source, file_create/file_edit must include human_power_fix explaining how the patch fixes the recorded activation error. The managed Human Power error log is mandatory. CAD-MCP Python source changes reload only the CAD-MCP child; outer TypeScript core changes still require the normal build/runtime replacement before they take effect.",
+          "cad-mcp-dev remains development-only; ordinary Human Power source repair uses the audited generic file tools and does not turn the user's Job into a development workflow.",
+        ] : []),
         ...(strictCustomJobHarness
           ? ["STRICT CUSTOM JOB EXECUTION — highest priority for execution scope of established Custom Jobs, without relaxing platform safety or explicit Job conditions:\n" + strictCustomJobHarness]
           : []),
@@ -701,20 +702,25 @@ export function createMcpServer(sessionKey: string): McpServer {
         target = ownedSourceRoot(owned);
         const stat = await fs.promises.lstat(target);
         if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("SOURCE_UPDATE_TARGET_REQUIRED: select an existing owned source folder.");
-      } else if (!libraryId && !folder && selectedSource) {
-        if (kind && !isPathInside(selectedSource, kind === "job" ? getJobLibrariesRoot() : getLispLibrariesRoot())) {
-          return "Select the intended source library and folder for cg/update; the current selection is a different kind.";
+      } else if (!libraryId && !folder) {
+        const selected = recentSourceForSession(sessionKey) ?? activeJob?.job_root ??
+          selectedSource ?? jobUpdateTargetForSession(sessionKey);
+        if (!selected || (kind && !isPathInside(selected,
+            kind === "job" ? getJobLibrariesRoot() : getLispLibrariesRoot()))) {
+          return "Select the intended existing Job or Lisp library and source folder for cg/update.";
         }
-        target = selectedSource;
-      } else if (!libraryId && !folder && activeJob) {
-        if (kind === "lisp") return "Select the Lisp library and source folder for cg/update; the active Job is not a Lisp target.";
-        target = activeJob.job_root;
+        target = selected;
       } else {
         const jobs = await import("./tools/jobs.js").then((module) => module.listRegisteredJobs());
         return "Select the existing Job or Lisp for cg/update by source_kind, library and folder. " +
           (jobs.length ? "Registered Jobs: " + jobs.map(job => job.id).join(", ") : "No registered Jobs found.");
       }
       activateJobUpdateGrant(sessionKey, target);
+      rememberSourceForSession(sessionKey, target);
+      if (workExecution) {
+        clearBuilderTarget(workExecution);
+        assertBuilderTarget(workExecution, target);
+      }
       return "cg/update authorized for one existing source package: " + target +
         ". Edit only that Job or Lisp directly. This does not authorize another asset or alter CAD MCP.";
     },
@@ -905,10 +911,10 @@ export function createMcpServer(sessionKey: string): McpServer {
           ? [
               "",
               "",
-              `⚠ CUSTOM JOB CONTRACT UPDATE REQUIRED (epoch ${jobCompat.source_epoch})`,
-              "CadGPT Job behavior changed. Existing Custom Jobs in AppData must be checked before they can run.",
-              "Please run jobcreate CONTRACT UPDATE: inspect registered JOB.md workflows, report affected Jobs and ask approval before updating their business flow.",
-              "Until the scan is completed, CadGPT blocks User Job execution; it will not silently overwrite Job definitions.",
+              `⚠ CUSTOM JOB COMPATIBILITY NOTICE (epoch ${jobCompat.source_epoch})`,
+              "The local contract marker changed. This diagnostic notice does not block authoring or Job execution.",
+              "Inspect only a relevant Job when compatibility analysis is requested; preserve its business workflow.",
+              "No scan or migration is required before RUN. Report real failures and never silently rewrite Job definitions.",
             ].join("\n")
           : (jobCompat.pending_actions.length || jobCompat.blocked_job_ids.length)
             ? [

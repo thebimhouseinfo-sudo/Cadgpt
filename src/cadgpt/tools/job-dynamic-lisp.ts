@@ -1,3 +1,5 @@
+import { currentToolLease } from "../lib/work-registration.js";
+import { assertJobUpdateGrant, withSourceMutation } from "../runtime/job-update-grant.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -5,7 +7,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { getUserCapabilitiesPath } from "../lib/appdata.js";
-import { isPathInside, toCadgptPath } from "../lib/path-security.js";
+import { isPathInside, toCadgptPath, resolveAbsoluteMutationPath } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { withFileMutationLocks } from "../runtime/file-scheduler.js";
 import { listBundledLispEntries, resolveBundledLispPath } from "../lib/bundled-assets.js";
@@ -127,7 +129,8 @@ async function jobTarget(
   if (!isPathInside(target, jobRoot)) {
     throw new Error("JOB_DYNAMIC_LISP_PATH: dynamic Lisp path escapes the owning Job folder");
   }
-  return { job_root: jobRoot, target, relative_path: relative };
+  const canonicalTarget = await resolveAbsoluteMutationPath(target, { allowedRoots: [jobRoot], forCreate: true });
+  return { job_root: jobRoot, target: canonicalTarget, relative_path: relative };
 }
 
 async function seedSource(sourceLispId: string): Promise<SeedSource> {
@@ -246,7 +249,7 @@ export function registerJobDynamicLispTools(server: McpServer): void {
     {
       title: "Prepare or Reuse Job-owned Dynamic Lisp",
       description:
-        "Seed a persistent Job-owned dynamic Lisp from a registered working Lisp source exactly once. Later calls reuse the existing Job copy instead of copying the base source again.",
+        "Legacy source maintenance: creating a persistent Job Engine copy requires exact cg/update for this Job. Reading an existing copy is unrestricted. Normal Dynamic Lisp runs keep Engine unchanged and generate Data in the owned runtime.",
       inputSchema: {
         job_id: z.string().min(1),
         source_lisp_id: z.string().min(1),
@@ -269,8 +272,8 @@ export function registerJobDynamicLispTools(server: McpServer): void {
         );
         const provenancePath = targetInfo.target + ".source.json";
 
-        return await withFileMutationLocks(
-          [targetInfo.target, provenancePath],
+        return await withSourceMutation(() => withFileMutationLocks(
+          [targetInfo.job_root, targetInfo.target, provenancePath],
           async () => {
             let existing: string | null = null;
             try {
@@ -319,6 +322,8 @@ export function registerJobDynamicLispTools(server: McpServer): void {
               });
             }
 
+            const invoking = currentToolLease();
+            assertJobUpdateGrant(invoking.sessionKey, invoking.workId, targetInfo.job_root);
             await fs.mkdir(path.dirname(targetInfo.target), {
               recursive: true,
             });
@@ -360,7 +365,7 @@ export function registerJobDynamicLispTools(server: McpServer): void {
                 "Patch only declared dynamic data/sections; do not wrap or adapt the original command.",
             });
           }
-        );
+        ));
       } catch (error) {
         return toolError("job_dynamic_lisp_prepare", error);
       }
@@ -372,7 +377,7 @@ export function registerJobDynamicLispTools(server: McpServer): void {
     {
       title: "Patch Job-owned Dynamic Lisp",
       description:
-        "Apply hash-guarded exact replacements to a persistent Job-owned dynamic Lisp. Untouched source remains unchanged and the result must pass AutoLISP syntax validation before write.",
+        "Legacy Engine maintenance only: exact Human cg/update must authorize this Job source. Ordinary per-run Data belongs in the Job runtime and does not modify Engine code. Patches are revision-checked and syntax-validated.",
       inputSchema: {
         job_id: z.string().min(1),
         relative_path: z
@@ -399,9 +404,11 @@ export function registerJobDynamicLispTools(server: McpServer): void {
         const targetInfo = await jobTarget(job, relative_path);
         const provenancePath = targetInfo.target + ".source.json";
 
-        return await withFileMutationLocks(
-          [targetInfo.target, provenancePath],
+        return await withSourceMutation(() => withFileMutationLocks(
+          [targetInfo.job_root, targetInfo.target, provenancePath],
           async () => {
+            const invoking = currentToolLease();
+            assertJobUpdateGrant(invoking.sessionKey, invoking.workId, targetInfo.job_root);
             const original = await fs.readFile(targetInfo.target, "utf8");
             const beforeHash = sha256(original);
             if (beforeHash !== expected_sha256) {
@@ -506,7 +513,7 @@ export function registerJobDynamicLispTools(server: McpServer): void {
                 "Only exact declared dynamic sections were replaced; reuse this persisted Job copy on the next run.",
             });
           }
-        );
+        ));
       } catch (error) {
         return toolError("job_dynamic_lisp_patch", error);
       }

@@ -76,6 +76,6 @@ test("Job discovery and CadGPT launch are required to expose changed contract ra
   assert.match(jobs, /job_contract_compatibility/);
   assert.match(jobs, /JOB_LOCAL_COMPAT_SCAN_COUNT_MISMATCH/);
   assert.match(jobs, /CONTRACT UPDATE/);
-  assert.match(server, /CUSTOM JOB CONTRACT UPDATE REQUIRED/);
+  assert.match(server, /CUSTOM JOB COMPATIBILITY NOTICE/);
   assert.match(server, /CUSTOM JOB UPDATES STILL PENDING/);
 });
