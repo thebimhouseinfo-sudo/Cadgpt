@@ -143,7 +143,12 @@ test("MCP cg/update infers an unambiguous Lisp target and unlocks only that sour
     await client.callTool({ name: "cadgpt_admission", arguments: { user_turn: "cg/update", invocation_source: "plugin" } });
     const reused = await client.callTool({ name: "cadgpt_control", arguments: { surface: "update" } });
     assert.match(reused.structuredContent.text, /authorized/i);
-    assert(reused.structuredContent.text.includes(folder));
+    // Builder targets use case-insensitive canonical paths on Windows.
+    // Keep the full owner-path assertion without depending on display casing.
+    const responseText = reused.structuredContent.text;
+    assert(process.platform === "win32"
+      ? responseText.toLowerCase().includes(folder.toLowerCase())
+      : responseText.includes(folder));
     const oldRoute = await client.callTool({ name: "cadgpt_control", arguments: { surface: "jobupdate" } });
     assert.equal(oldRoute.isError, true);
     assert.equal(workApi.activeWorkForSession(session)?.executionId, work.executionId);
