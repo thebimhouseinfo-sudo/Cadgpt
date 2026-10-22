@@ -527,6 +527,8 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
       registry.delete(publicName);
     }
 
+    const publicShape = schemaToShape(tool.inputSchema);
+    if (tool.name === "acad_save_bound_document") delete publicShape.runtime_document_id;
     const registered = server.registerTool(
       publicName,
       {
@@ -534,7 +536,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
         description:
           `[CAD MCP / execution-scoped drawing context] ${tool.description ?? tool.name}`,
         inputSchema: {
-          ...schemaToShape(tool.inputSchema),
+          ...publicShape,
           drawing_id: z
             .string()
             .optional()
@@ -546,16 +548,22 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
       },
       async (args: Record<string, unknown>) => {
         try {
+          const executionId = currentToolLease().workId;
+          // A failed retry must not leave an earlier successful Save witness.
+          if (tool.name === "acad_save_bound_document") invalidateBoundSave(executionId);
           await ensureCadRuntimeActive();
           const drawingId =
             typeof args.drawing_id === "string" ? args.drawing_id : undefined;
           const binding = resolveDrawingContext(drawingId);
           const upstreamArgs = { ...args };
           delete upstreamArgs.drawing_id;
+          if (tool.name === "acad_save_bound_document") {
+            upstreamArgs.runtime_document_id = binding.runtime_document_identity;
+          }
 
           return await withCadHostLock(binding.host, async () => {
+            if (tool.name === "acad_save_bound_document") invalidateBoundSave(executionId);
             await activateDrawingContext(binding);
-            const executionId = currentToolLease().workId;
             if (tool.name !== "acad_save_bound_document") {
               invalidateBoundSave(executionId);
               if (!READ_ONLY_BOUND_CAD_TOOLS.has(tool.name)) notePotentialCadMutation(executionId);
@@ -569,7 +577,7 @@ export function syncCadBusinessProxies(server: McpServer): string[] {
                     findPayloadField(payload, "runtime_document_id") === binding.runtime_document_identity) {
                   noteVerifiedBoundSave(executionId, binding.runtime_document_identity);
                 } else {
-                  invalidateBoundSave(executionId);
+                  throw new Error("BOUND_SAVE_UNVERIFIED: Save did not confirm the bound document identity.");
                 }
               }
             } else if (tool.name === "acad_save_bound_document") {

@@ -2897,8 +2897,8 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
       "cad__cad_list_layers",
       "cad_invoke_manifest_tool",
       "job_run_direct",
-      "job_draft_validate",
-      "job_promote_draft",
+      "v5_source_update",
+      "v5_source_publish",
       "job_dynamic_lisp_prepare",
       "job_dynamic_lisp_patch",
       "lisp_scaffold",
@@ -2983,8 +2983,8 @@ test("same OpenAI conversation survives MCP transport rotation without explicit 
     );
     assert.equal(names.includes("cad_status"), true);
     assert.equal(names.includes("cad__cad_list_layers"), true);
-    assert.equal(names.includes("job_draft_validate"), true);
-    assert.equal(names.includes("job_promote_draft"), true);
+    assert.equal(names.includes("v5_source_update"), true);
+    assert.equal(names.includes("v5_source_publish"), true);
 
     const cj = await tool(b.headers, 1012, "cadgpt_control", { surface: "cj" });
     assert.equal(

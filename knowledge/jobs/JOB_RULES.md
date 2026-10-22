@@ -1,6 +1,6 @@
 # CadGPT V5 — Canonical Job Rules
 
-**Status:** V5 runtime guidance. **Authority:** `docs/roadmap/CADGPT_CORE_FUNCTION_V5_BRANCH_PLAN.md`, `docs/roadmap/CADGPT_V5_DETAILED_IMPLEMENTATION_PLAN.md`, and human-approved V5 theory. This document replaces the legacy mandatory draft/validate/test/promote lifecycle **on V5 only**. Tool aliases retained for existing Jobs do not reinstate the old lifecycle.
+**Status:** V5 runtime guidance. **Authority:** `docs/roadmap/CADGPT_CORE_FUNCTION_V5_BRANCH_PLAN.md`, `docs/roadmap/CADGPT_V5_DETAILED_IMPLEMENTATION_PLAN.md`, and human-approved V5 theory. This document replaces the legacy mandatory draft/validate/test/promote lifecycle **on V5 only**. Legacy draft/checkout/promote implementations remain internal compatibility code, are not public MCP tools, and do not reinstate the old lifecycle.
 
 ## Core model and roles
 
@@ -18,9 +18,12 @@ Builder source mutations use `v5_source_create`/`v5_source_update` with an exact
 
 A reusable capability is indexed only when explicitly requested: `v5_source_publish` for an already-authored managed Job/Lisp package, or `temp_job_lisp_publish` for selected independent reusable Lisp. Publication is **not** a prerequisite for authoring or running a Job directly through `job_runtime_prepare(source_path=<absolute-final-managed-JOB.md>)`. For registered Operator invocations use `job_runtime_prepare(id=<registered-id>)`. Existing library registration refreshes after in-place source edits without a new promotion step.
 
+Existing saved/imported reusable source needs exact user `cg/update <target>` authorization. Same-session new unpublished source may continue across Work cleanup; missing Registry entries alone do not establish ownership. Source edits do not publish implicitly.
+
 ## Temp Job
 
 - Allocate `%LOCALAPPDATA%/CadGPT/temp-jobs/<UUID>/` using `temp_job_create`. UUID belongs to temporary scratch **only**.
+- Read owned source with `temp_job_source_read` before SHA-checked corrections. Session ownership survives Work changes; stale execution IDs and other sessions remain denied.
 - A Temp Job needs no `JOB.md`, Job Registry entry, draft or whole-Job promotion.
 - Builder uses `temp_job_source_create`, `temp_job_source_update`, optional `temp_job_lisp_load`, then the normal bound CAD execution tools. Loaded Lisp success requires `loaded=true`; run command success is separate.
 - A Temp Job may run its own trusted, hash-pinned **file-only** Python helper using `temp_job_python_run` and JSON input. This is not an OS sandbox and is never an alternative path for AutoCAD mutations; CAD execution still goes through the verified host and drawing tools.

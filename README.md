@@ -74,6 +74,7 @@ cg/list   refresh open drawings
 cg/cl     create or repair Lisp
 cg/cj     create or repair Job
 cg/job    list registered Jobs
+cg/update edit one selected existing Job or Lisp
 cg/kug    update global HVAC knowledge (KUG)
 cg/kud    update bound-drawing HVAC knowledge (KUD)
 cg/mcp    CAD MCP development workflow (development builds only)
@@ -207,7 +208,7 @@ User-managed Lisp lives under:
 %LOCALAPPDATA%\CadGPT\libraries\lisp
 ```
 
-Editing uses controlled checkout → validate → real CAD test → promote workflows. Generic file tools cannot mutate permanent managed libraries.
+Explicit reusable authoring uses `v5_source_create` / `v5_source_update` directly in the final managed owner folder. Saved-source edits require exact `cg/update <target>` authorization; generic file tools cannot bypass source guards. One-off helpers use session-owned Temp source. Scaffold and source execution do not require Registry publication; publish explicitly when requested.
 
 System Lisp authoring guidance lives under:
 

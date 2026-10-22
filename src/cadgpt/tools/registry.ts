@@ -8,6 +8,7 @@ import { listStoredJobCapabilities } from "../lib/job-capability-index.js";
 import { getRepoRoot } from "../lib/path-security.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
 import { isDevelopmentBuild } from "../lib/work-registration.js";
+import { RETIRED_AUTHORING_TOOLS } from "../lib/tool-policy.js";
 import {
   listBundledLispEntries,
   resolveBundledLispPath,
@@ -77,6 +78,7 @@ const CORE_TOOLS = [
   { name: "v5_source_publish", class: "workflow.builder", summary: "On explicit user request index already-authored managed Job/Lisp library without draft promotion." },
   { name: "temp_job_create", class: "workflow.temp", summary: "Builder allocates isolated UUID Temp Job workspace; no JOB.md required." },
   { name: "temp_job_source_create", class: "workflow.temp", summary: "Create a new source file only inside calling Builder-owned Temp Job." },
+  { name: "temp_job_source_read", class: "workflow.temp", summary: "Read exact owned Temp source text, byte count and revision for safe correction across Work continuation." },
   { name: "temp_job_source_update", class: "workflow.temp", summary: "Hash-guarded repair of Builder-owned Temp Job source file." },
   { name: "temp_job_python_run", class: "workflow.temp", summary: "Run SHA-verified trusted Temp Python as FILE-only JSON helper; never bypass bound CAD host." },
   { name: "temp_job_result_create", class: "workflow.temp", summary: "Create user-named persistent result under exact verified Drawing Anchor." },
@@ -94,7 +96,7 @@ const CORE_TOOLS = [
   { name: "job_dynamic_lisp_patch", class: "workflow.jobs", summary: "Hash-guarded exact replacement of declared dynamic data/sections in a persistent Job-owned Lisp copy." },
   { name: "skill_list", class: "skills", summary: "List internal CadGPT system skills." },
   { name: "skill_get", class: "skills", summary: "Load one internal CadGPT skill resource." },
-  { name: "lisp_scaffold", class: "lisp.authoring", summary: "Create a canonical AutoLISP draft for a user-managed library; bundled Internal Registry library ids are read-only." },
+  { name: "lisp_scaffold", class: "lisp.authoring", summary: "Generate canonical AutoLISP source content for explicit authoring; no draft or Registry prerequisite." },
   { name: "lisp_checkout", class: "lisp.authoring", summary: "Copy one managed Lisp capability into workspace for editing/repair and normalize its working header only when write-lisp is activated." },
   { name: "lisp_validate", class: "lisp.authoring", summary: "Statically validate managed AutoLISP source with an explicit authoring profile." },
   { name: "lisp_draft_validate", class: "lisp.authoring", summary: "Statically validate an AutoLISP workspace draft." },
@@ -151,7 +153,7 @@ async function loadToolEntries(): Promise<Array<Record<string, unknown>>> {
   const core = isDevelopmentBuild()
     ? [...CORE_TOOLS, ...DEV_ONLY_TOOLS]
     : CORE_TOOLS;
-  const result: Array<Record<string, unknown>> = core.map((item) => ({
+  const result: Array<Record<string, unknown>> = core.filter(item => !RETIRED_AUTHORING_TOOLS.has(item.name)).map((item) => ({
     id: item.name,
     name: item.name,
     kind: "tool",

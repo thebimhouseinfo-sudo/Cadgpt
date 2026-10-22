@@ -2,69 +2,13 @@
 
 Purpose: debug AutoLISP from concrete AutoCAD evidence and finish with a real load test, without silently choosing a live project drawing.
 
-## Non-negotiable test rule
+## Evidence and target selection
 
-Every changed production `.lsp` must be loaded in AutoCAD before handoff.
+Use `lisp_validate` with exactly one of raw `source` or managed `path`, or the development checker `npm run test:lisp-syntax -- <file.lsp> --profile=cadgpt --expect=COMMAND`. These use the shared validator, not an ad-hoc parenthesis count. Static validation does not establish native success.
 
-Static validation is only a pre-load gate. A file is not considered fixed merely because parentheses balance or `lisp_validate` passes.
+Use the task's authorized bound drawing. Clarify only when the target or test mutation is unresolved; do not ask for a separate drawing selection after every edit. If a user requested a disposable test drawing, try `drawing_create_test` and do not silently fall back to a live project when it fails.
 
-Before the AutoCAD load gate, use the repository's ready-made syntax test whenever a local source/dev shell is available:
-
-```text
-npm run test:lisp-syntax -- "<file.lsp>" --profile=cadgpt
-```
-
-For a known command, add `--expect=COMMAND`. This script uses the same `validateLispSource` implementation as the MCP validators, so it is a fast preflight rather than a competing checker. In MCP-only execution, `lisp_draft_validate` is the equivalent mandatory syntax gate.
-
-## Test-environment selection requires user choice
-
-After static validation passes and the Lisp is ready for AutoCAD testing, do not silently pick a drawing.
-
-If the user has already explicitly named a test drawing in the current request, use that drawing. Otherwise ask whether they want:
-
-```text
-1. a new drawing for testing; or
-2. the current drawing.
-```
-
-Do not proceed to the load gate until the user chooses.
-
-### New drawing selected
-
-Try `drawing_create_test` first.
-
-The current CadGPT CAD MCP contains a blank-drawing creation path using AutoCAD's document collection. When available, `drawing_create_test` creates a new unsaved blank drawing and binds the CadGPT session to it.
-
-If that capability is unavailable on the installed runtime/AutoCAD host or the tool fails, **do not fall back to the current/project drawing**. Ask the user to open/create a test drawing manually. Then use `drawing_list` and `drawing_bind` to bind exactly that drawing before loading the Lisp.
-
-### Current drawing selected
-
-Use `drawing_status` to confirm the exact bound drawing identity before loading. The user's explicit choice authorizes the agreed test on that drawing.
-
-A drawing is never considered approved for testing merely because it is active, open, or already bound from earlier CAD work.
-
-A blank drawing is sufficient for syntax/load validation. Commands that require representative geometry may need a user-designated test DWG or deliberately-created disposable test entities.
-
-## Debugging loop
-
-Use this loop:
-
-```text
-reproduce/inspect
-→ classify failure
-→ inspect source/state
-→ patch narrowly
-→ ready-made syntax preflight when local shell is available
-→ lisp_draft_validate / lisp_validate
-→ obtain user-approved test drawing
-→ verified load
-→ read load error evidence
-→ patch/revalidate/reload until loaded=true
-→ run command when safely automatable
-→ inspect drawing postcondition
-```
-
-Do not rewrite an entire working command because one COM call or one mapping branch fails.
+Reproduce/inspect the relevant failure, patch narrowly with the owned source API, validate, then load/run the exact source through verified CAD tools and inspect the concrete postcondition. If native AutoCAD is unavailable, report the checks actually performed and leave native verification explicitly pending. No draft/checkout/promotion ceremony is required.
 
 ## Classify the failure first
 
@@ -88,7 +32,7 @@ Treat these differently. A COM `Invalid index` error is not a reason to change p
 Before patching runtime bugs, collect the smallest useful evidence:
 
 - command name;
-- exact approved test drawing identity;
+- exact authorized bound drawing identity;
 - entity handle/type/layer when relevant;
 - source file/function;
 - actual AutoCAD error message or load log tail;
@@ -97,7 +41,7 @@ Before patching runtime bugs, collect the smallest useful evidence:
 
 ## Syntax/static test
 
-Every edited `.lsp` must pass the shared CadGPT validator before load.
+Use the shared CadGPT validator to diagnose source before load; it does not introduce a separate authoring lifecycle.
 
 Source/dev preflight:
 
@@ -105,10 +49,10 @@ Source/dev preflight:
 npm run test:lisp-syntax -- "<file.lsp>" --profile=cadgpt [--expect=COMMAND]
 ```
 
-MCP draft gate:
+MCP validation:
 
 ```text
-lisp_draft_validate(profile="cadgpt")
+lisp_validate(source=<exact authored text>, profile="cadgpt")
 ```
 
 Imported managed source may use `lisp_validate(profile="syntax")`.
@@ -117,7 +61,7 @@ These paths intentionally share one validation engine. Do not replace them with 
 
 ## Verified load test
 
-Load the exact edited file into the approved bound drawing with:
+Load the exact edited file into the authorized bound drawing with:
 
 ```text
 cad__cad_load_lisp_file
@@ -131,7 +75,7 @@ loaded: true
 
 before command execution or handoff.
 
-If it returns `loaded: false`, read `error` and `log_tail`, patch the source, run `lisp_validate` again, and reload into the same approved test drawing. Repeat until the file loads cleanly or a concrete external blocker is identified.
+If it returns `loaded: false`, read `error` and `log_tail`, patch the source, run `lisp_validate` again, and reload into the same authorized drawing. Repeat until the file loads cleanly or a concrete external blocker is identified.
 
 Do not treat `SendCommand` enqueue/queue success as load success.
 
@@ -142,7 +86,7 @@ Many useful AutoLISP commands require user input: object selection, point pickin
 For such commands:
 
 1. complete static validation;
-2. obtain the user-approved test drawing;
+2. obtain the user-authorized drawing;
 3. load successfully in that drawing;
 4. stop automated execution unless there is a deterministic, explicitly-supported automation path;
 5. tell the user the Lisp **loaded successfully** and ask them to run the named command manually in the approved drawing;

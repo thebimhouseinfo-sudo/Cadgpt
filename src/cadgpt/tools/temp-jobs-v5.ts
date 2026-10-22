@@ -7,7 +7,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { currentToolLease } from "../lib/work-registration.js";
 import { loadVerifiedLispForCurrentWork } from "./cad-proxy.js";
 import { toolError, toolResult } from "../lib/tool-result.js";
-import { createTempJob, writeTempSource, updateTempSource, createTempResult, writeTempResult, getOwnedTempLisp, finishTempJob, clearTempJobs } from "../runtime/temp-job-v5.js";
+import { createTempJob, readTempSource, writeTempSource, updateTempSource, createTempResult, writeTempResult, getOwnedTempLisp, finishTempJob, clearTempJobs } from "../runtime/temp-job-v5.js";
 
 export async function assertIndependentLispFolder(root: string): Promise<void> {
   const canonical = await fs.realpath(root);
@@ -77,6 +77,16 @@ export function registerTempJobV5Tools(server: McpServer): void {
       const l = currentToolLease();
       return toolResult("temp_job_source_create", await writeTempSource(id, l.workId, l.sessionKey, relative_path, content));
     } catch (e) { return toolError("temp_job_source_create", e); }
+  });
+  server.registerTool("temp_job_source_read", {
+    title: "Read owned Temp Job source and current revision",
+    description: "Read source text and SHA-256 within this logical session's own Temp Job. Use the returned revision for safe source correction; no generic FILE or Registry permission is needed.",
+    inputSchema: { id: z.string().uuid(), relative_path: z.string().min(1) },
+  }, async ({ id, relative_path }) => {
+    try {
+      const lease = currentToolLease();
+      return toolResult("temp_job_source_read", await readTempSource(id, lease.workId, lease.sessionKey, relative_path));
+    } catch (error) { return toolError("temp_job_source_read", error); }
   });
   server.registerTool("temp_job_source_update", {
     title: "Fix one owned Temp Job source file",

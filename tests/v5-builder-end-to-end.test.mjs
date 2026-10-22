@@ -16,6 +16,7 @@ const {
 } = await import("../dist/cadgpt/lib/work-registration.js");
 const { registerV5BuilderSourceTools } = await import("../dist/cadgpt/tools/v5-builder-source.js");
 const { getJobLibrariesRoot } = await import("../dist/cadgpt/lib/appdata.js");
+const { observeExplicitJobUpdateCommand, activateJobUpdateGrant } = await import("../dist/cadgpt/runtime/job-update-grant.js");
 
 const handlers = new Map();
 registerV5BuilderSourceTools({
@@ -62,6 +63,13 @@ test("V5 Builder direct create/update/publish works only within same owned packa
     assert.notEqual(published.isError, true, JSON.stringify(published));
 
     const updated = "# Direct Builder Job\n\n## Steps\n1. Updated step.\n";
+    const locked = await call("v5_source_update", {
+      ...base, content: updated, expected_sha256: sha(source),
+    });
+    assert.equal(locked.isError, true);
+    assert.equal(await fs.readFile(savedPath, "utf8"), source);
+    observeExplicitJobUpdateCommand(session, "cg/update");
+    activateJobUpdateGrant(session, path.dirname(savedPath));
     const replaced = await call("v5_source_update", {
       ...base, content: updated, expected_sha256: sha(source),
     });

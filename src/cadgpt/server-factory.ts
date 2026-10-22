@@ -29,6 +29,7 @@ import {
   type ExecutionPath,
 } from "./lib/work-registration.js";
 import {
+  RETIRED_AUTHORING_TOOLS,
   toolAuthority,
   toolFamilyForInvocation,
   toolTargetId,
@@ -80,10 +81,11 @@ import {
   runWithJobSystemLease,
 } from "./runtime/system-lease.js";
 import { activeJobRuntimeForExecution, cleanupJobRuntimeForExecution, cleanupJobRuntimeForSystemLease } from "./runtime/job-runtime.js";
-import { getRepoRoot } from "./lib/path-security.js";
-import { getJobLibrariesRoot } from "./lib/appdata.js";
+import { getRepoRoot, isPathInside } from "./lib/path-security.js";
+import { getJobLibrariesRoot, getLispLibrariesRoot } from "./lib/appdata.js";
+import { currentBuilderTarget } from "./runtime/builder-target.js";
 import { assertOwnedSourceRootSafe, ownedSourceRoot } from "./lib/owned-source.js";
-import { activateJobUpdateGrant, clearJobUpdateGrantForSession } from "./runtime/job-update-grant.js";
+import { activateJobUpdateGrant, clearJobUpdateGrantForSession, clearSourceAuthoringForSession } from "./runtime/job-update-grant.js";
 import {
   clearAddinPairingsForSession,
   clearAddinSessionObserver,
@@ -266,7 +268,9 @@ function configureToolRegistration(server: McpServer, sessionKey: string): void 
       return runWithToolLease(lease, () => callback(toolArgs, ...rest));
     };
 
-    return original(name, nextConfig, wrapped);
+    const registered = original(name, nextConfig, wrapped);
+    if (RETIRED_AUTHORING_TOOLS.has(name)) registered.disable();
+    return registered;
   }) as typeof server.registerTool;
 }
 
@@ -434,7 +438,8 @@ export function createMcpServer(sessionKey: string): McpServer {
       capabilities: { logging: {}, tools: { listChanged: true } },
       instructions: [
         "CadGPT entry routing — highest priority: bare CadGPT plugin/icon invocation (including a connector renamed CG) or bare @cadgpt or @cg must call cadgpt_admission and return its welcome_text verbatim when present. Do not replace it with prose such as 'activated'.",
-        "Exact cg/ calls cadgpt_control(surface=commands); cg/list -> surface=list; cg/cl -> surface=cl; cg/cj -> surface=cj; cg/job -> surface=job; cg/rl -> register Lisp folder; cg/rj -> register Job folder; cg/il -> import Lisp; cg/el -> export Lisp; cg/ij -> import Job; cg/ej -> export Job; cg/mcp -> surface=mcp; cg/help -> surface=help; cg/stop -> surface=stop. cg/list reads tray cache only and never wakes full CAD MCP.",
+        "Exact cg/ calls cadgpt_control(surface=commands); cg/list -> surface=list; cg/cl -> surface=cl; cg/cj -> surface=cj; cg/job -> surface=job; cg/update -> surface=update, selecting the exact existing Job or Lisp by source_kind, job_library_id and job_folder; cg/rl -> register Lisp folder; cg/rj -> register Job folder; cg/il -> import Lisp; cg/el -> export Lisp; cg/ij -> import Job; cg/ej -> export Job; cg/mcp -> surface=mcp; cg/help -> surface=help; cg/stop -> surface=stop. cg/list reads tray cache only and never wakes full CAD MCP.",
+        "SOURCE EDIT AUTHORITY — only the exact current Human command cg/update authorizes editing one selected existing Job or Lisp. Reading and running remain unaffected. A source package newly created by this logical session remains authorable across Work changes until published or the session ends; do not request cg/update merely because its folder now exists. Existing or unknown source requires the exact target grant; never infer new authoring from an absent Registry entry. cg/jobupdate is retired, not an alternate unlock.",
         "CadGPT is explicit-launch, session-persistent.",
         "The user launches CadGPT once per ChatGPT conversation, either by selecting/calling the CadGPT plugin/icon (the connector may be renamed, e.g. CG) or by using literal @cadgpt or @cg. The connector may replace its underlying MCP transport/session without requiring the user to launch again.",
         "On a bare plugin/icon or bare @cadgpt or @cg launch, call cadgpt_admission once. If that launch also contains a real task, claim the session and continue directly instead of forcing the generic Welcome. After the session is claimed, do not call admission again on every turn.",
@@ -672,26 +677,46 @@ export function createMcpServer(sessionKey: string): McpServer {
       ];
       return lines.join("\n");
     },
-    authorizeJobUpdate: async (libraryId, folder) => {
+    authorizeJobUpdate: async (libraryId, folder, kind) => {
       const workExecution = activeExecutionForSession(sessionKey);
       const activeJob = workExecution ? activeJobRuntimeForExecution(workExecution) : null;
+      const selectedSource = workExecution ? currentBuilderTarget(workExecution) : null;
       let target: string;
       if (libraryId && folder) {
-        const owned = { kind: "reusable-job" as const, libraryId, relativeFolder: folder };
+        if (!kind) {
+          const matches: ("job" | "lisp")[] = [];
+          for (const candidate of ["job", "lisp"] as const) {
+            const owned = { kind: candidate === "job" ? "reusable-job" as const : "reusable-lisp" as const, libraryId, relativeFolder: folder };
+            const exists = await fs.promises.lstat(ownedSourceRoot(owned)).then(stat => stat.isDirectory(), (error: NodeJS.ErrnoException) => {
+              if (error.code === "ENOENT") return false;
+              throw error;
+            });
+            if (exists) matches.push(candidate);
+          }
+          if (matches.length !== 1) return "Select the existing Job or Lisp kind (source_kind) for cg/update; the library/folder is missing or ambiguous.";
+          kind = matches[0];
+        }
+        const owned = { kind: kind === "lisp" ? "reusable-lisp" as const : "reusable-job" as const, libraryId, relativeFolder: folder };
         await assertOwnedSourceRootSafe(owned);
         target = ownedSourceRoot(owned);
+        const stat = await fs.promises.lstat(target);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("SOURCE_UPDATE_TARGET_REQUIRED: select an existing owned source folder.");
+      } else if (!libraryId && !folder && selectedSource) {
+        if (kind && !isPathInside(selectedSource, kind === "job" ? getJobLibrariesRoot() : getLispLibrariesRoot())) {
+          return "Select the intended source library and folder for cg/update; the current selection is a different kind.";
+        }
+        target = selectedSource;
       } else if (!libraryId && !folder && activeJob) {
+        if (kind === "lisp") return "Select the Lisp library and source folder for cg/update; the active Job is not a Lisp target.";
         target = activeJob.job_root;
       } else {
         const jobs = await import("./tools/jobs.js").then((module) => module.listRegisteredJobs());
-        return "Select the existing Job for cg/jobupdate by its library and folder. " +
+        return "Select the existing Job or Lisp for cg/update by source_kind, library and folder. " +
           (jobs.length ? "Registered Jobs: " + jobs.map(job => job.id).join(", ") : "No registered Jobs found.");
       }
-      const stat = await fs.promises.stat(path.join(target, "JOB.md"));
-      if (!stat.isFile()) throw new Error("JOB_UPDATE_SOURCE_REQUIRED: target must contain an existing JOB.md.");
       activateJobUpdateGrant(sessionKey, target);
-      return "cg/jobupdate authorized for one existing Job: " + target +
-        ". Edit that Job's source directly. This does not authorize another Job or alter CAD MCP.";
+      return "cg/update authorized for one existing source package: " + target +
+        ". Edit only that Job or Lisp directly. This does not authorize another asset or alter CAD MCP.";
     },
     stopCurrentJob: async () => {
       const executionId = activeExecutionForSession(sessionKey);
@@ -1148,6 +1173,7 @@ export async function disposeLogicalSessionState(
     await cleanupExecutionState(executionIdReadyForCleanup);
   }
   revokeSessionAdmissions(sessionKey);
+  clearSourceAuthoringForSession(sessionKey);
   clearCadPrepare(sessionKey);
   clearAddinSessionObserver(sessionKey);
   clearAddinPairingsForSession(sessionKey);
