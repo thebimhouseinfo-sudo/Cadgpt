@@ -212,16 +212,20 @@ class CadUpstream {
         }
       });
 
-      const timeoutMs = Math.max(1000, Number(process.env.CAD_MCP_CONNECT_TIMEOUT_MS || 15000));
-      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        await Promise.race([
-          client.connect(transport),
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(() => reject(new Error(`CAD MCP connection timed out after ${timeoutMs}ms`)), timeoutMs);
-          }),
-        ]);
+        await client.connect(transport);
         const listed = await client.listTools();
+        // An actual stdio transport close is different from a tool failure.
+        // Drop only this closed client so the next permitted CAD call reconnects.
+        client.onclose = () => {
+          if (this.client !== client) return;
+          this.client = null;
+          this.transport = null;
+          this.tools = [];
+          this.connectedExecutionId = null;
+          this.connectedHumanPower = false;
+          this.lastError = "CAD MCP transport closed";
+        };
         this.client = client;
         this.transport = transport;
         this.tools = listed.tools ?? [];
@@ -238,8 +242,6 @@ class CadUpstream {
         const enriched = enrichCadError(error, stderrTail);
         this.rememberError(enriched);
         throw enriched;
-      } finally {
-        if (timer) clearTimeout(timer);
       }
     })();
 
@@ -278,8 +280,10 @@ class CadUpstream {
       );
     } catch (error) {
       const message = this.rememberError(error);
-      await this.shutdown();
-      throw new Error(`CAD MCP call '${name}' failed; upstream was reset and will reconnect on the next call while AutoCAD remains active. Original error: ${message}`);
+      // A tool error does not mean the Python MCP transport is broken.
+      // Preserve the current drawing binding and healthy upstream tools.
+      // The SDK transport's onclose path remains responsible for real closure.
+      throw new Error(`CAD MCP call '${name}' failed: ${message}`, { cause: error });
     } finally {
       const callMs = Date.now() - callStartedAt;
       if (callMs >= 5000) {

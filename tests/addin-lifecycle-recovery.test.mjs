@@ -35,8 +35,10 @@ test("active add-in logical sessions are pinned outside MCP TTL cleanup", () => 
   );
   assert.match(
     indexSource,
-    /isLogicalSessionPinned:\s*isAddinManagedSession/
+    /isLogicalSessionPinned:\s*\(sessionKey\)\s*=>/
   );
+  assert.match(indexSource, /isAddinManagedSession\(sessionKey\)/);
+  assert.match(indexSource, /activeWorkForSession\(sessionKey\)/);
 });
 
 test("unknown stale MCP transport can cold-bootstrap only from connector conversation identity", () => {

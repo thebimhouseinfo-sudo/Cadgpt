@@ -140,6 +140,9 @@ function cleanup(): void {
     // pair remains registered. Windows sleep pauses the add-in poll timer, so
     // elapsed wall-clock idle time is not evidence that this work ended.
     if (isAddinManagedSession(work.sessionKey)) continue;
+    // Active CAD/HYBRID work keeps its tools and binding until explicit stop,
+    // release or real session teardown. Idle time is not a CAD failure.
+    if (work.executionPath === "cad" || work.executionPath === "hybrid") continue;
     if (now - Date.parse(work.lastActivityAt) <= WORK_IDLE_MS) continue;
     if (hasActiveLeaseForWork(executionId)) continue;
     registrations.delete(executionId);

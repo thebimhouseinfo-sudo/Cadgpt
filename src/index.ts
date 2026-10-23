@@ -14,7 +14,7 @@ import {
 import { runtimeStateSnapshot } from "./cadgpt/lib/runtime-state.js";
 import { resolveCadPrepareSessionByToken } from "./cadgpt/tools/cad-launcher.js";
 import { routeMcpPost } from "./cadgpt/lib/mcp-post-routing.js";
-import { activeToolLeaseCount, activeWorkCount, sweepExpiredWork } from "./cadgpt/lib/work-registration.js";
+import { activeToolLeaseCount, activeWorkCount, activeWorkForSession, sweepExpiredWork } from "./cadgpt/lib/work-registration.js";
 import { continuityDiagnosticsPath } from "./cadgpt/lib/continuity-diagnostics.js";
 import {
   addinBindingStatus,
@@ -52,8 +52,11 @@ const mcpPathSet = new Set(mcpPaths);
 const sessions = createSessionManager(
   PORT,
   {
-    isLogicalSessionPinned:
-      isAddinManagedSession,
+    isLogicalSessionPinned: (sessionKey) => {
+      if (isAddinManagedSession(sessionKey)) return true;
+      const active = activeWorkForSession(sessionKey);
+      return active?.executionPath === "cad" || active?.executionPath === "hybrid";
+    },
   }
 );
 sessions.startCleanup();
